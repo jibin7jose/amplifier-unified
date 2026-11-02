@@ -439,12 +439,15 @@ def test_full_python_suite_is_post_release_or_manual_but_fast_proofs_remain():
                     if step.get('name') == 'Run the complete Python suite')
     # Keep the entire suite and immediate node identities: a timeout must not
     # conceal which test failed or was still running behind quiet progress dots.
-    assert 'uv run --no-sync pytest -v --tb=short --junitxml=output/python-checks/junit.xml' in complete['run']
-    assert 'set -o pipefail' in complete['run']
-    assert 'tee output/python-checks/pytest.log' in complete['run']
+    assert complete['run'] == 'python -u scripts/browser_check_runner.py --python-suite --output output/python-checks'
+    runner = (ROOT / 'scripts/browser_check_runner.py').read_text()
+    assert "PYTHON_COMMAND = ['.venv/bin/python', '-u', '-m', 'pytest', '-v', '--tb=short'," in runner
+    assert "'--junitxml=output/python-checks/junit.pending.xml']" in runner
+    assert 'tee ' not in complete['run']
     assert '--maxfail' not in complete['run'] and ' tests/' not in complete['run']
     upload = next(step for step in python['steps'] if step.get('uses') == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
-    assert upload['if'] == 'always()' and upload['with']['path'] == 'output/python-checks/'
+    assert upload['if'] == 'always()'
+    assert upload['with']['path'].splitlines() == ['output/python-checks/', '!output/python-checks/junit.pending.xml']
     for filename in ('release.yml', 'work-workflows.yml'):
         jobs = yaml.load((workflows / filename).read_text(), Loader=yaml.BaseLoader)['jobs']
         for job in jobs.values():
@@ -458,6 +461,48 @@ def test_full_python_suite_is_post_release_or_manual_but_fast_proofs_remain():
     assert 'dist/*.whl' in package and 'from amplifier_web.app_updates import PROBE' in package
     runtime = '\n'.join(step.get('run', '') for step in release['jobs']['runtime']['steps'])
     assert 'tests/test_runtime_module_cache.py' in runtime
+
+
+def test_full_python_evidence_budget_precedes_setup_and_always_finalizes_before_upload():
+    import ast
+    workflow = yaml.load((ROOT / '.github/workflows/python-checks.yml').read_text(), Loader=yaml.BaseLoader)
+    job = workflow['jobs']['python']
+    steps = job['steps']
+    assert job['timeout-minutes'] == '90'
+    early = steps[0]
+    assert early['name'] == 'Start the full Python evidence deadline before preparation'
+    assert early['if'] == "${{ env.CHECK_SUITE == 'full' }}"
+    assert 'time.monotonic() + 75 * 60' in early['run'] and '"$GITHUB_ENV"' in early['run']
+    assert steps[1]['uses'].startswith('actions/checkout@')
+    initialize = next(i for i, row in enumerate(steps) if row.get('name') == 'Retain unstarted full Python evidence')
+    setup = next(i for i, row in enumerate(steps) if row.get('uses', '').startswith('actions/setup-python@'))
+    execute = next(i for i, row in enumerate(steps) if row.get('name') == 'Run the complete Python suite')
+    finalize = next(i for i, row in enumerate(steps) if row.get('name') == 'Finalize available full Python evidence without replay')
+    upload = next(i for i, row in enumerate(steps) if row.get('uses', '').startswith('actions/upload-artifact@'))
+    assert initialize < setup < execute < finalize < upload
+    assert '--initialize' in steps[initialize]['run']
+    assert steps[finalize]['if'] == "${{ always() && env.CHECK_SUITE == 'full' }}"
+    assert '--finalize' in steps[finalize]['run']
+    assert steps[upload]['if'] == 'always()'
+    assert '!output/python-checks/junit.pending.xml' in steps[upload]['with']['path']
+    source = (ROOT / 'scripts/browser_check_runner.py').read_text()
+    module = ast.parse(source)
+    command = next(ast.literal_eval(node.value) for node in module.body if isinstance(node, ast.Assign)
+                   and any(isinstance(t, ast.Name) and t.id == 'PYTHON_COMMAND' for t in node.targets))
+    assert command == ['.venv/bin/python', '-u', '-m', 'pytest', '-v', '--tb=short',
+                       '--junitxml=output/python-checks/junit.pending.xml']
+    assert 'log_limit=PYTHON_LOG_BYTES, interrupt_grace=30' in source
+    assert 'PYTHON_LOG_BYTES = 16 * 1024 * 1024' in source
+    assert 'PYTHON_JUNIT_BYTES = 8 * 1024 * 1024' in source
+    assert "junit_output=output / 'junit.pending.xml'" in source
+    assert "'--junitxml=/proc/self/fd/'" in source
+    assert "'pass_fds': (junit_file.fileno(),)" in source
+    assert 'not an enforced upload timeout' in source
+    assert 'timeout-minutes' not in steps[upload]
+    assert "float(os.environ['PYTHON_CHECK_DEADLINE'])" in source
+    assert 'no replay' in source and "'pytestSessionComplete'" in source
+    lock = __import__('tomllib').loads((ROOT / 'uv.lock').read_text())
+    assert next(row for row in lock['package'] if row['name'] == 'pytest')['version'] == '9.1.1'
 
 
 def test_manual_python_selection_is_fixed_and_preserves_full_and_core_modes():
@@ -494,7 +539,7 @@ def test_manual_python_selection_is_fixed_and_preserves_full_and_core_modes():
     assert rejected['if'] == "${{ inputs.core_wheels && inputs.suite && inputs.suite != 'full' }}"
     assert 'exit 1' in rejected['steps'][0]['run']
     steps = jobs['python']['steps']
-    assert steps[1]['name'] == 'Record and validate the fixed Python selection'
+    assert steps[2]['name'] == 'Record and validate the fixed Python selection'
     native = next(step for step in steps if step.get('name') == 'Select the prepared native-controls interpreter')
     assert native['if'] == "${{ env.CHECK_SUITE == 'patch-placement-native' }}"
     assert native['run'] == 'echo "UNIFIED_RUNTIME_PYTHON=$GITHUB_WORKSPACE/.venv/bin/python" >> "$GITHUB_ENV"'
@@ -507,7 +552,7 @@ def test_manual_python_selection_is_fixed_and_preserves_full_and_core_modes():
     assert '"${targets[@]}"' in focused['run'] and 'set -o pipefail' in focused['run']
     assert '--junitxml=output/python-checks/junit.xml' in focused['run']
     assert 'tee output/python-checks/pytest.log' in focused['run']
-    assert '${{' not in focused['run'] and '${{' not in steps[1]['run']
+    assert '${{' not in focused['run'] and '${{' not in steps[2]['run']
     receipts = next(step for step in steps if step.get('name') == 'Prepare pinned native receipt dependencies')
     installed = next(step for step in steps if step.get('name') == 'Verify installed native receipt boundary outside checkout')
     assert receipts['if'] == "${{ env.CHECK_SUITE == 'full' || env.CHECK_SUITE == 'shared-work-native' }}"
@@ -934,7 +979,9 @@ def test_offline_preflight_does_not_run_import_or_independent_install_probes():
 def test_python_selection_records_exact_source_and_refuses_missing_files(tmp_path, monkeypatch, suite, targets, missing):
     import subprocess
     workflow = yaml.load((ROOT / '.github/workflows/python-checks.yml').read_text(), Loader=yaml.BaseLoader)
-    run = workflow['jobs']['python']['steps'][1]['run']
+    selection, = (step for step in workflow['jobs']['python']['steps']
+                  if step.get('name') == 'Record and validate the fixed Python selection')
+    run = selection['run']
     lines = run.splitlines()
     assert lines[0] == "python - <<'PY'" and lines[-1] == 'PY'
     script = compile('\n'.join(lines[1:-1]), 'workflow-python-selection', 'exec')
@@ -967,7 +1014,9 @@ def test_python_selection_records_exact_source_and_refuses_missing_files(tmp_pat
 def test_python_selection_rejects_arbitrary_input_before_commands(tmp_path, monkeypatch, suite):
     import subprocess
     workflow = yaml.load((ROOT / '.github/workflows/python-checks.yml').read_text(), Loader=yaml.BaseLoader)
-    script = '\n'.join(workflow['jobs']['python']['steps'][1]['run'].splitlines()[1:-1])
+    selection, = (step for step in workflow['jobs']['python']['steps']
+                  if step.get('name') == 'Record and validate the fixed Python selection')
+    script = '\n'.join(selection['run'].splitlines()[1:-1])
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('CHECK_SUITE', suite)
     monkeypatch.setattr(subprocess, 'check_output', lambda *a, **kw: pytest.fail('Invalid selection ran a command'))
