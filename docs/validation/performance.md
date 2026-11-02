@@ -195,7 +195,12 @@ retention policy.
 explicit partial coverage, isolated concurrent requests and cancellation. The
 existing surface/reaction/coordination/memory owners still construct their own
 sections; unavailable data retains each consumer's existing behavior. The snapshot
-expires after fitting and does not replace memory or Work revalidation at send.
+is retained only with its bounded request record for the one unsent refit; a new
+model request obtains a fresh snapshot. It does not replace memory or Work
+revalidation at send. `tests/test_pretransport_refit_native.py` exercises the
+real installed loop and selected-provider path with a timed-out image read:
+the refit must not collect all context again, and changed/unavailable authority,
+Stop and changed inputs must still prevent transport, including under Full access.
 The native surface/awareness probes check selective images, fresh per-request
 observations and clean durable history through the real runtime.
 

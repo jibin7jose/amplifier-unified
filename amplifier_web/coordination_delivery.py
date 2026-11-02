@@ -866,6 +866,25 @@ class CoordinationDelivery:
             request = await self.previous.revalidate(request)
         return request
 
+    async def revalidate_work(self, binding):
+        """Fresh currentness, bounded by the bridge's existing response deadline."""
+        scope = binding.get('executionScope')
+        self.check_execution_scope(scope)
+        try:
+            # This required check must not use the optional observation deadline.
+            # The bridge owns timeout/cancellation; Stop is rechecked afterward.
+            check = await self.bridge('work.invocation.revalidate',
+                                      {'version': binding['required']['version']})
+        except Exception:
+            raise RequestFitChanged('authority_unavailable') from None
+        self.check_execution_scope(scope)
+        if (not isinstance(check, dict) or not isinstance(check.get('required'), dict)
+                or check['required'].get('status') != 'available'):
+            raise RequestFitChanged('authority_unavailable')
+        if (check.get('current') is not True or check.get('effectAuthorized') is not False
+                or check['required'] != binding['required']):
+            raise RequestFitChanged('authority_changed')
+
     async def finalize_work(self, request, *, fitted, binding):
         """Last awaited check after every outer wrapper, before commit/send."""
         if not binding:
@@ -885,17 +904,8 @@ class CoordinationDelivery:
             # Keep the fitted bytes, but never promote their observed Work
             # version to current assurance when that check was waived.
             saved['assuranceUnavailable'] = True
-        else:
-            try:
-                check = await asyncio.wait_for(self.bridge('work.invocation.revalidate',
-                                                          {'version': saved['required']['version']}), 1.5)
-            except Exception:
-                raise RequestFitChanged('authority_unavailable') from None
-            if not isinstance(check, dict):
-                raise RequestFitChanged('authority_unavailable')
-            if (check.get('current') is not True or check.get('effectAuthorized') is not False
-                    or check.get('required') != saved['required']):
-                raise RequestFitChanged('authority_changed')
+        if not full or saved.get('refitContext'):
+            await self.revalidate_work(saved)
         self.check_execution_scope(scope)
         after = request.model_dump_json()
         if self._request(request) is not saved:

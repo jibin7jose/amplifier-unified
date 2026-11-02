@@ -23,7 +23,7 @@ from test_output_image_pairs import pair, identities, pixels, status
 
 
 async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=False, output_pair=None,
-                      selected=False):
+                      selected=False, preparation_context=False, full_access=False):
     plan = {'session': {'orchestrator': {'module': 'loop-streaming', 'config': {
         'use_streaming': False, 'extended_thinking': True,
         'min_delay_between_calls_ms': 0, 'max_iterations': max_iterations,
@@ -43,7 +43,9 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
     required['requirementsRef']['args']['sessionId'] = session.session_id
     state = SimpleNamespace(stale=False, measurements=[], transports=[], tools=0, preparations=0,
                             budget_options=[], dispatch_options=[], image_reads=0,
-                            timeout_cancelled=False, timeout_elapsed=None, bound=[])
+                            timeout_cancelled=False, timeout_elapsed=None, bound=[], context_snapshots=0,
+                            context_timeout_cancelled=False, authority_waiting=asyncio.Event(),
+                            authority_cancelled=False)
     pair_input = {'operation': 'dispatch', 'args': {'action': 'outputs.images',
         'args': {'images': identities(output_pair.rows)}}} if output_pair else None
 
@@ -51,13 +53,46 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
         epoch = ['original-input']
         image_capabilities = SimpleNamespace(supports=AsyncMock(return_value=True))
 
+    def change_work(version):
+        assert version != required['version']
+        required['version'] = version
+        required['requirementsRef']['args']['expectedVersion'] = version
+
     async def bridge(operation, args):
+        if operation == 'context.prepare':
+            state.context_snapshots += 1
+            if mode == 'pair_refit_context_timeout' and state.context_snapshots == 3:
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    state.context_timeout_cancelled = True
+            return {'coordination.current': {'available': True,
+                'value': await bridge('coordination.current', {})}}
         if operation == 'coordination.current':
             state.preparations += 1
             if mode == 'scope_during_refit' and state.preparations == 3:
                 scope['generationId'] = 'changed-generation'
-            return {'work': {'available': True, 'discovery': empty_discovery(), 'required': required}}
+            # Real bridge responses cross JSON IPC; saved observations cannot
+            # share mutable dictionaries with the current host owner.
+            return {'work': {'available': True, 'discovery': empty_discovery(),
+                             'required': copy.deepcopy(required)}}
         if operation == 'work.invocation.revalidate':
+            if len(state.measurements) >= 2:
+                if mode == 'pair_refit_authority_delay':
+                    await asyncio.sleep(1.65)
+                elif mode == 'pair_refit_authority_unavailable':
+                    raise TimeoutError('Synthetic bridge response deadline expired')
+                elif mode == 'pair_refit_authority_changed':
+                    return {'current': False, 'effectAuthorized': False, 'required': required}
+                elif mode == 'pair_refit_authority_stop':
+                    scope['stopRevision'] += 1
+                elif mode == 'pair_refit_authority_cancel':
+                    state.authority_task = asyncio.current_task()
+                    state.authority_waiting.set()
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        state.authority_cancelled = True
             if mode == 'authority_unavailable' and len(state.measurements) > 1:
                 raise TimeoutError('Synthetic unavailable authority')
             if mode == 'authority_typed_error' and len(state.measurements) > 1:
@@ -90,15 +125,19 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
                     elif mode == 'pair_input_changed':
                         scope['inputIds'] = ['original-input', 'later-input']
                     elif mode == 'pair_work_changed':
-                        required['version'] = 'changed-authority'
+                        change_work('b' * 64)
                     raise
             if mode == 'pair_timeout_without_pixels' and state.image_reads > 2:
                 raise ValueError('Synthetic saved-image read remains unavailable')
             return await output_pair.app.app_bridge(operation, args, output_pair.sid)
         raise AssertionError(operation)
 
-    work = CoordinationDelivery(Surfaces(), bridge, origin_scope=lambda: copy.deepcopy(scope))
-    visual = OutputImageDelivery(work, bridge) if output_pair else VoiceVisualDelivery(work, bridge)
+    from amplifier_web.preparation_context import PreparationContext
+    context = PreparationContext(bridge) if preparation_context else None
+    read = context.read if context else bridge
+    work = CoordinationDelivery(Surfaces(), read, origin_scope=lambda: copy.deepcopy(scope),
+                                full_access=lambda: full_access)
+    visual = OutputImageDelivery(work, read) if output_pair else VoiceVisualDelivery(work, read)
     state.delivery = visual
 
     class Tool:
@@ -137,7 +176,7 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
                                 'provider_error', 'provider_typed_error', 'binding_missing'}:
                     state.stale = True
                 if mode == 'authority_changed':
-                    required['version'] = 'changed-authority'
+                    change_work('b' * 64)
                 elif mode == 'stop':
                     scope['stopRevision'] += 1
                 elif mode == 'new_generation':
@@ -146,6 +185,8 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
                     scope['inputIds'] = ['original-input', 'later-input']
                 elif mode == 'binding_missing' and len(state.measurements) == 2:
                     work.requests.clear()
+            if len(state.measurements) == 3 and mode == 'pair_refit_budget_work_changed':
+                change_work('d' * 64)
             if len(state.measurements) == 3 and mode == 'repeated_change':
                 request.messages.append(Message(role='user', content='changed after refit'))
             return {'estimated_input_tokens': 10001 if mode == 'oversized_refit' and len(state.measurements) == 3 else 100,
@@ -182,7 +223,7 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
             return HookResult()
         session.coordinator.hooks.register('tool:post', bind_image_pair, name='fixture-image-pair-receipt')
     original = Provider()
-    wrapped = SurfaceProvider(original, visual)
+    wrapped = SurfaceProvider(original, context.wrap(visual) if context else visual)
     provider = SelectedProvider(original, {'model': 'selected-model', 'effort': 'high',
         'max_output_tokens': 321}, lambda _: wrapped) if selected else wrapped
     await session.coordinator.mount('providers', provider, name='fixture')
@@ -211,6 +252,32 @@ async def test_actual_loop_refits_without_repeating_completed_tool(mode, max_ite
         # The capped loop adds its existing finalization instruction once.
         assert sum(m.get('role') == 'user' for m in history) == (2 if max_iterations == 1 else 1)
     finally:
+        await session.cleanup()
+
+
+@pytest.mark.parametrize('full_access', [False, True])
+async def test_context_refit_cancels_pending_authority_check_without_sending(pair, full_access):
+    session, state = await native_case('pair_refit_authority_cancel', output_pair=pair,
+        selected=True, preparation_context=True, full_access=full_access)
+    execution = asyncio.create_task(session.execute('Compare the saved images once, then finish.'))
+    try:
+        await asyncio.wait_for(state.authority_waiting.wait(), 10)
+        # Cancel the executing worker task, not Core's outer Python/Rust
+        # awaitable proxy, which has its own cancellation lifecycle.
+        state.authority_task.cancel()
+        # Installed Core reports the inner cancellation through its public
+        # RuntimeError boundary; it must not become a Work refusal or send.
+        with pytest.raises(RuntimeError, match='Execution failed: CancelledError'):
+            await execution
+        assert state.authority_cancelled
+        assert len(state.transports) == 1 and len(state.measurements) == 3
+        assert state.tools == 1 and state.context_snapshots == 2
+    finally:
+        if getattr(state, 'authority_task', None) is not None and not state.authority_task.done():
+            state.authority_task.cancel()
+            await asyncio.gather(state.authority_task, return_exceptions=True)
+        execution.cancel()
+        await asyncio.gather(execution, return_exceptions=True)
         await session.cleanup()
 
 
@@ -316,5 +383,49 @@ async def test_output_pair_deadline_refits_real_retained_selection_once(pair, mo
         assert sum(m.get('role') == 'tool' and m.get('tool_call_id') == 'read-once' for m in history) == 1
         assert sum(m.get('role') == 'user' and m.get('content') ==
                    'Compare the saved images once, then finish.' for m in history) == 1
+    finally:
+        await session.cleanup()
+
+
+async def test_pair_refit_does_not_repeat_the_original_context_snapshot(pair):
+    session, state = await native_case('pair_refit_context_timeout', output_pair=pair,
+                                       selected=True, preparation_context=True)
+    try:
+        assert await session.execute('Compare the saved images once, then finish.') == 'Done'
+        assert state.tools == 1 and len(state.transports) == 2
+        assert len(state.measurements) == 3
+        assert state.transports[-1] == state.measurements[-1]
+        assert state.context_snapshots == 2  # One for each actual model request.
+        assert state.timeout_cancelled and not state.context_timeout_cancelled
+    finally:
+        await session.cleanup()
+
+
+@pytest.mark.parametrize('full_access', [False, True])
+@pytest.mark.parametrize('mode,reason,measurements', [
+    ('pair_work_changed', 'authority_changed', 3),
+    ('pair_input_changed', 'native_scope_changed', 2),
+    ('pair_stop', 'native_scope_changed', 2),
+    ('pair_refit_authority_changed', 'authority_changed', 3),
+    ('pair_refit_authority_unavailable', 'authority_unavailable', 3),
+    ('pair_refit_authority_stop', 'native_scope_changed', 3),
+    ('pair_refit_budget_work_changed', 'authority_changed', 3),
+    ('pair_refit_authority_delay', None, 3),
+])
+async def test_context_refit_keeps_fresh_authority_and_stop_checks(pair, mode, reason, measurements, full_access):
+    session, state = await native_case(mode, output_pair=pair, selected=True,
+        preparation_context=True, full_access=full_access)
+    try:
+        execution = session.execute('Compare the saved images once, then finish.')
+        if reason:
+            with pytest.raises(RuntimeError, match=reason):
+                await execution
+            assert len(state.transports) == 1 and len(state.measurements) == measurements
+        else:
+            assert await execution == 'Done'
+            assert len(state.transports) == 2 and len(state.measurements) == 3
+            assert state.transports[-1] == state.measurements[-1]
+        assert state.context_snapshots == 2
+        assert state.tools == 1
     finally:
         await session.cleanup()

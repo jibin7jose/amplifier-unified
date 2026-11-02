@@ -1,4 +1,4 @@
-"""One host read per fitted request; no cache across requests or revalidation."""
+"""One observation per request, including its single pretransport refit."""
 import asyncio
 from contextvars import ContextVar
 
@@ -30,6 +30,30 @@ class PreparationContext:
             def __getattr__(self, name):
                 return getattr(delivery, name)
 
+            async def _with_context(self, request, provider, values, *, commit=False, refit=False):
+                token = owner.current.set(values)
+                try:
+                    result = await delivery.prepare(request, provider, commit=commit)
+                    work_request = getattr(delivery, 'work_request', None)
+                    binding = work_request(result) if callable(work_request) else None
+                    if binding is not None:
+                        # Private, bounded by the existing request/refusal records.
+                        # Never exported as authority or cached across requests.
+                        binding['preparationContext'] = values
+                        if refit:
+                            binding['refitContext'] = True
+                    return result
+                finally:
+                    owner.current.reset(token)
+
+            async def prepare_refit(self, request, provider, *, binding):
+                values = binding.get('preparationContext')
+                if not isinstance(values, dict) or binding['required']['status'] != 'available':
+                    return await self.prepare(request, provider)
+                # The marked binding requires fresh currentness at the final
+                # send boundary, after every awaited preparation/budget step.
+                return await self._with_context(request, provider, values, refit=True)
+
             async def prepare(self, request, provider, *, commit=False):
                 from .execution_events import CALL_PURPOSE
                 if CALL_PURPOSE.get() or not any(getattr(t, 'name', None) == 'app_control'
@@ -41,10 +65,6 @@ class PreparationContext:
                         raise ValueError('Invalid preparation context')
                 except Exception:
                     values = {}
-                token = owner.current.set(values)
-                try:
-                    return await delivery.prepare(request, provider, commit=commit)
-                finally:
-                    owner.current.reset(token)
+                return await self._with_context(request, provider, values, commit=commit)
 
         return Delivery()

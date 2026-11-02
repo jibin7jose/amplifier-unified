@@ -47,6 +47,16 @@ including the measured model, effort and output reservation; a copied request or
 changed selection cannot stand in for it. Native regression coverage traverses
 the selected-model wrapper as well as the surface adapter and real loop boundary.
 
+The one refit retains its original request-scoped preparation observation instead
+of fetching all sections again. It refreshes the required Work version through
+the canonical currentness check after refit/measurement and before transport,
+including when Full waived fitted-context assurance. Each new model request obtains its
+own observation. Required currentness reads use the bridge's response deadline
+and cancellation; optional context collection's shorter deadline must not cancel
+an otherwise valid required check. Stop and input/generation identity are checked
+again after the await. An unavailable observation is not evidence of changed
+authority and must be reported separately.
+
 The original native generation, complete inputs, Stop revision and required Work
 version must remain valid. Changed or unavailable authority, unknown/sent calls,
 ordinary provider errors, any stream event, an unavailable/oversized measurement

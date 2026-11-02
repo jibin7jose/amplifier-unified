@@ -263,7 +263,7 @@ jobs:
           uv run --no-sync python - <<'PY'
           import xml.etree.ElementTree as ET
           rows = ET.parse('output/pretransport-refit-native.xml').getroot().findall('.//testcase')
-          assert len(rows) == 28
+          assert len(rows) == 47
           assert all(not any(row.find(tag) is not None for tag in ('failure', 'error', 'skipped')) for row in rows)
           PY
       - name: Verify repeated peer returns through real Worker processes

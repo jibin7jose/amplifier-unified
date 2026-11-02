@@ -188,7 +188,10 @@ class SurfaceProvider:
         if refused and not explicit_budget:
             raise ValueError("The request was refused before transport; a new explicit budget/refit is required.")
         if entry is None:
-            cached = await self.delivery.prepare(request, self.original)
+            refit = getattr(self.delivery, 'prepare_refit', None)
+            cached = (await refit(request, self.original, binding=refit_binding)
+                      if refit_binding is not None and callable(refit)
+                      else await self.delivery.prepare(request, self.original))
             if refused and hasattr(self.delivery, "revalidate"):
                 # Stabilize revoked visual/context warnings BEFORE the new
                 # measurement. Never replace fitted bytes during transport.
@@ -203,7 +206,8 @@ class SurfaceProvider:
                 if (not current or current.get('required') != refit_binding.get('required')
                         or current.get('executionScope') != refit_binding.get('executionScope')):
                     self.delivery.discard_work(current)
-                    raise RequestFitChanged('authority_changed')
+                    unavailable = not current or current.get('required', {}).get('status') != 'available'
+                    raise RequestFitChanged('authority_unavailable' if unavailable else 'authority_changed')
             self.prepared = (self.prepared + [entry])[-4:]
             self.refused = [row for row in self.refused if row[0] is not request]
         _, cached, fitted, binding = entry
