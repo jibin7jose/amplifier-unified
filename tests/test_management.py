@@ -141,11 +141,12 @@ async def test_explicit_recovery_refuses_changed_budget_even_when_readback_fails
     async def control(sid, operation, arguments, **kwargs):
         native_calls.append(operation)
         if operation == 'budget.set':
+            assert arguments == {'maxOutputTokens': 2000}
             entered.set()
             await release.wait()
             if uncertain_mutation:
                 raise ConnectionError('Synthetic lost mutation receipt')
-            return {'max_output_tokens': 2000}
+            return {'maxOutputTokens': 2000}
         if operation == 'budget.get':
             raise ConnectionError('Synthetic lost readback')
         raise AssertionError('Stale recovery reached native arming')
@@ -154,7 +155,7 @@ async def test_explicit_recovery_refuses_changed_budget_even_when_readback_fails
     app.management.ensure_runtime = AsyncMock()
     app.runtime.control = AsyncMock(side_effect=control)
     changing = asyncio.create_task(app.management.command('runtime.control', {
-        'sessionId': session['id'], 'operation': 'budget.set', 'args': {'max_output_tokens': 2000}}, 'budget-change'))
+        'sessionId': session['id'], 'operation': 'budget.set', 'args': {'maxOutputTokens': 2000}}, 'budget-change'))
     try:
         await asyncio.wait_for(entered.wait(), 2)
         await app.dispatch('runtime.control', {

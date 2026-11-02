@@ -2,6 +2,7 @@
 import copy
 from contextlib import asynccontextmanager
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -531,8 +532,11 @@ async def ordinary_recovery_case(directory, wire, messages=()):
         if adapter:
             adapter.save()
 
-    adapter = ContextContinuity(coordinator, session.session_id, directory, checkpoint,
-                                writer_guard=gate.check_current)
+    # Test composition also runs against the original host, which has no writer
+    # seam. That baseline must reach the missing recovery control, not fail setup.
+    writer = ({'writer_guard': gate.check_current}
+              if 'writer_guard' in inspect.signature(ContextContinuity).parameters else {})
+    adapter = ContextContinuity(coordinator, session.session_id, directory, checkpoint, **writer)
     controls = RuntimeControls(session, runtime)
     measured = coordinator.get_capability('context.measured_request_view')
 
@@ -625,7 +629,7 @@ async def test_explicit_recovery_in_ordinary_loop_then_adjacent_compaction(
         await append_recovery_evidence(case.context, ['A', 'B', 'C'])
         prefix = copy.deepcopy(await case.context.get_messages())
         before_calls = len(wire.completions)
-        with pytest.raises(CompactionError, match='native_no_reduction'):
+        with pytest.raises(RuntimeError, match=r'Execution failed: CompactionError:.*native_no_reduction'):
             await case.session.execute('Failing ordinary request: finish from the retained evidence.')
         failed_source = copy.deepcopy(await case.context.get_messages())
         assert failed_source[:len(prefix)] == prefix
@@ -650,7 +654,9 @@ async def test_explicit_recovery_in_ordinary_loop_then_adjacent_compaction(
         wire.reminder += ' Current reminder revision: BETA.'
         before_arm = (len(wire.counts), len(wire.compactions), len(wire.completions))
         task_before = copy.deepcopy(case.controls.tasks.record())
-        contract = case.controls.recovery_contract()
+        contract = copy.deepcopy({'plan': case.session.coordinator.config,
+                                  'context': case.context.config,
+                                  'selection': case.controls.selection})
         pending = await case.controls.perform('context.recovery.request', recovery_command(wire))
         assert pending['state'] == 'pending' and pending['attempts'] == 1
         assert await case.controls.perform('context.recovery.request', recovery_command(wire)) == pending
@@ -672,7 +678,8 @@ async def test_explicit_recovery_in_ordinary_loop_then_adjacent_compaction(
         assert status['verification']['limit'] <= RECOVERY_BUDGET
         assert len(wire.completions) == before_calls + 1
         assert all(not row[2] for row in wire.compactions[calls:])
-        assert case.controls.recovery_contract() == contract
+        assert {'plan': case.session.coordinator.config, 'context': case.context.config,
+                'selection': case.controls.selection} == contract
         recovered_window = copy.deepcopy(case.context.summary[1]['metadata']['openai:compaction']['output'])
         recovered_end = case.context.summary[0]
         recovered_source = copy.deepcopy(await case.context.get_messages())
@@ -691,7 +698,8 @@ async def test_explicit_recovery_in_ordinary_loop_then_adjacent_compaction(
         assert wire.compactions[-1][0]['input'][:len(recovered_window)] == recovered_window
         assert case.context.summary[0] > recovered_end
         assert_recovery_dispatch(wire, wire.views[-1], adjacent=True)
-        assert case.controls.recovery_contract() == contract
+        assert {'plan': case.session.coordinator.config, 'context': case.context.config,
+                'selection': case.controls.selection} == contract
         assert await case.controls.perform('context.recovery.status') == status
         assert ('context:compaction_finished', failure) in wire.events
         assert ('tool:post', actual_receipt) in wire.events
@@ -723,7 +731,7 @@ async def test_recovery_intent_remount_and_preparation_fences(tmp_path, monkeypa
         prior = copy.deepcopy(first.context.summary)
         saved = first.adapter.path.read_bytes()
         await append_recovery_evidence(first.context, ['A', 'B', 'C'])
-        with pytest.raises(CompactionError, match='native_no_reduction'):
+        with pytest.raises(RuntimeError, match=r'Execution failed: CompactionError:.*native_no_reduction'):
             await first.session.execute('Failing ordinary preparation before remount.')
         source = copy.deepcopy(await first.context.get_messages())
         command = recovery_command(wire)
@@ -781,7 +789,7 @@ async def test_recovery_intent_remount_and_preparation_fences(tmp_path, monkeypa
         else:
             code = {'stop': 'recovery_interrupted', 'configuration': 'recovery_contract_changed',
                     'prefix': 'recovery_source_changed'}.get(change, 'recovery_unreconciled')
-            with pytest.raises(ContextRecoveryError, match=code):
+            with pytest.raises(RuntimeError, match='Execution failed: ContextRecoveryError:.*' + code):
                 await second.session.execute('Explicit new input must not bypass the recovery fence.')
             status = await second.controls.perform('context.recovery.status')
             assert status['state'] == ('unknown' if uncertain else 'failed')
@@ -793,7 +801,7 @@ async def test_recovery_intent_remount_and_preparation_fences(tmp_path, monkeypa
                 with pytest.raises(ContextRecoveryError, match='recovery_unreconciled'):
                     await second.controls.perform('context.recovery.request',
                                                   recovery_command(wire, 'do-not-replay'))
-            with pytest.raises(ContextRecoveryError, match='recovery_unreconciled'):
+            with pytest.raises(RuntimeError, match=r'Execution failed: ContextRecoveryError:.*recovery_unreconciled'):
                 await second.session.execute('Another input does not retry consumed recovery.')
             assert (len(wire.counts), len(wire.compactions), len(wire.completions)) == before
         canonical = await second.context.get_messages()
@@ -955,5 +963,9 @@ async def test_lazy_restore_requires_committed_recovery_candidate(tmp_path, stat
         assert newer.public()['status'] == 'restored'
     assert newer.path.read_bytes() == candidate
     assert newer.recovery_path.read_bytes() == retained
-    assert raw.counted == raw.compactions == raw.sent == []
+    assert raw.compactions == raw.sent == []
+    if state != 'committed' or path == 'preserve':
+        assert raw.counted == []
+    else:
+        assert raw.counted  # Ordinary fitting is not replay or another recovery.
     assert await second.context.get_messages() == source

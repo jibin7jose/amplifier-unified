@@ -41,7 +41,7 @@ def _sync(callback):
     return value
 
 
-async def _guarded(guard, callback, *args, **kwargs):
+async def _guarded(guard, callback, /, *args, **kwargs):
     if guard:
         guard()
     try:
