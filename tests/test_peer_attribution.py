@@ -747,3 +747,81 @@ async def test_versioned_notification_cannot_get_caption_without_exact_retained_
     app.collaboration.save('exact-watch', observed)
     app.collaboration.save(row['inputId'], notice)
     assert app_caption(app.db, source, row) is None
+
+
+@pytest.mark.parametrize('change', [
+    'none', 'input', 'recipient', 'generation', 'automatic', 'origin', 'mode',
+    'dependency', 'guard', 'admission', 'accepted', 'unknown', 'start', 'send', 'submit',
+])
+async def test_receiving_browser_fixture_only_waits_for_exact_watch_boundary(app, monkeypatch, change):
+    from types import SimpleNamespace
+    from fixtures.peer_attribution_ui_server import NoModel as ReceivingOnly
+    from amplifier_web import collaboration_input
+    from test_collaborative_workspaces import until
+
+    runtime = ReceivingOnly()
+    app.runtime = runtime
+    observer, peer = app.state['sessions']
+    await generation(app, observer, 'fixture-observer-generation', ['observer-input'])
+    await generation(app, peer, 'fixture-source-generation', ['source-input'])
+    watch = await agent_action(app, observer, 'coordination.watch', {
+        'sessionId': observer['id'], 'targetSessionId': peer['id'],
+        'condition': 'status_changed', 'expiresInSeconds': 60}, 'visible-watch')
+    runtime.bind_watch(app, watch, observer)
+    expected = copy.deepcopy(runtime.expected)
+    original = runtime.collaboration_input
+
+    if change == 'admission':
+        monkeypatch.setattr(app.collaboration, 'admission', lambda *args: {'admitted': False})
+    elif change in {'accepted', 'unknown'}:
+        async def wrong_outcome(controls, native, args, activation, authorize, **kwargs):
+            await authorize(args)
+            await authorize(args)
+            return {'accepted': True} if change == 'accepted' else {'reason': 'Outcome unknown'}
+        monkeypatch.setattr(collaboration_input, 'deliver', wrong_outcome)
+
+    async def attempt(session, args, guard, emit):
+        if change == 'input': args = {**args, 'inputId': 'unexpected-input'}
+        elif change == 'recipient': session = {**session, 'id': 'unexpected-recipient'}
+        elif change == 'generation':
+            session = {**session, 'collaborationGeneration': {'id': 'unexpected-generation'}}
+        elif change == 'automatic': args = {**args, 'automaticDelivery': False}
+        elif change in {'origin', 'mode', 'dependency'}:
+            receipt = app.collaboration.receipt(args['inputId'])
+            key, value = {'origin': ('origin', 'agent'), 'mode': ('mode', 'queue'),
+                          'dependency': ('dependencyRequestId', 'unexpected-watch')}[change]
+            receipt[key] = value
+            app.collaboration.save(args['inputId'], receipt)
+        elif change == 'guard': guard = lambda: 'Synthetic guard refusal'
+        elif change == 'start': return await runtime.start(session, emit)
+        elif change == 'send': return await runtime.send(session, 'Forbidden', args['inputId'], emit)
+        elif change == 'submit': return await runtime.submit(SimpleNamespace(id=args['inputId']))
+        return await original(session, args, guard, emit)
+    monkeypatch.setattr(runtime, 'collaboration_input', attempt)
+    await app.on_runtime_event('runtime.status', {'sessionId': peer['id'], 'status': 'idle'})
+    identity = expected['inputId']
+    await until(lambda: bool(app.collaboration.receipt(identity).get('admission')))
+    receipt = app.collaboration.receipt(identity)
+    assert runtime.expected == expected
+    assert runtime.calls
+    if change == 'none':
+        assert receipt['delivery'] == 'queued'
+        assert receipt['admission'] == {'accepted': False, 'effect': 'none',
+            'waitingForBoundary': True, 'reason': 'Waiting for a supported recipient boundary.'}
+        assert receipt['dependencyRequestId'] == watch['requestId']
+        assert receipt['dependencySatisfied'] is False
+        for call in runtime.calls:
+            assert call['method'] == 'collaboration_input' and 'fatal' not in call
+            assert call['arguments']['inputId'] == identity
+            assert call['result'] == receipt['admission']
+            assert call['authorizations'] == [{'guardReason': None, 'admitted': True,
+                'currentGenerationId': expected['generationId']}] * 2
+    else:
+        assert receipt['delivery'] == 'unknown'
+        assert receipt['admission'] == {'reason': 'Admission outcome unknown; no replay.'}
+        assert any(call.get('fatal') for call in runtime.calls)
+    assert runtime.starts == int(change == 'start')
+    assert runtime.sends == int(change == 'send')
+    assert runtime.native_submits == int(change == 'submit')
+    assert observer['collaborationGeneration']['id'] == expected['generationId']
+    assert identity not in observer['collaborationGeneration'].get('inputIds', [])
