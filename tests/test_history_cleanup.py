@@ -101,6 +101,44 @@ async def test_single_session_includes_descendant_workers_only(app,tmp_path):
     result=(await app.dispatch('storage.historyDelete',args))['result']
     assert not result['cleanupPending'] and not child.exists() and other.exists()
 
+
+@pytest.mark.parametrize('child_id', ['child-worker', '0000000000000000-123456789abcdef0_self'])
+async def test_worker_only_cleanup_refuses_without_ancestor_execution_exclusion(app, tmp_path, child_id):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    sid, path, selection = await seed(app, tmp_path)
+    child = path.parent/child_id; child.mkdir()
+    (child/'metadata.json').write_text(json.dumps({'working_dir': str(tmp_path/'project'), 'parent_id': sid}))
+    (child/'transcript.jsonl').write_text('synthetic worker transcript')
+    # Even a compatible worker ID must not be treated as independently owned.
+    lease = SharedSessionStore(tmp_path/'project', sid).acquire(app='synthetic-active-ancestor')
+    try:
+        with pytest.raises(AppError, match='top-level conversation'):
+            await confirm(app, {**selection, 'nativeId': child_id})
+    finally:
+        lease.release()
+    assert path.exists() and child.exists()
+
+
+async def test_shared_history_native_workers_stay_explicitly_refused(app, tmp_path):
+    sid, path, selection = await seed(app, tmp_path)
+    child = path.parent/'0000000000000000-123456789abcdef0_self'; child.mkdir()
+    (child/'metadata.json').write_text(json.dumps({'working_dir': str(tmp_path/'project'), 'parent_id': sid}))
+    for scope in (selection, {'project': selection['project']}):
+        with pytest.raises(AppError, match='native worker identities'):
+            await confirm(app, scope)
+    assert path.exists() and child.exists()
+
+
+@pytest.mark.parametrize('parent', ['missing-root', 'child-worker'])
+async def test_project_cleanup_refuses_unverified_or_cyclic_ancestry(app, tmp_path, parent):
+    _, path, selection = await seed(app, tmp_path)
+    child = path.parent/'child-worker'; child.mkdir()
+    (child/'metadata.json').write_text(json.dumps({'working_dir': str(tmp_path/'project'), 'parent_id': parent}))
+    with pytest.raises(AppError, match='ancestry could not be verified'):
+        await confirm(app, {'project': selection['project']})
+    assert path.exists() and child.exists()
+
+
 def test_large_root_does_not_starve_other_roots(tmp_path,monkeypatch):
     from amplifier_web.storage_catalog import inspect
     monkeypatch.setenv('AMPLIFIER_HOME',str(tmp_path/'cli'))

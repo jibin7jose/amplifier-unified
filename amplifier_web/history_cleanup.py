@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from .managed_deletion import _safe
+from .managed_deletion import _safe, shared_identity
 from .session_files import amplifier_home, project_slug, validate_id, capture_sessions_dir
 
 
@@ -40,6 +40,8 @@ def scope(app, selection):
         validate_id(chosen)
         if chosen not in records:
             raise ValueError('This saved session is no longer available.')
+        if records[chosen].get('parent_id'):
+            raise ValueError('Review the top-level conversation instead of deleting worker history separately. Its files were preserved.')
         native = {chosen}
         while True:
             children = {sid for sid, meta in records.items() if meta.get('parent_id') in native}
@@ -50,6 +52,18 @@ def scope(app, selection):
         native = set(records)
     if not native:
         raise ValueError('This project has no saved sessions.')
+    # This path has not qualified native-worker ancestor execution exclusion.
+    # Do not reinterpret a metadata lock as that missing ownership authority.
+    if any(not shared_identity(sid) for sid in native):
+        raise ValueError('This history contains native worker identities that cannot be reviewed here. Delete their owning managed chat, or keep this history.')
+    for sid in native:
+        seen = {sid}
+        parent = records[sid].get('parent_id')
+        while parent:
+            if parent not in native or parent in seen:
+                raise ValueError('Worker ancestry could not be verified. Its files were preserved.')
+            seen.add(parent)
+            parent = records[parent].get('parent_id')
     workspaces = {records[sid].get('working_dir') or records[sid].get('workspace') for sid in native}
     if len(workspaces) != 1:
         raise ValueError('Several project paths share this history name. Review individual sessions instead.')

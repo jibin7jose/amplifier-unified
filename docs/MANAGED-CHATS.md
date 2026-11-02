@@ -51,10 +51,19 @@ not a claim of forensic erasure of disk/WAL/backup media.
 
 Active work, pending questions/approvals, naming, history indexing, uncertain
 operations, another host's shared lock, a separate worktree, uncancelled
-schedules, unsupported legacy worker identities, foreign history, a second root
+schedules, unverified worker ancestry, foreign history, a second root
 using the managed folder, symlinks and special/mounted files refuse with a
 concrete error. Cancelled schedules and terminal run evidence can be removed;
 a schedule with an active/unknown run still refuses. Refusals preserve files.
+
+Owned native descendants, including underscore-containing worker IDs, remain in
+the deletion scope without being treated as shared root checkpoint addresses.
+The managed root's execution lease and any compatible legacy worker checkpoint
+leases remain required, even when no checkpoint exists. Stable native metadata
+locks exclude cooperating naming writers through confirmation and recovery;
+they do not replace execution ownership. Shared-history cleanup still refuses
+worker-only selection and unsupported native identities; use the owning managed
+chat's reviewed deletion instead.
 
 File enumeration and resource retention checks run off the server event loop.
 The app checks retention again after retiring an idle runtime, then stages only
