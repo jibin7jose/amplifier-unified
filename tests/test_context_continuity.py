@@ -466,7 +466,9 @@ async def ordinary_recovery_case(directory, wire, messages=()):
     raw.coordinator = coordinator
     selected = SelectedProvider(raw, {
         'instance': 'openai', 'model': RECOVERY_MODEL, 'effort': 'high', 'max_output_tokens': 1000})
-    await coordinator.mount('providers', raw, name='openai')
+    # The base streaming loop selects its mounted mapping; only loop-live has
+    # a root_provider override. Mount the actual selected wrapper on this path.
+    await coordinator.mount('providers', selected, name='openai')
     coordinator.get('orchestrator').root_provider = selected
     coordinator.register_capability('live.activation', gate)
     coordinator.register_capability('live.runtime', runtime)
@@ -618,6 +620,7 @@ async def test_explicit_recovery_in_ordinary_loop_then_adjacent_compaction(
     async with ordinary_recovery_case(tmp_path / 'session', wire) as case:
         await case.session.execute('SEED-EFFECT: save report-v1 once; preserve ORBIT.')
         assert wire.effects == 1
+        assert all(body['max_output_tokens'] == 1000 for body in wire.completions)
         actual_receipt = copy.deepcopy(next(data for event, data in wire.events if event == 'tool:post'))
         if prior_checkpoint:
             await append_recovery_evidence(case.context, ['PRIOR'])
