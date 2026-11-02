@@ -139,6 +139,10 @@ class ClientViews:
                     load(scoped, self.service.db, current['id'],
                          open_panel=current.get('open', False), version=current.get('selectedVersion'))
                     record['canvas'] = scoped['canvas']
+                    # Reload replaces executable state, not the client's choice
+                    # to show this exact version inline or as a saved card.
+                    if current.get('_presentationDisposed'):
+                        record['canvas']['_presentationDisposed'] = True
                     views.pop('primaryBinding', None)
                     views.pop('retained', None)
                     preference = views.get('preferences', {}).get('primary:' + current['id'], {})

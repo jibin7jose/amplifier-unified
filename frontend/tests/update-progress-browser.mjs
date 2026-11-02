@@ -104,25 +104,41 @@ try{
  // both outcomes; a stale install identity or unconfirmed restart cannot claim it.
  await stage('application-confirmed');
  await expect(overview).toContainText('Application updated successfully');
+ const confirmedAppResult=await page.evaluate(()=>window.amplifier.getState().updates.applicationResult);
+ const confirmedAppText=await overview.locator('[data-part="confirmed-application-result"]').innerText();
+ assert.equal(confirmedAppResult.phase,'restart-ack');
  await stage('component-source-changed');
- await expect(overview).toContainText('Some components were not updated');
- await expect(overview).toContainText('Application updated successfully');
- await expect(overview).toContainText('amplifier-foundation');
- await expect(overview).toContainText('Check for updates again before retrying');
+ // Persistent attention owns the heading; confirmed app success is independent.
+ await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');
+ await expect(overview.locator('#update-action-status')).toHaveText('runtime-source-changed. Current components remain active. Open Updates to review details and recovery options.');
+ await expect(overview.locator('[data-part="confirmed-application-result"]')).toHaveText(confirmedAppText);
+ const changedFailure=await page.evaluate(()=>{
+  const {updates,attention}=window.amplifier.getState();
+  return {lastFailure:updates.diagnostics.lastFailure,batch:updates.diagnostics.batch,
+   applicationResult:updates.applicationResult,actionRequired:attention.items.some(item=>item.actionRequired&&item.firstFailure?.id===updates.diagnostics.lastFailure.id)};
+ });
+ assert.equal(changedFailure.lastFailure.reason,'runtime-source-changed');
+ assert.equal(changedFailure.lastFailure.status,'failed');
+ assert.equal(changedFailure.lastFailure.phase,'ecosystem-validation');
+ assert.equal(changedFailure.lastFailure.attemptId,changedFailure.batch.attemptId);
+ assert.deepEqual(changedFailure.batch.components,['amplifier-foundation']);
+ assert.equal(changedFailure.actionRequired,true);
+ assert.deepEqual(changedFailure.applicationResult,confirmedAppResult);
+ await expect(advanced.locator('.a-update-failure[role="alert"]')).toContainText('Worker sources changed while checking. Let source changes finish, then check for updates again.');
  await expect(check).toBeEnabled();
  await page.reload();await page.waitForSelector('#amp-one');
  if(!await overview.isVisible())await openSettingsPage(page,'updates');
- await expect(overview).toContainText('Application updated successfully');
- await expect(overview).toContainText('Some components were not updated');
+ await expect(overview.locator('[data-part="confirmed-application-result"]')).toHaveText(confirmedAppText);
+ await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');
+ await expect(overview.locator('#update-action-status')).toContainText('runtime-source-changed');
+ assert.deepEqual(await page.evaluate(()=>window.amplifier.getState().updates.applicationResult),confirmedAppResult);
+ assert.deepEqual(await page.evaluate(()=>window.amplifier.getState().updates.diagnostics.lastFailure),changedFailure.lastFailure);
  await page.setViewportSize({width:320,height:844});
  await expect.poll(()=>page.locator('.a-dialog').evaluate(el=>el.scrollWidth-el.clientWidth)).toBeLessThanOrEqual(1);
  await page.screenshot({path:output+'-partial-success-mobile.png'});
  // A declaration constraint is not evidence of local edits or an override.
  // Publish it over the same HTTP/SSE path; retain the exact confirmed app receipt.
  const beforeConstraint=await readObservations();
- const confirmedAppResult=await page.evaluate(()=>window.amplifier.getState().updates.applicationResult);
- const confirmedAppText=await overview.locator('[data-part="confirmed-application-result"]').innerText();
- assert.equal(confirmedAppResult.phase,'restart-ack');
  const constraintGuidance='A package source declaration could not be reconciled with the selected component. The current components remain active. This does not establish local edits. Share the update diagnostics for review; do not remove pins or caches to bypass this check.';
  const terminalDetail='Component update preparation failed. Current components remain active.';
  const appOnlyDetail='The latest published application release is installed.';
@@ -134,9 +150,9 @@ try{
  });
  const assertConstraint=async()=>{
   await expect.poll(async()=>(await constraintState()).lastFailure?.reason).toBe('runtime-source-constraint');
-  await expect(overview).toContainText('Some components were not updated');
+  await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');
   await expect(overview.locator('[data-part="confirmed-application-result"]')).toHaveText(confirmedAppText);
-  await expect(overview).toContainText('amplifier-foundation');
+  await expect(overview.locator('#update-action-status')).toContainText('runtime-source-constraint. Current components remain active.');
   await expect(overview).not.toContainText('You’re up to date');
   await expect(check).toBeEnabled();
   await expect(overview.locator('.a-progress-spinner')).toHaveCount(0);
@@ -197,15 +213,21 @@ try{
  result.constraintFailure.noUpdateEffects=true;
  await stage('app-result-stale');
  await expect(overview).not.toContainText('Application updated successfully');
- await expect(overview).toContainText('Updates need attention');
+ await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');
  await stage('application-confirmed');await stage('unconfirmed-restart');
  await expect(overview).toContainText('Waiting for restart confirmation');
  await expect(overview).not.toContainText('Application updated successfully');
  await stage('clear-app-result');await page.setViewportSize({width:1280,height:950});
- await stage('adopting');await expect(overview).toContainText('Ready for new work');await expect(overview).toContainText('No app restart');await expect(check).toBeEnabled();
+ // These synthetic completion/check stages do not establish matching recovery
+ // of the failure recorded after this batch began. Do not infer it from phase.
+ await stage('adopting');await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');await expect(updates).toContainText('2 conversation workers are finishing on earlier components.');await expect(check).toBeEnabled();
+ const adoption=await page.evaluate(()=>{const u=window.amplifier.getState().updates;return {workers:u.adoption,phase:u.phase,stage:u.sequence.stage,restarting:!!u.pendingRestart}});
+ assert.deepEqual(adoption,{workers:{pendingWorkers:2,activeWorkers:2},phase:'installed',stage:'complete',restarting:false});
  await stage('installed');await expect(updates).toContainText('Other components installed at');
  await expect(updates).toContainText('Included components installed at');
- await expect(overview).toContainText('You’re up to date');
+ await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');
+ await expect(overview.locator('#update-action-status')).toContainText('runtime-source-constraint');
+ await expect(overview).not.toContainText('You’re up to date');
  await expect(check).toBeEnabled();await expect(install).toHaveCount(0);
  await expect(overview.locator('.a-progress-spinner')).toHaveCount(0);
  await page.reload();await page.waitForSelector('#amp-one');
@@ -280,9 +302,10 @@ try{
  await expect.poll(async()=>(await observations()).preferences.autoCheck).toBe(true);await expect(automatic).toBeChecked();assert.deepEqual((await observations()).calls,{check:0,install:0,rollback:0});
  await page.reload();await openSettingsPage(page,'updates');if(!await updates.getByText('Update preferences',{exact:true}).isVisible())await advanced.locator('summary').first().click();if(!await frequency.isVisible())await updates.getByText('Update preferences',{exact:true}).click();
  await expect(automatic).toBeChecked();await expect(frequency).toHaveValue('24');
- // Explicit checks carry their own outcome. A failed attempt cannot remain green.
- await check.click();await expect(overview).toContainText('Updates need attention');await expect(updates).toContainText('Synthetic update lookup failed. Check again.');assert.equal((await observations()).calls.check,1);
- await check.click();await expect(overview).toContainText('You’re up to date');await expect(updates.getByText('Synthetic update lookup failed. Check again.',{exact:true})).toHaveCount(0);assert.deepEqual((await observations()).calls,{check:2,install:0,rollback:0});
+ // Explicit checks carry their own outcome; a successful lookup cannot clear
+ // a retained component failure without matching recovery.
+ await check.click();await expect(overview.getByRole('heading',{level:4})).toHaveText('Update needs attention');await expect(updates).toContainText('Synthetic update lookup failed. Check again.');assert.equal((await observations()).calls.check,1);
+ await check.click();await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');await expect(overview.locator('#update-action-status')).toContainText('runtime-source-constraint');await expect(overview).not.toContainText('You’re up to date');await expect(updates.getByText('Synthetic update lookup failed. Check again.',{exact:true})).toHaveCount(0);assert.deepEqual((await observations()).calls,{check:2,install:0,rollback:0});
  assert.deepEqual(errors,[]);result.status='passed';result.checks={progress:true,componentIdentity:true,completedMilestones:true,partialSuccess:true,partialSuccessReload:true,staleAppResultExcluded:true,unconfirmedRestartExcluded:true,savedPreferences:true,unknownIntervalPreserved:true,explicitCheckFailureRetry:true,noInstallEffects:true,noPrematureActivation:true,waitingDistinct:true,activationBusy:true,duplicateInstallDisabled:true,reducedMotion:true,retryAfterFailure:true,completionRestoresControls:true,failureDistinct:true,reload:true,mobileOverflow:false};result.browserErrors=errors;result.browserVersion=browser.version();
 }catch(error){result.status='failed';result.error=String(error);if(page)await page.screenshot({path:output+'-failed.png'});throw error}
 finally{try{await browser?.close()}finally{fixture.kill('SIGTERM');await new Promise(resolve=>{if(fixture.exitCode!==null)return resolve();const timer=setTimeout(()=>{fixture.kill('SIGKILL');resolve()},10000);fixture.once('exit',()=>{clearTimeout(timer);resolve()})});result.fixtureLog=log;await writeFile(output+'.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result));}}
