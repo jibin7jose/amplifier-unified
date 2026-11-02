@@ -1,7 +1,7 @@
 """One fresh conversation per occurrence, with no automatic creation/input replay."""
 import asyncio
 
-from .session_creation import template
+from .session_creation import template, configuration_changes
 from .managed_chats import is_managed
 
 
@@ -24,6 +24,7 @@ async def create_destination(schedules, current, run):
     config = current['newTaskConfiguration']
     location = {'location': {'kind': 'managed'}} if is_managed(config) else {'workspace': config['workspace']}
     rejected = False
+    configuration_comparison = {}
     def guard():
         nonlocal rejected
         try:
@@ -32,9 +33,21 @@ async def create_destination(schedules, current, run):
                 destination = app._session(identity, hydrate=False)
                 if (destination.get('interruptionRevision', 0) != run['destinationInterruptionRevision']
                         or destination.get('executionRevision', 0) != run['destinationExecutionRevision']
-                        or destination.get('configurationBusy') or destination.get('fileAccessPending')
-                        or template(app, destination)[1]['configurationHash'] != run['destinationConfigurationHash']):
+                        or destination.get('configurationBusy') or destination.get('fileAccessPending')):
                     raise ValueError('The destination changed or stopped before task creation.')
+                observed = template(app, destination)[1]
+                if observed['configurationHash'] != run['destinationConfigurationHash']:
+                    previous = {'configurationHash': run['destinationConfigurationHash'],
+                                'configurationParts': run.get('destinationConfigurationParts', {})}
+                    fields = configuration_changes(previous, observed)
+                    configuration_comparison.update(
+                        before={'stage': 'destination_created', **previous},
+                        after={'stage': 'task_creation_admission', 'configurationHash': observed['configurationHash'],
+                               'configurationParts': observed['configurationParts']},
+                        changedCategories=fields)
+                    raise ValueError('The new task configuration changed before task creation'
+                                     + (': ' + ', '.join(fields) if fields else '')
+                                     + ' (destination creation compared with task-creation admission).')
         except ValueError:
             rejected = True
             raise
@@ -67,7 +80,8 @@ async def create_destination(schedules, current, run):
             phase = 'skipped' if rejected else 'unknown'
             detail = ('New-task preparation stopped before the next effect: ' if rejected else
                       'New-task preparation outcome requires inspection; no automatic retry: ') + str(exc)[:500]
-            saved = schedules.store.transition(sid, run['id'], ['creating'], phase, schedules.clock(), detail=detail)
+            saved = schedules.store.transition(sid, run['id'], ['creating'], phase, schedules.clock(), detail=detail,
+                **({'destinationConfigurationComparison': configuration_comparison} if configuration_comparison else {}))
             schedules.store.review(sid, current['id'], detail, schedules.clock())
             schedules.decide_notification(app._session(sid), saved)
             schedules.changed()

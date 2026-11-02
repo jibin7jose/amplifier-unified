@@ -18,18 +18,40 @@ try{
  const state=()=>page.evaluate(()=>window.amplifier.getState());
  await page.goto(url);await showFixtureConversation(page);await page.getByRole('textbox',{name:'Message Amplifier'}).waitFor();
  assert.equal((await (await page.request.get(url+'/fixture')).json()).foundationCachePresent,false);
- await action('view.update',{patch:{panel:'settings',settingsExpanded:['workspaces']}});
+ await openSettingsPage(page,'defaults');
  const settings=page.getByRole('region',{name:'Settings content'});
+ await expect(settings.locator('#bundle-default-scope')).toHaveValue('app');
+ await settings.locator('#default-bundle').selectOption('work-amp-dev');
+ await expect.poll(async()=>(await state()).bundleDefaults.app).toBe('work-amp-dev');
+ await openSettingsPage(page,'workspaces');
  await expect(page.locator('.a-settings-experience').getByRole('button',{name:'Workspaces',exact:true})).toBeVisible();
  await expect(settings.getByRole('region',{name:'Workspace starters'})).toHaveCount(0);
  await settings.getByRole('button',{name:'Manage starters →',exact:true}).click();
  const starters=settings.getByRole('region',{name:'Workspace starters'});
  await expect(starters.getByText('Amplifier development',{exact:true})).toBeVisible();
+ await expect.poll(async()=>(await state()).workspaceStarters?.items.find(row=>row.id==='amplifier-development')?.bundle).toBe('');
  await starters.locator('[data-collection-id="amplifier-development"] button').click();
  const initialEditor=settings.getByRole('form',{name:'Starter editor'});
+ const inheritedBundle=initialEditor.getByLabel('Workspace bundle default',{exact:true});
+ await expect(inheritedBundle).toHaveValue('');
+ await expect(inheritedBundle.locator('option:checked')).toHaveText('Inherit app and shared defaults');
+ await expect(inheritedBundle).toBeDisabled();
  await initialEditor.locator('summary').filter({hasText:'Local workspace Git'}).click();
  await expect(initialEditor.getByLabel('Initialize local workspace Git',{exact:true})).toBeChecked();
  await expect(initialEditor.getByLabel('Initialize local workspace Git',{exact:true})).toBeDisabled();
+ const beforeInheritedCopy=await state();
+ await initialEditor.getByRole('button',{name:'Duplicate',exact:true}).click();
+ await expect(initialEditor.getByText('Copy created. Customize it below.',{exact:true})).toBeVisible();
+ await expect(initialEditor.getByLabel('Starter name',{exact:true})).toHaveValue('Amplifier development copy');
+ await expect(inheritedBundle).toBeEnabled();
+ await expect(inheritedBundle).toHaveValue('');
+ await expect.poll(async()=>(await state()).workspaceStarters.items.find(row=>row.name==='Amplifier development copy')?.bundle).toBe('');
+ const afterInheritedCopy=await state();
+ assert.deepEqual(afterInheritedCopy.workspaces.map(row=>row.id),beforeInheritedCopy.workspaces.map(row=>row.id),'Duplicating a starter does not create a workspace');
+ assert.deepEqual(afterInheritedCopy.sessions.map(row=>row.id),beforeInheritedCopy.sessions.map(row=>row.id),'Duplicating a starter does not create a chat');
+ await initialEditor.getByRole('button',{name:'Delete this starter',exact:true}).click();
+ await starters.getByRole('button',{name:'Delete starter',exact:true}).click();
+ await expect(starters.getByText('Amplifier development copy',{exact:true})).toHaveCount(0);
  await starters.locator('[data-collection-id=\"development\"] button').click();
  const editor=settings.getByRole('form',{name:'Starter editor'});
  // A click starts duplication; the old built-in editor remains until its
@@ -189,5 +211,5 @@ try{
  await expect(composer).toHaveDraft('Retain this draft through starter setup');
  await page.getByRole('button',{name:'Send message',exact:true}).click();await page.getByText('Synthetic first response',{exact:true}).waitFor();
  const evidence=await (await page.request.get(url+'/fixture')).json();assert.equal(evidence.sent[0].workspace,folder);assert.equal(evidence.sent[0].attachments[0].name,'notes.txt');
- assert.deepEqual(errors,[]);console.log(JSON.stringify({status:'passed',scenarios:14,resourceContinuity:['chat and Home return','reservation draft','same editor identity','Settings keyboard and phone drawer inert cleanup','private peer','one held save receipt'],screenshots:out,workspace:folder}));
+ assert.deepEqual(errors,[]);console.log(JSON.stringify({status:'passed',scenarios:15,starterInheritance:['explicit app default','built-in inherited choice','duplicate loaded into editor without workspace or chat creation'],resourceContinuity:['chat and Home return','reservation draft','same editor identity','Settings keyboard and phone drawer inert cleanup','private peer','one held save receipt'],screenshots:out,workspace:folder}));
 }catch(error){await page?.screenshot({path:out+'/failure.png'}).catch(()=>{});console.error((await page?.locator('body').innerText())?.slice(-6000));throw error}finally{await browser?.close();fixture.kill('SIGTERM')}

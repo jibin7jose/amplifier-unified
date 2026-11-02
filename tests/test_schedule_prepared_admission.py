@@ -20,6 +20,7 @@ from amplifier_web.management import Management
 from amplifier_web.runtime import RuntimeManager
 from amplifier_web.service import AppService
 from amplifier_web.session_creation import configuration_changes, template
+from amplifier_web.shared_settings import settings_paths, update_settings
 from test_schedules import config
 
 
@@ -28,6 +29,7 @@ from pathlib import Path
 from amplifier_core import HookResult
 
 INVOCATION = contextvars.ContextVar('schedule_fixture_producer', default=None)
+VALIDATION = contextvars.ContextVar('schedule_fixture_validation', default=None)
 
 def record(kind, **values):
     row = {'kind':kind, 'at':time.time(), **values}
@@ -73,6 +75,18 @@ def install():
     from amplifier_module_loop_streaming import StreamingOrchestrator
     for method in ('_execute_one_turn', '_evaluate_goal', '_summarize_goal_run', '_judge_stall'):
         wrap(StreamingOrchestrator, method)
+    from amplifier_core.validation.provider import ProviderValidator
+    original = ProviderValidator._check_protocol_compliance
+    source_hash = hashlib.sha256(inspect.getsource(original).encode()).hexdigest()
+    @functools.wraps(original)
+    async def validate(self, *args, **kwargs):
+        token = VALIDATION.set({'id':str(uuid.uuid4()),
+            'producer':'ProviderValidator._check_protocol_compliance', 'sourceSha256':source_hash})
+        try:
+            return await original(self, *args, **kwargs)
+        finally:
+            VALIDATION.reset(token)
+    ProviderValidator._check_protocol_compliance = validate
 
 def attach(coordinator):
     async def resolved(event, data):
@@ -93,12 +107,13 @@ def attach(coordinator):
 
 
 PROVIDER = '''from pathlib import Path
-import json, time, uuid
+import hashlib, json, os, time, uuid
 from amplifier_core import ProviderInfo
 from amplifier_core.message_models import ChatResponse, TextBlock, Usage
 from amplifier_web.execution_events import CALL_PURPOSE, CURRENT_CALL
-from schedule_observer import INVOCATION, attach
+from schedule_observer import INVOCATION, VALIDATION, attach
 __amplifier_module_type__ = 'provider'
+SOURCE_LABEL = 'default'
 class Provider:
     name = 'fixture'
     def __init__(self, config=None, coordinator=None): self.coordinator, self.config = coordinator, config or {}
@@ -162,6 +177,13 @@ class Provider:
 async def mount(coordinator, config=None):
     attach(coordinator)
     await coordinator.mount('providers', Provider(config, coordinator), name='fixture')
+    if (config or {}).get('source_observations'):
+        with Path(config['source_observations']).open('a') as stream:
+            stream.write(json.dumps({'sessionId':coordinator.session_id, 'label':SOURCE_LABEL,
+                'pid':os.getpid(), 'validation':VALIDATION.get(),
+                'coordinatorType':type(coordinator).__module__+'.'+type(coordinator).__qualname__,
+                'moduleFile':str(Path(__file__).resolve()),
+                'sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()})+'\\n')
 '''
 
 
@@ -383,6 +405,14 @@ def assert_fault_controls(report):
 @pytest.mark.parametrize('selection', [None, {'instance': 'fixture', 'model': 'fixture-pinned', 'effort': 'high'}], ids=['default', 'pinned'])
 @pytest.mark.parametrize('authorization', ['ui', 'full-system'])
 async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monkeypatch, selection, authorization):
+    await prepared_occurrences(tmp_path, monkeypatch, selection, authorization)
+
+
+async def test_used_session_source_survives_preparation_and_material_change_refuses(tmp_path, monkeypatch):
+    await prepared_occurrences(tmp_path, monkeypatch, None, 'ui', inherited_source=True)
+
+
+async def prepared_occurrences(tmp_path, monkeypatch, selection, authorization, *, inherited_source=False):
     import amplifier_module_context_simple as context
     import amplifier_module_loop_live as loop
     import amplifier_module_hook_context_intelligence as capture
@@ -410,6 +440,16 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
     provider.mkdir(parents=True)
     (provider / '__init__.py').write_text(PROVIDER)
     calls = tmp_path / 'calls.jsonl'
+    source_mounts = tmp_path / 'source-mounts.jsonl'
+    source_paths = {}
+    if inherited_source:
+        for label in ('A', 'B', 'C'):
+            module = tmp_path / 'module-sources' / label / 'amplifier_module_provider_fixture'
+            module.mkdir(parents=True)
+            (module / '__init__.py').write_text(PROVIDER.replace(
+                "SOURCE_LABEL = 'default'", f"SOURCE_LABEL = '{label}'"))
+            source_paths[label] = module.parent
+        provider = source_paths['A'] / 'amplifier_module_provider_fixture'
     # Compose an ordinary root with a local behavior, not an exported snapshot.
     awareness = tmp_path / 'awareness.md'; awareness.write_text('Synthetic schedule awareness.\n')
     behavior = tmp_path / 'behavior.yaml'
@@ -419,7 +459,8 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
         'includes': [{'bundle': str(behavior)}],
         'session': {'orchestrator': {'module': 'loop-live', 'config': {'use_streaming': False, 'max_iterations': 1}},
                     'context': {'module': 'context-simple', 'source': modules['context-simple']}},
-        'providers': [{'module': 'provider-fixture', 'source': str(provider.parent), 'config': {'calls': str(calls)}}]}))
+        'providers': [{'module': 'provider-fixture', 'source': str(provider.parent), 'config': {
+            'calls': str(calls), **({'source_observations': str(source_mounts)} if inherited_source else {})}}]}))
     command = [sys.executable, str(launcher)]
     monkeypatch.setattr(RuntimeManager, '_command', lambda self, *a, **kw: list(self.command or command))
     runtime = RuntimeManager(command=command, startup_timeout=45, retention={'prewarm_on_select': False})
@@ -438,10 +479,11 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
     original_event = app.on_runtime_event
     source_id = None
     completed = False
+    material_change = False
 
     def read_calls():
         errors, decoded = [], {}
-        for name, path in (('producerEvents', producer_events), ('calls', calls)):
+        for name, path in (('producerEvents', producer_events), ('calls', calls), ('sourceMounts', source_mounts)):
             try:
                 raw = path.read_text() if path.exists() else ''
             except (OSError, UnicodeError) as exc:
@@ -460,7 +502,32 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
                     errors.append({'file': path.name, 'line': number, 'error': str(exc)})
         report['observationErrors'] = errors
         report['producerEvents'] = decoded['producerEvents']
+        report['sourceMounts'] = decoded['sourceMounts']
         return decoded['calls']
+
+    def assert_sources(mounted=None):
+        import hashlib, inspect
+        from amplifier_core.testing import MockCoordinator
+        from amplifier_core.validation.provider import ProviderValidator
+        mounted = report['sourceMounts'] if mounted is None else mounted
+        expected = [source_id, *(row['target'] for row in report['expected'])]
+        actual = [row for row in mounted if row['validation'] is None]
+        validated = [row for row in mounted if row['validation'] is not None]
+        assert Counter(row['sessionId'] for row in actual) == Counter(expected)
+        assert len({row['pid'] for row in actual}) == len(expected)
+        assert Counter(row['pid'] for row in actual) == Counter(row['pid'] for row in validated)
+        assert len({row['validation']['id'] for row in validated}) == len(expected)
+        validator_hash = hashlib.sha256(inspect.getsource(ProviderValidator._check_protocol_compliance).encode()).hexdigest()
+        for row in validated:
+            assert row['sessionId'] == 'test-session'
+            assert row['coordinatorType'] == MockCoordinator.__module__ + '.' + MockCoordinator.__qualname__
+            assert row['validation']['producer'] == 'ProviderValidator._check_protocol_compliance'
+            assert row['validation']['sourceSha256'] == validator_hash
+        module = source_paths['B'] / 'amplifier_module_provider_fixture' / '__init__.py'
+        for row in mounted:
+            assert row['label'] == 'B', row
+            assert Path(row['moduleFile']).resolve() == module.resolve(), row
+            assert row['sha256'] == hashlib.sha256(module.read_bytes()).hexdigest(), row
 
     async def observed_admit(target, args, guard):
         row = {'target': target, **copy.deepcopy(args)}
@@ -489,7 +556,21 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
         await original_event(kind, data)
 
     async def observed_dispatch(action, args=None, **kwargs):
-        result = await original_dispatch(action, args, **kwargs)
+        if material_change and kwargs.get('origin') == 'scheduler' and action == 'task.create':
+            target = app._session(args['sessionId'])
+            before = template(app, target)[1]
+            update_settings(settings_paths(target['workspace'], session_id=target['id'])['session'],
+                lambda settings: settings['sources']['modules'].update({'provider-fixture': str(source_paths['C'])}))
+            report['materialChange'] = {'target': target['id'], 'before': before,
+                'after': template(app, target)[1], 'injectedAt': 'before_task_create'}
+        try:
+            result = await original_dispatch(action, args, **kwargs)
+        except BaseException as exc:
+            if kwargs.get('origin') == 'scheduler' and action == 'task.create':
+                observations.append({'stage': action, 'sessionId': args['sessionId'],
+                    'error': {'type': type(exc).__name__, 'detail': str(exc)},
+                    'summary': template(app, app._session(args['sessionId']))[1]})
+            raise
         if kwargs.get('origin') == 'scheduler' and action in {'session.create', 'task.create'}:
             target = args['id'] if action == 'session.create' else args['sessionId']
             configuration, summary = template(app, app._session(target))
@@ -508,12 +589,20 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
         await app.dispatch('session.create', {'bundle': str(bundle), 'workspace': str(workspace),
                                              **({'selection': selection} if selection else {})})
         source_id = app._session()['id']
+        if inherited_source:
+            update_settings(settings_paths(workspace, session_id=source_id)['session'],
+                lambda settings: settings.update(sources={'modules': {'provider-fixture': str(source_paths['B'])}}))
         if authorization == 'full-system':
             from test_full_feedback import mode
             await mode(app, app._session(source_id))
         await app.management.ensure_runtime(app._session(source_id))
         await runtime.control(source_id, 'task.get', {})
         source_summary = template(app, app._session(source_id))[1]
+        if inherited_source:
+            source_config = template(app, app._session(source_id))[0]
+            assert source_config['plan']['providers'][0]['source'] == str(source_paths['A'])
+            assert source_config['sourceSettings'] == {'sources': {'modules': {'provider-fixture': str(source_paths['B'])}}}
+            report['sourceSelection'] = {'authored': 'A', 'reviewed': 'B', 'materialChange': 'C'}
         fields = {'sessionId': source_id, **config(now[0], 'task'), 'destination': 'new_task',
                   'newTaskMaxTurns': 1, 'prompt': 'Report SCHEDULE_ADMISSION_CONTROL, then finish.', 'notificationPolicy': 'always'}
         preview = (await app.dispatch('schedule.preview', fields))['result']
@@ -527,6 +616,7 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
             assert 'messageId' not in schedule['authorization']
         report['sourceConfiguration'] = source_summary
         destinations = []
+        prior_runs = []
         for occurrence in range(2):
             now[0] = app.schedules.store.get(source_id, schedule['id'])['nextDue']
             await app.schedules.tick(); await app.schedules.tick()
@@ -548,6 +638,16 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
             assert task['id'] == run['taskId'] and task['maxTurns'] == 1
             report['calls'] = read_calls()
             assert_execution(report)
+            if inherited_source:
+                assert_sources()
+                for previous in prior_runs:
+                    assert app.schedules.store.run(source_id, previous['id']) == previous
+                prior_runs.append(copy.deepcopy(app.schedules.store.run(source_id, run['id'])))
+                stages = [row for row in observations if row['sessionId'] == target]
+                assert {row['stage'] for row in stages} == {'session.create', 'task.create', 'input_admission'}
+                assert {row['summary']['configurationHash'] for row in stages} == {source_summary['configurationHash']}
+                assert next(row for row in stages if row['stage'] == 'session.create')['planSource'] == 'override'
+                assert next(row for row in stages if row['stage'] == 'task.create')['planSource'] == 'effective'
             assert any(row.get('text') == 'SCHEDULE_ADMISSION_CONTROL' for row in app._session(target)['messages'])
             before = (copy.deepcopy(report['admissions']), copy.deepcopy(report['generations']))
             await app.schedules.tick(); await app.schedules.tick()
@@ -555,6 +655,29 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
             report['repeatTicks'].append({'occurrence': occurrence + 1, 'additionalAdmissions': 0,
                                          'additionalGenerations': 0})
             assert len(app.schedules.store.runs(source_id)) == occurrence + 1
+        if inherited_source:
+            material_change = True
+            before_execution = copy.deepcopy((report['admissions'], report['generations'], report['sourceMounts']))
+            now[0] = app.schedules.store.get(source_id, schedule['id'])['nextDue']
+            await app.schedules.tick(); await app.schedules.tick()
+            rejected = app.schedules.store.runs(source_id)[0]
+            report['materialChange']['run'] = copy.deepcopy(rejected)
+            report['calls'] = read_calls()
+            assert rejected['phase'] == 'skipped' and rejected['creationConfirmed'], rejected
+            assert not rejected.get('taskId')
+            assert (report['admissions'], report['generations'], report['sourceMounts']) == before_execution
+            assert_execution(report)
+            assert_sources()
+            for previous in prior_runs:
+                assert app.schedules.store.run(source_id, previous['id']) == previous
+            comparison = rejected['destinationConfigurationComparison']
+            assert comparison['before']['stage'] == 'destination_created'
+            assert comparison['after']['stage'] == 'task_creation_admission'
+            assert comparison['before']['configurationHash'] == report['materialChange']['before']['configurationHash']
+            assert comparison['after']['configurationHash'] == report['materialChange']['after']['configurationHash']
+            assert comparison['changedCategories'] == ['sourceSettings']
+            assert str(tmp_path) not in json.dumps(comparison)
+            assert app.schedules.store.get(source_id, schedule['id'])['status'] == 'needs_review'
         assert template(app, app._session(source_id))[1] == source_summary
         assert app._session(source_id)['messages'] == []
         completed = True
@@ -574,6 +697,19 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
                 assert_execution(report)
                 assert len(report['expected']) == 2
                 assert_fault_controls(report)
+                if inherited_source:
+                    assert_sources()
+                    for mutation in ('extra_validation_mount', 'missing_validation_binding', 'wrong_source'):
+                        bad = copy.deepcopy(report['sourceMounts'])
+                        if mutation == 'extra_validation_mount':
+                            bad.append(copy.deepcopy(next(row for row in bad if row['validation'])))
+                        elif mutation == 'missing_validation_binding':
+                            next(row for row in bad if row['validation'])['validation'] = None
+                        else:
+                            bad[-1]['label'] = 'A'
+                        with pytest.raises(AssertionError):
+                            assert_sources(bad)
+                        report['negativeControls'].append(mutation)
                 report['verified'] = True
         except BaseException as exc:
             report['shutdownOrFinalCheckFailure'] = {'type': type(exc).__name__, 'detail': str(exc)}
@@ -582,6 +718,6 @@ async def test_prepared_first_and_second_occurrences_execute_once(tmp_path, monk
             report['calls'] = read_calls()
             artifacts = os.environ.get('AMPLIFIER_TEST_ARTIFACTS')
             if artifacts:
-                path = Path(artifacts) / ('schedule-prepared-' + ('pinned' if selection else 'default')
+                path = Path(artifacts) / ('schedule-prepared-' + ('source-inheritance' if inherited_source else 'pinned' if selection else 'default')
                     + ('-full-system' if authorization == 'full-system' else '') + '.json')
                 path.write_text(json.dumps(report, indent=2))

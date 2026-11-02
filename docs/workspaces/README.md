@@ -45,7 +45,11 @@ worktree placement or ownership through either dispatch entry point.
 New workspace creation offers **Start from…**. **Blank** keeps the empty-folder
 flow. **Development** adds repository guidance without forcing Git or a bundle.
 **Amplifier development** adds the Amplifier, Core and Foundation repositories
-as independent child checkouts and sets the workspace's `anchors-amp-dev` default.
+as independent child checkouts. New plans inherit an explicitly saved Unified app
+or shared Amplifier bundle default, without copying that choice into project
+settings. If neither is set, this starter keeps its `anchors-amp-dev` workspace
+fallback. The currently selected workspace's override does not choose the default
+for a different new workspace. Blank and Development continue to inherit defaults.
 
 **Settings → Workspaces** keeps ordinary placement settings approachable.
 Its **Manage starters** link opens a separate advanced list/detail editor,
@@ -56,6 +60,14 @@ then edit its description, instructions, optional bundle default, repository
 URLs/folders/branches and resource tracking. Deleting a definition never deletes
 created workspaces. Edits apply to future plans; prepared plans retain their exact
 starter snapshot.
+Amplifier development revision 6 makes this choice when the plan is prepared.
+An inherited plan stays inherited if defaults later change; new chats use the
+then-current defaults. Already reviewed revision-5 plans keep their explicit
+bundle, as do saved custom starters. Duplicating a built-in copies its current
+choice when duplicated, including inheritance, from a fresh server snapshot.
+The returned copy is loaded into the editor; a previously displayed choice may
+be stale. Duplication does not create or change a workspace. Explicit chat choices
+and existing conversations are unchanged; no workspace settings are migrated.
 Bundle choices share the chat dropdown's catalog: the preconfigured `anchors`
 and `anchors-amp-dev` roots from Amplifier Foundation and `work` and `work-amp-dev` from
 amplifier-bundle-work, plus enabled standalone bundles added through Advanced

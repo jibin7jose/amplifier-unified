@@ -95,6 +95,8 @@ def test_only_preconfigured_bundles_offered_and_sources_correct(tmp_path):
     catalog = StarterCatalog(tmp_path)
     assert {row['value'] for row in catalog.listing()['bundles']} == expected
     assert catalog.snapshot('amplifier-development')['bundle'] == 'anchors-amp-dev'
+    assert {row['id']: row['revision'] for row in catalog.listing()['items']} == {
+        'blank': 1, 'development': 5, 'amplifier-development': 6}
     assert catalog.snapshot('development')['scratch'] is True
     assert catalog.snapshot('blank')['scratch'] is False
     assert catalog.snapshot('amplifier-development')['rootGit'] is True
@@ -103,6 +105,170 @@ def test_only_preconfigured_bundles_offered_and_sources_correct(tmp_path):
     for name in ('amplifier-dev', 'foundation', 'exp-delegation', 'git+https://example.test/root'):
         with pytest.raises(ValueError, match='configured standalone'):
             catalog.command('workspace.starters.save', {'starter': {'name': 'Invalid', 'bundle': name}}, 'invalid-'+name)
+
+
+@pytest.mark.parametrize('app_bundle,shared_bundle,expected', [
+    ('work-amp-dev', None, 'work-amp-dev'),
+    ('anchors', None, 'anchors'),
+    (None, 'work-amp-dev', 'work-amp-dev'),
+    (None, 'anchors', 'anchors'),
+    ('anchors', 'work-amp-dev', 'anchors'),
+    (None, None, 'anchors-amp-dev'),
+])
+async def test_amplifier_starter_created_root_respects_saved_defaults_or_fallback(
+        service, local_amplifier_repositories, app_bundle, shared_bundle, expected):
+    from amplifier_web.shared_settings import read_yaml
+    initial = service.state['settings']['workspace']
+    await service.dispatch('session.create', {'bundle': 'anchors'})
+    existing = service._session()['id']
+    # A selected workspace's explicit choice must not become new-workspace intent.
+    await service.dispatch('bundle.default', {'scope': 'workspace', 'bundle': 'work'})
+    local_settings = Path(initial) / '.amplifier/settings.local.yaml'
+    before = local_settings.read_bytes()
+    await service.dispatch('bundle.default', {'scope': 'shared', 'bundle': shared_bundle})
+    await service.dispatch('bundle.default', {'scope': 'app', 'bundle': app_bundle})
+    fallback = StarterCatalog(service.data_dir).snapshot('amplifier-development')
+    _, row = await create(service, 'amplifier-development', 'Conditional development')
+    folder = Path(row['path'])
+    assert row['setup']['status'] == 'ready'
+    saved = row['setup']['starter']
+    inherited = bool(app_bundle or shared_bundle)
+    assert saved == {**fallback, 'bundle': '' if inherited else 'anchors-amp-dev'}
+    settings = folder / '.amplifier/settings.yaml'
+    if inherited:
+        assert not settings.exists()
+    else:
+        assert read_yaml(settings)['bundle']['active'] == 'anchors-amp-dev'
+    assert not (folder / '.amplifier/settings.local.yaml').exists()
+    assert (folder / 'AGENTS.md').read_text() == DEVELOPMENT_INSTRUCTIONS + '\n'
+    assert (folder / 'SCRATCH.md').read_text() == SCRATCH_TEMPLATE
+    assert (folder / '.amplifier/AGENTS.md').read_text() == '@../AGENTS.md\n@../SCRATCH.md\n'
+    assert row['resourceTracking'] is True and row['resources']['resources'] == []
+    assert row['setup']['rootGit']['status'] == 'ready'
+    assert subprocess.run(['git', '-C', str(folder), 'rev-parse', '--verify', 'HEAD'],
+                          capture_output=True).returncode != 0
+    assert subprocess.check_output(['git', '-C', str(folder), 'remote']).strip() == b''
+    assert local_amplifier_repositories['clones'] == [item['url'] for item in fallback['repositories']]
+    for item in row['setup']['repositories']:
+        assert item['status'] == 'ready'
+        assert item['sha'] == local_amplifier_repositories['commits'][item['url']]
+        assert (folder / item['directory'] / '.git').is_dir()
+    await service.dispatch('session.create', {})
+    assert service._session()['workspace'] == row['path']
+    assert service._session()['bundle'] == expected
+    assert service._session(existing)['bundle'] == 'anchors'
+    assert local_settings.read_bytes() == before
+
+
+@pytest.mark.parametrize('starter', ['blank', 'development'])
+@pytest.mark.parametrize('bundle', ['work-amp-dev', 'anchors'])
+async def test_blank_and_development_created_roots_keep_app_inheritance(service, starter, bundle):
+    await service.dispatch('bundle.default', {'scope': 'app', 'bundle': bundle})
+    _, row = await create(service, starter, 'Inherited workspace')
+    folder = Path(row['path'])
+    assert not (folder / '.amplifier/settings.yaml').exists()
+    await service.dispatch('session.create', {})
+    assert service._session()['workspace'] == row['path']
+    assert service._session()['bundle'] == bundle
+
+
+async def test_inherited_starter_plan_stays_live_without_retargeting_existing_roots(
+        service, local_amplifier_repositories):
+    await service.dispatch('bundle.default', {'scope': 'app', 'bundle': 'work-amp-dev'})
+    plan = (await service.dispatch('workspace.prepare', {
+        'name': 'Live inheritance', 'starterId': 'amplifier-development'}))['result']
+    assert plan['starter']['bundle'] == ''
+    # The retained choice is inheritance, not a frozen copy of work-amp-dev.
+    await service.dispatch('bundle.default', {'scope': 'app', 'bundle': 'anchors'})
+    await service.dispatch('workspace.create', {'planId': plan['planId'], 'fromDraft': True},
+                           command_id='live-inheritance')
+    row = await settle(service)
+    folder = Path(row['path'])
+    assert row['setup']['status'] == 'ready' and row['setup']['starter'] == plan['starter']
+    await service.dispatch('session.create', {})
+    first = service._session()['id']
+    assert service._session(first)['bundle'] == 'anchors'
+    await service.dispatch('bundle.default', {'scope': 'app', 'bundle': 'work-amp-dev'})
+    await service.dispatch('session.create', {})
+    assert service._session()['bundle'] == 'work-amp-dev'
+    assert service._session(first)['bundle'] == 'anchors'
+    await service.dispatch('session.create', {'bundle': 'anchors-amp-dev'})
+    assert service._session()['bundle'] == 'anchors-amp-dev'
+    assert not (folder / '.amplifier/settings.yaml').exists()
+    assert not (folder / '.amplifier/settings.local.yaml').exists()
+
+
+async def test_reviewed_revision_five_plan_keeps_its_explicit_bundle(
+        service, local_amplifier_repositories, monkeypatch):
+    original = StarterCatalog.listing
+    def revision_five(catalog):
+        value = original(catalog)
+        row = next(item for item in value['items'] if item['id'] == 'amplifier-development')
+        row.update(revision=5, bundle='anchors-amp-dev')
+        return value
+    # Prepare through the normal owner while reproducing the prior catalog.
+    with monkeypatch.context() as patch:
+        patch.setattr(StarterCatalog, 'listing', revision_five)
+        plan = (await service.dispatch('workspace.prepare', {
+            'name': 'Reviewed old plan', 'starterId': 'amplifier-development'}))['result']
+    await service.dispatch('bundle.default', {'scope': 'app', 'bundle': 'work-amp-dev'})
+    await service.dispatch('workspace.create', {'planId': plan['planId'], 'fromDraft': True},
+                           command_id='reviewed-old-plan')
+    row = await settle(service)
+    assert row['setup']['status'] == 'ready' and row['setup']['starter'] == plan['starter']
+    assert row['setup']['starter']['revision'] == 5
+    assert defaults(service.data_dir, row['path'], 'work-amp-dev')['workspace'] == 'anchors-amp-dev'
+    await service.dispatch('session.create', {})
+    assert service._session()['bundle'] == 'anchors-amp-dev'
+
+
+@pytest.mark.parametrize('inherit', [False, True])
+def test_amplifier_duplicate_keeps_current_choice_when_duplicated(tmp_path, inherit):
+    catalog = StarterCatalog(tmp_path, inherit_amplifier_default=inherit)
+    saved = catalog.command('workspace.starters.duplicate', {'id': 'amplifier-development'}, 'duplicate')
+    assert saved['bundle'] == ('' if inherit else 'anchors-amp-dev')
+    before = catalog.path.read_bytes()
+    changed = StarterCatalog(tmp_path, inherit_amplifier_default=not inherit)
+    assert changed.snapshot(saved['id']) == saved
+    assert changed.path.read_bytes() == before
+
+
+@pytest.mark.parametrize('prepared_default_scope', [None, 'app', 'shared'])
+async def test_prepared_starter_keeps_pin_or_inheritance_when_defaults_appear_or_clear(
+        service, local_amplifier_repositories, prepared_default_scope):
+    from amplifier_web.shared_settings import read_yaml
+    await service.dispatch('bundle.default', {'scope': 'app', 'bundle': None})
+    await service.dispatch('bundle.default', {'scope': 'shared', 'bundle': None})
+    await service.dispatch('session.create', {'bundle': 'anchors'})
+    existing = service._session()['id']
+    if prepared_default_scope:
+        await service.dispatch('bundle.default', {
+            'scope': prepared_default_scope, 'bundle': 'work-amp-dev'})
+    plan = (await service.dispatch('workspace.prepare', {
+        'name': 'Default transition', 'starterId': 'amplifier-development'}))['result']
+    assert plan['starter']['revision'] == 6
+    assert plan['starter']['bundle'] == ('' if prepared_default_scope else 'anchors-amp-dev')
+    if prepared_default_scope:
+        await service.dispatch('bundle.default', {'scope': 'app', 'bundle': None})
+        await service.dispatch('bundle.default', {'scope': 'shared', 'bundle': None})
+    else:
+        await service.dispatch('bundle.default', {'scope': 'app', 'bundle': 'work-amp-dev'})
+    await service.dispatch('workspace.create', {'planId': plan['planId'], 'fromDraft': True},
+                           command_id='prepared-default-transition')
+    row = await settle(service)
+    assert row['setup']['status'] == 'ready'
+    assert row['setup']['starter'] == plan['starter']
+    folder = Path(row['path'])
+    settings = folder / '.amplifier/settings.yaml'
+    if prepared_default_scope:
+        assert not settings.exists()
+    else:
+        assert read_yaml(settings)['bundle']['active'] == 'anchors-amp-dev'
+    assert not (folder / '.amplifier/settings.local.yaml').exists()
+    await service.dispatch('session.create', {})
+    assert service._session()['workspace'] == row['path']
+    assert service._session()['bundle'] == ('work' if prepared_default_scope else 'anchors-amp-dev')
+    assert service._session(existing)['bundle'] == 'anchors'
 
 
 async def test_starters_and_chat_share_enabled_standalone_catalog(service):
@@ -440,6 +606,8 @@ async def test_restart_marks_root_git_unknown_and_refuses_retry(service):
 async def test_prepared_snapshot_survives_starter_edit_and_delete(service):
     saved = await service.dispatch('workspace.starters.save', {'starter': {'name': 'Custom', 'instructions': 'Original', 'bundle': 'anchors'}})
     starter = saved['result']
+    # An explicit saved custom choice still wins over a later app default.
+    await service.dispatch('bundle.default', {'scope': 'app', 'bundle': 'work-amp-dev'})
     plan = (await service.dispatch('workspace.prepare', {'name': 'Snapshot', 'starterId': starter['id']}))['result']
     await service.dispatch('workspace.starters.remove', {'id': starter['id'], 'expectedRevision': starter['revision']})
     await service.dispatch('workspace.create', {'planId': plan['planId']}, command_id='snapshot-create')
@@ -539,6 +707,30 @@ def local_git(path):
     subprocess.run(['git', '-C', str(path), 'add', '.'], check=True)
     subprocess.run(['git', '-C', str(path), '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'Initial'], check=True, capture_output=True)
     return subprocess.check_output(['git', '-C', str(path), 'rev-parse', 'HEAD']).decode().strip()
+
+
+@pytest.fixture
+def local_amplifier_repositories(tmp_path, monkeypatch):
+    """Keep the real built-in scaffold/import flow; redirect only Git transport."""
+    sources, commits, clones = {}, {}, []
+    for name in ('amplifier', 'amplifier-core', 'amplifier-foundation'):
+        url = f'https://github.com/microsoft/{name}.git'
+        sources[url] = tmp_path / ('origin-' + name)
+        commits[url] = local_git(sources[url])
+    original = provisioning._git
+    def local_clone(fd, *args):
+        if args[0] != 'clone':
+            return original(fd, *args)
+        url = args[-2]
+        assert url in sources
+        clones.append(url)
+        # No network and no mocked clone success; all other Git guards stay real.
+        return subprocess.check_output([
+            'git', '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.file.allow=always',
+            '-c', f'url.{sources[url]}.insteadOf={url}', *args],
+            cwd=f'/proc/self/fd/{fd}', pass_fds=(fd,), stderr=subprocess.DEVNULL).decode().strip()
+    monkeypatch.setattr(provisioning, '_git', local_clone)
+    return {'commits': commits, 'clones': clones}
 
 
 async def test_real_git_import_default_branch_partial_retry_keeps_success(service, tmp_path, monkeypatch):

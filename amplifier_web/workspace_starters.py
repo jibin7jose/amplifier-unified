@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from filelock import FileLock
 from amplifier_worktrees.git import atomic
 from .host.config import PRECONFIGURED_BUNDLES
-from .bundle_selection import catalog_entry
+from .bundle_selection import catalog_entry, defaults
 
 DEVELOPMENT_INSTRUCTIONS = """# Development workspace
 
@@ -148,11 +148,12 @@ def definition(value, bundle_names=None):
 
 
 class StarterCatalog:
-    def __init__(self, home, bundles=None, sources=None):
+    def __init__(self, home, bundles=None, sources=None, *, inherit_amplifier_default=False):
         self.path = home / 'workspace-starters.json'
         self.bundles = copy.deepcopy(bundles if bundles is not None else [catalog_entry(name) for name in PRECONFIGURED_BUNDLES])
         self.bundle_names = {row['value'] for row in self.bundles}
         self.sources = dict(sources or {})
+        self.inherit_amplifier_default = inherit_amplifier_default
 
     def _read(self):
         if not self.path.exists():
@@ -167,7 +168,12 @@ class StarterCatalog:
 
     def listing(self):
         value = self._read()
-        builtins = [{**copy.deepcopy(row), 'builtIn': True, 'revision': 5 if row['id'] != 'blank' else 1} for row in BUILTINS]
+        revisions = {'blank': 1, 'development': 5, 'amplifier-development': 6}
+        builtins = [{**copy.deepcopy(row), 'builtIn': True, 'revision': revisions[row['id']]} for row in BUILTINS]
+        if self.inherit_amplifier_default:
+            # Inherit deliberately saved defaults, not the automatic Work fallback.
+            # Only future built-in snapshots change; saved custom choices do not.
+            next(row for row in builtins if row['id'] == 'amplifier-development')['bundle'] = ''
         # Older custom definitions retain their behavior; no file migration.
         customs = [{**copy.deepcopy(row), 'scratch': row.get('scratch', False), 'rootGit': row.get('rootGit', False)} for row in value['items']]
         return {'revision': value['revision'], 'items': builtins + customs,
@@ -238,8 +244,10 @@ def configured_catalog(service):
     from .host.config import read_config
     from .bundles import offered_catalog
     config = read_config(service.state['settings']['workspace'], home=service.data_dir)
+    inherited = defaults(service.data_dir, service.state['settings']['workspace'],
+                         service.state['settings'].get('appBundle'), global_only=True)
     return StarterCatalog(service.data_dir, offered_catalog(config), {
         name: config.resolve_source(config.registrations[name]) or config.registrations[name]
         for name in config.settings.get('bundle', {}).get('added', {})
         if name in config.registrations
-    })
+    }, inherit_amplifier_default=bool(inherited['app'] or inherited['shared']))
