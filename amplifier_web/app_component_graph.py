@@ -75,18 +75,24 @@ def digest(graph):
     return hashlib.sha256(json.dumps(graph, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def requirements(graph):
+def requirements(graph, *, extras=None):
     """Exact resolver overrides for this candidate, never future updates."""
     lines = []
     for item in graph:
         if item['name'] == 'amplifier-unified':
             continue  # Root app identity is already the selected release commit.
+        name = item['name']
+        selected = sorted((extras or {}).get(name, ()))
+        if any(not re.fullmatch(r'[a-z0-9][a-z0-9-]*', extra) for extra in selected):
+            raise ValueError('Invalid component extra')
+        if selected:
+            name += '[' + ','.join(selected) + ']'
         if item.get('url'):
-            value = item['name'] + ' @ git+' + item['url'] + '@' + item['revision']
+            value = name + ' @ git+' + item['url'] + '@' + item['revision']
             if item.get('subdirectory'):
                 value += '#subdirectory=' + item['subdirectory']
         else:
-            value = item['name'] + '==' + item['version']
+            value = name + '==' + item['version']
         lines.append(value)
     return '\n'.join(lines) + '\n'
 

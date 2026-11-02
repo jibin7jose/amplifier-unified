@@ -250,6 +250,7 @@ async def managed(tmp_path, monkeypatch):
     monkeypatch.setattr(app_features, "running_application", lambda manager: copy.deepcopy(HOST_APP))
     monkeypatch.setattr(app_updates, "installed_extras", lambda: ["tui"])
     monkeypatch.setattr(app_updates.components, "installed_graph", lambda: copy.deepcopy(BASELINE))
+    monkeypatch.setattr("amplifier_web.app_feature_probe.installed_dependency_extras", lambda extras: {})
     monkeypatch.setattr(app_updates.components, "read_graph", AsyncMock(return_value=copy.deepcopy(CANDIDATE)))
     monkeypatch.setattr(app_updates.components, "updates", AsyncMock(side_effect=AssertionError("feature checked newer components")))
     monkeypatch.setattr(app_updates, "check", AsyncMock(side_effect=AssertionError("feature checked newer app releases")))

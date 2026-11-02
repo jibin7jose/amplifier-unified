@@ -368,9 +368,11 @@ async def _stage(manager, *, selected=None, extras):
         # This explicit addition must not opportunistically upgrade or omit a
         # pre-existing distribution, including packages beyond app dependencies.
         from .app_features import validate_selection
+        from .app_feature_probe import installed_dependency_extras
         validate_selection(manager, selected, extras)
         await manager.diagnostics.run('target-discovery',installed_target)
-        manager.diagnostics.sync('host-components-record',write_private,folder/'host-components.txt',components.requirements(host_graph))
+        dependency_extras=manager.diagnostics.sync('host-dependency-extras',installed_dependency_extras,extras)
+        manager.diagnostics.sync('host-components-record',write_private,folder/'host-components.txt',components.requirements(host_graph,extras=dependency_extras))
         resolution_args=['--refresh','--overrides',str(folder/'host-components.txt'),
                          '--with-requirements',str(folder/'host-components.txt')]
     await manager.publish(phase='staging',detail='Installing the app release in an isolated environment…',error=None)
