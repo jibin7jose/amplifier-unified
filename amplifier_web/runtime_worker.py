@@ -657,6 +657,10 @@ class Worker:
 
     def install_activity(self, coordinator):
         from amplifier_core import HookResult
+        # ask_user is delivered over the host's durable approval channel even
+        # though this worker has no terminal. This advertises transport only;
+        # each request still waits for its own explicit client response.
+        coordinator.register_capability("approval.interactive", True)
         if coordinator.get_capability("web.activity"):
             # Live provider edits may mount a new immutable instance after the
             # hooks were installed. Preserve its admission wrapper as well.

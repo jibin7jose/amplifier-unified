@@ -31,6 +31,8 @@ ROUTING_BUNDLE = 'git+https://github.com/microsoft/amplifier-bundle-routing-matr
 ENV_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 PROVIDER_ENV = {
     'provider-openai': ('OPENAI_API_KEY',),
+    'provider-jev': ('TYPESAFE_API_KEY',),
+    'provider-local-decisions': ('LOCAL_DECISIONS_API_KEY',),
     'provider-azure-openai': ('AZURE_OPENAI_API_KEY',),
     'provider-chat-completions': ('CHAT_COMPLETIONS_API_KEY',),
     'provider-anthropic': ('ANTHROPIC_API_KEY',),
@@ -572,6 +574,13 @@ class SetupManager:
             cli=bool(await asyncio.to_thread(github_cli_token)) if args['module']=='provider-github-copilot' else False
             self.config(workspace) # Load app-owned keys as well as the launch environment.
             return {'credentialCheck':{**environment_credential(args['module'],env_var=args.get('envVar')), 'githubCliAvailable':cli,'requestedEnvVar':args.get('envVar',''), 'checkedAt':time.time()}}
+        if action=='providers.decisionModels':
+            from .decision_settings import describe
+            effective = self.config(workspace)
+            return {'decisionModels': describe(effective.settings, effective.providers)}
+        if action=='providers.configureDecisions':
+            from .decision_settings import configure
+            return configure(self, args, workspace, scope)
         if action=='providers.list':
             from .image_defaults import preference
             config = self.config(workspace)

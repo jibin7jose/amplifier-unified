@@ -21,7 +21,8 @@ _SECRET_KEYS = {"api_key", "apikey", "access_token", "refresh_token", "secret", 
 def _metadata(value):
     """Persist routing/config, never literal credential fields."""
     if isinstance(value, dict):
-        return {key: _metadata(item) for key, item in value.items() if key.lower() not in _SECRET_KEYS}
+        return {key: _metadata(item) for key, item in value.items()
+                if key.lower() not in _SECRET_KEYS or item == {"$hostProviderCredential": True}}
     if isinstance(value, list):
         return [_metadata(item) for item in value]
     return value

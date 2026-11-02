@@ -280,6 +280,22 @@ async def test_missing_saved_connection_publishes_choices_without_changing_histo
     h.session.cleanup.assert_awaited_once()
 
 
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
+async def test_initialization_failure_keeps_cleanup_ownership_before_session_returns(mounted_host, failure):
+    h = mounted_host
+    h.store.save("native-root", [{"role": "user", "content": "Retained work"}], {"bundle": "anchors"})
+    before = h.path.read_bytes()
+    async def create(**kwargs):
+        await kwargs["before_initialize"](h.session)
+        raise failure("Later account failed during initialization")
+    h.prepared.create_session.side_effect = create
+    with pytest.raises(failure):
+        await h.prepare()
+    h.session.cleanup.assert_awaited_once()
+    h.session.execute.assert_not_called()
+    assert h.path.read_bytes() == before
+
+
 async def test_native_only_resume_keeps_complete_history_and_repairs_receipt_without_replay(mounted_host):
     h = mounted_host
     rows = [{"role": "user", "content": "first"}, {"role": "assistant", "content": "answer"},

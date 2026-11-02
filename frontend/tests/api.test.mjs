@@ -9,6 +9,15 @@ test('commands send structured JSON to same origin and return server receipt',as
 test('server validation errors remain visible and do not report success',async()=>{
  const original=globalThis.fetch;try{globalThis.fetch=async()=>new Response(JSON.stringify({accepted:false,error:'Select a conversation first.'}),{status:400});await assert.rejects(request('/api/actions',{method:'POST',body:{}}),/Select a conversation first/);}finally{globalThis.fetch=original}
 });
+test('rejection identifies its request endpoint without retaining private query context',async()=>{
+ const original=globalThis.fetch;
+ try{
+  globalThis.fetch=async()=>new Response(JSON.stringify({error:'Permission denied'}),{status:403});
+  for(const path of ['/api/actions','/api/state'])await assert.rejects(request(path+'?private=do-not-retain'),error=>{
+   assert.equal(error.requestPath,path);assert.equal(error.status,403);assert.ok(!JSON.stringify(error).includes('do-not-retain'));return true;
+  });
+ }finally{globalThis.fetch=original}
+});
 test('unexpected HTML response gives useful connection error',async()=>{
  const original=globalThis.fetch;try{globalThis.fetch=async()=>new Response('<html>proxy failure</html>',{status:502});await assert.rejects(request('/api/state'),/unexpected response \(502\)/);}finally{globalThis.fetch=original}
 });

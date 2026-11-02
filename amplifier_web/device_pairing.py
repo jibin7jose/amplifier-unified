@@ -84,7 +84,7 @@ class Pairings:
         while self.starts and self.starts[0] <= now - 60:
             self.starts.popleft()
 
-    def start(self, name, proof):
+    def start(self, name, proof, *, enrollment=None):
         self.clean()
         if not isinstance(proof, str) or not PROOF.fullmatch(proof):
             raise web.HTTPBadRequest(text='Invalid device proof.')
@@ -97,11 +97,15 @@ class Pairings:
         code = '-'.join(''.join(secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(4)) for _ in range(2))
         self.pending[identity] = {'name': name.strip(), 'challenge': proof, 'code': code,
                                   'expires': time.time() + TTL, 'state': 'pending'}
+        if enrollment is not None:
+            self.pending[identity]['enrollment'] = enrollment
         return {'id': identity, 'code': code, 'verificationPath': '/devices/pair?id=' + identity,
                 'expiresIn': TTL, 'interval': 5}
 
     def find(self, identity):
         self.clean()
+        if not isinstance(identity, str):
+            raise web.HTTPBadRequest(text='Invalid connection request identifier.')
         row = self.pending.get(identity)
         if row is None:
             raise web.HTTPGone(text='This connection request expired. Start again in the app.')
@@ -114,13 +118,26 @@ class Pairings:
         if not allow:
             row['state'] = 'denied'
             return
-        device_id = secrets.token_hex(16)
-        token = 'amc_' + device_id + '.' + secrets.token_urlsafe(48)
+        enrollment = row.get('enrollment')
+        upgrade = enrollment.get('upgradeDevice') if enrollment else None
+        device_id = upgrade or secrets.token_hex(16)
+        token = (enrollment['upgradeToken'] if upgrade else
+                 ('amd_' if enrollment else 'amc_') + device_id + '.' + secrets.token_urlsafe(48))
         with self.devices.transaction() as state:
+            if upgrade:
+                existing = state['devices'].get(upgrade)
+                if not existing or existing.get('scope') != 'device-v1' or self.devices.identify(token) != upgrade:
+                    raise web.HTTPGone(text='This app was disconnected. Start a new connection.')
+                existing['grants'] = sorted(set(existing['grants']) | set(enrollment['grants']))
+                row.update(state='approved', token=token, deviceID=device_id)
+                return
             if len(state['devices']) >= MAX_DEVICES:
                 raise web.HTTPConflict(text='Remove an unused device before connecting another.')
             state['devices'][device_id] = {'id': device_id, 'name': row['name'], 'scope': SCOPE,
                                             'digest': digest(token), 'createdAt': int(time.time())}
+            if enrollment:
+                state['devices'][device_id].update(scope='device-v1', appId=enrollment['appId'],
+                                                   grants=enrollment['grants'])
         row.update(state='approved', token=token, deviceID=device_id)
 
     def poll(self, identity, verifier):
@@ -130,7 +147,10 @@ class Pairings:
         if row['state'] == 'approved':
             if self.devices.identify(row['token']) is None:
                 return {'status': 'revoked'}
-            return {'status': 'approved', 'token': row['token'], 'deviceID': row['deviceID'], 'scope': SCOPE}
+            result = {'status': 'approved', 'token': row['token'], 'deviceID': row['deviceID'], 'scope': SCOPE}
+            if row.get('enrollment'):
+                result.update(scope='device-v1', grants=self.devices.read()['devices'][row['deviceID']]['grants'])
+            return result
         return {'status': row['state']}
 
 
@@ -182,6 +202,9 @@ def setup_routes(app):
         identity = request.query.get('id', '')
         browser_session(request)
         row = manager.find(identity)
+        if row.get('enrollment'):
+            # Never describe a capability grant using the old chat-only page.
+            raise web.HTTPSeeOther('/connect/verify?id=' + identity)
         if request.method == 'POST':
             form = await check_form(request, identity)
             if form.get('decision') not in {'allow', 'deny'}:
@@ -205,11 +228,15 @@ def setup_routes(app):
             identity = form.get('id', '')
             if not re.fullmatch(r'[a-f0-9]{32}', identity):
                 raise web.HTTPBadRequest()
+            if 'device_connections' in app:
+                app['device_connections'].stop(identity, 'Access removed')
             manager.devices.revoke(identity)
             raise web.HTTPSeeOther('/devices')
         rows = []
         for row in manager.devices.listing():
-            scope = 'Chat companion' if row.get('scope') == SCOPE else 'Full host access'
+            scope = ('Chat companion' if row.get('scope') == SCOPE else
+                     'Connected app · ' + ', '.join(row.get('grants', []))
+                     if row.get('scope') == 'device-v1' else 'Full host access')
             rows.append('<li><strong>' + html.escape(row['name']) + '</strong> — ' + scope
                 + '<form method="post"><input type="hidden" name="csrf" value="' + csrf(request, 'manage')
                 + '"><input type="hidden" name="id" value="' + row['id']

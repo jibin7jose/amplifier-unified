@@ -1,5 +1,6 @@
 """Application updates retain and validate every installed optional feature."""
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -8,7 +9,8 @@ from amplifier_web import app_updates
 from test_app_updates import prepared_activation
 
 
-@pytest.mark.parametrize('extras', [[], ['tui'], ['native-desktop'], ['native-desktop', 'tui']])
+@pytest.mark.parametrize('extras', [[], ['tui'], ['native-desktop'], ['native-desktop', 'tui'],
+    ['decisions-jev'], ['decisions-openai', 'tui']])
 async def test_update_stages_and_replaces_the_same_optional_install(tmp_path, monkeypatch, extras):
     service, manager, _ = await prepared_activation(tmp_path, monkeypatch)
     service.state['updates']['application'] = service.state['updates']['pendingApp']
@@ -103,18 +105,26 @@ async def test_changed_extras_can_restage_through_normal_app_command(tmp_path, m
     close.assert_awaited_once()
 
 
-@pytest.mark.parametrize('extras', [[], ['tui'], ['native-desktop'], ['native-desktop', 'tui']])
+@pytest.mark.parametrize('extras', [[], ['tui'], ['native-desktop'], ['native-desktop', 'tui'],
+    ['decisions-jev'], ['decisions-local'], ['decisions-openai'], ['managed-browser']])
 def test_detect_optional_features_without_loading_them(monkeypatch, extras):
-    distributions = {'native-desktop': 'amplifier-module-tool-computer-use', 'tui': 'amplifier-app-tui'}
+    distributions = {
+        'native-desktop': ['amplifier-module-tool-computer-use'], 'tui': ['amplifier-app-tui'],
+        'decisions-jev': ['amplifier-lib-decisions', 'amplifier-module-provider-jev'],
+        'decisions-local': ['amplifier-lib-decisions', 'amplifier-module-provider-local-decisions'],
+        'decisions-openai': ['amplifier-lib-decisions', 'amplifier-module-provider-openai'],
+        'managed-browser': ['playwright'],
+    }
     requested = []
     def distribution(name):
         requested.append(name)
-        if name not in {distributions[extra] for extra in extras}:
+        if name not in {name for extra in extras for name in distributions[extra]}:
             raise app_updates.metadata.PackageNotFoundError(name)
-        return object()
+        return SimpleNamespace(entry_points=[SimpleNamespace(group='amplifier.decision_backends')])
     monkeypatch.setattr(app_updates.metadata, 'distribution', distribution)
     assert app_updates.installed_extras() == extras
-    assert requested == ['amplifier-module-tool-computer-use', 'amplifier-app-tui']
+    assert len(requested) == len(set(requested))
+    assert not any(name in requested for name in ('torch', 'transformers', 'accelerate'))
 
 
 @pytest.mark.parametrize('extras', [None, 'tui', ['unknown'], ['tui', 'tui'], [['tui']], [True]])

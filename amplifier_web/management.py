@@ -259,7 +259,7 @@ class Management:
             return await self.list_bundles(args, command_id)
         if action == 'providers.list':
             return await self.list_providers(args, command_id)
-        independent=(action in {'bundle.preview','configuration.defaults','providers.list','providers.credentials','providers.schema','providers.models','providers.imageModels','providers.test','providers.testMessage','routing.list','routing.show'}
+        independent=(action in {'bundle.preview','configuration.defaults','providers.list','providers.decisionModels','providers.credentials','providers.schema','providers.models','providers.imageModels','providers.test','providers.testMessage','routing.list','routing.show'}
                      or action == 'runtime.control' and args.get('operation') == 'configuration.catalog')
         try:
             if not independent and self.lock.locked():
@@ -841,9 +841,9 @@ class Management:
             from .managed_chats import is_managed
             from .configuration_target import resolve
             target=resolve(self.service,args)
-            managed_draft = target['global_only'] if target else action in {'providers.list','providers.models','providers.imageModels'} and is_managed(args)
+            managed_draft = target['global_only'] if target else action in {'providers.list','providers.decisionModels','providers.models','providers.imageModels'} and is_managed(args)
             session=({'workspace':str(self.service.data_dir)} if managed_draft else {'workspace':str(Path(args['workspace']).expanduser().resolve())}
-                     if managed_draft or action in {'providers.list','providers.models','providers.imageModels'} and args.get('workspace')
+                     if managed_draft or action in {'providers.list','providers.decisionModels','providers.models','providers.imageModels'} and args.get('workspace')
                      else self.configuration_session(args))
             async def runtime_operation(operation,values):
                 current=self.session(args)
@@ -871,7 +871,7 @@ class Management:
             else:
                 persistent.runtime_operation=runtime_operation
                 persistent.progress=progress
-            manager=SetupManager(self.service.data_dir,catalog=self.provider_catalog,allow_missing_workspace=bool(args.get('workspace')),global_only=managed_draft) if action in {'providers.list','providers.credentials','providers.schema','providers.models','providers.imageModels','providers.test','providers.testMessage','routing.list','routing.show'} else persistent
+            manager=SetupManager(self.service.data_dir,catalog=self.provider_catalog,allow_missing_workspace=bool(args.get('workspace')),global_only=managed_draft) if action in {'providers.list','providers.decisionModels','providers.credentials','providers.schema','providers.models','providers.imageModels','providers.test','providers.testMessage','routing.list','routing.show'} else persistent
             probe_key=manager.catalog_key(args,session['workspace']) if action in {'providers.models','providers.imageModels','providers.schema'} else None
             routing_before = None
             if action in {'routing.save', 'routing.use'}:
@@ -927,8 +927,8 @@ class Management:
                     state_for(self.service,'setup',args).update(providers=manager.provider_rows(session['workspace']),providersWorkspace=session['workspace'],providersLoadedAt=time.time(), providersLocation={'kind':'managed' if managed_draft else 'workspace'}, configurationTarget=args.get('configurationTarget'), imagePreference=preference(image_config.settings, image_config.providers))
                     self.service._publish_progress(session_ids=set(), record_only=True, global_keys={'setup'})
                 self.background(self.warm_providers(manager,session['workspace']))
-            if action in {'providers.save','providers.finishSetup','providers.configureImages','providers.remove','providers.move','providers.reorder','routing.save','routing.use'} and result.get('configurationChanged',True):
-                await self.invalidate_configuration(publish=False,warm=action not in {'providers.save','providers.finishSetup','providers.configureImages','providers.remove','providers.move','providers.reorder','routing.save','routing.use'},session_ids=routing_sessions)
+            if action in {'providers.save','providers.finishSetup','providers.configureImages','providers.configureDecisions','providers.remove','providers.move','providers.reorder','routing.save','routing.use'} and result.get('configurationChanged',True):
+                await self.invalidate_configuration(publish=False,warm=action not in {'providers.save','providers.finishSetup','providers.configureImages','providers.configureDecisions','providers.remove','providers.move','providers.reorder','routing.save','routing.use'},session_ids=set() if action=='providers.configureDecisions' else routing_sessions)
         elif action in {'bundle.preview', 'bundle.switch', 'bundle.fork'}:
             from .bundle_actions import perform
             await perform(self, action, args)

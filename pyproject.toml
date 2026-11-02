@@ -19,15 +19,22 @@ dependencies = [
     "tinycss2>=1.4,<2",
     "pyyaml>=6.0.3,<7",
     "filelock>=3.20,<4",
+    "qrcode>=8.2,<9",
     "watchfiles>=1.1,<2",
     "mcp>=2.2,<3",
     "httpx>=0.28,<1",
     "amplifier-bundle-context-intelligence[client] @ git+https://github.com/microsoft/amplifier-bundle-context-intelligence@main",
+    "amplifier-bundle-ui-use @ git+https://github.com/microsoft/amplifier-bundle-ui-use@main",
 ]
 
 [project.optional-dependencies]
 tui = ["amplifier-app-tui @ git+https://github.com/microsoft/amplifier-app-tui@main"]
 native-desktop = ["amplifier-module-tool-computer-use @ git+https://github.com/microsoft/amplifier-bundle-computer-use@main#subdirectory=modules/tool-computer-use"]
+managed-browser = ["amplifier-bundle-ui-use[browser] @ git+https://github.com/microsoft/amplifier-bundle-ui-use@main"]
+decisions-openai = ["amplifier-module-provider-openai[decisions] @ git+https://github.com/microsoft/amplifier-module-provider-openai@main"]
+decisions-azure = ["amplifier-module-provider-azure-openai[decisions] @ git+https://github.com/microsoft/amplifier-module-provider-azure-openai@main"]
+decisions-jev = ["amplifier-module-provider-jev @ git+https://github.com/microsoft/amplifier-module-provider-jev@main"]
+decisions-local = ["amplifier-module-provider-local-decisions @ git+https://github.com/microsoft/amplifier-module-provider-local-decisions@main"]
 
 [project.scripts]
 amplifier-unified = "amplifier_web.cli:main"

@@ -16,13 +16,21 @@ from . import app_component_graph as components
 
 REPOSITORY='microsoft/amplifier-unified'
 SOURCE='https://github.com/'+REPOSITORY
-OPTIONAL_EXTRAS={'native-desktop':'amplifier-module-tool-computer-use','tui':'amplifier-app-tui'}
-PROBE = r'''import json,sys
+OPTIONAL_EXTRAS={
+    'native-desktop': ('amplifier-module-tool-computer-use',),
+    'tui': ('amplifier-app-tui',),
+    'managed-browser': ('playwright',),
+    'decisions-openai': ('amplifier-lib-decisions', 'amplifier-module-provider-openai'),
+    'decisions-azure': ('amplifier-lib-decisions', 'amplifier-module-provider-azure-openai'),
+    'decisions-jev': ('amplifier-lib-decisions', 'amplifier-module-provider-jev'),
+    'decisions-local': ('amplifier-lib-decisions', 'amplifier-module-provider-local-decisions'),
+}
+PROBE = r'''import json,os,sys
 facts={"ok":False,"stage":"imports","isolated":bool(sys.flags.isolated),"pythonVersion":"%s.%s.%s"%sys.version_info[:3]}
 try:
  from pathlib import Path
  extras=sys.argv[1:]
- assert len(extras)==len(set(extras)) and all(extra in {"native-desktop","tui"} for extra in extras)
+ assert len(extras)==len(set(extras)) and all(extra in {"native-desktop","tui","managed-browser","decisions-openai","decisions-azure","decisions-jev","decisions-local"} for extra in extras)
  import amplifier_web
  from amplifier_web import __version__
  from amplifier_web.server import create_app
@@ -35,6 +43,8 @@ try:
  facts["stage"]="assets"
  facts["frontendPresent"]=(p/"static/index.html").is_file()
  assert facts["frontendPresent"]
+ from amplifier_ui_use.browser import observation_for
+ assert callable(observation_for)
  facts["stage"]="login"
  facts["loginAvailable"]=callable(pam.authenticate)
  assert facts["loginAvailable"]
@@ -51,6 +61,16 @@ try:
   binary=executable(None)
   assert callable(main) and binary.is_relative_to(Path(sys.prefix).resolve())
   assert binary.is_file() and os.access(binary,os.X_OK)
+ if "managed-browser" in extras:
+  from playwright.sync_api import sync_playwright
+  with sync_playwright() as driver:
+   binary=Path(driver.chromium.executable_path)
+   assert binary.is_file() and os.access(binary,os.X_OK)
+ for extra,module in {"decisions-openai":"amplifier_module_provider_openai.decisions", "decisions-azure":"amplifier_module_provider_azure_openai.decisions", "decisions-jev":"amplifier_module_provider_jev.catalog", "decisions-local":"amplifier_module_provider_local_decisions.catalog"}.items():
+  if extra in extras:
+   import importlib
+   catalog=importlib.import_module(module).catalog()
+   assert catalog["schema_version"]==2 and callable(catalog["validate"])
  facts["stage"]="worker-imports"
  import subprocess,tempfile
  worker_probe = """
@@ -163,11 +183,63 @@ def git_environment():
 def installed_extras():
     """Retain known optional features without loading clients or desktop backends."""
     extras=[]
-    for extra,distribution in sorted(OPTIONAL_EXTRAS.items()):
-        try:metadata.distribution(distribution)
-        except metadata.PackageNotFoundError:continue
+    present={}
+    for extra,distributions in sorted(OPTIONAL_EXTRAS.items()):
+        for distribution in distributions:
+            if distribution not in present:
+                try:present[distribution]=metadata.distribution(distribution)
+                except metadata.PackageNotFoundError:present[distribution]=None
+        if not all(present[name] is not None for name in distributions):continue
+        if extra.startswith('decisions-') and not any(
+                entry.group == 'amplifier.decision_backends'
+                for entry in getattr(present[distributions[-1]], 'entry_points', ())):
+            continue
         extras.append(extra)
     return extras
+
+
+def browser_process_options(manager, extras):
+    if 'managed-browser' not in extras:
+        return {}
+    from .app_features import managed_browser_cache
+    return {'env': {**os.environ, 'PLAYWRIGHT_BROWSERS_PATH': str(managed_browser_cache(manager.home))}}
+
+
+async def prepare_browser(manager, python, extras):
+    """Download this package's browser into this app's cache; install no OS packages."""
+    if 'managed-browser' not in extras:
+        return
+    from .app_features import managed_browser_cache, _managed_browser_path
+    managed_browser_cache(manager.home).mkdir(parents=True, exist_ok=True, mode=0o700)
+    await manager.diagnostics.run('managed-browser-install', process, python, '-I', '-m',
+        'playwright', 'install', 'chromium', **browser_process_options(manager, extras), timeout=900)
+    receipt = await qualify_browser(manager, python)
+    _managed_browser_path.cache_clear()
+    return receipt
+
+
+async def qualify_browser(manager, python):
+    probe = '''import asyncio,json
+from amplifier_web.app_features import qualify_managed_browser
+print(json.dumps(asyncio.run(asyncio.wait_for(qualify_managed_browser(),timeout=12))))
+'''
+    try:
+        output = await manager.diagnostics.run('managed-browser-probe', process, python, '-I', '-c', probe,
+            **browser_process_options(manager, ['managed-browser']), timeout=15)
+        receipt = json.loads(output)
+        if (not isinstance(receipt, dict) or receipt.get('blankLaunchVerified') is not True
+                or receipt.get('selection') not in {'configured', 'owned'}
+                or not all(isinstance(receipt.get(key), str) and Path(receipt[key]).is_absolute()
+                           for key in ('ownedExecutable', 'selectedExecutable'))
+                or not isinstance(receipt.get('launchArgs'), list)
+                or not all(isinstance(arg, str) for arg in receipt['launchArgs'])):
+            raise ValueError('Invalid browser qualification receipt.')
+        return receipt
+    except (OSError, RuntimeError, TimeoutError, ValueError, TypeError) as error:
+        raise ValueError('The browser could not start in this service. Inspect the managed-browser-probe '
+            'diagnostic; the service owner may need to provide operating-system libraries or fix the '
+            'configured browser executable/launch settings. You can connect an existing browser instead. '
+            'No operating-system packages were installed.') from error
 
 def validated_extras(extras):
     if (not isinstance(extras,list) or
@@ -304,7 +376,8 @@ async def _stage(manager, *, selected=None, extras):
     await manager.publish(phase='staging',detail='Installing the app release in an isolated environment…',error=None)
     await manager.diagnostics.run('candidate-install',process,uv,'tool','install','--force',*resolution_args,install_requirement(revision,extras),env=env,timeout=900)
     python=folder/'tools/amplifier-unified'/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
-    output=await manager.diagnostics.run('candidate-probe',process,python,'-I','-c',PROBE,*extras,timeout=30)
+    browser_receipt = await prepare_browser(manager, python, extras)
+    output=await manager.diagnostics.run('candidate-probe',process,python,'-I','-c',PROBE,*extras,**browser_process_options(manager, extras),timeout=30)
     installed=verified_version(manager,output,release['latest'],'candidate-version')
     graph=await manager.diagnostics.run('candidate-components',components.read_graph,process,python)
     app=next((item for item in graph if item['name']=='amplifier-unified'),{})
@@ -316,7 +389,7 @@ async def _stage(manager, *, selected=None, extras):
         from .app_feature_probe import DEPENDENCY_PROBE
         await manager.diagnostics.run('candidate-dependencies',process,python,'-I','-c',DEPENDENCY_PROBE,*extras,timeout=30)
     manager.diagnostics.sync('candidate-components-record',write_private,folder/'components.txt',components.requirements(graph))
-    manager.diagnostics.sync('candidate-record',write_private,folder/'validated.json',json.dumps({'revision':revision,'version':installed,'hostVersion':__version__,'attemptId':manager.diagnostics.state['attemptId'],'extras':extras,'generation':generation,'componentGraph':graph,'componentDigest':components.digest(graph),'hostGraph':host_graph,'hostDigest':components.digest(host_graph),**({'featureSelection':selected} if selected else {})}))
+    manager.diagnostics.sync('candidate-record',write_private,folder/'validated.json',json.dumps({'revision':revision,'version':installed,'hostVersion':__version__,'attemptId':manager.diagnostics.state['attemptId'],'extras':extras,'generation':generation,'componentGraph':graph,'componentDigest':components.digest(graph),'hostGraph':host_graph,'hostDigest':components.digest(host_graph),**({'managedBrowser':browser_receipt} if browser_receipt else {}),**({'featureSelection':selected} if selected else {})}))
     manager.diagnostics.clear_failure()
     manager.diagnostics.record('stage','succeeded',observedVersion=installed)
     await manager.publish(phase='app-staged',pendingApp={**release,'attemptId':manager.diagnostics.state['attemptId'],'generation':generation,'extras':extras},detail='Application release validated. Waiting for work to finish before restarting.')
@@ -471,6 +544,10 @@ async def _activate(manager, *, force=None):
         candidate_graph=await manager.diagnostics.run('candidate-components-recheck',components.read_graph,process,helper_python)
         if candidate_graph!=graph:
             raise ValueError('The candidate components changed after validation; stage a new update')
+    if 'managed-browser' in extras:
+        current_browser = await qualify_browser(manager, helper_python)
+        if current_browser != validated.get('managedBrowser'):
+            raise ValueError('The selected browser executable or launch settings changed after qualification; prepare the update again.')
     if force is not None:
         from .application_generations import supports
         if not generation or not supports(Path(previous['installation'])):
@@ -529,7 +606,7 @@ async def _activate(manager, *, force=None):
             installed_python = target['prefix'] / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
         else:
             await manager.diagnostics.run('replacement-install',process,uv,'tool','install','--force',*resolution_args,install_requirement(release['revision'],extras),env=git_environment(),timeout=900)
-        output=await manager.diagnostics.run('replacement-probe',process,installed_python,'-I','-c',PROBE,*extras,timeout=30)
+        output=await manager.diagnostics.run('replacement-probe',process,installed_python,'-I','-c',PROBE,*extras,**browser_process_options(manager, extras),timeout=30)
         installed=verified_version(manager,output,validated['version'],'replacement-version')
         if graph is not None:
             replacement_graph=await manager.diagnostics.run('replacement-components',components.read_graph,process,installed_python)

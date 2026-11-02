@@ -397,6 +397,10 @@ def _apply_settings(bundle, config):
                 if routing.get("overrides"):
                     patch["overrides"] = routing["overrides"]
                 hook["config"] = merge(hook.get("config", {}), patch)
+    from ..decision_settings import apply as apply_decisions
+    apply_decisions(bundle, settings)
+    from .ui_use_config import configure_bundle
+    configure_bundle(bundle)
     overrides = settings.get("overrides", {})
     for kind in ("providers", "tools", "hooks"):
         values = []
@@ -455,6 +459,8 @@ def _apply_settings(bundle, config):
         if isinstance(row, dict):
             override = overrides.get(row.get("module"), {})
             bundle.session[kind] = merge(row, {key: value for key, value in override.items() if key in {"source", "config"}})
+    from ..decision_accounts import bind_sources
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
     return bundle
 
 
@@ -863,6 +869,8 @@ class ResolvedRoot:
 
 def apply_runtime_plan(loaded, edited, config, execution_workspace):
     from ..runtime_controls import validate_plan
+    from ..decision_accounts import logical_plan
+    edited = logical_plan(edited)
     validate_plan(edited)
     if "hooks" in edited:
         # Even a same-valued balanced selection is explicit. An effective saved
@@ -1070,6 +1078,12 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
                 if isolation.failure(row):
                     row["enabled"] = False
         apply_provider_environment(environment_plan)
+    from ..decision_accounts import DecisionAccounts, AccountResolver, logical_plan
+    decision_accounts = DecisionAccounts(prepared.mount_plan, isolation,
+        lambda module, source: module_source(config, snapshot, module, source, components))
+    prepared.mount_plan = decision_accounts.plan
+    if decision_accounts.aliases:
+        prepared.resolver = AccountResolver(prepared.resolver, decision_accounts.aliases)
     from ..session_files import project_slug
     prepared.mount_plan.update(application_host=application_host, root_session_id=runtime.session_id,
         project_slug=project_slug(config.workspace),
@@ -1097,17 +1111,23 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         routing_policy = ({"before_initialize": partial(
             prepare_default_routing, automatic=getattr(loaded, "_host_automatic_routing", False))}
                           if not snapshot and any(row.get("module") == "hooks-routing" for row in loaded.hooks) else {})
-        if isolation:
+        if isolation or decision_accounts.records:
             routing_callback = routing_policy.get("before_initialize")
-            async def initialize_with_isolation(session):
-                await isolation.before_initialize(session)
+            async def initialize_with_isolation(constructing):
+                nonlocal session
+                session = constructing  # Retain cleanup ownership if initialize raises.
+                if isolation:
+                    await isolation.before_initialize(constructing)
+                if decision_accounts.records:
+                    await decision_accounts.before_initialize(constructing)
                 if routing_callback:
-                    await routing_callback(session)
+                    await routing_callback(constructing)
             routing_policy["before_initialize"] = initialize_with_isolation
         with startup_timing.phase('manager.session.create'):
             session = await prepared.create_session(session_id=runtime.session_id,
                 session_cwd=execution_workspace, approval_system=approvals, is_resumed=messages is not None,
                 **routing_policy)
+        decision_accounts.require_complete()
         coordinator = session.coordinator
         coordinator.register_capability("approval.interactive", approvals.interactive)
         from ..read_policy import validate_mounted_read_policy
@@ -1117,7 +1137,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         install_request_redaction(coordinator, directory=capture_dir(config.workspace, runtime.session_id))
         coordinator.register_capability('web.history_workspace', str(config.workspace))
         coordinator.register_capability('web.provider_credentials_bound',
-                                        getattr(loaded, '_host_provider_credentials_bound', False))
+                                        bool(decision_accounts.records) or getattr(loaded, '_host_provider_credentials_bound', False))
         # Freeze credential/file/source/generation identity before provider
         # construction. A later rotation cannot relabel an old mounted result.
         coordinator.register_capability('web.provider_catalog', {
@@ -1178,7 +1198,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             "session_id": runtime.session_id, "parent_id": None,
             "bundle_name": bundle_identity, "working_dir": str(config.workspace),
             "created": (saved[1].get("created") if saved else None) or datetime.now(UTC).isoformat(),
-            "application_host": application_host, "config": redact(session.config)}
+            "application_host": application_host, "config": redact(logical_plan(session.config))}
         continuity = None
         published_anchors = None
         async def checkpoint(status="in_progress"):
@@ -1276,7 +1296,8 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             "capabilities": {name: coordinator.get_capability(name) is not None for name in
                 ("session.spawn", "session.resume", "mention_resolver", "model_role_resolver")},
             "module_load_failures": fatal_failures,
-            "provider_failures": isolation.outcomes(coordinator) if isolation else []}
+            "provider_failures": isolation.outcomes(coordinator) if isolation else [],
+            "decision_account_failures": decision_accounts.failures}
         report["config_inputs"] = config_inputs
         report["history_source"] = history_source
         report["execution_workspace"] = str(execution_workspace)

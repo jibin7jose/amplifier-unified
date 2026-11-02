@@ -1,0 +1,7 @@
+# Only the installed host support packs are added to a new worker declaration.
+# These are HTTP clients/contracts, never local model servers or inference weights.
+[features]
+decisions-openai = ["amplifier-module-provider-openai[decisions] @ git+https://github.com/microsoft/amplifier-module-provider-openai@main"]
+decisions-azure = ["amplifier-module-provider-azure-openai[decisions] @ git+https://github.com/microsoft/amplifier-module-provider-azure-openai@main"]
+decisions-jev = ["amplifier-module-provider-jev @ git+https://github.com/microsoft/amplifier-module-provider-jev@main"]
+decisions-local = ["amplifier-module-provider-local-decisions @ git+https://github.com/microsoft/amplifier-module-provider-local-decisions@main"]

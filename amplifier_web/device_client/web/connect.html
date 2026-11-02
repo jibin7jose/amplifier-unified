@@ -1,0 +1,40 @@
+<p class="eyebrow">DEVICES & APPS · ISOLATED PREVIEW</p>
+<h1>Bring your devices into the conversation.</h1>
+<p class="lead">Connect an app, then choose what it can help with. Your work stays on this Amplifier service.</p>
+<div id="notice" role="status" aria-live="polite"></div>
+<section class="card">
+  <h2>Use a browser on this computer</h2>
+  <p>Connect the Amplifier extension and choose a tab locally. You can then work with that tab from another screen—including your phone.</p>
+  <div class="actions"><button id="open-extension" class="primary">Open and connect</button><a class="button" href="/connect/download/extension">Download extension preview</a></div>
+  <details><summary>First time? Install the development preview</summary>
+    <p>If your browser shows a certificate warning for this service, finish <a href="/setup" target="_blank" rel="noopener">HTTPS setup</a> before connecting. Dismissing the warning can let approval work while the extension’s background connection fails.</p>
+    <ol><li>Download and unzip the extension preview.</li><li>Open your browser’s Extensions page and enable Developer mode.</li><li>Choose Load unpacked and select the <strong>amplifier-connect</strong> folder.</li><li>Return here and choose Open and connect.</li></ol>
+    <p>This PoC is for Chrome and Edge. Store installation and native-client installers are separate follow-up work.</p>
+  </details>
+  <p>For tasks across pages, install the latest extension preview, open the extension connection page and choose <strong>Enable tasks across pages</strong>. Approve that added access once, then choose <strong>Use this tab across pages</strong> in its toolbar popup. Older connections keep their document-only access.</p>
+  <p id="setup-state" class="muted" aria-live="polite"></p>
+</section>
+<section class="card">
+  <h2>Your connections</h2>
+  <p>Each app has its own access. Connecting a device does not give every app on it permission.</p>
+  <div id="devices" aria-live="polite"><p>Loading connections…</p></div>
+</section>
+<section class="card">
+  <h2>Try browser access</h2>
+  <p><a href="/connect/sample" target="_blank" rel="noopener">Open the sample form</a> on the computer whose browser you want to use. In the extension, choose <strong>Use this tab</strong>. Then select it below.</p>
+  <label for="target">Browser target</label><select id="target"><option value="">No browser target is ready</option></select>
+  <div class="actions"><button id="observe" disabled>Inspect selected tab</button><button id="sample" disabled>Fill and save the sample</button><button id="cancel" hidden>Stop this test</button></div>
+  <p id="task-hint" class="muted"></p>
+  <p id="task-status" role="status"></p>
+  <pre id="result" hidden></pre>
+  <p class="muted">These checks use the connection protocol directly. No model is called or charged. The sample changes only the selected sample form.</p>
+</section>
+<section class="card">
+  <h2>Connect another app or device</h2>
+  <p><a href="/connect/code">Enter the code shown in your app</a>. Compatible clients can also open their approval link directly.</p>
+  <details><summary>Independent reference client</summary>
+    <p><a href="/connect/download/reference">Download the Python reference client</a>. It connects using the same public protocol and offers a connection check. It needs Python 3.10 or later.</p>
+    <p>Run it with <code>--host</code> followed by this page’s origin. For the isolated preview, use <code>--ca</code> with the service’s <a href="/ca.crt">CA certificate</a> after verifying it. It opens approval in your browser; no token copying is required.</p>
+  </details>
+</section>
+<details class="card"><summary>Requests and results</summary><p>Actual operation requests and retained results, including uncertain outcomes.</p><div id="operations"></div></details>

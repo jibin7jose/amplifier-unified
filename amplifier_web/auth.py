@@ -180,7 +180,8 @@ def is_entry_navigation(request: web.Request) -> bool:
     """
     return (
         request.method in {"GET", "HEAD"}
-        and request.path in {"/", "/login", "/setup", "/oauth/mcp/callback", "/oauth/mcp/complete", "/devices/pair", "/devices"}
+        and request.path in {"/", "/login", "/setup", "/oauth/mcp/callback", "/oauth/mcp/complete", "/devices/pair", "/devices",
+                             "/connect", "/connect/verify", "/connect/code"}
         and "Origin" not in request.headers
         and request.headers.get("Sec-Fetch-Mode") == "navigate"
         and (
@@ -192,6 +193,9 @@ def is_entry_navigation(request: web.Request) -> bool:
 
 @web.middleware
 async def auth_required(request: web.Request, handler):
+    from .device_connections import PREFIX, extension_request, permits_device
+    extension = extension_request(request)
+
     async def authenticated(credential):
         scope = history_scope(request.app["session_secret"], credential,
                               request.app["service"].data_dir)
@@ -202,8 +206,15 @@ async def auth_required(request: web.Request, handler):
         return response
 
     cross_site = request.headers.get("Sec-Fetch-Site") == "cross-site"
-    if (cross_site and not is_entry_navigation(request)) or not allowed_origin(request):
+    if not extension and ((cross_site and not is_entry_navigation(request)) or not allowed_origin(request)):
         return web.json_response({"error": "Cross-origin requests are not permitted."}, status=403)
+    if extension and request.method == 'OPTIONS':
+        return await handler(request)
+    if ((request.path in {PREFIX, PREFIX + '/qr'} and request.method in {'GET', 'HEAD'})
+            or (request.path in {PREFIX + '/enroll', PREFIX + '/token'} and request.method == 'POST')):
+        return await handler(request)
+    if extension and not request.headers.get('Authorization', '').lower().startswith('bearer amd_'):
+        return web.json_response({'error': 'An app credential is required.'}, status=401)
     # Public, immutable UI resources only. Authentication still gates the SPA,
     # every API, and all user-authored files/canvas documents.
     public = {"/oauth/mcp/callback", "/oauth/mcp/complete", "/login", "/setup", "/api/ca", "/ca.crt", "/api/health",
@@ -232,7 +243,7 @@ async def auth_required(request: web.Request, handler):
     authorization = request.headers.get("Authorization", "")
     if authorization.lower().startswith("bearer ") and hmac.compare_digest(authorization[7:], request.app["control_token"]):
         return await authenticated(authorization[7:])
-    if authorization.lower().startswith(('bearer amt_', 'bearer amc_')):
+    if authorization.lower().startswith(('bearer amt_', 'bearer amc_', 'bearer amd_')):
         devices = request.app['terminal_setup'].devices
         identity = devices.identify(authorization[7:])
         if identity:
@@ -242,7 +253,11 @@ async def auth_required(request: web.Request, handler):
             # Observe revocation before any await, including the JSON body read.
             with devices.connection(identity):
                 scope = device.get('scope')
-                if scope is not None:
+                if scope == 'device-v1':
+                    request['connection_device'] = identity
+                    if not permits_device(request):
+                        return web.json_response({'error': 'This connection cannot access that operation.'}, status=403)
+                elif scope is not None:
                     request['companion_device'] = identity
                     from .device_pairing import SCOPE, permits_companion
                     if scope != SCOPE or not await permits_companion(request):

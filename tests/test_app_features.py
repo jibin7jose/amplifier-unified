@@ -568,7 +568,8 @@ async def test_rejected_concurrent_feature_keeps_active_update_phase_and_receipt
 
 
 @pytest.mark.parametrize("caller", ["ui", "agent"])
-async def test_shared_action_persists_queued_admission_and_exact_retry_cannot_replay(managed, monkeypatch, caller):
+@pytest.mark.parametrize("feature", ["native-desktop", "managed-browser", "decisions-openai", "decisions-azure", "decisions-jev", "decisions-local"])
+async def test_shared_action_persists_queued_admission_and_exact_retry_cannot_replay(managed, monkeypatch, caller, feature):
     service = managed.service
     scheduled = []
 
@@ -580,7 +581,7 @@ async def test_shared_action_persists_queued_admission_and_exact_retry_cannot_re
         return None
 
     monkeypatch.setattr(service, "_task", hold)
-    args = {"feature": "native-desktop", "hostInstanceId": service.instance_id}
+    args = {"feature": feature, "hostInstanceId": service.instance_id}
 
     async def request():
         if caller == "agent":

@@ -22,7 +22,7 @@ EFFECTS = {
 }
 PERSISTENT = {
     **dict.fromkeys(('permissions.save', 'permissions.reset'), 'file_access'),
-    **dict.fromkeys(('providers.save', 'providers.remove', 'providers.move', 'providers.reorder', 'providers.login'), 'connections'),
+    **dict.fromkeys(('providers.save', 'providers.remove', 'providers.move', 'providers.reorder', 'providers.login', 'providers.configureDecisions'), 'connections'),
     **dict.fromkeys(('providers.finishSetup', 'providers.configureImages', 'routing.use', 'routing.save'), 'model_defaults'),
     **dict.fromkeys(('modules.save', 'modules.remove', 'modules.validate', 'sources.save', 'sources.remove', 'sources.validate'), 'modules'),
 }

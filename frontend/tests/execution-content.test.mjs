@@ -64,3 +64,11 @@ test('bounded misses and ambiguous calls do not claim a request was never record
  assert.match(contentUnavailable({contentAvailability:{status:'ambiguous'}},'Request'),/could not be matched/);
  assert.doesNotMatch(contentUnavailable({},'Request'),/not recorded/);
 });
+test('UI actions keep their tool identity while app dispatch exposes its nested action',()=>{
+ for(const tool of ['browser','computer','ui_use']){
+  const action=actionContent(node(tool,{action:'click'},{success:true}));
+  assert.equal(action.kind,'generic');assert.equal(action.title,tool);assert.equal(action.target,'click');
+ }
+ const app=actionContent(node('app_control',{operation:'dispatch',args:{action:'canvas.show'}},{success:true}));
+ assert.equal(app.kind,'app');assert.equal(app.title,'App action');assert.equal(app.target,'dispatch → canvas.show');
+});

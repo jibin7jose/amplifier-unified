@@ -4,23 +4,25 @@ import {ChatGPTAccount} from './chatgpt-sign-in';
 import {ProviderKeyPreview} from './provider-key-preview';
 import {ProviderMessageTest} from './provider-message-test';
 
-export function AIConnectionDetail({selected,service,state,session,act,busy,onModel,onImages,onCredentials,onRefresh,onCheck,onRemove,onAdvanced}){
+export function AIConnectionDetail({selected,service,state,session,act,busy,onModel,onImages,onDecisions,onCredentials,onRefresh,onCheck,onRemove,onAdvanced}){
  return <>
   {service.auth==='signin'&&<ChatGPTAccount account={selected?.account}/>}
   <p role={selected?.authenticationRequired?'alert':undefined}>{selected?.authenticationRequired?'Reconnect this account to continue.':selected?.accountConnected||selected?.credentialsConfigured?'Connected. Choose how Amplifier uses this account.':'Add credentials to use this connection.'}</p>
   <div className="a-connection-capabilities">
+   {service.decisionOnly?<div className="a-connection-capability"><div><strong>Decision models</strong><p>Choose actions for browser and computer tasks.</p><small>Enable this connection separately for each surface. Your ordinary chat model still plans the work.</small></div><button type="button" className="a-soft" disabled={busy} onClick={onDecisions}>Choose decision preferences</button></div>:<>
    <div className="a-connection-capability"><div><strong>Chat</strong><p>{selected?.config?.default_model||selected?.config?.model||'Choose a model'}</p></div><button type="button" className="a-soft" disabled={busy} onClick={onModel}>Choose model</button></div>
    <div className="a-connection-capability"><div><strong>Images</strong><p>Managed across your AI connections.</p><small>Your image provider can be different from your chat provider.</small></div><button type="button" className="a-soft" disabled={busy} onClick={onImages}>Manage image generation</button></div>
+   </>}
   </div>
   <details className="a-everyday-disclosure"><summary>Account and connection checks</summary><div>
    <ProviderKeyPreview credential={selected?.credential}/>
    <div className="a-dialog-actions">
     <button type="button" className="a-soft" disabled={busy} onClick={onCredentials}>{service.auth==='signin'?(selected?.accountConnected?'Reconnect account':'Sign in'):'Change credentials'}</button>
-    <button type="button" className="a-soft" disabled={busy} onClick={onCheck}>Check connection</button>
+    {!service.decisionOnly&&<button type="button" className="a-soft" disabled={busy} onClick={onCheck}>Check connection</button>}
     <button type="button" className="a-link" disabled={busy} onClick={onRefresh}><RefreshCw/>Refresh credentials</button>
    </div>
-   <p className="a-caption">Checking verifies the model catalog without sending a chat request.</p>
-   <ProviderMessageTest key={selected?.id} state={state} id={selected?.id} sessionId={session?.id} act={act} disabled={busy}/>
+   {service.decisionOnly?<p className="a-caption">Saving credentials does not test this service. Its first UI-use task reports the selected model, actual results and any fallback.</p>:<><p className="a-caption">Checking verifies the model catalog without sending a chat request.</p>
+   <ProviderMessageTest key={selected?.id} state={state} id={selected?.id} sessionId={session?.id} act={act} disabled={busy}/></>}
   </div></details>
   <div className="a-dialog-actions a-connection-secondary-actions"><button type="button" className="a-link" onClick={onAdvanced}>Full connection settings</button><button type="button" className="a-link a-danger" disabled={busy} onClick={onRemove}><Trash2/>Remove connection</button></div>
  </>;

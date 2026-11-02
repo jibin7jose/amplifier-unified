@@ -11,6 +11,9 @@ from .auth import with_history_scope
 
 @web.middleware
 async def client_context(request, handler):
+    if request.path == '/api/connections/v1' or request.path.startswith('/api/connections/v1/'):
+        # Device enrollment is independent of conversation/view attachment.
+        return await handler(request)
     service = request.app["service"]
     header = request.headers.get("X-Amplifier-Client")
     query = request.query.get("clientId")

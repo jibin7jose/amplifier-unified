@@ -850,30 +850,41 @@ class UpdateManager:
                 await self.publish(phase='error', error='Update check failed. Your installed sources are unchanged.')
 
     async def featureInstall(self, feature, hostInstanceId, request_id):
-        from .app_features import record
-        from .app_updates import stage, activate, installed_extras
+        from .app_features import FEATURES, record
+        from .app_updates import stage, activate, installed_extras, prepare_browser
         request_id = request_id or uuid.uuid4().hex
         try:
             if hostInstanceId != self.service.instance_id:
-                raise ValueError('The app host changed. Check desktop setup again before installing.')
-            if feature != 'native-desktop':
-                raise ValueError('Only native-desktop can be added through this action.')
+                raise ValueError('The app host changed. Check setup again before installing.')
+            if not isinstance(feature, str) or feature not in FEATURES:
+                raise ValueError('Choose a supported optional feature.')
             state = self.service.state['updates']
             if (self.closed or self.lock.locked() or self.awaiting_restart()
                     or state.get('pendingApp') or state.get('pendingRelease') or state.get('pendingSmartTools')):
                 raise ValueError('Another update is pending. Finish or inspect that update before adding a feature.')
             async with self.lock:
                 if feature in installed_extras():
-                    await record(self, request_id, 'already_installed', detail='The native observation package is already installed. Check readiness; this request changed nothing.')
+                    browser_receipt = None
+                    if feature == 'managed-browser':
+                        import sys
+                        self.diagnostics.begin('application', self.running_identity.get('revision'))
+                        await record(self, request_id, 'staging', feature=feature,
+                            detail='Preparing the browser binary in this service’s own cache.')
+                        browser_receipt = await prepare_browser(self, sys.executable, [feature])
+                    await record(self, request_id, 'already_installed', feature=feature,
+                        **({'managedBrowser':browser_receipt} if browser_receipt else {}),
+                        detail='Browser launch verified using '+browser_receipt['selection']+' executable; refresh browser readiness.' if browser_receipt
+                            else 'The optional package is already installed. Decision support also requires current conversation components.')
                     return
-                await record(self, request_id, 'staging', detail='Qualifying native observation against this same app and its existing components.')
+                await record(self, request_id, 'staging', feature=feature,
+                    detail='Qualifying '+FEATURES[feature]+' against this same app and its existing components.')
                 await stage(self, feature=feature, request_id=request_id)
             await activate(self)
         except asyncio.CancelledError:
-            await record(self, request_id, 'interrupted', detail='The request was interrupted. Inspect update diagnostics before any retry.')
+            await record(self, request_id, 'interrupted', feature=feature, detail='The request was interrupted. Inspect update diagnostics before any retry.')
             raise
         except Exception as error:
-            await record(self, request_id, 'error', detail=str(error) if isinstance(error, ValueError) else 'The feature request did not finish. Inspect update diagnostics before retrying; nothing was replayed.')
+            await record(self, request_id, 'error', feature=feature, detail=str(error) if isinstance(error, ValueError) else 'The feature request did not finish. Inspect update diagnostics before retrying; nothing was replayed.')
             raise
 
     async def app(self):

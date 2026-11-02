@@ -42,10 +42,11 @@ def _set_response_headers(response: web.StreamResponse, request: web.Request) ->
     # Chromium sends Origin: null on navigation POSTs from a no-referrer
     # document. Keep the login form same-origin without leaking referrers to
     # other sites; do not weaken the Origin check to accept opaque origins.
-    response.headers["Referrer-Policy"] = "same-origin" if path in {"/login", "/devices", "/devices/pair"} else "no-referrer"
-    response.headers["Cache-Control"] = "no-store" if path.startswith(("/api/", "/share/", "/devices")) or path in {"/login", "/oauth/mcp/callback", "/oauth/mcp/complete"} else "no-cache"
+    response.headers["Referrer-Policy"] = "same-origin" if path in {"/login", "/devices", "/devices/pair"} or path.startswith('/connect') else "no-referrer"
+    response.headers["Cache-Control"] = "no-store" if path.startswith(("/api/", "/share/", "/devices", "/connect")) or path in {"/login", "/oauth/mcp/callback", "/oauth/mcp/complete"} else "no-cache"
     response.headers.setdefault("Content-Security-Policy", f"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; frame-src 'self' http: https:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' {sockets} https://api.openai.com wss://api.openai.com; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'")
-    return response
+    from .device_connections import response_headers
+    return response_headers(request, response)
 
 
 @web.middleware
@@ -130,6 +131,12 @@ async def create_app(data_dir, workspace=None, runtime=None, voice=True, backgro
     setup_terminal(app)
     from .device_pairing import setup_routes as setup_device_pairing
     setup_device_pairing(app)
+    from .device_connections import setup_routes as setup_device_connections
+    setup_device_connections(app)
+    from .device_connection_pages import setup_routes as setup_connection_pages
+    setup_connection_pages(app)
+    from .ui_use import setup_routes as setup_ui_use
+    setup_ui_use(app)
     from .smart_tools import SmartToolsManager
     from .smart_canvas import SmartCanvas
     service.smart_tools = SmartToolsManager(service)

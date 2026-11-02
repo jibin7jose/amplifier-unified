@@ -1,3 +1,4 @@
+import {DecisionModelSettings} from './decision-model-settings';
 import {ConfigurationScopeSelect,useConfigurationScope,useConfigurationId} from './configuration-scope';
 import {AttentionBadge} from './attention';
 import {ProviderKeyPreview} from './provider-key-preview';
@@ -17,15 +18,23 @@ import {providerOptions} from './provider-options';
 import {aiServices,aiService,matchingSetupOperation,setupPending} from './ai-connections-data';
 
 export function AIConnections({state,session,act,navigate,onReturnToChat,imagesOnly=false}){
+ const [decisionSettingsOpened,setDecisionSettingsOpened]=useState(false);
  const layout=useContext(SettingsLayoutContext);
  const setup=state.setup||{},providers=(setup.providers||[]).filter(p=>p.enabled!==false);
- const labels=new Map(providerOptions(providers.map(p=>({...p,info:{id:p.module,display_name:aiService(p.module).name}}))).map(row=>[row.id,row.label]));
+ const services=[...aiServices,...(setup.decisionModels?.services||[]).filter(s=>!aiServices.some(existing=>existing.module===s.module))];
+ const serviceFor=(module,config)=>{
+  const choice=services.find(s=>s.module===module)||aiService(module);
+  // A conditional decision-only setup choice must not relabel an existing
+  // chat account from the same provider or change its save/test workflow.
+  return choice.decisionOnlyWhen&&config?{...choice,decisionOnly:config.chat_enabled===false}:choice;
+ };
+ const labels=new Map(providerOptions(providers.map(p=>({...p,info:{id:p.module,display_name:serviceFor(p.module).name}}))).map(row=>[row.id,row.label]));
  const editorKey=imagesOnly?'imageSettingsEditor':'aiConnectionEditor';
  const configId=useConfigurationId();
  const requested=state.view?.[editorKey]||{};
  const identity=value=>configId('connection')+':'+(value.id||'')+':'+(value.module||'');
  const d=useGuardedSettingsDraft(requested,identity(requested),draft=>act('view.update',{patch:{[editorKey]:draft}}));
- const step=d.step||'list',service=aiService(d.module),selected=providers.find(p=>p.id===d.id);
+ const step=d.step||'list',selected=providers.find(p=>p.id===d.id),service=serviceFor(d.module,selected?.config);
  const scope=useConfigurationScope(d.scope);
  const authMode=chatGPTMode(d.authMode||selected?.config?.auth_mode);
  const loginArgs={id:d.id,authMode,scope:scope};
@@ -40,7 +49,7 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
  const edit=patch=>act('view.update',{patch:{[editorKey]:{...d,...patch}}});
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;requestVersion.current++}},[]);
  useEffect(()=>{requestVersion.current++;setPrivateKey(null);setCompleted(false);setPending(null);setError('');setNotice('');sending.current=false;},[draftIdentity]);
- useEffect(()=>{if(context.current!==session?.workspace){requestVersion.current++;context.current=session?.workspace;setCompleted(false);setKey('');setPending(null);sending.current=false;edit({step:'list',id:'',model:''});}act('providers.list',session?{sessionId:session.id}:{});act('routing.list');},[session?.workspace]);
+ useEffect(()=>{if(context.current!==session?.workspace){requestVersion.current++;context.current=session?.workspace;setCompleted(false);setKey('');setPending(null);sending.current=false;edit({step:'list',id:'',model:''});}act('providers.list',session?{sessionId:session.id}:{});act('providers.decisionModels',session?{sessionId:session.id}:{});act('routing.list');},[session?.workspace]);
  async function run(action,args={},next=''){
   if(sending.current)return;
   sending.current=true;const version=++requestVersion.current;setError('');setNotice('');setPending({action,id:args.id||args.module||'',commandId:null,next});
@@ -65,6 +74,7 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
    setKey('');edit({saved:true,...(next==='models'?{step:'model'}:{})});
    if(next==='signin')run('providers.login',loginArgs);
    else if(next==='models')run('providers.models',{id:d.id});
+   else if(next==='decisions'){edit({step:'decisions',saved:true});act('providers.decisionModels',session?{sessionId:session.id}:{});setNotice('Connection saved. Choose where to use it below.');}
   }else if(action==='providers.remove'){
    setCompleted(false);setKey('');edit({step:'list',id:'',saved:false});setNotice('Connection removed. Chats that used it will need a replacement connection when resumed.');
   }else if(action==='providers.finishSetup'){
@@ -84,7 +94,7 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
  const modelBusy=setupPending(setup.operations?.['providers.models:'+d.id])||catalog?.phase==='working';
  const credential=!setupPending(credentialOperation)&&setup.credentialCheck?.module===d.module?setup.credentialCheck:null;
  const credentialMode=d.credentialMode==='auto'?(credential?.githubCliAvailable?'github-cli':credential?.available?'environment':'private'):(d.credentialMode||'private');
- const scanCredentials=module=>{if(aiService(module).auth!=='signin')run('providers.credentials',{module});};
+ const scanCredentials=module=>{if(serviceFor(module).auth!=='signin')run('providers.credentials',{module});};
  async function changeConnection(action,args={}){
   if(sending.current||transitionPending)return;
   const version=++transition.current,previousId=d.id;setTransitionPending(true);sending.current=true;setError('');setNotice('');setCompleted(false);setKey('');
@@ -99,11 +109,13 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
   finally{if(alive.current&&version===transition.current){setTransitionPending(false);sending.current=false}}
  }
  const choose=s=>changeConnection('settings.connection.select',{module:s.module});
- const saveConnection=()=>run('providers.save',{id:d.id,module:d.module,config:{...selected?.config,...(service.auth==='optional-key'?{base_url:d.baseUrl?.trim()}: {})},scope:scope,...(service.auth==='signin'?{}:credentialMode==='environment'?{apiKeyEnv:credential?.envVar}:credentialMode==='github-cli'?{useGitHubCli:true}:{apiKey:key})},service.auth==='signin'?'signin':'models');
- const back=()=>{setError('');edit({step:['services','detail','images'].includes(step)?'list':step==='model'?'detail':'services'});};
+ const needsEndpoint=service.auth==='optional-key'||service.endpoint===true;
+ const endpointKey=service.endpoint_config_key||'base_url',savedEndpoint=selected?.config?.[endpointKey]||'';
+ const saveConnection=()=>run('providers.save',{id:d.id,module:d.module,config:{...selected?.config,...(service.decisionOnly?{chat_enabled:false}:{}),...(needsEndpoint?{[endpointKey]:d.baseUrl?.trim()}: {})},scope:scope,...(service.auth==='signin'?{}:credentialMode==='environment'?{apiKeyEnv:credential?.envVar}:credentialMode==='github-cli'?{useGitHubCli:true}:{apiKey:key})},service.decisionOnly?'decisions':service.auth==='signin'?'signin':'models');
+ const back=()=>{setError('');edit({step:['services','detail','images','decisions'].includes(step)?'list':step==='model'?'detail':'services'});};
  const openImages=()=>navigate('image-generation');
  const advanced=()=>navigate('providers');
- const unsaved=!!d.imageEdited||!!key||(step==='connect'&&!!d.baseUrl&&d.baseUrl!==(selected?.config?.base_url||''))||(step==='model'&&!!d.model&&d.model!==(selected?.config?.default_model||selected?.config?.model||''));
+ const unsaved=!!d.imageEdited||!!key||(step==='connect'&&!!d.baseUrl&&d.baseUrl!==savedEndpoint)||(step==='model'&&!!d.model&&d.model!==(selected?.config?.default_model||selected?.config?.model||''));
  useSettingsDraft(imagesOnly?'image-generation':'ai-connections',{label:'AI connection setup',dirty:unsaved,
   review:()=>{navigate(imagesOnly?'image-generation':'ai-connections');edit({step:d.imageEdited?'list':step,...(d.imageEdited?{imageFocus:crypto.randomUUID()}:{})})},
   discard:()=>{setKey('');setError('');if(identity(editor.current)===draftIdentity)edit({step:'list',id:'',module:'',model:'',baseUrl:'',saved:false,imageMode:null,imageProviderId:null,imageModel:null,imagesEnabled:null,imageEdited:false})}});
@@ -111,33 +123,35 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
   {imagesOnly?<ImageGenerationSettings key={session?.workspace||'global'} state={state} session={session} providers={providers} labels={labels} draft={d} edit={edit} act={act} run={run} pending={pending} busy={busy} navigate={navigate}/>:['list','images'].includes(step)?<>
    <p className="a-everyday-intro">Connect the AI services Amplifier can use for your work.</p>
    {completed&&onReturnToChat&&<div className="a-ai-welcome"><h4>Your connection is saved</h4><p>Return to chat to write a message or attach a file. Your unfinished message is kept.</p><button type="button" className="a-primary" disabled={busy} onClick={onReturnToChat}>Return to chat</button>{selected&&setup.metadata?.[selected.module]?.imageGeneration&&<button type="button" className="a-soft" disabled={busy} onClick={openImages}>Image preferences</button>}</div>}
-   {!providersLoaded&&!providers.length?<div role="status">{listOperation?.phase==='error'?<><p>Could not load AI connections. {loadError}</p><button type="button" className="a-soft" onClick={()=>act('providers.list',{})}>Retry loading connections</button></>:'Loading AI connections…'}</div>:!providers.length?<div className="a-ai-welcome"><Sparkles aria-hidden="true"/><h4>Start with one connection</h4><p>Choose a service, connect your account, and choose a model. You can add more later.</p><button className="a-primary" data-action="settings.connection.start" disabled={busy} onClick={()=>changeConnection('settings.connection.start')}><Plus/>Connect AI</button></div>:<><div className="a-everyday-list">{providers.map(p=><SettingsLink key={p.id} disabled={busy} title={<>{labels.get(p.id)}{p.authenticationRequired&&<AttentionBadge count={1}/>}</>} description={(p.config?.default_model||p.config?.model||'Choose a model')+' · '+(p.authenticationRequired?'Sign-in needed':p.accountConnected?'Account connected':p.credentialsConfigured?'Credentials available':p.keySource==='provider-managed'?'Account sign-in':'Connection needs setup')+(p.credential?.preview?.masked?' · Key '+p.credential.preview.masked:'')} onClick={()=>{setError('');setNotice('');edit({step:'detail',id:p.id,module:p.module,authMode:chatGPTMode(p.config?.auth_mode),model:p.config?.default_model||p.config?.model||'',scope,baseUrl:p.config?.base_url||'',previousLoginId:setup.login?.loginId,saved:true,initializeRouting:false})}}/>)}</div><button className="a-soft" data-action="settings.connection.start" disabled={busy} onClick={()=>changeConnection('settings.connection.start')}><Plus/>Connect another service</button></>}
+   {!providersLoaded&&!providers.length?<div role="status">{listOperation?.phase==='error'?<><p>Could not load AI connections. {loadError}</p><button type="button" className="a-soft" onClick={()=>act('providers.list',{})}>Retry loading connections</button></>:'Loading AI connections…'}</div>:!providers.length?<div className="a-ai-welcome"><Sparkles aria-hidden="true"/><h4>Start with one connection</h4><p>Choose a service, connect your account, and choose a model. You can add more later.</p><button className="a-primary" data-action="settings.connection.start" disabled={busy} onClick={()=>changeConnection('settings.connection.start')}><Plus/>Connect AI</button></div>:<><div className="a-everyday-list">{providers.map(p=><SettingsLink key={p.id} disabled={busy} title={<>{labels.get(p.id)}{p.authenticationRequired&&<AttentionBadge count={1}/>}</>} description={(serviceFor(p.module,p.config||{}).decisionOnly?'Decision models':p.config?.default_model||p.config?.model||'Choose a model')+' · '+(p.authenticationRequired?'Sign-in needed':p.accountConnected?'Account connected':p.credentialsConfigured?'Credentials available':p.keySource==='provider-managed'?'Account sign-in':'Connection needs setup')+(p.credential?.preview?.masked?' · Key '+p.credential.preview.masked:'')} onClick={()=>{setError('');setNotice('');edit({step:'detail',id:p.id,module:p.module,authMode:chatGPTMode(p.config?.auth_mode),model:p.config?.default_model||p.config?.model||'',scope,baseUrl:p.config?.[serviceFor(p.module,p.config||{}).endpoint_config_key||'base_url']||'',previousLoginId:setup.login?.loginId,saved:true,initializeRouting:false})}}/>)}</div><button className="a-soft" data-action="settings.connection.start" disabled={busy} onClick={()=>changeConnection('settings.connection.start')}><Plus/>Connect another service</button></>}
    {setup.active&&providers.length>0&&<div className="a-ai-hint">Your model rules are saved. <button className="a-link" data-action="view.update" onClick={()=>navigate('routing')}>Advanced model rules</button></div>}
+   <details className="a-everyday-disclosure" onToggle={event=>{if(event.currentTarget.open)setDecisionSettingsOpened(true)}}><summary>Decision models (optional)</summary>{decisionSettingsOpened&&<DecisionModelSettings state={state} act={act} navigate={navigate}/>}</details>
    <div className="a-everyday-footer"><p className="a-caption">Connections are stored on the Amplifier host. Existing conversations keep their settings.</p><button className="a-link" data-action="view.update" onClick={advanced}>Advanced connection settings<ExternalLink/></button></div>
   </>:<>
    <button className="a-link" data-action="view.update" disabled={busy} onClick={back}><ArrowLeft/>Back</button>
-   {step==='services'?<><h4>Which service would you like to use?</h4><div className="a-everyday-list">{aiServices.map(s=><SettingsLink key={s.module} disabled={busy} title={s.name} description={s.description} onClick={()=>choose(s)}/>)}</div><button className="a-link" data-action="view.update" onClick={advanced}>Other provider or custom endpoint</button></>:<>
+   {step==='services'?<><h4>Which service would you like to use?</h4><div className="a-everyday-list">{services.map(s=><SettingsLink key={s.module} disabled={busy} title={s.name} description={s.description} onClick={()=>choose(s)}/>)}</div><button className="a-link" data-action="view.update" onClick={advanced}>Other provider or custom endpoint</button></>:<>
     <p className="a-ai-step">{step==='connect'?'1 · Connect':step==='model'?'2 · Choose a model':'Saved connection'}</p><h4>{labels.get(d.id)||service.name}</h4>
     {step==='detail'?<AIConnectionDetail selected={selected} service={service} state={state} session={session} act={act} busy={busy}
      onModel={()=>{edit({step:'model',settingDefault:true});run('providers.models',{id:d.id})}}
      onImages={openImages}
+     onDecisions={()=>edit({step:'decisions'})}
      onCredentials={()=>{edit({step:'connect',previousLoginId:login?.loginId,credentialMode:'private'});scanCredentials(d.module)}}
      onRefresh={()=>run('providers.list',{refresh:true})} onCheck={()=>run('providers.test',{id:d.id})}
      onRemove={()=>run('providers.remove',{id:d.id,scope:scope})} onAdvanced={advanced}/>
-    :step==='connect'?<>
+    :step==='decisions'?<DecisionModelSettings state={state} act={act} navigate={navigate}/>:step==='connect'?<>
      {service.auth==='signin'?<>
       {login&&login.loginId!==d.previousLoginId?<DeviceSignIn login={login} busy={busy} onCancel={()=>run('providers.loginCancel',{id:d.id})} onRetry={()=>run('providers.login',loginArgs)} onEnablePlan={()=>run('providers.login',{...loginArgs,enablePlan:true})}/>:<><ChatGPTSignInChoice mode={authMode} onChange={authMode=>edit({authMode})} disabled={busy}/><SettingsActions><button className="a-primary" data-action={selected?'providers.login':'providers.save'} disabled={busy} onClick={()=>selected?run('providers.login',loginArgs):saveConnection()}>{busy?'Getting ready…':authMode==='chatgpt_plan'?'Continue with ChatGPT':'Get sign-in code'}</button></SettingsActions></>}
      </>:<>
-      {service.auth==='optional-key'&&<><label htmlFor={configId('ai-base-url')}>API base URL</label><input id={configId('ai-base-url')} type="url" placeholder="http://localhost:1234/v1" value={d.baseUrl||''} disabled={busy} onChange={e=>edit({baseUrl:e.target.value})}/><p className="a-caption">Use an address reachable from the computer running Amplifier. Include /v1 if your service requires it.</p></>}
+      {needsEndpoint&&<><label htmlFor={configId('ai-base-url')}>API base URL</label><input id={configId('ai-base-url')} type="url" placeholder={service.endpoint_placeholder||'http://localhost:1234/v1'} value={d.baseUrl||''} disabled={busy} onChange={e=>edit({baseUrl:e.target.value})}/><p className="a-caption">{service.endpoint_hint||(service.decisionOnly?'The decision service must already be running at an address reachable from the Amplifier host. Use its full decision endpoint.':'Use an address reachable from the computer running Amplifier. Include /v1 if your service requires it.')}</p></>}
       {(credential?.available||credential?.githubCliAvailable)&&<fieldset className="a-credential-options"><legend>How would you like to connect?</legend>
        {credential.available&&<label><input type="radio" name="ai-credential" checked={credentialMode==='environment'} onChange={()=>{setKey('');edit({credentialMode:'environment'})}}/><span><strong>Use the key already on this host</strong><small>Found {credential.envVar}. Only its name is saved; the key stays in the environment.</small></span></label>}
        {credential.githubCliAvailable&&<label><input type="radio" name="ai-credential" checked={credentialMode==='github-cli'} onChange={()=>{setKey('');edit({credentialMode:'github-cli'})}}/><span><strong>Use GitHub CLI sign-in</strong><small>Use the host’s signed-in GitHub account. Its token is saved privately for this connection.</small></span></label>}
        <label><input type="radio" name="ai-credential" checked={credentialMode==='private'} onChange={()=>edit({credentialMode:'private'})}/><span><strong>Use a different key</strong><small>Connect another account or enter a key yourself.</small></span></label>
       </fieldset>}
       {credentialMode==='environment'&&<ProviderKeyPreview credential={credential}/>}
-      {credentialMode==='private'&&<><label htmlFor={configId('ai-private-key')}>{service.auth==='token'?'GitHub token':service.auth==='optional-key'?'API key (optional)':'API key'}</label><input id={configId('ai-private-key')} type="password" autoComplete="off" spellCheck={false} value={key} onChange={e=>setKey(e.target.value)} disabled={busy}/><p className="a-caption">{service.auth==='optional-key'?'Leave blank if your local service does not need a key.':'Stored privately for this connection. Other accounts keep their own keys.'}</p></>}
+      {credentialMode==='private'&&<><label htmlFor={configId('ai-private-key')}>{service.auth==='token'?'GitHub token':service.auth==='optional-key'?'API key (optional)':'API key'}</label><input id={configId('ai-private-key')} type="password" autoComplete="off" spellCheck={false} value={key} onChange={e=>setKey(e.target.value)} disabled={busy}/><p className="a-caption">{service.credential_hint||(service.auth==='optional-key'?'Leave blank if your local service does not need a key.':'Stored privately for this connection. Other accounts keep their own keys.')}</p></>}
       {service.auth==='token'&&!credential?.githubCliAvailable&&!credential?.available&&<details className="a-everyday-disclosure"><summary>Help connecting GitHub Copilot</summary><div><p>Sign in to GitHub CLI on the computer running Amplifier, then check again. Or use a GitHub token for an account with Copilot access.</p><a href="https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli" target="_blank" rel="noreferrer">GitHub setup guide</a><button className="a-link" disabled={busy} onClick={()=>scanCredentials(d.module)}>Check host sign-in again</button></div></details>}
-      <SettingsActions><button className="a-primary" data-action="providers.save" disabled={busy||(service.auth==='optional-key'&&!/^https?:\/\/[^\s]+$/.test(d.baseUrl||''))||(credentialMode==='environment'?!credential?.available:credentialMode==='github-cli'?!credential?.githubCliAvailable:service.auth!=='optional-key'&&!key.trim())} onClick={saveConnection}>{busy?'Connecting…':'Save and check connection'}</button></SettingsActions>
+      <SettingsActions><button className="a-primary" data-action="providers.save" disabled={busy||(needsEndpoint&&!/^https?:\/\/[^\s]+$/.test(d.baseUrl||''))||(credentialMode==='environment'?!credential?.available:credentialMode==='github-cli'?!credential?.githubCliAvailable:service.auth!=='optional-key'&&!key.trim())} onClick={saveConnection}>{busy?'Connecting…':service.decisionOnly?'Save connection':'Save and check connection'}</button></SettingsActions>
      </>}
     </>:step==='model'?<>
      {login?.status==='completed'&&<DeviceSignIn login={login} chooseModel welcomeDismissed={d.welcomedLoginId===login.loginId} onWelcomeDismiss={()=>edit({welcomedLoginId:login.loginId})}/>}<p>Choose from the models available through this connection.</p>

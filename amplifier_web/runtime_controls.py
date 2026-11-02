@@ -37,7 +37,8 @@ def public_config(value, *, module=None, metadata=False):
                 else public_config(item, module=value.get("module") if key == "config" else None,
                                    metadata=metadata)
                 for key, item in value.items()
-                if not (metadata and value.get("field_type") == "secret" and key in {"default", "value"})}
+                if key not in {"_decision_account", "_decision_accounts"}
+                and not (metadata and value.get("field_type") == "secret" and key in {"default", "value"})}
     if isinstance(value, (list, tuple)):
         return [public_config(item, metadata=metadata) for item in value]
     if isinstance(value, (str, int, float, bool)) or value is None:
@@ -231,6 +232,8 @@ class RuntimeControls:
         if task_only:
             return
         plan = {key:value for key,value in self.coordinator.config.items() if key in PLAN_KEYS}
+        from .decision_accounts import logical_plan
+        plan = logical_plan(plan)
         if self.coordinator.get_capability("web.provider_credentials_bound"):
             from .provider_environment import credential_bindings
             plan = credential_bindings(plan)
@@ -247,7 +250,8 @@ class RuntimeControls:
             raise ValueError("Finish or stop the active workers before changing session configuration")
 
     def configuration(self):
-        plan = copy.deepcopy(self.coordinator.config)
+        from .decision_accounts import logical_plan
+        plan = logical_plan(self.coordinator.config)
         stored = override_path(self.session.session_id)
         saved = json.loads(stored.read_text()) if stored.exists() else None
         if saved:
@@ -331,7 +335,8 @@ class RuntimeControls:
             return await self._perform(operation, args)
 
     def prepare_configuration(self, config):
-        previous = copy.deepcopy(self.coordinator.config)
+        from .decision_accounts import logical_plan
+        previous = logical_plan(self.coordinator.config)
         stored = override_path(self.session.session_id)
         if stored.exists():
             saved = json.loads(stored.read_text())

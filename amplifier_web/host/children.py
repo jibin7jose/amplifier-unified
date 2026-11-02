@@ -102,7 +102,9 @@ def child_plan(parent, overlay, *, tool_inheritance=None, hook_inheritance=None,
                retained_image_tools=None, retained_image_policy=None):
     """Compose immutable agent settings and honor explicit inheritance policies."""
     from amplifier_foundation import deep_merge
-    parent, overlay = copy.deepcopy(parent), copy.deepcopy(overlay)
+    from ..decision_accounts import logical_plan, check_child_sources
+    parent, overlay = logical_plan(parent), logical_plan(overlay)
+    check_child_sources(parent, overlay)
     agent_filter = overlay.pop("agents", None)
     from ..provider_recording import apply_provider_recording
     # Compose explicit child choices before reapplying host defaults. Otherwise
@@ -444,6 +446,11 @@ class Children:
                           retained_image_tools=retained_plan.get("tools", []) if isinstance(retained_plan, dict) else None,
                           retained_image_policy=retained_image_policy)
         if isinstance(retained_plan, dict):
+            from ..decision_accounts import restore_child_accounts
+            current_overlay = parent.coordinator.config.get("agents", {}).get(agent, {}) if agent != "self" else {}
+            authorized = child_plan(parent.coordinator.config, current_overlay, working_dir=cwd)
+            plan = restore_child_accounts(plan, retained_plan, authorized)
+        if isinstance(retained_plan, dict):
             # A resumed child must not lose its prior write ceiling merely
             # because its immediate parent currently omits the tool.
             # child_plan also retains declarations from older checkpoints that
@@ -537,6 +544,11 @@ class Children:
             await materialize_bundle_providers(
                 SimpleNamespace(providers=plan.get("providers", []), agents=plan.get("agents", {})),
                 child_prepared, isolation=isolation)
+        from ..decision_accounts import DecisionAccounts, AccountResolver
+        decision_accounts = DecisionAccounts(child_prepared.mount_plan, isolation, lambda module, source: source)
+        child_prepared.mount_plan = decision_accounts.plan
+        if decision_accounts.aliases:
+            child_prepared.resolver = AccountResolver(child_prepared.resolver, decision_accounts.aliases)
         persistent = _PERSISTENT.get()
         call_id = admission["callId"]
         row = {"sessionId": identity, "parentSessionId": parent.session_id, "callId": call_id, "runId": admission["runId"],
@@ -549,11 +561,12 @@ class Children:
         child = None
         ledger = None
         unregister = None
+        from ..provider_environment import credential_bindings
         metadata = {**(session_metadata or {}), "parent_id": parent.session_id, "agent_name": agent,
                     "tool_call_id": call_id,
                     "agent_overlay": copy.deepcopy(overlay), "workspace": str(cwd), "persistent": persistent,
                     "provider_preferences": [p.to_dict() for p in preferences],
-                    "preferences_source": preferences_source, "mount_plan": plan,
+                    "preferences_source": preferences_source, "mount_plan": credential_bindings(plan),
                     "automatic_default_routing": bool(
                         automatic_routing and routing_hooks(plan) == routing_hooks(parent.coordinator.config))}
         if selection:
@@ -582,12 +595,17 @@ class Children:
             initialization = ({"before_initialize": partial(
                 prepare_default_routing, automatic=metadata["automatic_default_routing"])}
                 if routing_policy else {})
-            if isolation:
+            if isolation or decision_accounts.records:
                 routing_callback = initialization.get("before_initialize")
-                async def initialize_with_isolation(session):
-                    await isolation.before_initialize(session)
+                async def initialize_with_isolation(constructing):
+                    nonlocal child
+                    child = constructing  # Also own cleanup before create_session returns.
+                    if isolation:
+                        await isolation.before_initialize(constructing)
+                    if decision_accounts.records:
+                        await decision_accounts.before_initialize(constructing)
                     if routing_callback:
-                        await routing_callback(session)
+                        await routing_callback(constructing)
                 initialization["before_initialize"] = initialize_with_isolation
             from .approvals import Approvals
             approvals = (self.approvals.for_context(lambda: child.coordinator.get('context') if child else None)
@@ -595,6 +613,7 @@ class Children:
             child = await child_prepared.create_session(session_id=identity, parent_id=parent.session_id,
                 approval_system=approvals, display_system=getattr(parent.coordinator, "display_system", None),
                 session_cwd=cwd, is_resumed=resumed, **initialization)
+            decision_accounts.require_complete()
             coordinator = child.coordinator
             from ..read_policy import validate_mounted_read_policy
             validate_mounted_read_policy(coordinator)

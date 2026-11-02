@@ -61,7 +61,7 @@ export async function request(path, options = {}) {
   const started=performance.now(),row={at:Date.now()/1000,method:options.method||'GET',route:path.split('?')[0].replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/ig,':id')};
   const action=options.body?.action;if(typeof action==='string'&&/^[a-z][a-z0-9_.]{0,79}$/.test(action))row.action=action;
   try{return await measuredRequest(path,options,row)}
-  catch(error){row.error=error.name;throw error}
+  catch(error){row.error=error.name;error.requestPath=path.split('?')[0];throw error}
   finally{row.elapsedMs=Math.round(performance.now()-started);requestTimings.push(row);if(requestTimings.length>30)requestTimings.shift()}
 }
 async function measuredRequest(path, options, timing) {

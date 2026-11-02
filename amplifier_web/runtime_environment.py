@@ -20,6 +20,39 @@ def manifest_path():
     return Path(__file__).with_name('runtime_deps') / 'pyproject.toml'
 
 
+def declared_manifest(*, extras=None):
+    """New worker policy follows installed support, never inference credentials.
+
+    Recorded generations still use their exact manifest. Adding a support pack
+    offers the ordinary conversation-component update; it does not alter an
+    active worker or claim that its decision backend has been configured.
+    """
+    content = manifest_path().read_bytes()
+    if extras is None:
+        from .app_updates import installed_extras
+        extras = installed_extras()
+    features = tomllib.loads((Path(__file__).with_name('runtime_deps') / 'features.toml').read_text())['features']
+    selected = [requirement for feature in sorted(extras) for requirement in features.get(feature, [])]
+    if not selected:
+        return content
+    from packaging.requirements import Requirement
+    value = tomllib.loads(content.decode())
+    requirements = value.setdefault('project', {}).setdefault('dependencies', [])
+    sources = value.setdefault('tool', {}).setdefault('uv', {}).setdefault('sources', {})
+    for requirement in selected:
+        parsed = Requirement(requirement)
+        name = package_name(parsed.name)
+        requirements[:] = [old for old in requirements if package_name(Requirement(old).name) != name]
+        # Keep dependency selection separate from source policy so the normal
+        # update path can preserve an explicitly installed fork or fixed ref.
+        source, separator, revision = (parsed.url or '').removeprefix('git+').rpartition('@')
+        if not separator or not source.startswith('https://'):
+            raise ValueError('Optional worker support requires a declared Git source.')
+        sources.setdefault(name, {'git': source, 'rev': revision})
+        requirements.append(parsed.name + ('[' + ','.join(sorted(parsed.extras)) + ']' if parsed.extras else ''))
+    return ('\n'.join(json.dumps(key) + ' = ' + toml_value(row) for key, row in value.items()) + '\n').encode()
+
+
 def receipt_directory(home, generation=None):
     root = Path(home) / 'updates'
     return root / 'releases' / generation if generation else root / 'baseline-runtime'
@@ -29,7 +62,7 @@ def manifest_content(home, generation=None):
     recorded = receipt_directory(home, generation) / 'runtime.toml'
     if recorded.exists():
         return recorded.read_bytes()
-    return manifest_path().read_bytes()
+    return declared_manifest()
 
 
 def project_path(home, generation=None, *, content=None):
@@ -94,7 +127,7 @@ def installed_sources(project, *, graph=None, tracked=()):
     result = {}
     tracked = set(locked_sources(project)) | set(tracked)
     configured = {package_name(name) for name in
-                  tomllib.loads(manifest_path().read_text()).get('tool', {}).get('uv', {}).get('sources', {})}
+                  tomllib.loads(declared_manifest().decode()).get('tool', {}).get('uv', {}).get('sources', {})}
     for record in installed_graph(project) if graph is None else graph:
         name = record['name']
         direct = record.get('directUrl') or {}
@@ -167,7 +200,7 @@ def inventory(home, *, installed=None, graph=None):
     project = project_path(home, generation)
     recorded = receipt_directory(home, generation) / 'runtime.lock'
     locked = locked_sources(project) if (project / 'uv.lock').exists() or not recorded.exists() else locked_sources(recorded)
-    sources = tomllib.loads(manifest_path().read_text()).get('tool', {}).get('uv', {}).get('sources', {})
+    sources = tomllib.loads(declared_manifest().decode()).get('tool', {}).get('uv', {}).get('sources', {})
     sources = {package_name(name): source for name, source in sources.items()}
     policies = receipt_directory(home, generation) / 'runtime-sources.json'
     recorded_policies = json.loads(policies.read_text()) if policies.exists() else {}
@@ -201,14 +234,15 @@ def inventory(home, *, installed=None, graph=None):
     rows = []
     base = receipt_directory(home, generation) / 'runtime-base.toml'
     baseline = base.read_bytes() if base.exists() else manifest_content(home, generation)
-    if baseline != manifest_path().read_bytes():
+    current_manifest = declared_manifest()
+    if baseline != current_manifest:
         rows.append({'id': 'runtime:environment', 'kind': 'runtime environment',
                      'label': 'Conversation worker environment', 'status': 'update', 'eligible': True,
                      'current': hashlib.sha256(baseline).hexdigest(),
-                     'latest': hashlib.sha256(manifest_path().read_bytes()).hexdigest(),
+                     'latest': hashlib.sha256(current_manifest).hexdigest(),
                      'usage': 'configured', 'usageEvidence': ['Updated application dependency declarations']})
     from .runtime_registry_updates import managed_source
-    core = managed_source(project, receipt_directory(home, generation), baseline, graph, manifest_path().read_bytes())
+    core = managed_source(project, receipt_directory(home, generation), baseline, graph, current_manifest)
     if core is not None:
         observed['amplifier-core'] = core
     elif observed.get('amplifier-core', {}).get('override'):
@@ -328,7 +362,7 @@ async def update_inventory(home):
 
 async def update_manifest(home):
     observed = await update_inventory(home)
-    return observed, augmented_manifest(manifest_path().read_bytes(), observed)
+    return observed, augmented_manifest(declared_manifest(), observed)
 
 
 def toml_value(value):
@@ -539,7 +573,7 @@ async def stage(manager, generation, candidates, *, finalize=True):
         from .deployment import write_private
         write_private(receipt.with_name('runtime-sources.json'), json.dumps(policies, indent=2) + '\n')
     if finalize and not receipt.exists():
-        receipt.with_name('runtime-base.toml').write_bytes(manifest_path().read_bytes())
+        receipt.with_name('runtime-base.toml').write_bytes(declared_manifest())
         shutil.copy2(project / 'pyproject.toml', receipt.with_name('runtime.toml'))
         shutil.copy2(project / 'uv.lock', receipt)
     return project

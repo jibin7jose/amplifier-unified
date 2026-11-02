@@ -1,3 +1,4 @@
+import {UIUseShortcut} from './ui-use';
 import {WorkspaceWork,SharedWorkBrowser} from './workspace-work';
 import {ArchiveButton} from './archive-feedback.jsx';
 import {WorkspaceConfiguration,WorkspaceSettingsBoundary} from './workspace-configuration';
@@ -78,7 +79,7 @@ export function WorkHeader({state,session,act,open,narrow,presentation,fileDropH
   </nav>
   <ShellSlot name="conversation.header">{surface!=='home'&&<nav className="a-work-heading" aria-label="Breadcrumb">{surface==='chat'&&workspace&&session?.location?.kind!=='managed'&&<><button type="button" className="a-work-crumb" onClick={()=>nav.browse('workspace',workspace.id)}><Folder/>{workspace.name}</button><ChevronRight aria-hidden="true"/></>}<strong title={title} aria-current="page" {...(surface==='chat'&&session?{role:'heading','aria-level':1,'data-part':'session-heading','data-session-id':session.id,tabIndex:-1}:{})}>{title}</strong></nav>}</ShellSlot>
   <div className="a-work-header-actions">
-   {!browsing&&session&&<><ActionMenu label="Chat" icon={<MessageCircle/>}>
+   {!browsing&&session&&<><UIUseShortcut sessionId={session.id} act={act}/><ActionMenu label="Chat" icon={<MessageCircle/>}>
     <button onClick={()=>open('chat-rename')}><Pencil/>Rename</button>
     <button data-action="session.pin" onClick={()=>act('session.pin',{id:session.id,pinned:!(state.pinnedSessionIds||[]).includes(session.id)})}><Pin/>{(state.pinnedSessionIds||[]).includes(session.id)?'Unpin':'Pin'}</button>
     <button onClick={()=>open('chat-share')}><Share2/>Share or save</button>
