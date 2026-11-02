@@ -179,6 +179,31 @@ Provider/tool modules that truncate before returning an output cannot be
 recovered by this adapter. Cross-host export and retention policy remain owned
 by the existing portability/storage integration.
 
+### Explicit native recovery
+
+`runtime.control` operation `context.recovery.request` requests recovery once
+for the current canonical prefix. It requires an idle owner and a stable host
+command identity. Optional `targetBytes` chooses a tentative batch size, not a
+token allowance. An `armed` receipt means only that the intent was saved: it
+does not run a model, submit input, resume a task, or settle an unknown effect.
+`context.recovery.status` reports the retained intent outcome without returning
+private native windows.
+
+The next independently authorized ordinary request supplies the loop's real
+request builder, selected provider, tools and overlays. Before compaction, the
+host verifies the source prefix, model/configuration and durable Stop revision,
+then records consumption. The context module derives progress separately from
+the active checkpoint. It must demonstrate a strictly smaller complete request
+that still fits the unchanged hard allowance. Only an exact, confirmed private
+checkpoint write permits activation. Required input can remain too large; that
+is a refusal, not permission to trim it, increase limits, or switch models.
+
+Overflow never arms recovery automatically. A failed, interrupted or unknown
+attempt is not silently re-armed on restart. Installation uncertainty retains
+the candidate identity and requires reconciliation; neither a missing response
+nor a new input proves that repeating a prior provider call is safe. Canonical
+instructions, results and operation identities remain available unchanged.
+
 Validation includes real boundary-module compactions plus host serialization and
 restart, corruption/prefix/model rejection, task CAS and idempotency across
 restart, a real base-loop evaluator/pause race, and a browser fixture exercising

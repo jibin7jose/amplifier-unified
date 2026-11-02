@@ -7,6 +7,34 @@ import pytest
 from amplifier_web.runtime_controls import public_config, restore_redactions, validate_plan
 
 
+@pytest.mark.asyncio
+async def test_explicit_recovery_control_only_arms_with_host_binding(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from test_task_continuity import controls
+    monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(tmp_path))
+    control = controls('recovery')
+    recovery = SimpleNamespace(request_recovery=AsyncMock(return_value={'status': 'armed'}),
+                               recovery_status=lambda: {'status': 'armed'})
+    control.coordinator.register_capability('web.continuity.recovery', recovery)
+    try:
+        with pytest.raises(ValueError, match='original host command'):
+            await control.perform('context.recovery.request', {})
+        assert await control.perform('context.recovery.request', {
+            '_recoveryCommand': {'id': 'exact-command', 'interruptionRevision': 3},
+            'targetBytes': 5000}) == {'status': 'armed'}
+        recovery.request_recovery.assert_awaited_once_with(
+            'exact-command', 3, target_bytes=5000)
+        control.runtime.generation = {'id': 'busy'}
+        with pytest.raises(ValueError, match='current response'):
+            await control.perform('context.recovery.request', {
+                '_recoveryCommand': {'id': 'another', 'interruptionRevision': 3}})
+        assert await control.perform('context.recovery.status') == {'status': 'armed'}
+        assert control.coordinator.session_state.get('goal') is None
+    finally:
+        await control.close()
+
+
 @pytest.mark.parametrize('preserve', [False, True])
 async def test_cancelled_restore_retains_controls_and_releases_persistence_guard(
         tmp_path, monkeypatch, preserve):

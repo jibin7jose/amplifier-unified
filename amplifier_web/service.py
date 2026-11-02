@@ -1942,6 +1942,12 @@ class AppService:
                 raise AppError('Select a chat first.', 404)
         if action == 'runtime.control' and args.get('operation', '').startswith(('kernels.', 'operations.')):
             raise AppError('Use the shared computation and operation actions; their ownership and dependency checks cannot be bypassed.', 403)
+        if action == 'runtime.control' and args.get('operation', '').startswith('context.recovery.'):
+            if origin == 'agent' and (not caller_session_id or args.get('sessionId') != caller_session_id):
+                raise AppError('Context recovery belongs to the calling conversation.', 409)
+            from .collaboration import PRINCIPAL
+            if origin == 'agent' and PRINCIPAL.get() not in {None, caller_session_id}:
+                raise AppError('A child cannot borrow its parent context recovery authority.', 403)
         if action == 'runtime.control' and args.get('operation') == 'tool.invoke':
             if origin == 'agent' and (not caller_session_id or args.get('sessionId') != caller_session_id):
                 raise AppError('Tool invocation must target the calling conversation.', 409)
@@ -3647,6 +3653,11 @@ class AppService:
                     values += ({'origin': origin, 'callerSessionId': caller_session_id,
                         'generation': copy.deepcopy(target.get('collaborationGeneration')),
                         'target': self.management.configuration_target_binding(target)},)
+                elif action == 'runtime.control' and args.get('operation') == 'context.recovery.request':
+                    # Capture before the queue. A Stop or configuration change
+                    # cannot lend new authority to this older command.
+                    target = self._session(args['sessionId'])
+                    values += ({'recovery': self.management.recovery_admission_binding(target)},)
                 pending.append((self.management.command, values))
             elif action.startswith("updates."):
                 if not self.update_manager: raise AppError("Update service is unavailable.")
@@ -5310,7 +5321,7 @@ class AppService:
                 if action_args.get('sessionId', session_id) != session_id:
                     raise AppError('Worktree actions must target the calling task.', 409)
                 action_args['sessionId'] = session_id
-            if args['action'] == 'runtime.control' and str(action_args.get('operation', '')).startswith('native.'):
+            if args['action'] == 'runtime.control' and str(action_args.get('operation', '')).startswith(('native.', 'context.recovery.')):
                 if action_args.get('sessionId', session_id) != session_id:
                     raise AppError('Native provider actions belong to the calling conversation.', 409)
                 action_args['sessionId'] = session_id
