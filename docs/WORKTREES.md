@@ -1,8 +1,13 @@
 # Managed checkouts and task execution handoff
 
 The Session settings page and app_control share worktree.inspect/list/create,
-attach/status/remove, handoff and reconcile. Inspect binds create to the current
-Git source revision. Clean committed checkout is default; including uncommitted
+attach/status/remove, handoff and reconcile. For clean creation use
+`worktree.inspect {mode:"clean", ref:"..."}` and pass its `expectedCommit` to
+create or commissioned `execution`. This resolves and pins a commit without
+scanning unrelated local changes. An optional creation `ref` must still match
+that commit. Legacy `sourceRevision` remains an opaque full working-folder
+snapshot digest, never a Git SHA; its existing validation is unchanged.
+Clean committed checkout is default; including uncommitted
 changes is an explicit option. The reusable library contract and limits live in
 [amplifier_worktrees](../amplifier_worktrees/README.md).
 

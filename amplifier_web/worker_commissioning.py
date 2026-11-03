@@ -67,8 +67,8 @@ async def prepare_checkout(owner, identity):
 
         checkout = await app.worktrees.finish_thread(app.worktrees.git.create,
             execution['repositoryPath'], command_id=identity + ':checkout',
-            expected_revision=execution['sourceRevision'], mode='clean',
-            ref=execution.get('ref', 'HEAD'), branch=execution.get('branch'),
+            expected_revision=execution.get('sourceRevision'), expected_commit=execution.get('expectedCommit'), mode='clean',
+            ref=execution.get('ref'), branch=execution.get('branch'),
             session_id=receipt['sessionId'],
             admit=lambda effect: asyncio.run_coroutine_threadsafe(admit(effect), loop).result(),
             on_cancel=cancel)
@@ -76,7 +76,10 @@ async def prepare_checkout(owner, identity):
         receipt = guard(owner, identity)
         if (checkout.get('id') != receipt['checkoutId'] or checkout.get('sessionId') != receipt['sessionId']
                 or checkout.get('source') != receipt['execution']['repositoryPath']
-                or checkout.get('sourceRevision') != receipt['execution']['sourceRevision']
+                or checkout.get('sourceRevision') != receipt['execution'].get('sourceRevision')
+                or checkout.get('expectedCommit') != receipt['execution'].get('expectedCommit')
+                or (receipt['execution'].get('expectedCommit') is not None
+                    and checkout.get('head') != receipt['execution']['expectedCommit'])
                 or checkout.get('status') != 'ready'):
             raise ValueError('The prepared checkout does not match its commissioning receipt.')
         app.worktrees.check_host(checkout)

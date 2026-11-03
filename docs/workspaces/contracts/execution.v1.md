@@ -55,6 +55,13 @@ An isolated working directory is not a security sandbox.
    before admitting its first working input; no model setup turn or later
    relocation is needed. Existing worktree and task receipts own these steps,
    and a partial preparation retains its root, files and outcome for recovery.
+   Clean committed-source creation binds an explicit immutable commit separately
+   from working-folder snapshots. It must not scan unrelated local changes or
+   untracked evidence. Explicit dirty-copy creation retains its full snapshot,
+   size and conflict checks. A confirmed pre-admission checkout refusal is
+   reported as not sent; uncertain admitted effects remain unknown and are not
+   retried merely to create activity. The retained idle worker can use the
+   existing guarded placement and fresh-input path after reconciliation.
    Read-only helpers may retain the inherited placement. Folder attachment
    never asks the user to choose an execution mode or silently relocates a chat.
 

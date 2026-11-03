@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from amplifier_worktrees import GitWorktrees
-from amplifier_worktrees.git import MAX_FILES, git
+from amplifier_worktrees.git import MAX_BYTES, MAX_FILES, CheckoutNotStarted, git
 from amplifier_web.service import AppService, AppError
 
 
@@ -67,6 +67,72 @@ def test_manifest_file_limit_still_refuses_snapshot_and_carry_dirty(tmp_path):
     assert not manager.records()
     assert {name: (root / name).read_bytes() for name in contents} == contents
     assert (root / 'a.txt').read_bytes() == b'original\n'
+
+
+def test_clean_commit_does_not_scan_or_copy_dirty_and_oversized_untracked_source(tmp_path, monkeypatch):
+    import amplifier_worktrees.git as owner
+    root = repository(tmp_path); manager = GitWorktrees(tmp_path / 'managed')
+    (root / 'a.txt').write_text('staged\n'); git(root, 'add', 'a.txt')
+    (root / 'a.txt').write_text('unstaged\n')
+    with (root / 'retained-evidence.bin').open('wb') as stream:
+        stream.truncate(MAX_BYTES + 1)
+    status, index = git(root, 'status', '--porcelain=v1'), git(root, 'show', ':a.txt')
+    def no_snapshot(*args, **kwargs):
+        pytest.fail('Clean committed-source operations must not inspect local file content')
+    monkeypatch.setattr(owner, 'snapshot', no_snapshot)
+    inspected = manager.inspect(root, mode='clean')
+    assert inspected['sourceKind'] == 'commit' and 'sourceRevision' not in inspected
+    created = manager.create(root, command_id='clean-commit', expected_commit=inspected['expectedCommit'])
+    assert created['head'] == inspected['expectedCommit'] and 'sourceRevision' not in created
+    assert Path(created['path'], 'a.txt').read_text() == 'original\n'
+    assert not Path(created['path'], 'retained-evidence.bin').exists()
+    assert git(root, 'status', '--porcelain=v1') == status and git(root, 'show', ':a.txt') == index
+    assert (root / 'a.txt').read_text() == 'unstaged\n'
+    assert (root / 'retained-evidence.bin').stat().st_size == MAX_BYTES + 1
+    assert manager.create(root, command_id='clean-commit', expected_commit=inspected['expectedCommit'])['duplicate']
+
+
+def test_clean_binding_ref_movement_and_snapshot_compatibility(tmp_path):
+    root = repository(tmp_path); manager = GitWorktrees(tmp_path / 'managed')
+    old = manager.inspect(root, mode='clean', ref='main')['expectedCommit']
+    snapshot = manager.inspect(root)['sourceRevision']
+    (root / 'a.txt').write_text('next\n'); git(root, 'commit', '-am', 'next')
+    current = manager.inspect(root, mode='clean')['expectedCommit']
+    for command, kwargs in [
+        ('moved', {'expected_commit': old, 'ref': 'main'}),
+        ('snapshot', {'expected_revision': snapshot}),
+        ('mixed', {'expected_revision': snapshot, 'expected_commit': old}),
+        ('carry', {'expected_commit': old, 'mode': 'carry_dirty'}),
+        ('short', {'expected_commit': old[:8]}),
+    ]:
+        with pytest.raises(CheckoutNotStarted):
+            manager.create(root, command_id=command, **kwargs)
+    assert not manager.records()
+    assert len(git(root, 'worktree', 'list', '--porcelain').split(b'worktree ')) == 2
+    pinned = manager.create(root, command_id='pinned', expected_commit=old)
+    assert Path(pinned['path'], 'a.txt').read_text() == 'original\n'
+    with pytest.raises(ValueError, match='different contents'):
+        manager.create(root, command_id='pinned', expected_commit=current)
+    # Existing snapshot callers retain their original binding, including clean.
+    legacy = create(manager, root, command_id='legacy')
+    assert legacy['sourceRevision'] == manager.inspect(root)['sourceRevision']
+    assert 'expectedCommit' not in legacy
+
+
+def test_clean_after_admission_failure_is_never_claimed_not_started(tmp_path):
+    root = repository(tmp_path); manager = GitWorktrees(tmp_path / 'managed')
+    commit = manager.inspect(root, mode='clean')['expectedCommit']
+    def admit_then_fail(effect):
+        effect()
+        raise ValueError('Acknowledgement lost after durable admission')
+    with pytest.raises(ValueError) as failure:
+        manager.create(root, command_id='lost-ack', expected_commit=commit, admit=admit_then_fail)
+    assert not isinstance(failure.value, CheckoutNotStarted)
+    assert manager.records()[0]['status'] == 'creating'
+    with pytest.raises(ValueError) as failure:
+        manager.create(root, command_id='branch-conflict', expected_commit=commit, branch='main')
+    assert not isinstance(failure.value, CheckoutNotStarted)
+    assert any(row['status'] == 'partial' for row in manager.records())
 
 
 def test_stale_branch_conflict_and_attached_ownership(tmp_path):
