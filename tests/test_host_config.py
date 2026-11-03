@@ -131,7 +131,7 @@ class HostSettingsTests(unittest.TestCase):
             self.assertNotIn('local_setting',result.settings)
 
     def test_legacy_provider_ids_map_to_core_instances_without_collapsing(self):
-        bundle=SimpleNamespace(providers=[{'module':'p','instance_id':'one','config':{'model':'old'}}],tools=[],hooks=[],session={})
+        bundle=SimpleNamespace(providers=[{'module':'p','instance_id':'one','config':{'model':'old'}}],tools=[],hooks=[],session={},agents={})
         providers=[{'module':'p','id':'one','config':{'model':'new'}},{'module':'p','id':'two'}]
         config=SimpleNamespace(settings={'config':{'providers':providers}},providers=providers)
         result=_apply_settings(bundle,config)
@@ -151,7 +151,7 @@ class HostSettingsTests(unittest.TestCase):
                 expand_environment('${AMPLIFIER_TEST_ABSENT}')
 
     def test_apply_settings_defers_provider_config_but_expands_provider_source(self):
-        bundle=SimpleNamespace(providers=[],tools=[],hooks=[],session={})
+        bundle=SimpleNamespace(providers=[],tools=[],hooks=[],session={},agents={})
         providers=[{'module':'provider-test','id':'one','source':'${PROVIDER_SOURCE}','config':{'base_url':'${OPTIONAL_BASE_URL}'}}]
         config=SimpleNamespace(settings={'config':{'providers':providers}},providers=providers)
         with patch.dict(os.environ,{'PROVIDER_SOURCE':'source'},clear=False):

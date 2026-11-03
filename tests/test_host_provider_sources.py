@@ -15,7 +15,7 @@ def configured(tmp_path, rows, **settings):
 
 
 def bundle(rows):
-    return SimpleNamespace(providers=rows, tools=[], hooks=[], session={})
+    return SimpleNamespace(providers=rows, tools=[], hooks=[], session={}, agents={})
 
 
 def test_saved_named_connection_is_source_qualified_without_account_fallback(tmp_path):
