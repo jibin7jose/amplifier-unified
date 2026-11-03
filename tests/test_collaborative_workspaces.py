@@ -672,9 +672,12 @@ async def test_agent_discovery_pages_roots_not_worker_families_or_transcripts(ap
     assert not app.runtime.inputs
 
 
-async def generation(app, session, identity, inputs):
+async def generation(app, session, identity, inputs, *, interruption_revision=None):
+    # Only intentionally fresh admissions supply their captured epoch. Omission
+    # keeps legacy epoch-zero behavior, including rejection after a Stop.
     await app.on_runtime_event("runtime.generation", {"sessionId": session["id"], "rootSessionId": session["id"],
-        "event": "generation.started", "generation_id": identity})
+        "event": "generation.started", "generation_id": identity,
+        **({} if interruption_revision is None else {"interruptionRevision": interruption_revision})})
     for input_id in inputs:
         await app.on_runtime_event("runtime.status", {"sessionId": session["id"], "status": "working",
             "event": "input.delivered", "inputId": input_id})
@@ -1766,32 +1769,74 @@ async def test_ordinary_peer_intake_keeps_only_the_same_objective(app, mode, cha
     target.update(status='working', task={'id': 'objective', 'revision': 1,
                                           'continuationEpoch': 1, 'status': 'active'})
     app.runtime.unavailable_boundaries.add(target['id'])
-    await send(app, mode=mode)
-    if mode == 'auto':
-        await until(lambda: app.collaboration.receipt('request-1').get('admission', {}).get('waitingForBoundary'))
-    original = app.collaboration.receipt('request-1')
-    target['task'].update(revision=2, constraints=['Inspect only; do not publish.'])
-    if change == 'objective':
-        target['task']['continuationEpoch'] = 2
-    elif change == 'new-task':
-        target['task']['id'] = 'different-task'
-    elif change == 'pause-resume':
-        target['task'].update(revision=3, continuationEpoch=3)
-    elif change == 'stop':
-        target['interruptionRevision'] = 1
-    elif change == 'legacy':
-        legacy = app.collaboration.receipt('request-1')
-        legacy.pop('replyTaskContinuationEpoch')
-        app.collaboration.save('request-1', legacy)
-    elif change == 'owner':
-        target['ownership'] = {'status': 'yielded'}
-    target['status'] = 'idle'
-    await app.collaboration.drain(target['id'])
-    result = await settled(app, 'request-1', 'accepted' if change == 'progress' else 'suppressed')
-    assert all(result[k] == original[k] for k in ('requestId', 'inputId', 'taskId', 'taskRevision',
-                                                 'sourceInputIds', 'displayBinding'))
-    await app.collaboration.drain(target['id'])
-    assert [value[1] for value in app.runtime.inputs] == (['request-1'] if change == 'progress' else [])
+    waiting = {'accepted': False, 'effect': 'none', 'waitingForBoundary': True}
+    observations = []
+    def observe(phase):
+        receipt = app.collaboration.receipt('request-1')
+        admission = receipt.get('admission') or {}
+        task = target.get('task') or {}
+        observations.append({'phase': phase, 'delivery': receipt.get('delivery'),
+            'admission': {key: admission.get(key) for key in ('accepted', 'effect', 'waitingForBoundary')},
+            'taskStatus': task.get('status'), 'taskRevision': task.get('revision'),
+            'taskEpoch': task.get('continuationEpoch'), 'savedTaskRevision': receipt.get('taskRevision'),
+            'savedEpochPresent': 'replyTaskContinuationEpoch' in receipt,
+            'guard': (app.collaboration.guard(receipt) or '')[:240],
+            'draining': target['id'] in app.collaboration.draining,
+            'redrain': target['id'] in app.collaboration.redrain,
+            'inputIds': [value[1][:80] for value in app.runtime.inputs[:8]],
+            'omittedInputIds': max(0, len(app.runtime.inputs) - 8)})
+    try:
+        await send(app, mode=mode)
+        if mode == 'auto':
+            # A submitting receipt with a prior wait is not the required
+            # positively-unadmitted queued boundary. Never mutate an in-flight copy.
+            await until(lambda: (receipt := app.collaboration.receipt('request-1'))['delivery'] == 'queued'
+                        and receipt.get('admission') == waiting)
+        async with app.lock:
+            original = app.collaboration.receipt('request-1')
+            observe('before-edit')
+            assert original['delivery'] == 'queued'
+            if mode == 'auto':
+                assert original['admission'] == waiting
+            assert not app.runtime.inputs
+            target['task'].update(revision=2, constraints=['Inspect only; do not publish.'])
+            if change == 'objective':
+                target['task']['continuationEpoch'] = 2
+            elif change == 'new-task':
+                target['task']['id'] = 'different-task'
+            elif change == 'pause-resume':
+                target['task'].update(revision=3, continuationEpoch=3)
+            elif change == 'stop':
+                target['interruptionRevision'] = 1
+            elif change == 'legacy':
+                legacy = app.collaboration.receipt('request-1')
+                legacy.pop('replyTaskContinuationEpoch')
+                app.collaboration.save('request-1', legacy)
+                app.db.commit()
+                saved = app.collaboration.receipt('request-1')
+                assert 'replyTaskContinuationEpoch' not in saved
+                assert saved['taskRevision'] == original['taskRevision'] == 1
+                assert target['task']['revision'] == 2
+                assert app.collaboration.guard(saved) == 'The recipient task changed.'
+            elif change == 'owner':
+                target['ownership'] = {'status': 'yielded'}
+            target['status'] = 'idle'
+            observe('after-edit')
+        await app.collaboration.drain(target['id'])
+        result = await settled(app, 'request-1', 'accepted' if change == 'progress' else 'suppressed')
+        assert all(result[k] == original[k] for k in ('requestId', 'inputId', 'taskId', 'taskRevision',
+                                                     'sourceInputIds', 'displayBinding'))
+        await app.collaboration.drain(target['id'])
+        assert [value[1] for value in app.runtime.inputs] == (['request-1'] if change == 'progress' else [])
+    except BaseException:
+        try:
+            async with asyncio.timeout(5), app.lock:
+                observe('failure')
+        except BaseException as diagnostic:
+            observations.append({'phase': 'failure-readback-unavailable', 'errorType': type(diagnostic).__name__})
+        # At most before/edit/failure observations; no text, raw receipt or environment.
+        print('PEER_INTAKE_BOUNDARY ' + json.dumps({'mode': mode, 'change': change, 'observations': observations}))
+        raise
 
 
 @pytest.mark.parametrize('mode', ['auto', 'queue'])

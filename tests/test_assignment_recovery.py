@@ -99,12 +99,28 @@ async def test_resume_refuses_unsettled_stop_or_member(app, block):
         app.collaboration.save('stop-recovery',receipt); app.db.commit()
     elif block=='working':source['status']='working'
     elif block=='native_worker':source['workers'].append({'id':'native','status':'running'})
-    elif block=='generation':await generation(app,source,'unsettled-generation',[])
+    elif block=='generation':
+        epoch = source['interruptionRevision']  # Captured for this intentionally fresh admission.
+        await generation(app,source,'unsettled-generation',[], interruption_revision=epoch)
+        assert source['collaborationGeneration'] == {
+            'id': 'unsettled-generation', 'inputIds': [], 'terminal': False, 'interruptionRevision': epoch}
     else:app.runtime._preparations={source['id']:object()}
     with pytest.raises(AppError,match='settle'):
         await resume(app,source)
     assert app.assignments.current(source)==value
     assert not app.runtime.inputs
+
+
+@pytest.mark.parametrize('missing', [True, False])
+async def test_generation_helper_does_not_refresh_a_missing_or_pre_stop_epoch(app, missing):
+    source = app.state['sessions'][0]
+    captured_epoch = source.get('interruptionRevision', 0)
+    await app.dispatch('conversation.stop', {'sessionId': source['id']})
+    assert source['interruptionRevision'] > captured_epoch
+    stopped = copy.deepcopy(source['collaborationGeneration'])
+    await generation(app, source, 'delayed-pre-stop-generation', [],
+                     **({} if missing else {'interruption_revision': captured_epoch}))
+    assert source['collaborationGeneration'] == stopped
 
 
 async def test_queued_outbound_to_independent_chat_stays_suppressed_after_resume(app):
@@ -119,7 +135,10 @@ async def test_queued_outbound_to_independent_chat_stays_suppressed_after_resume
     assert app.collaboration.receipt('old-peer-request')['delivery']=='suppressed'
     assert not app.runtime.inputs
     # A fresh explicit request has current lineage and can be admitted.
-    await generation(app,source,'fresh-generation',['new-human-input'])
+    epoch = source['interruptionRevision']
+    await generation(app,source,'fresh-generation',['new-human-input'], interruption_revision=epoch)
+    assert source['collaborationGeneration'] == {
+        'id': 'fresh-generation', 'inputIds': ['new-human-input'], 'terminal': False, 'interruptionRevision': epoch}
     await send(app,identity='fresh-peer-request')
     await until(lambda:len(app.runtime.inputs)==1)
     assert app.runtime.inputs[0][1]=='fresh-peer-request'

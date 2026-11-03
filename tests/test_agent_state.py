@@ -123,7 +123,9 @@ async def _configuration_tool(app, sid, native_role=None):
         capabilities = {}
         return SimpleNamespace(session_id=session_id, get_capability=capabilities.get,
                                register_capability=capabilities.__setitem__)
-    worker = Worker.__new__(Worker)
+    # Keep constructor-owned execution/activation defaults. Only the synthetic
+    # coordinator, generation and host bridge below replace runtime boundaries.
+    worker = Worker()
     root = native_coordinator(sid)
     worker.session = SimpleNamespace(coordinator=root)
     worker.runtime = SimpleNamespace(generation={'id': 'synthetic-generation', 'input_ids': []})

@@ -100,7 +100,10 @@ async def test_stop_then_new_generation_does_not_restore_old_claim(app):
     await app.dispatch('conversation.stop', {'sessionId': peer['id']}, command_id='stop-holder')
     listing = (await app.dispatch('assignment.tasks.read', {'sessionId': owner['id'], 'taskId': task['id']}))['result']['task']
     assert listing['claim']['status'] == 'stale'
-    await generation(app, peer, 'explicit-later-turn', ['new-authorized-input'])
+    epoch = peer['interruptionRevision']
+    await generation(app, peer, 'explicit-later-turn', ['new-authorized-input'], interruption_revision=epoch)
+    assert peer['collaborationGeneration'] == {
+        'id': 'explicit-later-turn', 'inputIds': ['new-authorized-input'], 'terminal': False, 'interruptionRevision': epoch}
     with pytest.raises(AppError, match='stale'):
         await change(app, peer, 'complete', claimed, report='Late completion', agent=True)
     await change(app, owner, 'release', claimed)

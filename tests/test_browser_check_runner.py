@@ -72,7 +72,7 @@ def test_uncertain_cleanup_stops_and_records_unrun_without_false_cascade(tmp_pat
 def test_cleanup_identity_details_are_bounded_without_reducing_failure_count(monkeypatch):
     identities = {-pid: '1' for pid in range(1, 41)}
     snapshots = iter([{}, identities, {}])
-    monkeypatch.setattr(runner, 'owned_members', lambda *args: next(snapshots))
+    monkeypatch.setattr(runner, 'owned_members', lambda *args, **kwargs: next(snapshots))
     cleanup = runner.retire_group(-1, 'synthetic')
     assert cleanup['terminated'] == 40 and cleanup['remaining'] == []
     assert len(cleanup['observedBeforeTermination']) == 32
@@ -2073,7 +2073,7 @@ os.write(1,b"progress")
 
 def test_python_cleanup_drain_error_does_not_skip_available_identity_inspection(monkeypatch):
     inspections = []
-    monkeypatch.setattr(runner, 'owned_members', lambda *args: inspections.append(True) or {})
+    monkeypatch.setattr(runner, 'owned_members', lambda *args, **kwargs: inspections.append(True) or {})
     def failed_drain():
         raise OSError('Capture failed')
     cleanup = runner.retire_group(-1, 'synthetic', drain=failed_drain)
@@ -2401,3 +2401,292 @@ finally:
         assert report['scenarios'][0]['cleanup'] == {'remaining': [], 'terminated': 0}
     finally:
         finish_nested_fixture_identities((sibling,))
+
+
+@pytest.fixture
+def cleanup_processes(monkeypatch):
+    """Synthetic /proc and pidfds; no real process, scan or signal operation."""
+    import errno
+    from types import SimpleNamespace
+    originals = {name: getattr(Path, name) for name in ('iterdir', 'read_text', 'stat', 'open', 'readlink')}
+    original_close = os.close
+
+    def configure(fault, count=1, *, environment=None):
+        pids = list(range(91001, 91001 + count))
+        births = {pid: str(12300 + i) for i, pid in enumerate(pids)}
+        live, handles, denied, calls = set(pids), {}, set(), []
+        token = 'a' * 32
+        target = pids[-1]
+
+        def refusal():
+            error = PermissionError(errno.EACCES, 'SECRET exception text', '/private/SECRET/path')
+            # Exception-owned fields are not diagnostic authority.
+            error._cleanup_receipt = {'remaining': [], 'terminated': 0, 'private': 'SECRET'}
+            error._cleanup_failure = {'operation': 'SECRET', 'ownership': 'proven'}
+            return error
+
+        def operation(name, pid):
+            calls.append((name, pid))
+            if (pid == target or name == 'proc_iter') and name == fault:
+                raise refusal()
+
+        def iterdir(path):
+            if path != Path('/proc'):
+                return originals['iterdir'](path)
+            operation('proc_iter', None)
+            return iter(Path('/proc') / str(pid) for pid in pids if pid in live)
+
+        def read_text(path, *args, **kwargs):
+            if path.parent.parent != Path('/proc') or path.name != 'stat':
+                return originals['read_text'](path, *args, **kwargs)
+            pid = int(path.parent.name)
+            name = ('identity_recheck' if pid in handles.values() else
+                    'post_denial_stat' if pid in denied else 'stat')
+            operation(name, pid)
+            denied.discard(pid)
+            fields = ['0'] * 20
+            fields[0], fields[1], fields[2], fields[19] = 'S', '1', '88001', births[pid]
+            return f'{pid} (SECRET command) ' + ' '.join(fields)
+
+        def uid_stat(path, *args, **kwargs):
+            if path.parent != Path('/proc') or not path.name.isdigit():
+                return originals['stat'](path, *args, **kwargs)
+            operation('uid_stat', int(path.name))
+            return SimpleNamespace(st_uid=os.geteuid())
+
+        def open_environ(path, *args, **kwargs):
+            if path.parent.parent != Path('/proc') or path.name != 'environ':
+                return originals['open'](path, *args, **kwargs)
+            pid = int(path.parent.name)
+            try:
+                operation('environ_open', pid)
+                if fault == 'post_denial_stat' and pid == target:
+                    raise refusal()
+            except PermissionError:
+                denied.add(pid)
+                raise
+            class Stream:
+                def __enter__(self):
+                    return self
+                def read(self, size):
+                    assert size == 1024 * 1024 + 1
+                    try:
+                        operation('environ_read', pid)
+                    except PermissionError:
+                        denied.add(pid)
+                        raise
+                    owner = token if environment is None else environment[runner.OWNER_ENV]
+                    return (runner.OWNER_ENV + '=' + owner + '\0PRIVATE=SECRET\0').encode()
+                def __exit__(self, *args):
+                    try:
+                        operation('environ_close', pid)
+                    except PermissionError:
+                        denied.add(pid)
+                        raise
+            return Stream()
+
+        def readlink(path):
+            if path.parent.parent == Path('/proc') and path.name == 'exe':
+                return Path('/private/SECRET/python')
+            return originals['readlink'](path)
+
+        def pidfd_open(pid):
+            assert pid in pids  # Never pass through to the host.
+            operation('pidfd_open', pid)
+            handle = pid + 100000
+            handles[handle] = pid
+            return handle
+
+        def send_signal(handle, sig):
+            assert handle in handles and sig in (signal.SIGTERM, signal.SIGKILL)
+            pid = handles[handle]
+            operation('signal', pid)
+            live.discard(pid)  # Simulated disappearance on the next existing scan.
+
+        def close(handle):
+            if handle not in handles:
+                # run_scenarios writes its test-owned evidence using real FDs.
+                # Only the explicitly fake pidfds above are syscall-injected.
+                return original_close(handle)
+            pid = handles.pop(handle)
+            operation('pidfd_close', pid)
+
+        for name, func in [('iterdir', iterdir), ('read_text', read_text), ('stat', uid_stat),
+                           ('open', open_environ), ('readlink', readlink)]:
+            monkeypatch.setattr(Path, name, func)
+        monkeypatch.setattr(runner.os, 'pidfd_open', pidfd_open)
+        monkeypatch.setattr(runner.signal, 'pidfd_send_signal', send_signal)
+        monkeypatch.setattr(runner.os, 'close', close)
+        ticks = iter(range(10000))
+        monkeypatch.setattr(runner.time, 'monotonic', lambda: next(ticks))
+        monkeypatch.setattr(runner.time, 'sleep', lambda seconds: None)
+        return SimpleNamespace(pids=pids, births=births, live=live, calls=calls,
+                               token=token, group=88000, handles=handles)
+    return configure
+
+
+@pytest.mark.parametrize('operation', [
+    'proc_iter', 'stat', 'uid_stat', 'environ_open', 'environ_read', 'environ_close',
+    'post_denial_stat', 'pidfd_open', 'identity_recheck', 'signal', 'pidfd_close',
+])
+def test_cleanup_failure_receipt_identifies_exact_denied_operation(cleanup_processes, operation):
+    import errno
+    fixture = cleanup_processes(operation)
+    receipt = runner.retire_group(fixture.group, fixture.token, {})
+    owned = operation in {'pidfd_open', 'identity_recheck', 'signal', 'pidfd_close'}
+    expected = {'phase': 'termination' if owned else 'grace', 'operation': operation,
+                'errorType': 'PermissionError', 'errno': errno.EACCES,
+                'ownership': 'proven' if owned else 'unknown'}
+    if operation != 'proc_iter':
+        expected['pid'] = fixture.pids[0]
+    if operation not in {'stat', 'proc_iter'}:
+        expected['startTime'] = fixture.births[fixture.pids[0]]
+    assert receipt['failure'] == expected
+    assert receipt['remaining'] == ['unknown']
+    assert receipt['terminated'] == (1 if owned else None)
+    attempts = receipt['signalAttempts']
+    assert attempts['attempted'] == int(operation in {'signal', 'pidfd_close'})
+    assert attempts['returned'] == int(operation == 'pidfd_close')
+    assert attempts['failed'] == int(operation == 'signal')
+    assert attempts['disappeared'] == attempts['omitted'] == 0
+    assert fixture.calls.count((operation, None if operation == 'proc_iter' else fixture.pids[0])) == 1
+    if operation in {'environ_open', 'environ_read', 'environ_close', 'post_denial_stat'}:
+        assert fixture.calls.count(('post_denial_stat', fixture.pids[0])) == 1
+        assert fixture.calls.count(('environ_open', fixture.pids[0])) == 1
+    if operation in {'identity_recheck', 'signal', 'pidfd_close'}:
+        assert fixture.calls.count(('pidfd_close', fixture.pids[0])) == 1
+    assert not fixture.handles
+    encoded = json.dumps(receipt)
+    assert 'SECRET' not in encoded and '/private' not in encoded and '/proc' not in encoded
+    assert fixture.token not in encoded and runner.OWNER_ENV not in encoded
+
+
+@pytest.mark.parametrize('drain_failed', [False, True])
+def test_cleanup_failure_receipt_keeps_prior_signal_and_capture_error(cleanup_processes, drain_failed):
+    fixture = cleanup_processes('signal', count=2)
+    def drain():
+        if drain_failed:
+            raise OSError('SECRET disk failure')
+    receipt = runner.retire_group(fixture.group, fixture.token, {}, drain=drain)
+    assert receipt['remaining'] == ['unknown'] and receipt['terminated'] == 2
+    assert receipt['failure']['pid'] == fixture.pids[1]
+    assert receipt['signalAttempts'] == {
+        'attempted': 2, 'returned': 1, 'failed': 1, 'disappeared': 0, 'omitted': 0,
+        'items': [{'pid': pid, 'startTime': fixture.births[pid], 'signal': 'SIGTERM',
+                   'outcome': 'returned' if index == 0 else 'failed'}
+                  for index, pid in enumerate(fixture.pids)]}
+    assert receipt.get('drainError') == ('OSError' if drain_failed else None)
+    assert len(receipt['observedBeforeTermination']) == 2
+    assert fixture.live == {fixture.pids[1]}
+    assert 'SECRET' not in json.dumps(receipt)
+
+
+def test_cleanup_failure_receipt_bounds_signal_details_without_losing_counts(cleanup_processes):
+    fixture = cleanup_processes('signal', count=41)
+    receipt = runner.retire_group(fixture.group, fixture.token, {})
+    assert receipt['terminated'] == 41 and receipt['remaining'] == ['unknown']
+    assert receipt['signalAttempts']['attempted'] == 41
+    assert receipt['signalAttempts']['returned'] == 40 and receipt['signalAttempts']['failed'] == 1
+    assert len(receipt['signalAttempts']['items']) == 32 and receipt['signalAttempts']['omitted'] == 9
+    assert len(receipt['observedBeforeTermination']) == 32 and receipt['omittedProcessDetails'] == 9
+    assert receipt['failure']['pid'] == fixture.pids[-1]
+    assert len(json.dumps(receipt)) < 12000
+
+
+def test_cleanup_failure_receipt_success_uses_existing_scan_and_signal_sequence(cleanup_processes):
+    fixture = cleanup_processes(None)
+    receipt = runner.retire_group(fixture.group, fixture.token, {})
+    assert receipt['remaining'] == [] and receipt['terminated'] == 1
+    assert 'failure' not in receipt
+    assert receipt['signalAttempts'] == {
+        'attempted': 1, 'returned': 1, 'failed': 0, 'disappeared': 0, 'omitted': 0,
+        'items': [{'pid': fixture.pids[0], 'startTime': fixture.births[fixture.pids[0]],
+                   'signal': 'SIGTERM', 'outcome': 'returned'}]}
+    assert [op for op, _ in fixture.calls] == [
+        'proc_iter', 'stat', 'uid_stat', 'environ_open', 'environ_read', 'environ_close',
+        'proc_iter', 'stat', 'stat', 'stat',  # initial scan + two existing metadata checks
+        'proc_iter', 'stat', 'pidfd_open', 'identity_recheck', 'signal', 'pidfd_close',
+        'proc_iter', 'proc_iter']  # post-TERM wait and pre-KILL check; no extra scan
+    assert not fixture.live and not fixture.handles
+
+
+@pytest.mark.parametrize('operation', ['stat', 'signal', 'pidfd_close'])
+def test_cleanup_failure_receipt_keeps_next_scenario_unrun(tmp_path, monkeypatch, cleanup_processes, operation):
+    from types import SimpleNamespace
+    environment = {}
+    fixture = cleanup_processes(operation, environment=environment)
+    monkeypatch.setattr(runner, 'process_identities', lambda: {})
+    launches = []
+    def wait(*, timeout):
+        pytest.fail('Injected unsafe cleanup must not reach process.wait')
+    def popen(*args, **kwargs):
+        assert not launches and kwargs['start_new_session'] is True
+        # Detached fake descendants inherit this launch's real owner token.
+        # Keep only that field in memory, not the caller's whole environment.
+        owner = kwargs['env'][runner.OWNER_ENV]
+        assert re.fullmatch(r'[0-9a-f]{32}', owner)
+        environment[runner.OWNER_ENV] = owner
+        launches.append(args[0])
+        return SimpleNamespace(pid=fixture.group, poll=lambda: 0, wait=wait, returncode=0)
+    monkeypatch.setattr(runner.subprocess, 'Popen', popen)
+    code, report, output = execute(tmp_path, [scenario('first', 'pass'), scenario('later', 'pass')])
+    first, later = report['scenarios']
+    assert set(environment) == {runner.OWNER_ENV} and len(launches) == 1
+    assert fixture.calls.count((operation, fixture.pids[0])) == 1
+    assert code == 1 and not report['passed'] and not report['complete']
+    assert first['status'] == 'failed' and first['exitCode'] == 0
+    assert first['cleanup']['remaining'] == ['unknown']
+    assert first['cleanup']['failure']['operation'] == operation
+    owned = operation != 'stat'
+    assert first['cleanup']['failure']['ownership'] == ('proven' if owned else 'unknown')
+    assert first['cleanup']['terminated'] == (1 if owned else None)
+    attempts = first['cleanup']['signalAttempts']
+    assert attempts['attempted'] == int(owned)
+    assert attempts['returned'] == int(operation == 'pidfd_close')
+    assert attempts['failed'] == int(operation == 'signal')
+    if owned:
+        assert fixture.calls.count(('environ_read', fixture.pids[0])) == 1
+        assert first['cleanup']['observedBeforeTermination'][0]['processGroup'] == 88001
+        assert fixture.group == 88000  # Ownership came from the token, not the group.
+    assert not fixture.handles
+    assert later['status'] == 'unrun' and later['reason'] == 'unsafe_cleanup'
+    assert len(launches) == 1 and not (output / 'later.log').exists()
+    assert 'SECRET' not in json.dumps(first['cleanup'])
+    assert all(value not in json.dumps(report) for value in environment.values())
+
+
+def test_cleanup_failure_receipt_fallback_does_not_trust_exception_payload():
+    error = PermissionError(13, 'SECRET', '/private/SECRET')
+    error._cleanup_receipt = {'remaining': [], 'terminated': 0, 'secret': 'SECRET'}
+    error._cleanup_failure = {'phase': 'SECRET', 'ownership': 'proven'}
+    receipt = runner.unknown_cleanup(error)
+    assert receipt == {'remaining': ['unknown'], 'terminated': None, 'signalAttempts': None,
+        'error': 'PermissionError', 'failure': {'phase': 'unknown', 'operation': 'retire_group',
+        'errorType': 'PermissionError', 'errno': 13, 'ownership': 'unknown'}}
+    assert runner.cleanup_failure(error, 'SECRET', 'SECRET', pid=-1, birth='SECRET',
+                                  ownership='SECRET') == {
+        'phase': 'unknown', 'operation': 'unknown', 'errorType': 'PermissionError',
+        'errno': 13, 'ownership': 'unknown'}
+
+
+def test_cleanup_failure_receipt_wait_timeout_preserves_signal_progress(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    progress = {'remaining': [], 'terminated': 1, 'drainError': 'OSError',
+                'signalAttempts': {'attempted': 1, 'returned': 1, 'failed': 0,
+                                  'disappeared': 0, 'omitted': 0, 'items': []}}
+    def wait(*, timeout):
+        assert timeout == 2
+        raise subprocess.TimeoutExpired(['/private/SECRET/command'], timeout)
+    monkeypatch.setattr(runner, 'process_identities', lambda: {})
+    monkeypatch.setattr(runner.subprocess, 'Popen', lambda *a, **kw:
+                        SimpleNamespace(pid=91000, poll=lambda: 0, wait=wait, returncode=0))
+    monkeypatch.setattr(runner, 'retire_group', lambda *a, **kw: dict(progress))
+    code, report, _ = execute(tmp_path, [scenario('first', 'pass'), scenario('later', 'pass')])
+    receipt = report['scenarios'][0]['cleanup']
+    assert code == 1 and receipt['remaining'] == ['unknown']
+    assert receipt['terminated'] == 1 and receipt['signalAttempts'] == progress['signalAttempts']
+    assert receipt['drainError'] == 'OSError' and receipt['error'] == 'WaitTimeout'
+    assert receipt['failure'] == {'phase': 'wait', 'operation': 'process_wait',
+                                 'errorType': 'TimeoutExpired', 'pid': 91000, 'ownership': 'unknown'}
+    assert report['scenarios'][1]['reason'] == 'unsafe_cleanup'
+    assert 'SECRET' not in json.dumps(receipt)

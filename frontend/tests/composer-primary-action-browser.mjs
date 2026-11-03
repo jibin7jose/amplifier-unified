@@ -1,6 +1,6 @@
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 import {clearComposer} from './composer-test-helpers.mjs';
-// Packaged application and real action dispatch, synthetic media/runtime only.
+// Packaged application and real action dispatch, synthetic media/runtime/discovery.
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
@@ -9,11 +9,12 @@ import assert from 'node:assert/strict';
 import {chromium,expect} from '@playwright/test';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',[root+'tests/fixtures/voice_visual_ui_server.py','--onboarding-complete'],{stdio:['ignore','pipe','inherit']});
-let browser,page,failure;
+let browser,page,failure,discovery,fixtureUrl;
 const calls=[],transitions=[];
 const output=process.env.AMPLIFIER_SCREENSHOT_DIR||'/tmp/amplifier-composer-primary-action';
 try{
  const url=await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>reject(Error('Fixture timed out')),20000);fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exited '+code))});fixture.stdout.on('data',chunk=>{output+=chunk;for(const line of output.split('\n'))try{const data=JSON.parse(line);if(data.url){clearTimeout(timer);resolve(data.url)}}catch{}})});
+ fixtureUrl=url;
  await mkdir(output,{recursive:true});browser=await chromium.launch({headless:true});
  page=await browser.newPage({viewport:{width:1280,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});const errors=[];
  page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/actions')calls.push(request.postDataJSON())});
@@ -32,6 +33,18 @@ try{
   // stay authoritative across voice transitions (tooltip behavior has its own test).
  };
  await matches('Start voice call','call.start','audio-lines');await expect(primary).toBeEnabled();await expect(page.locator('.a-call-button')).toHaveCount(0);
+ // Exercise the real default/catalog UI instead of avoiding discovery to get
+ // clean shutdown. The synthetic metadata matches the fixture's seeded connection.
+ await page.getByRole('button',{name:'Model and reasoning settings',exact:true}).click();
+ const options=page.getByRole('dialog',{name:'Chat options',exact:true});
+ await expect(options.locator('#chat-provider')).toHaveValue('fixture');
+ await expect(options.locator('#chat-provider')).toBeEnabled();
+ await expect(options.locator('#chat-model')).toHaveValue('fixture-model');
+ await expect(options.locator('#chat-model')).toBeEnabled();
+ await expect(options.locator('#chat-model option[value="fixture-model"]')).toBeAttached();
+ await options.getByRole('button',{name:'Close chat options',exact:true}).click();
+ await expect(options).toHaveCount(0);
+ await matches('Start voice call','call.start','audio-lines');
  await composer.press('Enter');assert.equal(calls.filter(row=>row.action==='call.start').length,0,'Empty Enter never starts voice');
  await composer.fill(' \n');await matches('Start voice call','call.start','audio-lines');await clearComposer(composer);
  await primary.click();await matches('End voice call','call.end','x');await expect.poll(()=>page.evaluate(()=>typeof window.releaseMicrophone)).toBe('function');
@@ -69,12 +82,18 @@ try{
   await clearComposer(composer);await activity('working');await matches('Stop response','conversation.stop','x');assert.deepEqual(await primary.boundingBox(),box);await expect(primary).toBeInViewport();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:output+`/cancel-${width}.png`});
  }
  assert.deepEqual(errors,[]);assert.equal(calls.filter(row=>row.action==='conversation.send').length,1);
- await writeFile(output+'/primary-action.json',JSON.stringify({passed:true,calls,transitions},null,2));
- console.log('Composer primary action passed: voice/send/cancel, connecting cancellation, text/attachments during voice, agent drafts, work versus call cancellation, keyboard, permission recovery, stable desktop/mobile geometry. Synthetic media only; no physical audio claim.');
+ discovery=(await inspect()).discovery;
+ assert.equal(discovery.mode,'synthetic-metadata');
+ assert.ok(discovery.calls['configuration.defaults']+discovery.calls['configuration.catalog']>0,'Actual default/catalog requests must reach the synthetic resolution seam');
+ assert.equal(discovery.refused['probe.spawn'],0);
+ assert.deepEqual(Object.values(discovery.refused),Object.values(discovery.refused).map(()=>0));
+ await writeFile(output+'/primary-action.json',JSON.stringify({passed:true,calls,transitions,discovery},null,2));
+ console.log('Composer primary action passed: voice/send/cancel, connecting cancellation, text/attachments during voice, agent drafts, work versus call cancellation, keyboard, permission recovery, stable desktop/mobile geometry. Synthetic media/runtime/provider metadata; no physical audio or real acquisition claim.');
 }catch(error){
  failure=error;
+ if(fixtureUrl&&page&&!page.isClosed())discovery=await page.request.get(fixtureUrl+'/fixture').then(response=>response.json()).then(value=>value.discovery).catch(()=>discovery);
  const state=page&&!page.isClosed()?await page.evaluate(()=>{const state=window.amplifier?.getState();return {sessionId:state?.selectedSessionId,view:state?.view,voice:state?.voice,voiceConfiguration:state?.voiceConfiguration}}).catch(()=>null):null;
- await writeFile(output+'/primary-action.json',JSON.stringify({passed:false,error:String(error),calls,transitions,state},null,2));
+ await writeFile(output+'/primary-action.json',JSON.stringify({passed:false,error:String(error),calls,transitions,state,discovery},null,2));
  if(page&&!page.isClosed())await page.screenshot({path:output+'/failure.png'}).catch(()=>{});
  throw error;
 }

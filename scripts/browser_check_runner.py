@@ -241,123 +241,233 @@ def process_identities():
     return result
 
 
-def owned_members(group, token, known, preexisting=None):
+def cleanup_failure(exc, phase, operation, *, pid=None, birth=None, ownership='unknown'):
+    """Scalar evidence only; never serialize exceptions, paths, tokens or environ."""
+    detail = {
+        'phase': phase if phase in {'ownership', 'grace', 'initial_scan', 'termination',
+                                   'term_wait', 'kill_wait', 'final_scan', 'wait'} else 'unknown',
+        'operation': operation if operation in {'proc_iter', 'stat', 'uid_stat',
+            'environ_open', 'environ_read', 'environ_close', 'post_denial_stat',
+            'environ_bound', 'lineage', 'ownership_scan', 'pidfd_open',
+            'identity_recheck', 'signal', 'pidfd_close', 'process_wait', 'retire_group'} else 'unknown',
+        'errorType': ('PermissionError' if isinstance(exc, PermissionError) else
+                      'OSError' if isinstance(exc, OSError) else
+                      'TimeoutExpired' if isinstance(exc, subprocess.TimeoutExpired) else 'RuntimeError'),
+        'ownership': 'proven' if ownership == 'proven' else 'unknown',
+    }
+    if type(getattr(exc, 'errno', None)) is int and 0 <= exc.errno <= 4095:
+        detail['errno'] = exc.errno
+    if type(pid) is int and 0 < pid <= 2**31 - 1:
+        detail['pid'] = pid
+    if isinstance(birth, str) and re.fullmatch(r'[0-9]{1,32}', birth):
+        detail['startTime'] = birth
+    return detail
+
+
+def unknown_cleanup(exc):
+    # An uninstrumented failure does not prove that no signals were attempted.
+    # Exception attributes are not trusted receipts, even when shaped like one.
+    return {
+        'remaining': ['unknown'], 'terminated': None,
+        'error': cleanup_failure(exc, 'unknown', 'retire_group')['errorType'],
+        'failure': cleanup_failure(exc, 'unknown', 'retire_group'),
+        'signalAttempts': None,
+    }
+
+
+def owned_members(group, token, known, preexisting=None, *, failure=None):
     """Return PID/start identities, including cooperatively tagged nested children.
 
     Tokens supplement group/identity checks for new same-UID descendants. They
     are not an antiforgery boundary against processes that copy or erase tags.
     """
     members = {}
-    for entry in Path('/proc').iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
-            if fields[0] == 'Z':
+    if failure is not None:
+        failure.clear()
+    try:
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdigit():
                 continue
-            in_group = int(fields[2]) == group
-            if in_group or known.get(int(entry.name)) == fields[19]:
-                members[int(entry.name)] = fields[19]
-                continue
-            # A process that predates this scenario cannot have inherited its
-            # fresh token. Hosted runners have unrelated same-user processes
-            # whose environ is deliberately unreadable. PID alone is unsafe:
-            # a reused PID must still go through ownership discovery.
-            if (preexisting or {}).get(int(entry.name)) == fields[19]:
-                continue
-            if not in_group and entry.stat().st_uid != os.geteuid():
-                continue
+            pid, birth, operation = int(entry.name), known.get(int(entry.name)), 'stat'
             try:
-                with (entry / 'environ').open('rb') as stream:
-                    environment = stream.read(1024 * 1024 + 1)
-            except PermissionError:
-                # Linux may revoke environ access during exit before /proc is
-                # reaped. Only a proven zombie/disappearance is safe to ignore.
-                if (entry / 'stat').read_text().rsplit(')', 1)[1].split()[0] == 'Z':
+                fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
+                birth = fields[19]
+                if fields[0] == 'Z':
                     continue
+                in_group = int(fields[2]) == group
+                if in_group or known.get(pid) == fields[19]:
+                    members[pid] = fields[19]
+                    continue
+                # A process that predates this scenario cannot have inherited its
+                # fresh token. PID reuse must still go through ownership discovery.
+                if (preexisting or {}).get(pid) == fields[19]:
+                    continue
+                operation = 'uid_stat'
+                if not in_group and entry.stat().st_uid != os.geteuid():
+                    continue
+                try:
+                    operation = 'environ_open'
+                    with (entry / 'environ').open('rb') as stream:
+                        operation = 'environ_read'
+                        environment = stream.read(1024 * 1024 + 1)
+                        operation = 'environ_close'
+                except PermissionError:
+                    # Preserve the existing post-denial zombie check, not a retry.
+                    denied_operation, operation = operation, 'post_denial_stat'
+                    if (entry / 'stat').read_text().rsplit(')', 1)[1].split()[0] == 'Z':
+                        continue
+                    operation = denied_operation
+                    raise
+                operation = 'environ_bound'
+                if len(environment) > 1024 * 1024:
+                    raise RuntimeError('Process ownership environment exceeds inspection bound')
+                operation = 'lineage'
+                if environment_owns(environment, token):
+                    members[pid] = fields[19]
+            except (FileNotFoundError, ProcessLookupError):
+                pass
+            except (OSError, RuntimeError) as exc:
+                if failure is not None:
+                    failure.update(cleanup_failure(exc, 'ownership', operation, pid=pid, birth=birth))
                 raise
-            if len(environment) > 1024 * 1024:
-                raise RuntimeError('Process ownership environment exceeds inspection bound')
-            if environment_owns(environment, token):
-                members[int(entry.name)] = fields[19]
-        except (FileNotFoundError, ProcessLookupError):
-            pass
+    except (OSError, RuntimeError) as exc:
+        if failure is not None and not failure:
+            failure.update(cleanup_failure(exc, 'ownership', 'proc_iter'))
+        raise
     return members
 
 
 def retire_group(group, token, preexisting=None, *, drain=None):
     known = {}
     drain_error = None
+    initial, observed, phase = None, [], 'grace'
+    attempts = {'attempted': 0, 'returned': 0, 'failed': 0, 'disappeared': 0,
+                'items': [], 'omitted': 0}
+    failure = {}
+
+    def receipt(remaining):
+        # Legacy terminated counts the initial orphan set, not signal outcomes.
+        result = {'remaining': remaining, 'terminated': None if initial is None else len(initial)}
+        if drain_error:
+            result['drainError'] = drain_error
+        if observed:
+            result['observedBeforeTermination'] = observed
+            if len(initial) > len(observed):
+                result['omittedProcessDetails'] = len(initial) - len(observed)
+        if attempts['attempted']:
+            result['signalAttempts'] = attempts
+        return result
+
     def inspect():
         nonlocal drain_error
         if drain:
             try:
                 drain()
             except (OSError, RuntimeError) as exc:
-                drain_error = type(exc).__name__
-        current = owned_members(group, token, known, preexisting)
+                drain_error = cleanup_failure(exc, phase, 'ownership_scan')['errorType']
+        failure.clear()
+        try:
+            current = owned_members(group, token, known, preexisting, failure=failure)
+        except (OSError, RuntimeError) as exc:
+            if not failure:
+                failure.update(cleanup_failure(exc, phase, 'ownership_scan'))
+            raise
         # Once ownership is proven, retain PID/start-time identity while the
         # process exits; Linux can revoke its environ before it becomes a zombie.
         known.update(current)
         return current
-    # Fixtures commonly send termination in finally before Node itself exits.
-    # Give that normal shutdown time to finish before declaring an orphan.
-    grace = time.monotonic() + .5
-    while inspect() and time.monotonic() < grace:
-        time.sleep(.05)
-    initial = inspect()
-    observed = []
-    for pid, birth in initial.items():
-        if len(observed) == 32:
-            break
-        row = {'pid': pid, 'startTime': birth}
-        try:
-            entry = Path('/proc') / str(pid)
-            fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
-            if fields[19] == birth:
-                executable = entry.joinpath('exe').readlink().name[:96]
+    try:
+        # Fixtures commonly send termination in finally before Node itself exits.
+        # Give that normal shutdown time to finish before declaring an orphan.
+        grace = time.monotonic() + .5
+        while inspect() and time.monotonic() < grace:
+            time.sleep(.05)
+        phase = 'initial_scan'
+        initial = inspect()
+        for pid, birth in initial.items():
+            if len(observed) == 32:
+                break
+            row = {'pid': pid, 'startTime': birth}
+            try:
+                entry = Path('/proc') / str(pid)
                 fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
                 if fields[19] == birth:
-                    row.update(parentPid=int(fields[1]), processGroup=int(fields[2]),
-                               executable=executable)
+                    executable = entry.joinpath('exe').readlink().name[:96]
+                    fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
+                    if fields[19] == birth:
+                        row.update(parentPid=int(fields[1]), processGroup=int(fields[2]),
+                                   executable=executable)
+                    else:
+                        row['detail'] = 'identity_changed'
                 else:
                     row['detail'] = 'identity_changed'
-            else:
-                row['detail'] = 'identity_changed'
-        except OSError as exc:
-            row['detail'] = type(exc).__name__
-        observed.append(row)
+            except OSError as exc:
+                row['detail'] = cleanup_failure(exc, phase, 'stat')['errorType']
+            observed.append(row)
 
-    def receipt(remaining):
-        result = {'remaining': remaining, 'terminated': len(initial)}
-        if drain_error:
-            result['drainError'] = drain_error
-        if observed:
-            # No arguments, environment, full paths or unproven process owners.
-            result['observedBeforeTermination'] = observed
-            if len(initial) > len(observed):
-                result['omittedProcessDetails'] = len(initial) - len(observed)
-        return result
-
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        current = inspect()
-        if not current:
-            return receipt([])
-        for pid, birth in current.items():
-            try:
-                handle = os.pidfd_open(pid)
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            phase = 'termination'
+            current = inspect()
+            if not current:
+                return receipt([])
+            for pid, birth in current.items():
+                operation = 'pidfd_open'
+                ownership = 'proven'  # This PID/start pair was observed in the existing scan.
                 try:
-                    fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
-                    if fields[19] == birth:
-                        signal.pidfd_send_signal(handle, sig)
-                finally:
-                    os.close(handle)
-            except (FileNotFoundError, ProcessLookupError):
-                pass
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline and inspect():
-            time.sleep(.05)
-    return receipt(list(inspect()))
+                    handle = os.pidfd_open(pid)
+                    try:
+                        operation = 'identity_recheck'
+                        fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+                        if fields[19] == birth:
+                            operation = 'signal'
+                            attempt = {'pid': pid, 'startTime': birth, 'signal': sig.name, 'outcome': 'unknown'}
+                            attempts['attempted'] += 1
+                            if len(attempts['items']) < 32:
+                                attempts['items'].append(attempt)
+                            else:
+                                attempts['omitted'] += 1
+                            try:
+                                signal.pidfd_send_signal(handle, sig)
+                            except (FileNotFoundError, ProcessLookupError):
+                                attempt['outcome'] = 'disappeared'
+                                attempts['disappeared'] += 1
+                                raise
+                            except (OSError, RuntimeError):
+                                attempt['outcome'] = 'failed'
+                                attempts['failed'] += 1
+                                raise
+                            else:
+                                attempt['outcome'] = 'returned'
+                                attempts['returned'] += 1
+                        else:
+                            ownership = 'unknown'  # Reused identity: no signal was sent.
+                    finally:
+                        # Retain the operation that failed unless descriptor
+                        # close itself fails (the existing exception precedence).
+                        try:
+                            os.close(handle)
+                        except (OSError, RuntimeError):
+                            operation = 'pidfd_close'
+                            raise
+                except (FileNotFoundError, ProcessLookupError):
+                    pass
+                except (OSError, RuntimeError) as exc:
+                    failure.update(cleanup_failure(exc, phase, operation,
+                                                  pid=pid, birth=birth, ownership=ownership))
+                    raise
+            deadline = time.monotonic() + 2
+            phase = 'term_wait' if sig == signal.SIGTERM else 'kill_wait'
+            while time.monotonic() < deadline and inspect():
+                time.sleep(.05)
+        phase = 'final_scan'
+        return receipt(list(inspect()))
+    except (OSError, RuntimeError) as exc:
+        detail = failure or cleanup_failure(exc, phase, 'retire_group')
+        # Only this invocation's local observations are exported, never an
+        # exception-supplied report. A returned signal is not proof of exit;
+        # a failed syscall is not proof that prior effects did not occur.
+        return {**receipt(['unknown']), 'error': detail['errorType'],
+                'failure': {**detail, 'phase': phase}, 'signalAttempts': attempts}
 
 
 class BoundedLog:
@@ -784,16 +894,17 @@ def run_scenarios(root, plan, output, *, budget=1500, case_timeout=300, provenan
                                **({'drain': capture.drain} if capture else {}))
                                if process else {'remaining': [], 'terminated': 0})
                 except (OSError, RuntimeError) as exc:
-                    cleanup = {'remaining': ['unknown'], 'terminated': 0, 'error': type(exc).__name__}
+                    cleanup = unknown_cleanup(exc)
                 row['cleanup'] = cleanup
                 if cleanup.get('drainError'):
                     row['reason'] = row['reason'] or 'log_capture_failed'
                 if process and not cleanup['remaining']:
                     try:
                         process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        row['cleanup'] = cleanup = {'remaining': ['unknown'], 'terminated': cleanup['terminated'],
-                                                    'error': 'WaitTimeout'}
+                    except subprocess.TimeoutExpired as exc:
+                        row['cleanup'] = cleanup = {**cleanup, 'remaining': ['unknown'],
+                            'error': 'WaitTimeout',
+                            'failure': cleanup_failure(exc, 'wait', 'process_wait', pid=process.pid)}
                     if capture:
                         row['exitCode'] = process.returncode
                 if capture:
