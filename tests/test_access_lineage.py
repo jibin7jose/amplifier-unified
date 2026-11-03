@@ -2,6 +2,7 @@
 import json
 import uuid
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -328,15 +329,15 @@ async def test_scheduled_root_inherits_after_host_restart_without_source_residen
         record, _ = await create_schedule(app, sid, now[0])
         first_mount_modes = []
         first_mount_origins = []
-        original_control = runtime.control
-        async def control(identity, operation, args):
+        original_control = AsyncMock(wraps=runtime.control)
+        async def control(identity, operation, args, *, guard=None):
             if identity != sid and identity not in runtime.workers:
                 first_mount_modes.append(read_mode(app.data_dir, app._session(identity)['workspace'], identity))
                 saved = app.db.execute("SELECT value FROM state_records WHERE kind='session' AND id=?", (identity,)).fetchone()
                 manifest = json.loads(saved[0])
                 payload = read_detached(detach(app.db, manifest['$viewPayload']['$resource']))
                 first_mount_origins.append(payload.get('scheduledOrigin'))
-            return await original_control(identity, operation, args)
+            return await original_control(identity, operation, args, guard=guard)
         runtime.control = control
         now[0] += 61
         await app.schedules.tick()
@@ -347,6 +348,18 @@ async def test_scheduled_root_inherits_after_host_restart_without_source_residen
         assert first_mount_modes == ['full']
         assert first_mount_origins == [{'sessionId': sid, 'scheduleId': record['id'], 'runId': run['id']}]
         assert both_modes(app, app._session(target_id)) == ('full', 'full')
+        # The observer must forward the exact guard, not merely accept or run it.
+        original_control.reset_mock()
+        rejection = ValueError('Synthetic admission rejection')
+        checks = []
+        def reject():
+            checks.append('checked')
+            raise rejection
+        with pytest.raises(ValueError) as caught:
+            await runtime.control(target_id, 'task.get', {}, guard=reject)
+        assert caught.value is rejection and checks == ['checked']
+        original_control.assert_awaited_once_with(target_id, 'task.get', {}, guard=reject)
+        assert first_mount_modes == ['full']  # The negative probe did not remount.
     finally:
         await app.close()
     restored = AppService(tmp_path / 'app', None, workspace=tmp_path)
