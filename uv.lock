@@ -174,7 +174,7 @@ client = [
 [[package]]
 name = "amplifier-bundle-ui-use"
 version = "0.1.0.dev0"
-source = { git = "https://github.com/microsoft/amplifier-bundle-ui-use?rev=main#a1d3016faf238122f4fbeff809da7f6fe98bde9a" }
+source = { git = "https://github.com/microsoft/amplifier-bundle-ui-use?rev=main#5e3b08b8e06a6095314200476d387508ddb32f67" }
 
 [package.optional-dependencies]
 browser = [
@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "amplifier-unified"
-version = "0.48.1"
+version = "0.48.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
