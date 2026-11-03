@@ -8,11 +8,17 @@ const evidence=process.env.DECISION_SETUP_EVIDENCE||'/tmp/decision-setup-evidenc
 await mkdir(evidence,{recursive:true});
 const {base,stop}=await startSettingsFixture({SETTINGS_DECISION_SETUP_FIXTURE:'1'});
 let browser,page,failure;const errors=[],actions=[];
+let delayChoices=false,releaseChoices;
+const choicesGate=new Promise(resolve=>{releaseChoices=resolve});
 try{
  browser=await chromium.launch({headless:true,...(process.env.AMPLIFIER_TEST_CHROMIUM?{executablePath:process.env.AMPLIFIER_TEST_CHROMIUM}:{})});
  page=await browser.newPage({viewport:{width:1280,height:980},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
  page.on('pageerror',error=>errors.push(error.message));
  page.on('request',request=>{if(request.url()===base+'/api/actions'&&request.method()==='POST')actions.push(request.postDataJSON())});
+ await page.route(base+'/api/actions',async route=>{
+  if(delayChoices&&route.request().method()==='POST'&&route.request().postDataJSON()?.action==='providers.decisionModels')await choicesGate;
+  await route.continue();
+ });
  const observe=async()=>{const response=await page.request.get(base+'/fixture/decision-setup-observations');assert.ok(response.ok());return response.json()};
  const openDecisions=async()=>{
   await openSettingsPage(page,'ai-connections');
@@ -26,9 +32,15 @@ try{
  await expect(page.locator('#decision-mode option[value=decision]')).toBeDisabled();
  await page.getByRole('button',{name:/^Connect Jev/}).click();
  await expect(page.getByText('Use the key already on this host',{exact:true})).toBeVisible();
+ delayChoices=true;
  await page.getByRole('button',{name:'Save connection',exact:true}).click();
- await expect(page.getByText('Connection saved. Choose where to use it below.',{exact:true})).toBeVisible();
+ const confirmation=page.getByText('Connection saved.',{exact:true});
+ await expect(confirmation).toBeVisible();
  await expect(page.getByLabel('Use for',{exact:true})).toHaveValue('both');
+ await expect(page.locator('#decision-mode option[value=decision]')).toBeEnabled({timeout:3000});
+ assert.ok(await confirmation.evaluate(node=>!!(node.compareDocumentPosition(document.querySelector('[data-part=decision-model-settings]'))&Node.DOCUMENT_POSITION_FOLLOWING)),'Save confirmation precedes the choices');
+ assert.equal(await page.getByRole('button',{name:'Connect Jev',exact:true}).count(),0,'Saved account needs no duplicate setup');
+ releaseChoices();delayChoices=false;
  await page.getByLabel('Action selection',{exact:true}).selectOption('decision');
  const provider=await page.getByLabel('Provider connection',{exact:true}).inputValue();assert.ok(provider);
  await expect(page.getByRole('button',{name:'Save selection',exact:true})).toBeDisabled();
@@ -62,4 +74,4 @@ try{
  await writeFile(evidence+'/result.json',JSON.stringify({passed:true,saved,actions:names,errors,limits:'Synthetic state and credential; real installed Jev catalog and canonical settings persistence. No inference or live account call.'},null,2)+'\n');
  console.log(JSON.stringify({passed:true,provider,decisionAccountCount:saved.decisionAccountCount,ordinaryPreserved:true,bothSaved:true,independentEdit:true,evidence}));
 }catch(error){failure=error;if(page){await page.screenshot({path:evidence+'/failure.png'}).catch(()=>{});await writeFile(evidence+'/failure.txt',await page.locator('body').innerText()).catch(()=>{})}throw error}
-finally{await finishFixture({label:'Decision setup browser fixture',close:[['Browser',()=>browser?.close()]],stop,originalError:failure})}
+finally{releaseChoices();await finishFixture({label:'Decision setup browser fixture',close:[['Browser',()=>browser?.close()]],stop,originalError:failure})}

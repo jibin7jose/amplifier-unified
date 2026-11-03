@@ -74,7 +74,7 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
    setKey('');edit({saved:true,...(next==='models'?{step:'model'}:{})});
    if(next==='signin')run('providers.login',loginArgs);
    else if(next==='models')run('providers.models',{id:d.id});
-   else if(next==='decisions'){edit({step:'decisions',saved:true});act('providers.decisionModels',session?{sessionId:session.id}:{});setNotice('Connection saved. Choose where to use it below.');}
+   else if(next==='decisions'){edit({step:'decisions',saved:true});setNotice('Connection saved.');}
   }else if(action==='providers.remove'){
    setCompleted(false);setKey('');edit({step:'list',id:'',saved:false});setNotice('Connection removed. Chats that used it will need a replacement connection when resumed.');
   }else if(action==='providers.finishSetup'){
@@ -139,7 +139,7 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
      onCredentials={()=>{edit({step:'connect',previousLoginId:login?.loginId,credentialMode:'private'});scanCredentials(d.module)}}
      onRefresh={()=>run('providers.list',{refresh:true})} onCheck={()=>run('providers.test',{id:d.id})}
      onRemove={()=>run('providers.remove',{id:d.id,scope:scope})} onAdvanced={advanced}/>
-    :step==='decisions'?<DecisionModelSettings state={state} act={act} navigate={navigate} onConnect={connectDecision} labels={labels}/>:step==='connect'?<>
+    :step==='decisions'?<>{notice&&<ResultNotice phase="ready" message={notice}/>}<DecisionModelSettings state={state} act={act} navigate={navigate} onConnect={connectDecision} labels={labels}/></>:step==='connect'?<>
      {service.auth==='signin'?<>
       {login&&login.loginId!==d.previousLoginId?<DeviceSignIn login={login} busy={busy} onCancel={()=>run('providers.loginCancel',{id:d.id})} onRetry={()=>run('providers.login',loginArgs)} onEnablePlan={()=>run('providers.login',{...loginArgs,enablePlan:true})}/>:<><ChatGPTSignInChoice mode={authMode} onChange={authMode=>edit({authMode})} disabled={busy}/><SettingsActions><button className="a-primary" data-action={selected?'providers.login':'providers.save'} disabled={busy} onClick={()=>selected?run('providers.login',loginArgs):saveConnection()}>{busy?'Getting ready…':authMode==='chatgpt_plan'?'Continue with ChatGPT':'Get sign-in code'}</button></SettingsActions></>}
      </>:<>
@@ -166,7 +166,7 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
    </>}
   </>}
   {(error||credentialOperation?.phase==='error')&&<ResultNotice phase="error" message={error||credentialOperation.error||'Could not check credentials on this host.'}/>}
-  {notice&&<ResultNotice phase="ready" message={notice}/>}
+  {notice&&step!=='decisions'&&<ResultNotice phase="ready" message={notice}/>}
   {busy&&<ResultNotice phase="working" message="Working on this connection…"/>}
   {!busy&&setup.test?.providerId===d.id&&step==='detail'&&<ResultNotice phase={setup.test.reachable===false?'error':'ready'} message={setup.test.reachable===false?'Connection check failed.':'Model catalog check passed.'}/>}
  </section>;

@@ -143,7 +143,7 @@ def configure(manager, args, workspace, scope):
                 raise ValueError('This workspace overrides decision models. Save in its workspace scope.')
     manager.store.update(workspace, scope, save)
     effective = manager.config(workspace)
-    return {'decisionModels': describe(effective.settings, effective.providers), 'configurationChanged': True,
+    return {'decisionModels': describe(effective.settings, effective.providers), 'decisionModelsError': None, 'configurationChanged': True,
             'decisionSetupCompletion': {'purpose': purpose, 'mode': mode, 'scope': scope, 'takesEffect': 'new_sessions'}}
 
 

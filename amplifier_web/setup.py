@@ -457,7 +457,18 @@ class SetupManager:
         with self.read_snapshot(workspace):
             current=self.config(workspace)
             changed=before!=signature(current)
-            return {'providers':self.provider_rows(workspace),'takesEffect':'new_sessions','scope':scope,'configurationChanged':changed}
+            from .decision_settings import describe
+            # Publish saved accounts and their decision choices together. A
+            # later catalog request must not be needed to finish connecting.
+            result={'providers':self.provider_rows(workspace),
+                'takesEffect':'new_sessions','scope':scope,'configurationChanged':changed}
+            try:
+                result.update(decisionModels=describe(current.settings,current.providers),decisionModelsError=None)
+            except Exception:
+                # Optional metadata cannot turn an already committed account
+                # write into a reported save failure or expose provider errors.
+                result['decisionModelsError']='Refresh choices to try again.'
+            return result
 
     def _routing_dirs(self,workspace):
         # Same first-hit precedence as the mounted routing hook.
@@ -577,7 +588,7 @@ class SetupManager:
         if action=='providers.decisionModels':
             from .decision_settings import describe
             effective = self.config(workspace)
-            return {'decisionModels': describe(effective.settings, effective.providers)}
+            return {'decisionModels': describe(effective.settings, effective.providers), 'decisionModelsError': None}
         if action=='providers.configureDecisions':
             from .decision_settings import configure
             return configure(self, args, workspace, scope)
