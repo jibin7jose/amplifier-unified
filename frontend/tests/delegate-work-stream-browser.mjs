@@ -4,6 +4,8 @@
 // that independent boundary. Run against built assets in the owned test instance:
 // node tests/delegate-work-stream-browser.mjs (from frontend/).
 // --mobile-only selects 390x844 for all scenes; it does not skip any assertions.
+// --appearance-scope-only runs just the maintained aside paint regression at all
+// three widths; it does not claim the unrelated observer/attribution scenarios.
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
@@ -13,12 +15,15 @@ import {join} from 'node:path';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 import {readComposerDraft} from './composer-test-helpers.mjs';
 import {delegateStreamDiagnostics} from './delegate-stream-diagnostics.mjs';
+import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output=process.env.AMPLIFIER_TEST_OUTPUT_DIR||join(root,'test-results');
 mkdirSync(output,{recursive:true});
 const artifact=name=>join(output,name);
 const mobileOnly=process.argv.includes('--mobile-only');
+const appearanceScopeOnly=process.argv.includes('--appearance-scope-only');
+assert.ok(!(mobileOnly&&appearanceScopeOnly),'The appearance regression requires all three widths');
 const desktop={width:1280,height:1000},mobile={width:390,height:844};
 const viewports=mobileOnly?[['mobile',mobile]]:[['desktop',desktop],['mobile',mobile],['small',{width:320,height:844}]];
 const navigationEntries=[];
@@ -365,6 +370,7 @@ function measureOwner(element,probe) {
 }
 const fixture = spawn(process.env.AMPLIFIER_TEST_PYTHON || root + '.venv/bin/python', ['-u', root + 'tests/fixtures/browser_detail_server.py', root],
   {stdio: ['ignore', 'pipe', 'inherit']});
+const stopFixture=ownFixture(fixture,{label:'Delegate work stream fixture'});
 let browser,context,page,diagnosticOwner,restoredOwnerStyle,lastOwnerMeasurement,primaryFailure;
 const ownerDiagnostics=[];
 const saveOwnerDiagnostics=()=>writeFileSync(artifact('delegate-work-stream-owner-diagnostics.json'),
@@ -455,6 +461,7 @@ try {
     if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
     await expect(work.locator('[data-node-id="stream-main-model"]')).toBeVisible();
     await checkAsideAppearanceScope(page,work,name);
+    if(appearanceScopeOnly){await cleanScene(page);continue}
     // No intervening Delegate or Worker activity drawer is needed to read it.
     await expect(work.getByRole('button', {name: /Worker activity/})).toHaveCount(0);
     await expect(work.locator('[data-kind="worker"] > button')).toHaveCount(0);
@@ -561,6 +568,7 @@ try {
     await checkLatest(page,work,`stream-${name}-latest`);
     await cleanScene(page);
   }
+  if(!appearanceScopeOnly){
   // The separate live scenario drives actual metadata-only observer hooks and
   // UUID-stamped canonical records through the registered-browser UI. The
   // earlier scene alone is only presentation proof; this is not cold placement.
@@ -673,6 +681,7 @@ try {
     await expect(request).toBeHidden();await expect(reply).toBeHidden();
     await cleanScene(page);
   }
+  }
   assert.deepEqual(errors, []);
   const inspection = await control({op: 'inspect-work-source'});
   assert.equal(inspection.runtimeStarts, 0);
@@ -688,7 +697,8 @@ try {
   });
 } finally {
   await diagnostics.finish(primaryFailure,{
-    cleanup:[['browser close',()=>browser?.close()],['fixture stop',()=>fixture.kill()]],
+    cleanup:[['fixture lifecycle',()=>finishFixture({label:'Delegate work stream fixture',
+      close:[['Delegate work stream browser',()=>browser?.close()]],stop:stopFixture})]],
     writes:[
       ['lookup report',saveLookups],
       ['API failure report',()=>writeFileSync(artifact('delegate-work-stream-api-failures.json'),JSON.stringify(apiFailures,null,2))],
@@ -697,4 +707,6 @@ try {
     report:value=>writeFileSync(artifact('delegate-work-stream-diagnostic-errors.json'),JSON.stringify(value,null,2))
   });
 }
-console.log('PASS: synthetic interleaving/layout/actor attribution plus registered-browser stamped-observer long exchange reads; NOT cold-turn association or real-provider acceptance.');
+console.log(appearanceScopeOnly?
+  'PASS: real worker-status aside paint across bundled themes, both modes and three widths; NOT full delegate, provider or pixel-review acceptance.':
+  'PASS: synthetic interleaving/layout/actor attribution plus registered-browser stamped-observer long exchange reads and aside appearance isolation; NOT cold-turn association or real-provider acceptance.');
