@@ -37,6 +37,20 @@ test('Document observer excludes CSS-hidden, aria-hidden, inert and sensitive co
  assert.equal(JSON.stringify(result).includes('password-value'),false);
 });
 
+test('Document observation distinguishes checked, unchecked, mixed and unknown controls',async()=>{
+ const {context,connection}=worker();
+ const control=(id,patch={})=>({id,tagName:'INPUT',type:'checkbox',checked:false,indeterminate:false,value:'on',innerText:'',name:id,
+  getBoundingClientRect:()=>({width:16,height:16}),getAttribute:()=>null,closest:()=>null,...patch});
+ const nodes=[control('checked',{checked:true}),control('unchecked'),control('mixed',{checked:true,indeterminate:true}),
+  control('radio',{type:'radio',checked:true}),control('aria',{tagName:'BUTTON',type:'button',getAttribute:key=>({'role':'checkbox','aria-checked':'mixed'}[key]||null)}),
+  control('ordinary',{type:'text',value:'text'})];
+ context.document={title:'Fixture',body:{innerText:'Visible form'},querySelectorAll:()=>nodes};
+ context.location={href:'https://fixture.example/'};context.CSS={escape:value=>value};context.getComputedStyle=()=>({display:'block',visibility:'visible'});
+ context.connection=connection;context.operation={targetId:'target',revision:'document',action:'browser.observe',args:{},deadline:Date.now()/1000+15};
+ const result=await vm.runInContext('execute(connection,operation)',context);
+ assert.deepEqual(Array.from(result.controls,c=>[c.checked,c.indeterminate]),[[true,false],[false,false],[true,true],[true,false],['mixed',false],[null,false]]);
+});
+
 for(const [name,result,expected] of [['oversized',{text:'x'.repeat(262144)},'failed'],['UTF8',{text:'🙂'.repeat(60000)},'completed']])
  test(`Result preflight delivers a bounded ${name} receipt without repeating execution`,async()=>{
   const {context,values,session,calls,writes,alarms}=worker();let executions=0;

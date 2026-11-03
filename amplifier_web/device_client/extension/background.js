@@ -102,6 +102,11 @@ async function execute(connection,operation){
     }).slice(0,60).map(item=>({
      tag:item.tagName.toLowerCase(),type:item.type||'',label:(item.innerText||item.getAttribute('aria-label')||item.placeholder||item.name||'').slice(0,100),
      selector:item.id?'#'+CSS.escape(item.id):null,
+     checked:item.tagName==='INPUT'&&['checkbox','radio'].includes(item.type)?item.checked:
+      ['checkbox','radio'].includes(item.getAttribute('role'))?
+       item.getAttribute('aria-checked')==='true'?true:item.getAttribute('aria-checked')==='false'?false:
+        item.getAttribute('role')==='checkbox'&&item.getAttribute('aria-checked')==='mixed'?'mixed':null:null,
+     indeterminate:item.tagName==='INPUT'&&item.type==='checkbox'?item.indeterminate:false,
      ...(['password','file','hidden'].includes(item.type)?{}:{value:(item.value||'').slice(0,200)})
     }));
     return {url:location.href,title:document.title,text:document.body.innerText.slice(0,7000),controls};

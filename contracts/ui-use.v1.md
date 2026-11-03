@@ -22,4 +22,6 @@ Each projected mount reports an exact account lifecycle receipt through a privat
 
 Managed browser contexts are private per chat and lazily created. Ordinary web navigation is supported; the viewer streams the remote browser image rather than embedding websites directly. The user may interact to sign in. This does not supply managed-device SSO. Connected browser enrollment remains separately revocable; legacy exact-document grants do not imply navigation, screenshots or debugging access.
 
+Observed native checkbox/radio controls include their checked state and native checkbox indeterminate state. ARIA checkbox/radio controls expose declared true/false state, with mixed supported for checkboxes and null for unknown state. These values participate in observation freshness. Caller success conditions can require multiple fields; every condition must match a unique visible control. Missing or mixed state cannot prove a boolean checked assertion. Invalid success conditions are rejected before input. The fixed executor and existing target grants remain authoritative.
+
 This preview qualifies representative websites and desktop applications, not universal website compatibility. Protected browser pages, CAPTCHAs, browser permission dialogs, device-conditioned SSO and absent desktop executors produce explicit handoff. PWA screen sharing remains observation-only.

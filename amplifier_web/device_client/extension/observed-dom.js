@@ -6,9 +6,9 @@ const observeUI = () => {
   const registry=window[key];
   function observe(){
     const elements=[];let eligible=0;
-    for(const el of document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[contenteditable="true"]')){
+    for(const el of document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="checkbox"],[role="radio"],[contenteditable="true"]')){
       const box=el.getBoundingClientRect(),style=getComputedStyle(el);
-      if(box.width<=0||box.height<=0||style.visibility==='hidden'||style.display==='none'||el.disabled||el.readOnly||el.closest('[inert],[aria-hidden="true"]'))continue;
+      if(box.width<=0||box.height<=0||style.visibility==='hidden'||style.display==='none'||el.disabled||el.readOnly||el.getAttribute('aria-disabled')==='true'||el.getAttribute('aria-readonly')==='true'||el.closest('[inert],[aria-hidden="true"]'))continue;
       if(['password','file','hidden'].includes(el.type))continue;
       const x=Math.max(0,Math.min(innerWidth-1,box.x+box.width/2)),y=Math.max(0,Math.min(innerHeight-1,box.y+box.height/2));
       if(box.bottom<=0||box.right<=0||box.top>=innerHeight||box.left>=innerWidth)continue;
@@ -20,7 +20,11 @@ const observeUI = () => {
       if(label)for(const control of label.querySelectorAll('input,select,textarea,button'))control.remove();
       const labelled=(el.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>document.getElementById(id)?.textContent||'').join(' ').trim();
       const name=(el.getAttribute('aria-label')||labelled||label?.textContent||el.innerText||el.getAttribute('placeholder')||el.getAttribute('title')||el.name||tag).trim().replace(/\s+/g,' ').slice(0,240);
-      elements.push({id,tag,name,type:el.type||null,value:typeof el.value==='string'?el.value.slice(0,500):null,
+      const role=el.getAttribute('role'),nativeCheck=tag==='input'&&['checkbox','radio'].includes(el.type);
+      const ariaCheck=['checkbox','radio'].includes(role)?el.getAttribute('aria-checked'):null;
+      const checked=nativeCheck?el.checked:ariaCheck==='true'?true:ariaCheck==='false'?false:ariaCheck==='mixed'&&role==='checkbox'?'mixed':null;
+      elements.push({id,tag,name,type:el.type||null,role:role||null,value:typeof el.value==='string'?el.value.slice(0,500):null,
+        checked,indeterminate:nativeCheck&&el.type==='checkbox'?el.indeterminate:false,
         editable:tag==='textarea'||tag==='input'&&!['button','submit','checkbox','radio','reset'].includes(el.type)||el.isContentEditable,
         href:tag==='a'?el.href:null,rect:[box.x,box.y,box.width,box.height].map(v=>Math.round(v)),
         options:tag==='select'?Array.from(el.options).filter(o=>!o.disabled).slice(0,80).map(o=>({value:o.value,label:o.label})):null});
