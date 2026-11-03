@@ -179,6 +179,21 @@ current subscribers and concurrent owners independently when validating publicat
 Passing a recent-message window test does not establish bounded saves, admission,
 agent reads or model context. Measure those boundaries separately.
 
+`tests/fixtures/execution_publication_scaling.py` keeps three large owners active
+in one actual service. It distinguishes cold saves, scalar/token saves, nested
+execution changes and worker-report updates, checks exact durable readback and
+records wall/CPU time plus the existing preparation budgets. Run it inside an
+owned DTU with `python tests/fixtures/execution_publication_scaling.py --output DIR`;
+`--source PATH` selects a frozen comparison checkout. A single-owner cache hit
+cannot qualify concurrent-owner behavior or hide eviction churn.
+
+Unchanged execution may reuse its existing committed projection only after the
+original content, owner and resource evidence match; input digests and pending
+flags promote with the same successful pointer commit. The content comparison
+still visits the retained execution bytes. This short-term reduction in repeated
+conversion is not proof of history-independent work under WS5. Keep measuring
+that remaining cost; do not increase retention limits to make a benchmark pass.
+
 ## Agent preparation and tool reads
 
 Native checkpoint persistence and host notification are separate work. Save each

@@ -300,20 +300,18 @@ def persist(home, state, cache, *, session_ids=None, by_id=None, references=None
                  if key not in {'historyActivity', 'questions', 'workProjection'}}
         if 'execution' in value:
             raw_tree = value['execution']
-            value['execution'] = stored_execution(raw_tree, _retired=(
-                (lambda rows: execution_preparation.retired(session['id'], rows))
-                if execution_preparation is not None else None))
-            tree = value['execution']
-            if db is not None and len(tree.get('retiredUsageNodes', ())) >= 128:
-                from .cold_display import execution_reference
-                resource = (execution_preparation.reference(db, session, tree, pending_execution)
-                            if execution_preparation is not None and pending_execution is not None else None)
-                value[MARKER] = {**value.get(MARKER, {}),
-                                 'execution': execution_reference(db, tree, prepared=(
-                                     execution_preparation.prepare(session['id'], tree)
-                                     if execution_preparation is not None and resource is None else None),
-                                     resource=resource)}
+            if execution_preparation is not None and db is not None and pending_execution is not None:
+                tree, reference = execution_preparation.stored(db, session, raw_tree, pending_execution)
+            else:
+                tree, reference = stored_execution(raw_tree), None
+                if db is not None and len(tree.get('retiredUsageNodes', ())) >= 128:
+                    from .cold_display import execution_reference
+                    reference = execution_reference(db, tree)
+            if reference is not None:
+                value[MARKER] = {**value.get(MARKER, {}), 'execution': reference}
                 value.pop('execution')
+            else:
+                value['execution'] = tree
         messages = value.get('messages')
         if (db is not None and isinstance(messages, list)
                 and sum(len(message.get('text', '')) for message in messages
