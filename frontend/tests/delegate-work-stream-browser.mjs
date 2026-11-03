@@ -141,7 +141,8 @@ async function checkAsideAppearanceScope(page,work,viewport,setWorkerPhase) {
       const receipt=await window.amplifier.dispatch('shell.changes.apply',{
         clientId,expectedRevision:shell.revision,changeId:prepared.result.id});
       if(!receipt.accepted)throw Error('Appearance-scope presentation apply failed');
-      return receipt.result.appliedRevision;
+      if(!Number.isInteger(receipt.result.revision))throw Error('Appearance-scope apply omitted its revision');
+      return receipt.result.revision;
     },composition);
     await expect.poll(()=>page.evaluate(()=>window.amplifier.getShellState().revision)).toBe(applied);
   };
