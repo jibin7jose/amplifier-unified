@@ -13,7 +13,7 @@ import {chromium, expect} from '@playwright/test';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
-import {readComposerDraft} from './composer-test-helpers.mjs';
+import {readComposerDraft,clearComposer} from './composer-test-helpers.mjs';
 import {delegateStreamDiagnostics} from './delegate-stream-diagnostics.mjs';
 import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
 
@@ -228,7 +228,11 @@ async function checkAsideAppearanceScope(page,work,viewport,setWorkerPhase) {
   assert.equal(await readComposerDraft(editor),probeDraft,'Restoration preserves the nonempty draft');
   await setWorkerPhase('completed');
   await expect(status.getByRole('button',{name:'Stop worker',exact:true})).toHaveCount(0);
-  await editor.fill(draft);await expect(editor).toHaveDraft(draft);
+  // The Markdown editor commits deletion through its keyboard transaction.
+  // fill('') can clear DOM text without updating the canonical local draft.
+  await clearComposer(editor);
+  if(draft)await editor.fill(draft);
+  await expect(editor).toHaveDraft(draft);
 }
 async function checkHeader(page,region,label) {
   const heading=region.locator('header>span').first();
