@@ -104,6 +104,15 @@ it can change the conclusion. Keep diagnostic collection bounded and sensitive
 receipts private. Public evidence uses synthetic data, counts and hashes rather
 than transcript bodies, credentials or private environment details.
 
+For disposable query workers, measure delivery as well as worker calculation.
+Separate executor handoffs for tiny cleanup operations can repeatedly incur a busy
+event loop's scheduling delay. Keep one owned result-consumption/cleanup handoff;
+the real-process transport checks bound warm-read handoffs and ensure cancellation
+settles file work before releasing spool ownership. Shell query diagnostics retain
+fixed failure/disposition categories and `ownerWaitMs` after transport completes.
+That wait is included in `readMs`; do not add the two or interpret either as worker
+CPU time. These checks do not establish a bound on unrelated host persistence work.
+
 ## Keep qualification proportional to risk
 
 Follow the [fast publication policy](release-qualification.md#local-first-fast-publication-policy-updated-october-14-2026).

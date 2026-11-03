@@ -7,6 +7,20 @@ import pytest
 from amplifier_web.performance_diagnostics import PerformanceDiagnostics, TimedLock, measured
 
 
+def test_shell_query_retains_only_fixed_failure_and_disposition_facts(monkeypatch):
+    monkeypatch.setattr('amplifier_web.performance_diagnostics.time.monotonic', lambda: 12)
+    diagnostics = PerformanceDiagnostics()
+    for reason in ('timeout', 'source_changed', 'worker_stopped', 'private query'):
+        diagnostics.record_shell_query('chats', 'recent', 1, 2,
+            {'reason': reason}, accepted=False, completed_at=11, disposition='retry')
+    rows = diagnostics.snapshot()['shellQueries']
+    assert [row.get('reason') for row in rows] == ['timeout', 'source_changed', 'worker_stopped', None]
+    assert all(row['ownerWaitMs'] == 1000 and row['disposition'] == 'retry' for row in rows)
+    diagnostics.record_shell_query('chats', 'recent', 1, 2, {}, accepted=False,
+                                   disposition='private owner data')
+    assert 'disposition' not in diagnostics.snapshot()['shellQueries'][-1]
+
+
 def test_shell_query_diagnostics_are_bounded_content_free_and_detached():
     diagnostics = PerformanceDiagnostics()
     for index in range(70):

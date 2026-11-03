@@ -92,6 +92,56 @@ async def test_cancelled_waiter_does_not_cancel_shared_projection(tmp_path):
         await owner.close()
 
 
+async def test_warm_read_does_not_schedule_each_artifact_cleanup_separately(tmp_path, monkeypatch):
+    from amplifier_web import history_projection_process as transport
+    owner = projector(tmp_path)
+    try:
+        await owner.project({'value': 'warm'}, key='warm')
+        calls = []
+        blocking = transport._blocking
+        async def counted(call, *args, **kwargs):
+            calls.append(call)
+            return await blocking(call, *args, **kwargs)
+        monkeypatch.setattr(transport, '_blocking', counted)
+        result = await owner.project({'value': 'next'}, key='next')
+        assert result['tree']['value'] == 'next'
+        # Encode, move into the existing child, consume result plus cleanup.
+        # Each extra handoff pays busy-host scheduling delay even for tiny I/O.
+        assert len(calls) <= 3
+        assert owner._input_bytes == 0
+        assert not list(owner._root.rglob('*.input'))
+        assert not list(owner._root.rglob('*.output'))
+    finally:
+        await owner.close()
+
+
+async def test_close_settles_result_cleanup_before_releasing_spool(tmp_path, monkeypatch):
+    from amplifier_web import history_projection_process as transport
+    owner = projector(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    remove = transport._remove_paths
+    def held(paths):
+        entered.set()
+        assert release.wait(5)
+        remove(paths)
+    monkeypatch.setattr(transport, '_remove_paths', held)
+    waiter = asyncio.create_task(owner.project({'value': 'held'}, key='held'))
+    try:
+        async with asyncio.timeout(5):
+            while not entered.is_set():
+                await asyncio.sleep(.001)
+        closing = asyncio.create_task(owner.close())
+        await asyncio.sleep(.02)
+        assert not closing.done() and owner._input_bytes > 0
+        release.set()
+        await closing
+        assert await waiter == {'status': 'retry', 'reason': 'closed'}
+        assert owner._input_bytes == 0 and not owner._root.exists()
+    finally:
+        release.set()
+        await owner.close()
+
+
 async def test_spool_allocation_failure_recovers_on_next_request(tmp_path, monkeypatch):
     owner = projector(tmp_path)
     make_root = owner._make_root
