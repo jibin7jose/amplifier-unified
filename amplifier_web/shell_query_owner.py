@@ -332,12 +332,13 @@ class ShellQueryOwner:
                     result = {'status': 'retry', 'reason': 'worker_stopped'}
                 except Exception:
                     result = {'status': 'retry', 'reason': 'worker_failed'}
+                job['completed_at'] = time.monotonic()
                 async with self.service.lock:
                     self.active = None
                     self.jobs.pop(key, None)
                     interested = {item[0] for item in job['interests'].values() if self._current(item)}
                     if not interested or self.closed:
-                        self._diagnose(job, started_at, result, accepted=False)
+                        self._diagnose(job, started_at, result, accepted=False, disposition='no_interest')
                         if not self.closed:
                             self._wake_capacity()
                         continue
@@ -346,7 +347,7 @@ class ShellQueryOwner:
                         # Capture a fresh current read; an intentional retirement
                         # is not a catalog failure. The loop awaits the exact old
                         # process before starting any replacement.
-                        self._diagnose(job, started_at, result, accepted=False)
+                        self._diagnose(job, started_at, result, accepted=False, disposition='retired')
                         for identity in interested:
                             with self.service.clients.bind(identity):
                                 self.resources.snapshot(identity)
@@ -358,7 +359,9 @@ class ShellQueryOwner:
                     except (OSError, sqlite3.Error):
                         current = False
                     accepted = current and result.get('status') == 'complete' and result.get('durable') == job['fence'][0]
-                    self._diagnose(job, started_at, result, accepted=accepted)
+                    self._diagnose(job, started_at, result, accepted=accepted,
+                        disposition='accepted' if accepted else 'stale' if not current or (
+                            result.get('status') == 'complete') else 'retry')
                     if accepted:
                         values = self.service.projections.values
                         if len(values) >= 256:
@@ -397,11 +400,12 @@ class ShellQueryOwner:
         self.capacity_waiters = {identity: interest for identity, interest in self.capacity_waiters.items()
                                  if self._current(interest)}
 
-    def _diagnose(self, job, started_at, result, *, accepted):
+    def _diagnose(self, job, started_at, result, *, accepted, disposition):
         diagnostics = getattr(self.service, 'performance_diagnostics', None)
         if diagnostics is not None:
             diagnostics.record_shell_query(job['inputs']['operation'], job['inputs']['args'].get('section'),
-                job['queued_at'], started_at, result, accepted=accepted)
+                job['queued_at'], started_at, result, accepted=accepted,
+                completed_at=job.get('completed_at'), disposition=disposition)
 
     def _wake_capacity(self):
         if len(self.jobs) >= MAX_JOBS:

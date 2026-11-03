@@ -50,6 +50,11 @@ class _Limit(Exception):
     pass
 
 
+def _remove_paths(paths):
+    for path in paths:
+        path.unlink(missing_ok=True)
+
+
 class ProcessProjector:
     """One lazy interpreter, eight admitted requests, 256 MiB total spool.
 
@@ -166,6 +171,7 @@ class ProcessProjector:
 
     async def _project(self, inputs, key):
         path = None
+        cleanup = []
         size = 0
         token = None
         owner = False
@@ -176,6 +182,7 @@ class ProcessProjector:
                 return retry('worker_failed', capture_failure('spool_setup', exc))
             identity = uuid.uuid4().hex
             path = root / (identity + '.input')
+            cleanup.append(path)
             size, digest = await _blocking(self._encode, path, inputs)
             if self._closed:
                 return retry('closed')
@@ -183,6 +190,7 @@ class ProcessProjector:
             shared = self._shared.get(token)
             if shared is not None:
                 await _blocking(path.unlink, missing_ok=True)
+                cleanup.clear()
                 path = None
                 self._release(size); size = 0
                 return await asyncio.shield(shared)
@@ -193,7 +201,7 @@ class ProcessProjector:
                     return retry('closed')
                 try:
                     self._active = asyncio.current_task()
-                    return await asyncio.wait_for(self._roundtrip(path, identity, digest), self._timeout)
+                    return await asyncio.wait_for(self._roundtrip(path, identity, digest, cleanup), self._timeout)
                 except TimeoutError:
                     await self._retire()
                     return retry('timeout')
@@ -217,8 +225,8 @@ class ProcessProjector:
         finally:
             if owner:
                 self._shared.pop(token, None)
-            if path is not None:
-                await _blocking(path.unlink, missing_ok=True)
+            if cleanup:
+                await _blocking(_remove_paths, tuple(cleanup))
             self._release(size)
 
     async def _message(self):
@@ -257,13 +265,14 @@ class ProcessProjector:
             raise ValueError('Invalid worker readiness')
         return None
 
-    async def _roundtrip(self, source, identity, digest):
+    async def _roundtrip(self, source, identity, digest, cleanup):
         failed = await self._start()
         if failed:
             return failed
         worker_home = self._worker_home
         target = worker_home / (identity + '.output')
         active = worker_home / (identity + '.input')
+        cleanup.extend((active, target))
         try:
             await _blocking(os.replace, source, active)
             descriptor = json.dumps({'id': identity, 'digest': digest}, separators=(',', ':')).encode() + b'\n'
@@ -280,7 +289,11 @@ class ProcessProjector:
             if (message.get('type') != 'result' or type(message.get('bytes')) is not int
                     or not 0 <= message['bytes'] <= self._output_limit):
                 raise _Limit('output_limit')
-            result = await _blocking(self._decode, target, message)
+            # Complete the owned file lifecycle in one worker handoff. Separate
+            # unlinks amplify event-loop congestion after an already-fast query.
+            # Cancellation still settles that worker before paths/bytes retire.
+            result = await _blocking(self._decode_and_remove, target, message, tuple(cleanup))
+            cleanup.clear()
             if result['status'] == 'retry' and result['reason'] in {
                     'memory_limit', 'output_limit', 'worker_failed', 'worker_stopped'}:
                 await self._retire()
@@ -288,9 +301,12 @@ class ProcessProjector:
         except _Limit:
             await self._retire()
             raise
+
+    def _decode_and_remove(self, path, message, cleanup):
+        try:
+            return self._decode(path, message)
         finally:
-            await _blocking(active.unlink, missing_ok=True)
-            await _blocking(target.unlink, missing_ok=True)
+            _remove_paths(cleanup)
 
     def _decode(self, path, message):
         with path.open('rb') as stream:

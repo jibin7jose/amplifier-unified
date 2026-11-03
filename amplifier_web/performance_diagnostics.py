@@ -256,7 +256,8 @@ class PerformanceDiagnostics:
             with self.lock:
                 self.projection_failures.append({'at': time.time(), 'reason': reason, **value})
 
-    def record_shell_query(self, operation, section, queued_at, started_at, result, *, accepted):
+    def record_shell_query(self, operation, section, queued_at, started_at, result, *, accepted,
+                           completed_at=None, disposition=None):
         """Bounded scheduling facts; no page keys, query text or source paths."""
         if operation not in {'chats', 'workspace_counts', 'pinned_navigation'}:
             return
@@ -266,6 +267,14 @@ class PerformanceDiagnostics:
                'queueWaitMs': round(max(0, started_at - queued_at) * 1000, 2),
                'readMs': round(max(0, time.monotonic() - started_at) * 1000, 2),
                'accepted': bool(accepted)}
+        from .history_projection_process import REASONS
+        reason = result.get('reason')
+        if isinstance(reason, str) and reason in REASONS:
+            row['reason'] = reason
+        if disposition in ('accepted', 'no_interest', 'retired', 'stale', 'retry'):
+            row['disposition'] = disposition
+        if completed_at is not None:
+            row['ownerWaitMs'] = round(max(0, time.monotonic() - completed_at) * 1000, 2)
         for key in ('vmSteps', 'decodedRows', 'elapsedMs', 'threadCpuMs'):
             value = stats.get(key)
             if type(value) in (int, float) and 0 <= value < float('inf'):
