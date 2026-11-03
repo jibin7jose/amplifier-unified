@@ -51,7 +51,10 @@ accepted execution -> runtime admission -> working -> safely evictable when idle
 5. **WS5 — Charge updates to dependencies.** A resource update touches its record,
    actual dependents and subscribers. No request performs historical global scan,
    projection, hash or checkpoint to process a draft, scalar read or unrelated chat delta.
-   Review includes work before response filtering and serialization. A required
+   Review includes work before response filtering and serialization, including
+   conversion performed before an encoding-cache hit. Reusing unchanged execution
+   must avoid repeating its projection; changed content, failed commits and cold
+   services must still preserve exact receipts and pending-work facts. A required
    full-history operation, such as recovery validation, declares its trigger and
    scaling inputs; it must not become repeated background work for unrelated updates.
    This also applies within one long-lived conversation: a current token or scalar

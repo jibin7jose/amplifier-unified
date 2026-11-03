@@ -5,7 +5,7 @@ from another source. Custom reducers are rejected before invocation. JSON and
 its content hash remain the existing storage format and authority.
 """
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import io
@@ -25,6 +25,9 @@ class ReferenceEntry:
     signature: tuple
     resource: object
     charge: int
+    input_digest: bytes | None = None
+    projection: tuple | None = None
+    input_charge: int = 0
 
 
 class _BoundedBytes(io.BytesIO):
@@ -55,6 +58,37 @@ def _witness(value):
         return output.getvalue()
     finally:
         output.pickler = None  # Do not leave the writer/pickler cycle for GC.
+
+
+def _input_digest(tree):
+    """Private content comparison only; JSON remains the durable authority.
+
+    Bound temporary witnesses by the existing chunk size. A digest retains no
+    borrowed source graph or history bytes, and unsupported values keep the
+    original projection/encoder path without calling their reduction hooks.
+    """
+    if (type(tree) is not dict or any(type(key) is not str or len(key) > 200 for key in tree)):
+        return None
+    digest = hashlib.sha256()
+    def include(value):
+        witness = _witness(value)
+        digest.update(len(witness).to_bytes(8, 'big'))
+        digest.update(witness)
+    try:
+        for name in sorted(tree):
+            if name == 'plan':
+                continue  # stored_execution deliberately excludes native plans.
+            value = tree[name]
+            chunked = type(value) is list and len(value) >= ExecutionPreparation.CHUNK
+            include((name, chunked))
+            if chunked:
+                for start in range(0, len(value), ExecutionPreparation.CHUNK):
+                    include(value[start:start + ExecutionPreparation.CHUNK])
+            else:
+                include(value)
+    except (Unsupported, pickle.PicklingError, RecursionError, TypeError, ValueError):
+        return None
+    return digest.digest()
 
 
 class ExecutionPreparation:
@@ -190,6 +224,55 @@ class ExecutionPreparation:
         text = '{' + ','.join(fields) + '}'
         encoded = text.encode()
         return Prepared(text, hashlib.sha256(encoded).hexdigest(), len(encoded)), signature
+
+    def stored(self, db, session, tree, pending):
+        """Prepare or reuse the existing committed execution projection.
+
+        Every use witnesses original content before any conversion. Only a
+        matching owner, successful pointer commit and verified resource allow
+        skipping conversion. Changed input follows the canonical projection.
+        """
+        from .cold_display import execution_reference
+        from .session_projection import stored_execution
+        from . import resource_files
+        identity = session['id']
+        owner = (id(session), session.get('runtimeSessionId'), session.get('workspace'))
+        previous = (self.references.get(identity)
+                    if all(type(value) in (str, type(None)) for value in owner[1:]) else None)
+        # A small ordinary tree cannot produce a resource-sized accounting
+        # projection. Do not add a content pass there. Witness before projection
+        # otherwise: custom projection hooks may mutate their own source.
+        large = (type(tree) is dict and all(type(key) is str for key in tree)
+                 and sum(len(rows) for rows in (tree.get('nodes'), tree.get('retiredUsageNodes'))
+                         if type(rows) is list) >= self.CHUNK)
+        digest = _input_digest(tree) if large or (previous is not None and previous.input_digest is not None) else None
+        if (digest is not None and previous is not None and previous.owner == owner
+                and previous.input_digest == digest and previous.projection is not None):
+            resource = resource_files.reuse_reference(db, previous.resource)
+            if resource is not None:
+                pending[identity] = previous
+                return None, {**resource, **dict(previous.projection)}
+        value = stored_execution(tree, _retired=lambda rows: self.retired(identity, rows))
+        if len(value.get('retiredUsageNodes', ())) < self.CHUNK:
+            return value, None
+        resource = self.reference(db, session, value, pending)
+        projection = execution_reference(db, value, resource=resource)
+        entry = pending.get(identity)
+        if entry is not None and digest is not None:
+            summary = tuple((key, projection[key]) for key in (
+                'executionProjection', 'pendingObservation', 'pendingWork', 'pendingVoice'))
+            charge = (sys.getsizeof(digest) + sys.getsizeof(summary)
+                      + sum(sys.getsizeof(pair) + sys.getsizeof(pair[0])
+                            + sys.getsizeof(pair[1]) for pair in summary))
+            difference = charge - entry.input_charge
+            updated = replace(entry, input_digest=digest, projection=summary, input_charge=charge,
+                              charge=entry.charge + difference)
+            reserved = self._reserved({**pending, identity: updated})
+            if reserved <= self.MAX_BYTES:
+                pending[identity] = updated
+                while self.entries and self.bytes + reserved > self.MAX_BYTES:
+                    self.bytes -= self.entries.popitem(last=False)[1][2]
+        return None, projection
 
     def reference(self, db, session, tree, pending):
         """Reuse only complete freshly witnessed, successfully committed files."""
