@@ -4,6 +4,7 @@ import './composer-test-helpers.mjs';
 import {installAttachmentObserver} from './attachment-consumption-observer.mjs';
 import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
 import {bounded,withActionRoute,observed,resultOf,combinedFailure} from './chat-reference-harness.mjs';
+import {boundaryRead,openBoundaryHandle,closeBoundaryHandle,boundaryIdentity,boundaryRequests,BOUNDARY_OBSERVATION_MS} from './browser-boundary-evidence.mjs';
 import {spawn} from 'node:child_process';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -76,6 +77,148 @@ async function watch(page,owner,ids){await page.evaluate(([owner,ids])=>window.a
 async function waitRuntimeSend(page,owner,previous){
  await expect.poll(async()=>{const data=await inspect(page);return data.sends.filter(x=>x.sessionId===owner).length;},{timeout:10000}).toBe(previous+1);
  return (await inspect(page)).sends.filter(x=>x.sessionId===owner).at(-1).inputId;
+}
+// Observe only cycle A's existing click and existing ten-second runtime wait.
+// No event is cancelled, validity method invoked, action dispatched or retried.
+async function observeFirstSend(page,owner,attachmentId){
+ const data={attempt:'accepted-two-cycle-A',owner,attachmentId,stage:'setup',network:[],snapshots:[],errors:[],omitted:0,
+  limits:{requests:8,events:24,snapshots:4,responseBytes:65536,outboxBytes:65536,optionalReadMs:BOUNDARY_OBSERVATION_MS},
+  limitation:'Passive reads can affect timing. Deadlines are not cancellation; late setup gets bounded cleanup without rewriting its unknown receipt. A lost handle reply may leave listener removal unconfirmed until page close.'};
+ report.firstSendBoundary=data;
+ const id=value=>typeof value==='string'&&/^[a-zA-Z0-9:_-]{1,200}$/.test(value)?value:null;
+ const receipt=row=>{
+  if(!row||typeof row!=='object')return null;
+  return {accepted:typeof row.accepted==='boolean'?row.accepted:null,
+   inputId:id(row.inputId),sessionId:id(row.sessionId),
+   revision:Number.isSafeInteger(row.revision)?row.revision:null,
+   delivery:['sending','accepted','failed','unknown','queued_for_update','held'].includes(row.delivery)?row.delivery:null,
+   code:['invalid_response','delivery_uncertain','stale_revision','runtime_unavailable'].includes(row.code)?row.code:row.code?'other':null,
+   errorPresent:!!row.error};
+ };
+ const fault=phase=>{if(data.errors.length<8)data.errors.push(phase);else data.omitted++};
+ let active=false,closed=false,sequence=0,dom,finished;
+ const requests=new WeakMap();
+ const onRequest=request=>{
+  if(!active||closed)return;
+  try{
+   const url=new URL(request.url());
+   if(url.origin!==new URL(page.url()).origin||url.pathname!=='/api/actions'||request.method()!=='POST')return;
+   const text=request.postData();if(!text||text.length>32768){fault('action-body-unavailable');return}
+   const raw=JSON.parse(text),body=raw?.action==='shell.command'?raw.args:raw;
+   if(body?.action!=='conversation.send')return;
+   if(data.network.length>=data.limits.requests){data.omitted++;return}
+   const args=body.args??{},row={sequence:++sequence,stage:data.stage,action:body.action,commandId:id(raw.id??body.id),
+    sessionId:id(args.sessionId),identityMatch:boundaryIdentity({sessionId:id(args.sessionId)},{sessionId:owner}),
+    exactFixtureText:args.text==='Submit A',
+    exactAttachmentBatch:Array.isArray(args.attachmentIds)&&args.attachmentIds.length===1&&args.attachmentIds[0]===attachmentId,
+    attachmentCount:Array.isArray(args.attachmentIds)?args.attachmentIds.length:null,responseState:'not-observed'};
+   requests.set(request,row);data.network.push(row);
+  }catch{fault('request-observation-unavailable')}
+ };
+ const onResponse=response=>{
+  try{
+  const row=requests.get(response.request());if(!row||closed)return;
+  row.status=response.status();row.responseSequence=++sequence;
+  const length=response.headers()['content-length'];
+  if(!/^\d+$/.test(length??'')||Number(length)>data.limits.responseBytes){row.responseState='body-size-unavailable-or-over-limit';return}
+  row.responseState='body-pending';
+  void response.body().then(bytes=>{
+   if(closed)return;
+   if(bytes.length>data.limits.responseBytes){row.responseState='body-over-limit';return}
+   const body=JSON.parse(bytes.toString('utf8'));
+   row.response={...receipt(body),result:receipt(body?.result),receipt:receipt(body?.receipt)};
+   row.responseState='observed';row.bodySequence=++sequence;
+  }).catch(()=>{if(!closed){row.responseState='body-unreadable';fault('response-body-unavailable')}});
+  }catch{fault('response-observation-unavailable')}
+ };
+ const onFailed=request=>{const row=requests.get(request);if(row&&!closed){row.responseState='request-failed';row.failureSequence=++sequence}};
+ const snapshot=async stage=>{
+  if(closed)return;
+  data.stage=stage;const row={sequence:++sequence,stage};
+  const observedDom=dom?await boundaryRead(()=>dom.evaluate(value=>value.read())):{status:'observer-unavailable'};
+  row.dom=observedDom.status==='observed'?observedDom.value:{status:observedDom.status};
+  if(observedDom.status!=='observed')fault(stage+'-dom-'+observedDom.status);
+  const observedFixture=await boundaryRead(async()=>{
+   const state=await inspect(page),sends=state.sends.filter(value=>value.sessionId===owner);
+   return {selectedSessionId:id(state.selectedSessionId),ownerSendCount:sends.length,
+    inputIds:sends.slice(0,8).map(value=>id(value.inputId)),inputsOmitted:Math.max(0,sends.length-8)};
+  });
+  row.fixture=observedFixture.status==='observed'?observedFixture.value:{status:observedFixture.status};
+  if(observedFixture.status!=='observed')fault(stage+'-fixture-'+observedFixture.status);
+  if(closed)return;
+  if(data.snapshots.length<data.limits.snapshots)data.snapshots.push(row);else data.omitted++;
+ };
+ const finish=failed=>finished??=(async()=>{
+  data.endedStage=data.stage;
+  active=false;page.off('request',onRequest);page.off('response',onResponse);page.off('requestfailed',onFailed);
+  await snapshot(failed?'original-wait-or-click-failed':'runtime-send-observed');
+  if(dom){
+   const cleanup=await closeBoundaryHandle(dom);
+   data.events=cleanup.events.status==='observed'?cleanup.events.value:{status:cleanup.events.status};
+   data.handleDisposal=cleanup.disposal;
+   if(cleanup.events.status!=='observed')fault('event-cleanup-'+cleanup.events.status);
+   if(cleanup.disposal.status!=='observed')fault('handle-disposal-'+cleanup.disposal.status);
+  }else{
+   data.events={status:'observer-unavailable'};
+   data.handleDisposal={status:'unknown'};
+  }
+  closed=true;
+  data.requestObservation=boundaryRequests(data.network,'conversation.send',!!(data.errors.length||data.omitted));
+  data.pendingResponseReads=data.network.filter(row=>row.responseState==='body-pending').length;
+ })();
+ page.on('request',onRequest);page.on('response',onResponse);page.on('requestfailed',onFailed);
+ const setup=await openBoundaryHandle(()=>page.evaluateHandle(({owner,attachmentId})=>{
+   const id=value=>typeof value==='string'&&/^[a-zA-Z0-9:_-]{1,200}$/.test(value)?value:null;
+   const form=document.querySelector('.a-composer'),events=[];let omitted=0,sequence=0;
+   const category=node=>node===form?'form':node?.matches?.('[data-part="composer-primary-action"]')?'primary-action':
+    node?.matches?.('[role="textbox"]')?'editor':node?.form===form?'form-control':'other';
+   const listen=event=>{
+    if(event.target!==form&&!form?.contains(event.target))return;
+    const row={sequence:++sequence,type:event.type,phase:event.eventPhase===1?'capture':'bubble',
+     trusted:event.isTrusted,defaultPrevented:event.defaultPrevented,target:category(event.target),
+     submitter:category(event.submitter)};
+    if(events.length===24){events.shift();omitted++}events.push(row);
+   };
+   for(const name of ['click','submit','invalid']){
+    document.addEventListener(name,listen,{capture:true,passive:true});
+    document.addEventListener(name,listen,{capture:false,passive:true});
+   }
+   const read=()=>{
+    const state=window.amplifier?.getState(),current=document.querySelector('.a-composer');
+    const button=current?.querySelector('[data-part="composer-primary-action"]');
+    const editor=current?.querySelector('[role="textbox"][aria-label="Message Amplifier"]');
+    let outbox={status:'unavailable'};
+    try{
+     const raw=sessionStorage.getItem('amplifier.messageOutbox.v1')||'[]';
+     if(raw.length>65536)outbox={status:'over-limit'};
+     else{
+      const rows=JSON.parse(raw);if(!Array.isArray(rows))throw Error();
+      outbox={status:'observed',count:rows.length,omitted:Math.max(0,rows.length-8),
+       identities:rows.slice(0,8).map(row=>({commandId:id(row.commandId),sessionId:id(row.sessionId),
+        ownerMatches:row.sessionId===owner,containsAttachment:Array.isArray(row.attachmentIds)&&row.attachmentIds.includes(attachmentId),
+        status:['sending','accepted','failed','unknown','queued','queued_for_update'].includes(row.status)?row.status:'other'}))};
+     }
+    }catch{outbox={status:'unreadable'}}
+    return {status:'observed',selectedSessionId:id(state?.selectedSessionId),ownerSelected:state?.selectedSessionId===owner,
+     formPresent:!!current,sameForm:current===form,originalFormConnected:!!form?.isConnected,
+     formInvalid:current?.matches(':invalid')??null,noValidate:current?.noValidate??null,
+     buttonPresent:!!button,buttonDisabled:button?.disabled??null,buttonType:['submit','button','reset'].includes(button?.type)?button.type:null,
+     sendAction:button?.dataset.action==='conversation.send',editorPresent:!!editor,
+     editorDisabled:editor?.disabled??null,editorReadOnly:editor?.readOnly??null,editorContentEditable:editor?.isContentEditable??null,
+     draftLength:(editor?.value??editor?.textContent??'').length,activeCategory:category(document.activeElement),outbox};
+   };
+   return {read,finish(){
+    for(const name of ['click','submit','invalid']){
+     document.removeEventListener(name,listen,true);document.removeEventListener(name,listen,false);
+    }
+    return {records:events,omitted};
+   }};
+  },{owner,attachmentId}));
+ data.setup={status:setup.status};
+ if(setup.status==='observed')dom=setup.value;
+ else fault('event-observer-setup-'+setup.status);
+ await snapshot('before-click');active=true;data.stage='click-pending';
+ return {finish,clickResolved(){if(!closed){data.stage='runtime-wait';data.clickResolvedSequence=++sequence}}};
 }
 async function consumed(page,ids){
  await expect.poll(async()=>{const data=await trace(page);return ids.every(id=>data.rules.find(r=>r.id===id)?.armed);},{timeout:10000}).toBe(true);
@@ -189,8 +332,14 @@ async function twoCycles(page,owner,other){
  const composer=page.getByRole('textbox',{name:'Message Amplifier'});
  const a=await upload(page,'cycle-A.png');await original(page,a);await composer.fill('Submit A');
  await watch(page,owner,[a.id]);
- await page.getByRole('button',{name:'Send message',exact:true}).click();
- const first=await waitRuntimeSend(page,owner,0);await consumed(page,[a.id]);
+ const sendBoundary=await observeFirstSend(page,owner,a.id);
+ let first,sendFailed=true;
+ try{
+  await page.getByRole('button',{name:'Send message',exact:true}).click();
+  sendBoundary.clickResolved(); // No extra read between click and the original runtime wait.
+  first=await waitRuntimeSend(page,owner,0);sendFailed=false;
+ }finally{await sendBoundary.finish(sendFailed)}
+ await consumed(page,[a.id]);
  await composer.fill('Keep next draft B');
  // Hold an exact real attachment-add HTTP reply, after real host admission.
  // The service and state stream remain active; no content/revision is forged.

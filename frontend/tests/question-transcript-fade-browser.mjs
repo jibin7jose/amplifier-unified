@@ -11,6 +11,7 @@ import {chromium,expect} from '@playwright/test';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
 import {questionFadeExecution} from './question-fade-runtime.mjs';
+import {boundaryRead,boundaryIdentity,boundaryRequests,boundaryLease,BOUNDARY_OBSERVATION_MS} from './browser-boundary-evidence.mjs';
 
 const root=realpathSync(fileURLToPath(new URL('../../',import.meta.url)));
 const {python,artifactRoot,evidence:executionEvidence}=questionFadeExecution({root});
@@ -84,6 +85,129 @@ const boundedPush=(array,value,limit=report.limits.retainedEntriesPerArray)=>{
 };
 let fixture,stopFixture,browser,page,pane,failure,stderr='',stderrCharacters=0;
 let failureScreenshotAttempted=false;
+
+// One exact second-review attempt, following questions-browser's request-object
+// correlation. Diagnostic failures never replace the journey's original error.
+async function observeReviewBoundary(page,target,artifactReceipt){
+ const data={target,stage:'setup',snapshots:[],network:[],errors:[],omitted:0,
+  limits:{requests:12,snapshots:6,responseBytes:131072,optionalReadMs:BOUNDARY_OBSERVATION_MS},
+  limitation:'Passive reads can affect timing. Deadlines need a responsive Node event loop and do not cancel evaluation. Response bodies are Playwright observations, not independent wire captures.'};
+ report.reviewBoundary=data;
+ let active=false,closed=false,sequence=0,finished;
+ const requests=new WeakMap();
+ const id=value=>typeof value==='string'&&/^[a-zA-Z0-9:_-]{1,200}$/.test(value)?value:null;
+ const number=value=>Number.isSafeInteger(value)&&value>=0?value:null;
+ const pick=row=>{
+  if(!row||typeof row!=='object')return null;
+  const result={};
+  for(const key of ['id','viewId','resourceId','resourceRevision','previewId','sessionId','questionId','hostInstanceId'])
+   if(Object.hasOwn(row,key))result[key]=id(row[key]);
+  for(const key of ['version','selectedVersion','questionContentRevision','revision','stateRevision','generation','status'])
+   if(Object.hasOwn(row,key))result[key]=number(row[key]);
+  for(const key of ['accepted','resetPreview','presentationRequest'])
+   if(Object.hasOwn(row,key))result[key]=typeof row[key]==='boolean'?row[key]:null;
+  if(Object.hasOwn(row,'presentation'))result.presentation=['canvas','inline','saved'].includes(row.presentation)?row.presentation:'other';
+  if(Object.hasOwn(row,'code'))result.code=['canvas_preview_reset_required','canvas_preview_dirty','invalid_response','stale_revision','canvas_view_stale'].includes(row.code)?row.code:'other';
+  result.errorPresent=!!row.error;
+  return result;
+ };
+ const fault=phase=>{if(data.errors.length<8)data.errors.push(phase);else data.omitted++};
+ data.fixtureArtifactReceipt=pick(artifactReceipt);
+ const onRequest=request=>{
+  if(!active||closed)return;
+  try{
+   const url=new URL(request.url());if(url.origin!==new URL(page.url()).origin)return;
+   let action,args,commandId=null;
+   if(request.method()==='POST'&&url.pathname==='/api/actions'){
+    const text=request.postData();if(!text||text.length>32768){fault('action-body-unavailable');return}
+    const raw=JSON.parse(text),body=raw?.action==='shell.command'?raw.args:raw;
+    action=body?.action;args=body?.args;
+    if(!['canvas.select','canvas.views.inline'].includes(action))return;
+    commandId=id(raw.id??body.id);
+   }else if(request.method()==='GET'&&/^\/api\/canvas\/views\/[^/]+\/resource$/.test(url.pathname)){
+    action='inline-resource';args={viewId:url.pathname.split('/')[4],resourceId:url.searchParams.get('resourceId'),
+     resourceRevision:url.searchParams.get('resourceRevision'),
+     generation:url.searchParams.has('generation')?Number(url.searchParams.get('generation')):null};
+   }else return;
+   if(data.network.length>=data.limits.requests){data.omitted++;return}
+   const identityMatch=action==='inline-resource'?boundaryIdentity({resourceId:id(args.resourceId)},{resourceId:target.resourceId}):
+    boundaryIdentity({resourceId:id(action==='canvas.select'?args?.id:args?.resourceId),version:number(args?.version),
+     questionId:id(args?.questionId),questionContentRevision:number(args?.questionContentRevision)},
+    {resourceId:target.resourceId,version:target.version,questionId:target.questionId,questionContentRevision:target.questionContentRevision});
+   const row={sequence:++sequence,stage:data.stage,action,commandId,args:pick(args),identityMatch,responseState:'not-observed'};
+   data.network.push(row);requests.set(request,row);
+  }catch{fault('request-observation-unavailable')}
+ };
+ const onResponse=response=>{
+  try{
+  const row=requests.get(response.request());if(!row||closed)return;
+  row.status=response.status();row.responseSequence=++sequence;
+  if(row.action==='inline-resource'){row.responseState='headers-observed';return}
+  const length=response.headers()['content-length'];
+  if(!/^\d+$/.test(length??'')||Number(length)>data.limits.responseBytes){row.responseState='body-size-unavailable-or-over-limit';return}
+  row.responseState='body-pending';
+  void response.body().then(bytes=>{
+   if(closed)return;
+   if(bytes.length>data.limits.responseBytes){row.responseState='body-over-limit';return}
+   const body=JSON.parse(bytes.toString('utf8'));
+   row.response={...pick(body),result:pick(body?.result),receipt:pick(body?.receipt)};
+   row.responseState='observed';row.bodySequence=++sequence;
+  }).catch(()=>{if(!closed){row.responseState='body-unreadable';fault('response-body-unavailable')}});
+  }catch{fault('response-observation-unavailable')}
+ };
+ const onFailed=request=>{const row=requests.get(request);if(row&&!closed){row.responseState='request-failed';row.failureSequence=++sequence}};
+ const snapshot=async stage=>{
+  if(closed)return;
+  data.stage=stage;
+   const result=await boundaryRead(()=>page.evaluate(target=>{
+    const id=value=>typeof value==='string'&&/^[a-zA-Z0-9:_-]{1,200}$/.test(value)?value:null;
+    const scalar=(row,keys)=>row?Object.fromEntries(keys.map(key=>[key,
+     typeof row[key]==='boolean'||Number.isSafeInteger(row[key])?row[key]:id(row[key])])):null;
+    const state=window.amplifier?.getState();
+    const question=document.querySelector(`[data-question-id="${CSS.escape(target.questionId)}"]`);
+    const card=question?.querySelectorAll('.a-compact-artifact')[1],button=card?.querySelector('.a-document-preview-toggle');
+    const notice=card?.querySelector('.a-compact-artifact-notice');
+    const controls=notice?[...notice.querySelectorAll('button')].slice(0,4):[];
+    const keep=controls.some(node=>node.textContent==='Keep current preview');
+    const reset=controls.some(node=>node.textContent?.startsWith('Reset preview and '));
+    const session=state?.sessions?.find(row=>row.id===target.sessionId);
+    const savedQuestion=session?.questions?.find(row=>row.id===target.questionId);
+    const presentations=state?.canvasWorkspace?.presentations||[],views=state?.canvasWorkspace?.views||[];
+    const exact=presentations.filter(row=>row.id===target.resourceId&&row.version===target.version);
+    const leases=views.filter(row=>row.resourceId===target.resourceId);
+    return {selectedSessionId:id(state?.selectedSessionId),stateRevision:Number.isSafeInteger(state?.revision)?state.revision:null,
+     question:scalar(savedQuestion,['id','revision','contentRevision','status']),
+     cardPresent:!!card,buttonPresent:!!button,expanded:button?.getAttribute('aria-expanded')==='true',
+     buttonDisabled:button?.disabled??null,iframeCount:card?.querySelectorAll('iframe').length??0,
+     notice:!notice?'absent':keep&&reset?'keep-or-reset':notice.textContent?.startsWith('Shown in Canvas')?'shown-in-canvas':'other',
+     keepControl:keep,resetControl:reset,inlineErrorPresent:!!card?.querySelector('.a-inline-artifact-notice'),
+     primary:scalar(state?.canvas,['id','selectedVersion','revision','open','_presentationDisposed']),
+     presentations:exact.slice(0,4).map(row=>scalar(row,['id','version','presentation','questionId','questionContentRevision','sessionId'])),
+     presentationsOmitted:Math.max(0,exact.length-4),
+     leases:leases.slice(0,8).map(row=>scalar(row,['viewId','resourceId','resourceRevision','generation','selectedVersion','dirty'])),
+     leasesOmitted:Math.max(0,leases.length-8)};
+   },target));
+   if(closed)return;
+   const facts=result.status==='observed'?result.value:{status:result.status};
+   if(result.status!=='observed')fault(stage+'-state-'+result.status);
+   if(data.snapshots.length<data.limits.snapshots)data.snapshots.push({sequence:++sequence,stage,...facts});else data.omitted++;
+ };
+ const finish=failed=>finished??=(async()=>{
+  data.endedStage=data.stage;
+  active=false;page.off('request',onRequest);page.off('response',onResponse);page.off('requestfailed',onFailed);
+  await snapshot(failed?'failure-final':'preview-mounted');
+  closed=true;
+  data.selectionRequest=boundaryRequests(data.network,'canvas.select',!!(data.omitted||data.errors.length));
+  data.inlineRequest=boundaryRequests(data.network,'canvas.views.inline',!!(data.omitted||data.errors.length));
+  data.pendingResponseReads=data.network.filter(row=>row.responseState==='body-pending').length;
+  for(const row of data.network.filter(row=>row.action==='inline-resource'))
+   row.matchesAttemptLease=boundaryLease(row,data.network,!!(data.omitted||data.errors.length));
+  // An unfinished read stays explicitly pending; do not extend the iframe wait.
+ })();
+ page.on('request',onRequest);page.on('response',onResponse);page.on('requestfailed',onFailed);
+ await snapshot('before-click');active=true;data.stage='click-pending';
+ return {snapshot,finish,waiting(){if(!closed)data.stage='iframe-wait'}};
+}
 
 const inspect=async(pane,questionId)=>pane.evaluate((el,id)=>{
  const box=node=>{
@@ -182,11 +306,13 @@ const successShot=async name=>{
 const failureShot=async()=>{
  if(failureScreenshotAttempted||!page||page.isClosed())return;
  failureScreenshotAttempted=true;
- try{
-  const path=join(artifacts,'failure.png');
-  const bytes=await page.screenshot({path,timeout:2000,animations:'disabled'});
+ const path=join(artifacts,'failure.png');
+ const result=await boundaryRead(()=>page.screenshot({path,timeout:2000,animations:'disabled'}));
+ report.failureScreenshotObservation={status:result.status,budgetMs:BOUNDARY_OBSERVATION_MS};
+ if(result.status==='observed'){
+  const bytes=result.value;
   report.screenshots.push({kind:'failure',file:'failure.png',sha256:hash(bytes),bytes:bytes.length});
- }catch(error){report.failureScreenshotError=String(error?.stack||error).slice(0,2000)}
+ }
 };
 
 try{
@@ -513,10 +639,20 @@ try{
  const reviewFixture=await reviewResponse.json();
  const reviewQuestion=pane.locator(`[data-question-id="${reviewFixture.question.id}"]`);
  const htmlReview=reviewQuestion.locator('.a-compact-artifact').nth(1);
- await htmlReview.getByRole('button',{name:/^Preview here:/}).click();
  const iframe=htmlReview.locator('iframe'),inner=htmlReview.frameLocator('iframe');
- await expect(iframe).toHaveAttribute('sandbox','allow-scripts');
- await expect(inner.getByRole('heading',{name:'HTML mockup v1',exact:true})).toBeVisible();
+ const reviewBoundary=await observeReviewBoundary(page,{attempt:'second-html-review',
+  sessionId:ready.sessionId,questionId:reviewFixture.question.id,
+  questionRevision:reviewFixture.question.revision,questionContentRevision:reviewFixture.question.contentRevision,
+  resourceId:reviewFixture.html.id,version:reviewFixture.question.artifacts?.find(row=>row.id===reviewFixture.html.id)?.version??null},reviewFixture.html);
+ let reviewFailed=true;
+ try{
+  await htmlReview.getByRole('button',{name:/^Preview here:/}).click();
+  await reviewBoundary.snapshot('click-resolved');
+  reviewBoundary.waiting();
+  await expect(iframe).toHaveAttribute('sandbox','allow-scripts');
+  await expect(inner.getByRole('heading',{name:'HTML mockup v1',exact:true})).toBeVisible();
+  reviewFailed=false;
+ }finally{await reviewBoundary.finish(reviewFailed)}
  const innerControl=inner.getByRole('button',{name:'Try mockup',exact:true});
  // Merely mounting a review must not disable the overflow cue.
  await composer.evaluate(element=>element.focus({preventScroll:true}));await expect(composer).toBeFocused();
@@ -597,8 +733,15 @@ try{
  failure=error;
  report.failure={name:error?.name||'Error',message:String(error?.message||error),stack:String(error?.stack||error).slice(0,8000)};
  if(pane&&page&&!page.isClosed()){
-  try{if(await pane.count()===1)await record('failure-context',pane,report.question.id)}
-  catch(contextError){report.failureContextError=String(contextError?.stack||contextError).slice(0,2000)}
+  // Commit only an on-time read. The old record() continuation could append
+  // late facts after cleanup; this optional context never owns the failure.
+  const context=await boundaryRead(async()=>await pane.count()===1?inspect(pane,report.question.id):null);
+  report.failureContextObservation={status:context.status,budgetMs:BOUNDARY_OBSERVATION_MS};
+  if(context.status==='observed'&&context.value){
+   const state=context.value,label='failure-context';
+   boundedPush(report.focus,{label,...state.focus});
+   boundedPush(report.geometry,{label,...state.geometry,runtime:state.runtime,overflow:state.overflow,mask:state.mask});
+  }
  }
  await failureShot();
 }finally{
