@@ -113,6 +113,30 @@ def test_sidebar_content_clears_selection_edge_without_changing_native_rows():
         assert {item.name: tinycss2.serialize(item.value).strip() for item in declarations} == expected
 
 
+def test_navigation_paint_does_not_target_unrelated_semantic_asides():
+    rules = tinycss2.parse_stylesheet(source(), skip_comments=True, skip_whitespace=True)
+    rail_rules = [
+        rule for rule in rules
+        if rule.type == "qualified-rule"
+        and "box-shadow:inset 1px 0 var(--rain-rail)" in tinycss2.serialize(rule.content)
+    ]
+    assert len(rail_rules) == 1
+    assert tinycss2.serialize(rail_rules[0].prelude).strip() == (
+        '#amp-one :is(.a-nav-rail,[data-part="navigation"])'
+    )
+    # <aside> is also used for worker status, connection/update notices and
+    # Canvas. Its semantic tag must not make it a navigation styling target.
+    def inspect(rows):
+        for rule in rows:
+            if rule.type == "at-rule" and rule.content is not None:
+                inspect(tinycss2.parse_rule_list(
+                    rule.content, skip_comments=True, skip_whitespace=True,
+                ))
+            elif rule.type == "qualified-rule":
+                assert not re.search(r"\baside\b", tinycss2.serialize(rule.prelude))
+    inspect(rules)
+
+
 def luminance(color):
     channels = [int(color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
     linear = [value / 12.92 if value <= .04045 else ((value + .055) / 1.055) ** 2.4 for value in channels]
