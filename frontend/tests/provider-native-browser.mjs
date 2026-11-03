@@ -529,6 +529,22 @@ try{
    const finalProof=JSON.parse(await readFile(evidence+'/fixture/final-proof.json','utf8'));
    assert.equal(origin.mode,installed?'installed':'source');
    const within=(base,path)=>under(resolve(base),resolve(path));
+   const catalogProcesses=cleanup.processes.filter(row=>row.kind==='decision_account_catalog');
+   assert.ok(catalogProcesses.length>0,'Real isolated account discovery must execute');
+   for(const row of catalogProcesses){
+    assert.equal(row.returncode,0);assert.equal(row.procAbsent,true);
+    assert.deepEqual(row.script,origin.accountCatalog);
+    assert.deepEqual(row.requestedCommand,[process.env.AMPLIFIER_TEST_PYTHON,'-I',origin.accountCatalog.path]);
+    assert.deepEqual(row.command,[process.env.AMPLIFIER_TEST_PYTHON,'-I',origin.fixture.path,'--account-catalog',evidence+'/fixture']);
+    const parent=cleanup.processes.find(value=>value.pid===row.parent.pid);
+    assert.ok(parent,'Catalog belongs to a tracked worker/probe');
+    assert.equal(parent.startTicks,row.parent.startTicks);assert.equal(parent.processGroup,row.processGroup);
+    const guard=JSON.parse(await readFile(`${evidence}/fixture/guard-ready-${row.pid}.json`,'utf8'));
+    assert.equal(guard.isolated,true);assert.deepEqual(guard.allowedCommands,[]);
+    assert.deepEqual(guard.bootstrap,origin.fixture);
+    assert.ok(guard.environmentNames.every(name=>['PATH','SYSTEMROOT','WINDIR','LANG','LC_ALL','TZ','TMPDIR','TEMP','TMP','LC_CTYPE'].includes(name)));
+    assert.ok(guard.pythonPath.every(path=>!within(checkout,path)&&!within(evidence,path)),'Isolated helper must not inherit source/provider/bootstrap paths');
+   }
    for(const row of cleanup.processes){
     const loaded=row.loadedSources;assert.ok(loaded&&!loaded.error);assert.deepEqual(loaded.violations,[]);
     assert.equal(loaded.python,process.env.AMPLIFIER_TEST_PYTHON);
