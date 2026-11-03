@@ -128,14 +128,21 @@ class OutputImageDelivery:
         observation = self.observation
         if not observation:
             return request
-        if observation['epoch'] is None:
+        context_available = self.previous.epoch_available
+        if not context_available and observation['epoch'] is None:
+            # Without even a previous verified input, a later identity cannot
+            # prove this selection belongs to it. Require a fresh inspection.
+            self.observation = None
+        if observation['epoch'] is None and context_available:
             observation['epoch'] = copy.deepcopy(self.previous.epoch)
-        elif observation['epoch'] != self.previous.epoch:
+        elif context_available and observation['epoch'] != self.previous.epoch:
             self.observation = None
             if observation.get('pair'):
                 return self._pair_message(request, observation, reason_code='input_changed')
             return request
         if observation.get('pair'):
+            if not context_available:
+                return self._pair_message(request, observation, reason_code='context_read_unavailable')
             if not pair_retained(request, observation):
                 return self._pair_message(request, observation, reason_code='receipt_unavailable')
             if not await self.previous.image_capabilities.supports(request, provider):
@@ -172,6 +179,9 @@ class OutputImageDelivery:
         identity = {'id': saved['id'], 'sha256': saved['sha256']}
         value, pixels, reason_code = None, None, None
         try:
+            if not context_available:
+                reason_code = 'context_read_unavailable'
+                raise ValueError('The current input could not be checked.')
             value = dict(await asyncio.wait_for(self.bridge('outputs.image.read', identity), 2))
             pixels = value.pop('_image')
             if not await self.previous.image_capabilities.supports(request,provider):
@@ -179,7 +189,7 @@ class OutputImageDelivery:
         except asyncio.TimeoutError:
             pixels, reason_code = None, 'image_read_timeout'
         except Exception:
-            pixels, reason_code = None, 'image_read_unavailable'
+            pixels, reason_code = None, reason_code or 'image_read_unavailable'
         manifest = {**identity, 'toolCallId': tool_call_id, 'stage': 'request_preparation',
                     'pixelsIncluded': pixels is not None, 'reasonCode': reason_code}
         if reason_code:manifest['reason'] = REASONS[reason_code]

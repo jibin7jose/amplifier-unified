@@ -37,6 +37,7 @@ class SurfaceDelivery:
         self.notices = {}
         self.focus = None
         self.epoch = None
+        self.epoch_available = False
         self.last_delivery = {}
 
     async def read(self, args):
@@ -94,8 +95,11 @@ class SurfaceDelivery:
             manifest = await asyncio.wait_for(self.bridge('context.manifest', {}), 1.5)
         except Exception:
             manifest = {'surfaces': [], 'unavailable': True}
-        epoch = manifest.get('inputIds', [])
-        if self.epoch != epoch:
+        self.epoch_available = not manifest.get('unavailable')
+        # An unavailable read is not a new empty input. Keep the last known
+        # identity, but deliver no selected evidence until it is checked again.
+        epoch = manifest.get('inputIds', []) if self.epoch_available else self.epoch
+        if self.epoch_available and self.epoch != epoch:
             self.epoch = epoch
             self.focus = None
             self.images = {k: v for k, v in self.images.items() if v['epoch'] == epoch}

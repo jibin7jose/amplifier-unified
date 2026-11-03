@@ -52,6 +52,15 @@ message before committing. The output tests guard against unrelated history
 traversal and exercise changes during that read; do not replace these fences with
 a full conversation snapshot.
 
+A selected saved-image set shares one off-thread body/hash/PNG conversion pass
+(two for chunk-manifest lookup), not a separate event-loop resume for every
+image and conversion. Keep SQLite access on its owner thread and recheck the
+entire set's current reader relationships after the read, including pretransport
+validation. `test_output_image_preparation.py` measures these work bounds and
+injects loaded-loop resume delay under the existing image deadline. Temporary
+context unavailability suppresses image delivery but does not manufacture a new
+input identity or silently discard the selection; a verified input change does.
+
 ## Keep a meaningful regression check
 
 Choose a small case and a representative larger case for the affected operation.
