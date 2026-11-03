@@ -16,8 +16,24 @@ FIXTURE = SOURCE / 'tests/fixtures/provider_native_ui_server.py'
 DRIVER = '''
 import importlib.util, json, os, subprocess, sys
 from pathlib import Path
-fixture_path, source, root, operation = sys.argv[1:]
+fixture_path, source, root, operation, backend = sys.argv[1:]
 root = Path(root)
+if backend == 'fork-exec': subprocess._USE_POSIX_SPAWN = False
+spawn_events = []
+def observe_spawn(event, args):
+    if event in {'subprocess.Popen', 'os.posix_spawn'}:
+        spawn_events.append(event)
+        (root / 'launch-events.json').write_text(json.dumps(spawn_events))
+sys.addaudithook(observe_spawn)
+if operation.startswith('changed-spawn-'):
+    original_spawn = os.posix_spawn
+    def changed_spawn(executable, argv, environment, **kwargs):
+        if operation == 'changed-spawn-environment':
+            environment = {**environment, 'OPENAI_API_KEY': 'synthetic-secret'}
+        if operation == 'changed-spawn-argument': argv = [*argv, 'unapproved']
+        if operation == 'changed-spawn-executable': executable = '/bin/true'
+        return original_spawn(executable, argv, environment, **kwargs)
+    os.posix_spawn = changed_spawn
 spec = importlib.util.spec_from_file_location('provider_native_ui_server', fixture_path)
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
@@ -36,7 +52,7 @@ if operation in {'changed-helper', 'wrong-installed-origin'}:
         sys.argv[0] = fixture_path
     fixture.save(root / 'origin-policy.json', policy)
 fixture.install_guard(root)
-if operation == 'catalog':
+if operation == 'catalog' or operation.startswith('changed-spawn-'):
     print(json.dumps(decision_accounts.catalogs()))
 else:
     command = [sys.executable, '-I', policy['accountCatalog']['path']]
@@ -46,6 +62,10 @@ else:
     if operation == 'extra-argument': command.append('unapproved')
     if operation == 'other-program': command = [sys.executable, '-c', 'raise SystemExit(0)']
     if operation == 'direct-bootstrap': command = [sys.executable, '-I', fixture_path, '--account-catalog', str(root)]
+    if operation == 'direct-posix-bootstrap':
+        command = [sys.executable, '-I', fixture_path, '--account-catalog', str(root)]
+        os.posix_spawn(command[0], command, environment)
+        raise AssertionError('Direct spawn must not reach the helper')
     if operation == 'changed-helper':
         helper.write_text('raise SystemExit("changed helper must not run")')
     subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=environment, check=True)
@@ -84,8 +104,8 @@ def isolated_catalog(tmp_path):
     shadow = tmp_path / 'catalog_fixture.py'
     shadow.write_text('raise RuntimeError("unapproved source import")\n')
 
-    def run(operation='catalog'):
-        return subprocess.run([str(python), str(driver), str(FIXTURE), str(SOURCE), str(root), operation],
+    def run(operation='catalog', backend='default'):
+        return subprocess.run([str(python), str(driver), str(FIXTURE), str(SOURCE), str(root), operation, backend],
             cwd=tmp_path, env={**os.environ, 'PYTHONPATH': str(tmp_path),
                                'OPENAI_API_KEY': 'synthetic-parent-secret'},
             capture_output=True, text=True, timeout=20)
@@ -96,10 +116,15 @@ def records(root, pattern):
     return [json.loads(line) for path in root.glob(pattern) for line in path.read_text().splitlines()]
 
 
-def test_real_catalog_keeps_isolation_metadata_and_reaping(isolated_catalog):
+@pytest.mark.parametrize('backend', ['default', 'fork-exec'])
+def test_real_catalog_keeps_isolation_metadata_and_reaping(isolated_catalog, backend):
     run, root, _ = isolated_catalog
-    result = run()
+    result = run(backend=backend)
     assert result.returncode == 0, result.stderr
+    events = json.loads((root / 'launch-events.json').read_text())
+    expected_spawn = (backend == 'default' and subprocess._USE_POSIX_SPAWN
+                      and getattr(subprocess, '_HAVE_POSIX_SPAWN_CLOSEFROM', False))
+    assert events == (['subprocess.Popen', 'os.posix_spawn'] if expected_spawn else ['subprocess.Popen'])
     assert json.loads(result.stdout) == {'provider-catalog-fixture': 'hooks-catalog-fixture'}
     spawned, reaped = records(root, 'account-catalog-*.jsonl')
     assert spawned['event'] == 'spawned' and reaped['event'] == 'reaped'
@@ -114,7 +139,7 @@ def test_real_catalog_keeps_isolation_metadata_and_reaping(isolated_catalog):
     assert loaded['violations'] == [] and not loaded.get('error')
 
 
-@pytest.mark.parametrize('operation', ['credentials', 'pythonpath', 'extra-argument', 'other-program', 'direct-bootstrap'])
+@pytest.mark.parametrize('operation', ['credentials', 'pythonpath', 'extra-argument', 'other-program', 'direct-bootstrap', 'direct-posix-bootstrap'])
 def test_catalog_exception_does_not_admit_other_launches(isolated_catalog, operation):
     run, root, _ = isolated_catalog
     result = run(operation)
@@ -158,3 +183,16 @@ def test_real_metadata_cannot_use_network_or_spawn_children(isolated_catalog, op
     refusal = records(root, 'guard-*.jsonl')
     assert len(refusal) == 1
     assert refusal[0]['event'] == ('socket.getaddrinfo' if operation == 'network' else 'subprocess.Popen')
+
+
+@pytest.mark.skipif(not (subprocess._USE_POSIX_SPAWN and getattr(subprocess, '_HAVE_POSIX_SPAWN_CLOSEFROM', False)),
+                    reason='This interpreter does not use posix_spawn with the unchanged close_fds contract')
+@pytest.mark.parametrize('operation', ['changed-spawn-environment', 'changed-spawn-argument', 'changed-spawn-executable'])
+def test_authorized_catalog_spawn_cannot_change_identity_or_environment(isolated_catalog, operation):
+    run, root, _ = isolated_catalog
+    result = run(operation)
+    assert result.returncode != 0
+    assert 'unlisted subprocess' in result.stderr
+    assert records(root, 'account-catalog-*.jsonl') == []
+    refusal, = records(root, 'guard-*.jsonl')
+    assert refusal['event'] == 'os.posix_spawn'

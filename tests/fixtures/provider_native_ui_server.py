@@ -24,6 +24,7 @@ sitecustomize, then executes the unchanged, hashed production helper. Metadata
 is never supplied by the fixture. Its child permits no further processes; the
 helper's original offline guard also remains active. Parent spawn/reap records,
 child origin/guard records and /proc absence join the ordinary cleanup proof.
+Both fork/exec and posix_spawn retain that same exact helper launch boundary.
 
 Installed mode: AMPLIFIER_TEST_INSTALLED=1, AMPLIFIER_TEST_INSTALLED_IDENTITY
 points to {files: {wheel-relative-path: sha256}} (all wheel entries except RECORD).
@@ -264,7 +265,7 @@ def observe_account_catalog(root, policy):
     original = subprocess.Popen
     requested = [sys.executable, '-I', policy['accountCatalog']['path']]
     launched = [sys.executable, '-I', policy['fixture']['path'], '--account-catalog', str(root)]
-    authorized = contextvars.ContextVar('observed_account_catalog_launch', default=False)
+    authorized = contextvars.ContextVar('observed_account_catalog_launch', default=None)
 
     class ObservedPopen(original):
         def __init__(self, args, *positional, **kwargs):
@@ -283,7 +284,7 @@ def observe_account_catalog(root, policy):
                     if file_identity(identity['path']) != identity:
                         raise RuntimeError('Isolated account catalog source identity changed')
                 args = launched
-            token = authorized.set(catalog)
+            token = authorized.set(dict(kwargs['env']) if catalog else None)
             try:
                 super().__init__(args, *positional, **kwargs)
             finally:
@@ -386,8 +387,16 @@ def install_guard(root, commands=(), *, account_catalog=False):
             if command == catalog_command and catalog_authorized is not None:
                 # The bootstrap is never an independently allowed command: each
                 # invocation must retain the original launch and parent custody.
-                refused = not catalog_authorized()
-        elif event in {'os.system', 'os.posix_spawn', 'os.exec'}:
+                refused = catalog_authorized() is None
+        elif event == 'os.posix_spawn':
+            # CPython may launch the same validated Popen through posix_spawn.
+            # Admit that backend only inside its exact observed launch scope;
+            # direct calls, changed arguments/env and child spawns still fail.
+            environment = catalog_authorized() if catalog_authorized is not None else None
+            command = tuple(args[1]) if isinstance(args[1], (tuple, list)) else None
+            refused = (environment is None or command != catalog_command
+                       or args[0] != catalog_command[0] or args[2] != environment)
+        elif event in {'os.system', 'os.exec'}:
             refused = True
         elif event in {'socket.connect', 'socket.getaddrinfo'}:
             address = args[1] if event == 'socket.connect' else args[0]
