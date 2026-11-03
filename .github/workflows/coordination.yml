@@ -23,6 +23,7 @@ on:
       - 'amplifier_web/request_refit.py'
       - 'amplifier_web/surface_delivery.py'
       - 'tests/test_pretransport_refit_native.py'
+      - 'tests/test_full_refit_authority.py'
       - 'amplifier_web/coordination_guidance.py'
       - 'frontend/src/workspace-awareness.jsx'
       - 'frontend/tests/workspace-awareness-browser.mjs'
@@ -259,11 +260,15 @@ jobs:
           PY
       - name: Verify bounded pretransport request refitting in the native loop
         run: |
-          uv run --no-sync pytest -q tests/test_pretransport_refit_native.py --junitxml=output/pretransport-refit-native.xml
+          uv run --no-sync pytest -q tests/test_pretransport_refit_native.py tests/test_full_refit_authority.py --junitxml=output/pretransport-refit-native.xml
           uv run --no-sync python - <<'PY'
+          from collections import Counter
           import xml.etree.ElementTree as ET
           rows = ET.parse('output/pretransport-refit-native.xml').getroot().findall('.//testcase')
-          assert len(rows) == 47
+          assert Counter(row.get('classname') for row in rows) == {
+              'tests.test_pretransport_refit_native': 38,
+              'tests.test_full_refit_authority': 23,
+          }
           assert all(not any(row.find(tag) is not None for tag in ('failure', 'error', 'skipped')) for row in rows)
           PY
       - name: Verify repeated peer returns through real Worker processes
