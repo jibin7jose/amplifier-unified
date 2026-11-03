@@ -45,7 +45,7 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
                             budget_options=[], dispatch_options=[], image_reads=0,
                             timeout_cancelled=False, timeout_elapsed=None, bound=[], context_snapshots=0,
                             context_timeout_cancelled=False, authority_waiting=asyncio.Event(),
-                            authority_cancelled=False)
+                            authority_cancelled=False, authority_checks=0, full_access=full_access)
     pair_input = {'operation': 'dispatch', 'args': {'action': 'outputs.images',
         'args': {'images': identities(output_pair.rows)}}} if output_pair else None
 
@@ -70,6 +70,8 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
                 'value': await bridge('coordination.current', {})}}
         if operation == 'coordination.current':
             state.preparations += 1
+            if mode.startswith('pair_refit_observation_unavailable') and state.preparations == 3:
+                return {'status': 'unavailable'}
             if mode == 'scope_during_refit' and state.preparations == 3:
                 scope['generationId'] = 'changed-generation'
             # Real bridge responses cross JSON IPC; saved observations cannot
@@ -77,10 +79,11 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
             return {'work': {'available': True, 'discovery': empty_discovery(),
                              'required': copy.deepcopy(required)}}
         if operation == 'work.invocation.revalidate':
+            state.authority_checks += 1
             if len(state.measurements) >= 2:
                 if mode == 'pair_refit_authority_delay':
                     await asyncio.sleep(1.65)
-                elif mode == 'pair_refit_authority_unavailable':
+                elif mode in {'pair_refit_authority_unavailable', 'pair_refit_permission_revoked'}:
                     raise TimeoutError('Synthetic bridge response deadline expired')
                 elif mode == 'pair_refit_authority_changed':
                     return {'current': False, 'effectAuthorized': False, 'required': required}
@@ -136,7 +139,7 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
     context = PreparationContext(bridge) if preparation_context else None
     read = context.read if context else bridge
     work = CoordinationDelivery(Surfaces(), read, origin_scope=lambda: copy.deepcopy(scope),
-                                full_access=lambda: full_access)
+                                full_access=lambda: state.full_access)
     visual = OutputImageDelivery(work, read) if output_pair else VoiceVisualDelivery(work, read)
     state.delivery = visual
 
@@ -187,6 +190,11 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
                     work.requests.clear()
             if len(state.measurements) == 3 and mode == 'pair_refit_budget_work_changed':
                 change_work('d' * 64)
+            if len(state.measurements) == 3 and mode in {
+                    'pair_refit_permission_revoked', 'pair_refit_observation_unavailable_revoked'}:
+                state.full_access = False
+            if len(state.measurements) == 3 and mode == 'pair_refit_scope_stop':
+                scope['stopRevision'] += 1
             if len(state.measurements) == 3 and mode == 'repeated_change':
                 request.messages.append(Message(role='user', content='changed after refit'))
             return {'estimated_input_tokens': 10001 if mode == 'oversized_refit' and len(state.measurements) == 3 else 100,
@@ -255,10 +263,9 @@ async def test_actual_loop_refits_without_repeating_completed_tool(mode, max_ite
         await session.cleanup()
 
 
-@pytest.mark.parametrize('full_access', [False, True])
-async def test_context_refit_cancels_pending_authority_check_without_sending(pair, full_access):
+async def test_context_refit_cancels_pending_authority_check_without_sending(pair):
     session, state = await native_case('pair_refit_authority_cancel', output_pair=pair,
-        selected=True, preparation_context=True, full_access=full_access)
+        selected=True, preparation_context=True)
     execution = asyncio.create_task(session.execute('Compare the saved images once, then finish.'))
     try:
         await asyncio.wait_for(state.authority_waiting.wait(), 10)
@@ -401,7 +408,6 @@ async def test_pair_refit_does_not_repeat_the_original_context_snapshot(pair):
         await session.cleanup()
 
 
-@pytest.mark.parametrize('full_access', [False, True])
 @pytest.mark.parametrize('mode,reason,measurements', [
     ('pair_work_changed', 'authority_changed', 3),
     ('pair_input_changed', 'native_scope_changed', 2),
@@ -412,9 +418,9 @@ async def test_pair_refit_does_not_repeat_the_original_context_snapshot(pair):
     ('pair_refit_budget_work_changed', 'authority_changed', 3),
     ('pair_refit_authority_delay', None, 3),
 ])
-async def test_context_refit_keeps_fresh_authority_and_stop_checks(pair, mode, reason, measurements, full_access):
+async def test_context_refit_keeps_fresh_authority_and_stop_checks(pair, mode, reason, measurements):
     session, state = await native_case(mode, output_pair=pair, selected=True,
-        preparation_context=True, full_access=full_access)
+        preparation_context=True)
     try:
         execution = session.execute('Compare the saved images once, then finish.')
         if reason:

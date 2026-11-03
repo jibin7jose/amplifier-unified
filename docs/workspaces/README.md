@@ -97,8 +97,14 @@ existing-folder attachment does not apply a starter.
 The guidance restores the workspace-as-container model: project source goes in
 child repositories, leaving the root available for plans, working scripts,
 investigations and handoffs. Unlike the old temporary-workspace template, it
-does not promise destruction at session end. Shared scratch stays bounded and
-attributed; concurrent tasks keep detailed notes separately. Frequent source
+does not promise destruction at session end. Shared scratch is a short, attributed current-context index, not another task
+ledger, event log, release history or authority source. Task state stays with the
+host; detailed evidence stays with its owner and is read on demand. Ordinary
+paths or Markdown links avoid automatically including archived history. Managers
+promote only shared decisions and replace superseded entries, preserving useful
+history and unfinished work outside automatic context. Cleanup is deliberate:
+read current files, preserve concurrent edits and unresolved constraints, and do
+not overwrite existing user guidance on an application update. Frequent source
 checkpoints/worktrees belong to child repositories. Local workspace Git is
 optional and enabled by default for **Amplifier development** only. Custom copies
 expose **Initialize local workspace Git**. Enabled setup initializes an empty

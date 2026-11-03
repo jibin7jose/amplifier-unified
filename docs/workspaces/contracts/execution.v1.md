@@ -49,7 +49,13 @@ An isolated working directory is not a security sandbox.
 
 5. **Concurrency choices belong to tasks.** Conflicting writes to one folder
    queue by default. Authorized independent parallel work can use separate copies,
-   with the task path visible and a terminal opening there. Folder attachment
+   with the task path visible and a terminal opening there. One manager may
+   commission many independent durable workers in parallel. Explicit isolated
+   commissioning creates a managed checkout and saves the worker's objective
+   before admitting its first working input; no model setup turn or later
+   relocation is needed. Existing worktree and task receipts own these steps,
+   and a partial preparation retains its root, files and outcome for recovery.
+   Read-only helpers may retain the inherited placement. Folder attachment
    never asks the user to choose an execution mode or silently relocates a chat.
 
 6. **Bindings govern the whole runtime.** Shell cwd, file tools, dependency
@@ -76,6 +82,12 @@ An isolated working directory is not a security sandbox.
 - P5: race two writers; verify queuing, then authorize separate work and inspect cwd.
 - P6: inspect shell, imports, tests, and preview provenance in a two-repo fixture.
 - P7: race an original document update against accepting a generated draft.
+- P8: commission ten independent workers through the canonical create action;
+  assert overlapping preparation, separate checkout ownership and saved objectives before first input,
+  one source refusal with an explicit correction, restart without duplicate
+  creation, and Stop suppressing unadmitted work. A separate real Core/Live smoke
+  observes the saved goal and isolated working-directory capability at the first
+  scripted provider request, then completes through the canonical task action.
 
 ## Open questions
 

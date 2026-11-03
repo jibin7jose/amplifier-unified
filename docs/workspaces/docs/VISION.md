@@ -76,6 +76,24 @@ through the interface. Both paths use the same permissions, identities, revision
 and receipts. Developer controls add precision to those actions; they do not
 unlock a second implementation with weaker preservation guarantees.
 
+### 9. Managers amplify independent work
+
+One manager can prioritize and coordinate many independent goal-driven workers,
+and a higher-level manager can coordinate other managers. A worker receives a
+complete objective, acceptance criteria, authority and suitable working location
+before its working turn. It carries ordinary implementation, repair, isolated
+validation and the reviewable result through completion without step-by-step
+manager approvals. Managers review results and resolve genuine cross-task decisions.
+The host owns placement, task state, result delivery and accepted-task closure;
+models should not reconstruct those mechanisms through repeated conversations.
+Actual Stop, authority, writer ownership and unknown effects retain their meaning.
+
+Shared scratch is a short current context and index. Saved tasks and receipts own
+status; user instructions and current permissions own authority. Detailed history
+and evidence are loaded for a decision, not copied into every worker request.
+Useful superseded history stays outside automatically loaded instructions; stale
+holds and obsolete duplicate notes do not become permanent operating rules.
+
 ## What this deliberately resists
 
 - **A Git setup wizard for everyone.** Repository mechanics belong in execution
@@ -103,6 +121,11 @@ unlock a second implementation with weaker preservation guarantees.
   with 0 changes to the unsent composer text.
 - An operator identifies the owner, host, and deployed revision of 1 shared preview
   within 30 seconds using only its details panel.
+- A manager commissions 10 independent workers and receives results or genuine
+  blockers without a setup-only model turn or routine acknowledgement turns.
+  Restart and one correction retain the same owners and completed effects.
+- Shared scratch changes reflect current decisions; archived receipts and stale
+  instructions do not enter ordinary requests unless explicitly requested.
 - A user recovering from 1 interrupted handoff finds the original conversation,
   artifacts, and unfinished changes with 0 replayed external actions.
 
@@ -110,6 +133,7 @@ unlock a second implementation with weaker preservation guarantees.
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-11-03 | One manager coordinates many autonomous workers; current shared context stays separate from history and task state. | User-requested workflow simplification and scratch-context cleanup. |
 | 2026-09-22 | Initial proposed direction. | User's name-first/root-setting request, supplied sidebar examples, inspected Codex task workflows, and current Unified/workspace-tool source. |
 | 2026-09-22 | Preserve folder semantics and native history across clients. | User's attachment critique and explicit shared-session source-of-truth requirement. |
 

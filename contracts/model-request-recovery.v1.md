@@ -48,20 +48,27 @@ changed selection cannot stand in for it. Native regression coverage traverses
 the selected-model wrapper as well as the surface adapter and real loop boundary.
 
 The one refit retains its original request-scoped preparation observation instead
-of fetching all sections again. It refreshes the required Work version through
-the canonical currentness check after refit/measurement and before transport,
-including when Full waived fitted-context assurance. Each new model request obtains its
-own observation. Required currentness reads use the bridge's response deadline
+of fetching all sections again. Ask refreshes the required Work version through
+the canonical currentness check after refit/measurement and before transport.
+Full retains its standing authorization to act with incomplete Work assurance;
+a refit does not reintroduce that optional gate. The current Full policy is
+rechecked at native admission. Each new model request obtains its own
+observation. Required Ask currentness reads use the bridge's response deadline
 and cancellation; optional context collection's shorter deadline must not cancel
 an otherwise valid required check. Stop and input/generation identity are checked
 again after the await. An unavailable observation is not evidence of changed
 authority and must be reported separately.
 
-The original native generation, complete inputs, Stop revision and required Work
-version must remain valid. Changed or unavailable authority, unknown/sent calls,
+The original native generation, complete inputs and Stop revision must remain
+valid; Ask also retains its required Work version. Revoked policy, changed native
+scope, unavailable required Ask assurance, unknown/sent calls,
 ordinary provider errors, any stream event, an unavailable/oversized measurement
 or a second refusal remain terminal. This is not the timeout retry policy above.
 Local diagnostic reasons distinguish missing/changed binding, changed request
 components, changed native scope and changed/unavailable authority; they contain
 only fixed reason/component names, never prompt text, image data or request hashes.
+Correlated terminal diagnostics retain whether the bridge timed out, failed,
+returned malformed data, or reported unavailable required Work. Only a refusal
+observed at the adapter's local pretransport boundary may identify the request as
+unsent; a provider exception with the same type cannot make that claim.
 The recovery event is metadata only and does not prove provider admission.

@@ -396,7 +396,8 @@ class DirectNativeHost:
         }}
         prepared = PreparedBundle(plan, BundleModuleResolver(paths),
                                   Bundle(name="collaboration-native-probe", session=plan["session"]))
-        session = await prepared.create_session(session_id=row["id"])
+        session = await prepared.create_session(session_id=row["id"],
+            session_cwd=Path(row.get('workingDirectory') or row['workspace']))
         worker = worker_module.Worker()
         worker.session = session
         self.roots[row["id"]] = worker

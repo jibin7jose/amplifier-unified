@@ -129,11 +129,17 @@ def definitions(schema, string):
             **sid, "proposalId": string(200), "decision": {"enum": ["allow", "deny"]},
         }, ["sessionId", "proposalId", "decision"])),
         "coordination.send": ("Commit attributed task input to an exact existing root in this user's Unified installation, including other workspaces and managed chats. Discover IDs with coordination.list scope=all. No assignment, permissions, files or resume authority transfers. Auto (the default) delivers at the next supported model request boundary or when idle. Explicit queue waits for idle; notify never wakes. Preparation continues under service ownership. Read results, never replay uncertain input. To resume a commissioned same-workspace member after an explicit human instruction, use queue with resume={sourceMessageId, expectedInterruptionRevision}; the host binds the current human input and exact Stop/task/assignment boundaries. This admits one fresh input without resetting budgets, permissions or replaying old work. For explicit human repair of existing same-workspace schedules, scheduleRepair scopes the sourceMessageId and exact target IDs/revisions; the owner may resume those schedules unchanged.", schema(message, ["sessionId", "text"])),
-        "coordination.create": ("Commission an authorized durable task chat inheriting the caller's configuration, workspace and actual execution placement, with a saved return notification before its brief can run. This does not create an independent user chat in a different folder. Inspect this operation's requestId for its initial result. Returns before preparation and does not select the peer. Set returnNotification:false only when no automatic return is wanted.", schema({
+        "coordination.create": ("Commission one authorized durable worker; repeat independently for as many parallel tasks as needed. Inherits configuration and workspace. Optional execution creates a clean isolated checkout and optional objective installs its saved goal before the first brief can run. A saved return notification reports its outcome. This does not create an independent user chat in a different folder. Inspect this operation's requestId for its initial result. Returns before preparation and does not select the peer. Set returnNotification:false only when no automatic return is wanted.", schema({
             "senderSessionId": string(200), "grantId": string(200), "title": {**string(100), "minLength": 1},
             "text": {**string(16000), "minLength": 1}, "references": references,
             "returnNotification": {"type": "boolean", "default": True},
             "workReferences": references_schema(schema, string),
+            "objective": {**string(16000), "minLength": 1,
+                          "description": "Authorized durable goal to pursue through completion, saved before the initial brief."},
+            "constraints": {"type": "array", "maxItems": 100, "items": {**string(4000), "minLength": 1}},
+            "execution": schema({"kind": {"const": "worktree"}, "repositoryPath": string(4000),
+                                 "sourceRevision": string(100), "ref": string(500), "branch": string(500)},
+                                ["kind", "sourceRevision"]),
         }, ["title", "text"])),
         "coordination.read": ("Read a bounded window from one existing native conversation without selecting or warming it.", schema({
             **sid, "scope": {"enum": ["workspace", "all"]}, "messageId": string(200), "offset": {"type": "integer", "minimum": 0},
@@ -857,7 +863,7 @@ class Collaboration:
         if not task_matches(task, binding):
             return 'The requesting assignment changed.'
         if (source['workspace'] != receipt['workspace']
-                or (source.get('workingDirectory') or source['workspace']) != receipt['result']['workingDirectory']):
+                or (source.get('workingDirectory') or source['workspace']) != receipt.get('sourceWorkingDirectory', receipt['result']['workingDirectory'])):
             return 'The requester execution placement changed.'
         if receipt.get('workReferences'):
             return self.service.work_invocation.plan_reason(receipt)
@@ -2191,6 +2197,15 @@ class Collaboration:
         from .provider_environment import credential_bindings
         config = credential_bindings(config)
         summary["configurationHash"] = fingerprint(config)
+        if args.get('constraints') and not args.get('objective'):
+            self.error('Commissioned constraints require an objective.', 400)
+        if 'objective' in args and not args['objective'].strip():
+            self.error('Enter a nonempty commissioned objective.', 400)
+        execution = copy.deepcopy(args.get('execution'))
+        if execution:
+            self.service.worktrees.check_host(source)
+            execution['repositoryPath'] = await asyncio.to_thread(
+                self.service.worktrees.repository_path, source, execution.get('repositoryPath'))
         new_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "collaborative-task:" + source["id"] + ":" + identity))
         metadata = {"creatorSessionId": source["id"], "creatorTitle": source["title"], "requestId": identity,
             "configurationHash": summary["configurationHash"], **lineage,
@@ -2253,11 +2268,16 @@ class Collaboration:
                 "requestId": identity, "senderSessionId": source["id"], "workspace": source["workspace"], "protocol": PROTOCOL,
                 "sessionId": new_id, "delivery": "creation_pending", "result": metadata,
                 'creationVersion': 1, 'phase': 'planned', 'title': args['title'], 'origin': origin,
+                'sourceWorkingDirectory': metadata['workingDirectory'],
                 **lineage,
                 'sourceTaskId': task.get('id'), 'sourceTaskRevision': task.get('revision'),
                 'sourceTaskContinuationEpoch': continuation_epoch(task),
                 "initialInputId": identity + ":brief", "detail": "Creation committed; preparation is owned by the service."}
             receipt['assignmentId'] = assignment_id
+            if execution:
+                receipt['execution'] = execution
+            if args.get('objective'):
+                receipt['objective'] = {'objective': args['objective'], 'constraints': args.get('constraints', [])}
             if args.get('workReferences'):
                 receipt['workReferences'] = copy.deepcopy(args['workReferences'])
             if notify:
@@ -2301,7 +2321,7 @@ class Collaboration:
                 if reason:
                     self.end_creation(receipt, 'suppressed', reason)
                     return
-                if receipt.get('phase') not in {'planned', 'creating_root', 'root_retained'}:
+                if receipt.get('phase') not in {'planned', 'creating_checkout', 'checkout_ready', 'creating_root', 'root_retained', 'installing_objective', 'objective_ready'}:
                     self.end_creation(receipt, 'unknown', 'The preparation phase is unsupported. Retained effects were not replayed.', notify=True)
                     return
                 row = self.service.db.execute('SELECT configuration FROM collaboration_preparations WHERE request_id=?', (identity,)).fetchone()
@@ -2371,17 +2391,31 @@ class Collaboration:
                     or (target.get('workingDirectory') or target['workspace']) != metadata['workingDirectory']):
                 self.error('The retained root does not match this creation operation.', 409)
             directory = self.service.data_dir / 'sessions' / (target.get('runtimeSessionId') or target['id'])
-            for filename, expected in [('configuration.json', config['plan']), ('control-state.json', config['controls'])]:
+            expected_files = [('configuration.json', config['plan'])]
+            if receipt['phase'] not in {'installing_objective', 'objective_ready'}:
+                expected_files.append(('control-state.json', config['controls']))
+            for filename, expected in expected_files:
                 if json.loads((directory / filename).read_text()) != expected:
                     self.error('The retained root configuration changed before initial input.', 409)
-            receipt.update(delivery='created_initial_pending', phase='root_retained',
-                           detail='Root retained. Initial input and return policy are being committed.')
+            receipt.update(delivery='created_initial_pending',
+                           phase=receipt['phase'] if receipt['phase'] in {'creating_checkout', 'checkout_ready', 'installing_objective', 'objective_ready'} else 'root_retained',
+                           detail='Root retained. Objective, initial input and return policy are being committed.')
             if receipt.get('assignmentId'):
                 assignment = self.service.assignments.load(receipt['assignmentId'])
                 assignment['members'][new_id]['status'] = 'bound'
                 self.service.assignments.save(assignment)
             self.save(identity, receipt)
             self.publish_receipt(receipt)
+        if receipt.get('execution'):
+            from .worker_commissioning import prepare_checkout
+            await prepare_checkout(self, identity)
+            receipt = self.receipt(identity)
+            if receipt['delivery'] not in {'creation_pending', 'created_initial_pending'}:
+                return
+            metadata = receipt['result']
+        if receipt.get('objective'):
+            from .worker_commissioning import prepare_objective
+            await prepare_objective(self, identity)
         # The durable brief is ordinary attributed input, not copied history.
         token = CREATION.set((source["id"], fingerprint(values), None, config, metadata))
         try:

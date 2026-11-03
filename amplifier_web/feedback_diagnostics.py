@@ -44,7 +44,7 @@ def build_facts():
 # raw errors, correlation IDs and module/source configuration never leave here.
 FAILURE_CATEGORIES = {'unknown', 'invalid_image', 'context_limit', 'tool_configuration',
     'authentication', 'rate_limit', 'worker_startup', 'worker_communication',
-    'worker_exit', 'computer_capture_stop'}
+    'worker_exit', 'computer_capture_stop', 'request_preparation'}
 ERROR_TYPES = {'Error', 'RuntimeError', 'RuntimeStartupError', 'ConfiguredModuleError',
     'WorkerCommunicationError', 'WorkerExitedError',
     'ContextLengthError', 'InvalidRequestError', 'AuthenticationError', 'RateLimitError',

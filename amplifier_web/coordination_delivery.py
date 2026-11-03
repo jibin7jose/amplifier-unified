@@ -875,12 +875,15 @@ class CoordinationDelivery:
             # The bridge owns timeout/cancellation; Stop is rechecked afterward.
             check = await self.bridge('work.invocation.revalidate',
                                       {'version': binding['required']['version']})
+        except TimeoutError:
+            raise RequestFitChanged('authority_unavailable', cause='bridge_timeout') from None
         except Exception:
-            raise RequestFitChanged('authority_unavailable') from None
+            raise RequestFitChanged('authority_unavailable', cause='bridge_error') from None
         self.check_execution_scope(scope)
-        if (not isinstance(check, dict) or not isinstance(check.get('required'), dict)
-                or check['required'].get('status') != 'available'):
-            raise RequestFitChanged('authority_unavailable')
+        if not isinstance(check, dict) or not isinstance(check.get('required'), dict):
+            raise RequestFitChanged('authority_unavailable', cause='invalid_response')
+        if check['required'].get('status') != 'available':
+            raise RequestFitChanged('authority_unavailable', cause='required_unavailable')
         if (check.get('current') is not True or check.get('effectAuthorized') is not False
                 or check['required'] != binding['required']):
             raise RequestFitChanged('authority_changed')
@@ -892,6 +895,8 @@ class CoordinationDelivery:
         scope = binding.get('executionScope')
         self.check_execution_scope(scope)
         full = self.current_full(scope)
+        if binding.get('assuranceUnavailable') and not full:
+            raise RequestFitChanged('authority_changed')
         if binding['required']['status'] != 'available' and not full:
             return request
         saved = self._request(request)
@@ -904,7 +909,7 @@ class CoordinationDelivery:
             # Keep the fitted bytes, but never promote their observed Work
             # version to current assurance when that check was waived.
             saved['assuranceUnavailable'] = True
-        if not full or saved.get('refitContext'):
+        if not full:
             await self.revalidate_work(saved)
         self.check_execution_scope(scope)
         after = request.model_dump_json()

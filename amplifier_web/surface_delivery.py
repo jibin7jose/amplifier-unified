@@ -203,11 +203,17 @@ class SurfaceProvider:
                 from .request_refit import RequestFitChanged
                 self.delivery.check_execution_scope(refit_binding['executionScope'])
                 current = entry[3]
-                if (not current or current.get('required') != refit_binding.get('required')
-                        or current.get('executionScope') != refit_binding.get('executionScope')):
+                same_scope = current and current.get('executionScope') == refit_binding.get('executionScope')
+                same_required = current and current.get('required') == refit_binding.get('required')
+                if (not same_scope or (not same_required
+                        and not self.delivery.current_full(refit_binding['executionScope']))):
                     self.delivery.discard_work(current)
                     unavailable = not current or current.get('required', {}).get('status') != 'available'
                     raise RequestFitChanged('authority_unavailable' if unavailable else 'authority_changed')
+                if not same_required:
+                    # Retain the Full reliance across awaited budget work, even
+                    # when the new observation itself is unavailable.
+                    current['assuranceUnavailable'] = True
             self.prepared = (self.prepared + [entry])[-4:]
             self.refused = [row for row in self.refused if row[0] is not request]
         _, cached, fitted, binding = entry
@@ -220,6 +226,9 @@ class SurfaceProvider:
             except Exception as error:
                 # Only the pretransport checks are covered. A sent/unknown
                 # provider request never enters this refit path.
+                from .request_refit import RequestFitChanged
+                if isinstance(error, RequestFitChanged):
+                    error.local_refusal = True
                 self.prepared = [row for row in self.prepared if row[0] is not request]
                 if hasattr(self.delivery, "discard_work"):
                     self.delivery.discard_work(binding)
@@ -261,11 +270,15 @@ class SurfaceProvider:
         binding = row[2]
         if not binding or binding.get('executionScope') is None:
             return None
-        self.delivery.check_execution_scope(binding['executionScope'])
         budget = getattr(self.original, 'request_budget', None)
         if not callable(budget):
             return None
-        cached = await self._prepare(request, explicit_budget=True, refit_binding=binding)
+        try:
+            self.delivery.check_execution_scope(binding['executionScope'])
+            cached = await self._prepare(request, explicit_budget=True, refit_binding=binding)
+        except RequestFitChanged as error:
+            error.local_refusal = True
+            raise
         return await self._budget(budget, cached, request_options=request_options, **kwargs)
 
     def __getattr__(self, name):

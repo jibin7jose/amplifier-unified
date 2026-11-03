@@ -96,7 +96,7 @@ def test_only_preconfigured_bundles_offered_and_sources_correct(tmp_path):
     assert {row['value'] for row in catalog.listing()['bundles']} == expected
     assert catalog.snapshot('amplifier-development')['bundle'] == 'anchors-amp-dev'
     assert {row['id']: row['revision'] for row in catalog.listing()['items']} == {
-        'blank': 1, 'development': 5, 'amplifier-development': 6}
+        'blank': 1, 'development': 6, 'amplifier-development': 7}
     assert catalog.snapshot('development')['scratch'] is True
     assert catalog.snapshot('blank')['scratch'] is False
     assert catalog.snapshot('amplifier-development')['rootGit'] is True
@@ -246,7 +246,7 @@ async def test_prepared_starter_keeps_pin_or_inheritance_when_defaults_appear_or
             'scope': prepared_default_scope, 'bundle': 'work-amp-dev'})
     plan = (await service.dispatch('workspace.prepare', {
         'name': 'Default transition', 'starterId': 'amplifier-development'}))['result']
-    assert plan['starter']['revision'] == 6
+    assert plan['starter']['revision'] == 7
     assert plan['starter']['bundle'] == ('' if prepared_default_scope else 'anchors-amp-dev')
     if prepared_default_scope:
         await service.dispatch('bundle.default', {'scope': 'app', 'bundle': None})
