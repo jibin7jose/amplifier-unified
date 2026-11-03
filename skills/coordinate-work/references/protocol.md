@@ -123,9 +123,12 @@ compare those exact links, not equal message text.
    brief and acceptance criteria in `text` (there is no `acceptance` API field).
    Supply `objective` for a durable goal and optional `constraints` for that goal.
    For a new independent source writer, include `execution` with `kind:"worktree"`,
-   the exact `sourceRevision` from `worktree.inspect`, and `repositoryPath` when
-   selecting a repository. Optional `ref` and `branch` follow the discovered
-   schema. This creates a clean committed checkout, not a copy of dirty work.
+   `expectedCommit` from `worktree.inspect` with `mode:"clean"`, and `repositoryPath`
+   when selecting a repository. Optional `ref` must resolve to that commit;
+   omitting it pins the commit directly. Optional `branch` names a new branch.
+   This path does not inspect or copy unrelated untracked evidence or dirty work.
+   Do not put a Git SHA in `sourceRevision`: that legacy field binds the full
+   inspected working-folder snapshot and retains its capture limits.
    The host prepares and binds the checkout and saved objective before admitting
    the first brief. Preparation reports `checkoutId`, `objectiveTaskId` and final
    `workingDirectory` on the existing creation handle. No setup-only model turn
@@ -166,6 +169,12 @@ compare those exact links, not equal message text.
    Stop, newer instructions, detached members, native ownership and unresolved
    settings remain effective. Independent chats must first be explicitly adopted;
    cleanup and uncertain-handoff reconciliation still belong to the owner.
+   If checkout preparation was refused before any checkout effect, its receipt
+   reports `not_sent` and `preparationFailure.kind=checkout_not_started`; the root
+   remains retained. Inspect the exact outcome and reuse that same idle member
+   through these placement actions and a fresh brief, rather than commissioning
+   a replacement. Earlier UNKNOWN receipts remain UNKNOWN until their actual
+   operation and writer state are reconciled; an idle chat alone is not proof.
    Inspect your actual owned resources with `workspace.resources.managed`, using
    this workspace and your root session ID. Page each owner with its returned
    cursor. Local publishing reports actual bound ports and immutable served

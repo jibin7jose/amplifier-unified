@@ -138,8 +138,9 @@ def definitions(schema, string):
                           "description": "Authorized durable goal to pursue through completion, saved before the initial brief."},
             "constraints": {"type": "array", "maxItems": 100, "items": {**string(4000), "minLength": 1}},
             "execution": schema({"kind": {"const": "worktree"}, "repositoryPath": string(4000),
-                                 "sourceRevision": string(100), "ref": string(500), "branch": string(500)},
-                                ["kind", "sourceRevision"]),
+                                 "expectedCommit": {**string(64), "description": "Full Git commit ID for a clean checkout; obtain with worktree.inspect mode=clean. Local changes are not scanned or copied."},
+                                 "sourceRevision": {**string(100), "description": "Legacy inspected working-folder snapshot digest, not a Git commit. Supply this or expectedCommit, never both."},
+                                 "ref": string(500), "branch": string(500)}, ["kind"]),
         }, ["title", "text"])),
         "coordination.read": ("Read a bounded window from one existing native conversation without selecting or warming it.", schema({
             **sid, "scope": {"enum": ["workspace", "all"]}, "messageId": string(200), "offset": {"type": "integer", "minimum": 0},
@@ -2203,6 +2204,8 @@ class Collaboration:
             self.error('Enter a nonempty commissioned objective.', 400)
         execution = copy.deepcopy(args.get('execution'))
         if execution:
+            from amplifier_worktrees.git import source_binding
+            source_binding(execution.get('sourceRevision'), execution.get('expectedCommit'), 'clean')
             self.service.worktrees.check_host(source)
             execution['repositoryPath'] = await asyncio.to_thread(
                 self.service.worktrees.repository_path, source, execution.get('repositoryPath'))
@@ -2345,10 +2348,16 @@ class Collaboration:
                 # A lost acknowledgment after the input transaction is not a lost
                 # operation. Keep its exact admitted/queued receipt untouched.
                 if receipt.get('phase') != 'input_committed':
+                    from amplifier_worktrees.git import CheckoutNotStarted
                     receipt['errorType'] = type(exc).__name__
                     reason = self.creation_guard(receipt)
                     if reason:
                         self.end_creation(receipt, 'suppressed', reason)
+                    elif isinstance(exc, CheckoutNotStarted):
+                        receipt['preparationFailure'] = {'kind': 'checkout_not_started', 'detail': str(exc)[:1000]}
+                        self.end_creation(receipt, 'not_sent',
+                            'Checkout preparation refused before any checkout effect or initial input. '
+                            'The existing worker is retained. ' + str(exc)[:1000], notify=True)
                     else:
                         self.end_creation(receipt, 'unknown', 'Preparation did not confirm all effects. Inspect the retained operation; no effects were replayed.', notify=True)
         finally:

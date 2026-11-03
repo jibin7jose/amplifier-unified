@@ -187,14 +187,55 @@ async def test_failed_checkout_preserves_owner_and_fresh_corrected_commission_ca
     # A genuine stale-source refusal, not a fake test pass or hidden failure.
     (root / 'a.txt').write_text('new source revision\n')
     refused = await commission(app, source, 'stale', objective='Complete work', execution=placement)
-    await settled(app, refused['requestId'], 'unknown')
+    await settled(app, refused['requestId'], 'not_sent')
+    assert app.collaboration.receipt(refused['requestId'])['preparationFailure']['kind'] == 'checkout_not_started'
     assert app._session(refused['sessionId'])['status'] == 'idle'
     assert not any(row[0] == refused['sessionId'] for row in runtime.inputs)
     assert not app.worktrees.git.records()
     corrected = await commission(app, source, 'corrected', objective='Complete work', execution=execution(app, root))
     await initial_accepted(app, corrected['initialInputId'])
     assert len(runtime.observed) == 1
-    assert app.collaboration.receipt(refused['requestId'])['delivery'] == 'unknown'
+    assert app.collaboration.receipt(refused['requestId'])['delivery'] == 'not_sent'
+
+
+async def test_clean_commission_ignores_large_retained_evidence_and_pins_requested_commit(app, tmp_path, monkeypatch):
+    from amplifier_worktrees.git import MAX_BYTES, git
+    runtime = install_runtime(app, monkeypatch)
+    source = app.state['sessions'][0]
+    plan(app, source)
+    root = repository(tmp_path)
+    with (root / 'evidence.bin').open('wb') as stream:
+        stream.truncate(MAX_BYTES + 1)
+    (root / 'a.txt').write_text('local edit preserved\n')
+    inspected = await agent_action(app, source, 'worktree.inspect',
+        {'sessionId': source['id'], 'repositoryPath': str(root), 'mode': 'clean'}, 'inspect-clean-source')
+    commit = inspected['result']['repository']['expectedCommit']
+    request = await commission(app, source, 'explicit-clean', objective='Qualify the exact committed source',
+        execution={'kind': 'worktree', 'repositoryPath': str(root), 'expectedCommit': commit})
+    await initial_accepted(app, request['initialInputId'])
+    assert len(runtime.observed) == 1
+    operation = app.collaboration.receipt(request['requestId'])
+    checkout = app.worktrees.git.get(operation['checkoutId'])
+    assert checkout['expectedCommit'] == commit and checkout['head'] == commit
+    assert git(root, 'show', 'HEAD:a.txt') == b'original\n'
+    assert (root / 'a.txt').read_text() == 'local edit preserved\n'
+    assert (root / 'evidence.bin').stat().st_size == MAX_BYTES + 1
+    assert not Path(checkout['path'], 'evidence.bin').exists()
+
+
+async def test_commission_after_checkout_admission_failure_stays_unknown(app, tmp_path, monkeypatch):
+    runtime = install_runtime(app, monkeypatch)
+    source = app.state['sessions'][0]
+    plan(app, source)
+    root = repository(tmp_path)
+    request = await commission(app, source, 'partial-checkout', objective='Do not send after a partial checkout',
+        execution={'kind': 'worktree', 'repositoryPath': str(root),
+                   'expectedCommit': app.worktrees.git.inspect(root, mode='clean')['expectedCommit'], 'branch': 'main'})
+    await settled(app, request['requestId'], 'unknown')
+    assert not any(row[0] == request['sessionId'] for row in runtime.inputs)
+    assert app.worktrees.git.records()[0]['status'] == 'partial'
+    assert not app.db.execute('SELECT 1 FROM commands WHERE id=?', (request['initialInputId'],)).fetchone()
+    assert 'preparationFailure' not in app.collaboration.receipt(request['requestId'])
 
 
 async def test_commissioned_objective_is_not_an_inherited_manager_goal(app, monkeypatch):

@@ -95,16 +95,33 @@ def definitions(name, relative):
     return module
 
 
+_module_guards = None
+
+
 def setUpModule():
-    global forms, expanded, forbidden_run
-    for target in ("Popen", "run"):
-        guard = patch.object(subprocess, target, side_effect=AssertionError("Real process forbidden"))
-        guarded = guard.start()
-        unittest.addModuleCleanup(guard.stop)
-        if target == "run":
-            forbidden_run = guarded
-    forms = definitions("qualified_uv_forms", "scripts/uv_diagnostic_forms.py")
-    expanded = definitions("qualified_expanded_lock", "tests/fixtures/omitted_ref_expanded_lock.py")
+    global forms, expanded, forbidden_run, _module_guards
+    guards = ExitStack()
+    try:
+        for target in ("Popen", "run"):
+            guarded = guards.enter_context(patch.object(
+                subprocess, target, side_effect=AssertionError("Real process forbidden")))
+            if target == "run":
+                forbidden_run = guarded
+        forms = definitions("qualified_uv_forms", "scripts/uv_diagnostic_forms.py")
+        expanded = definitions("qualified_expanded_lock", "tests/fixtures/omitted_ref_expanded_lock.py")
+    except BaseException:
+        # Pytest does not run unittest's module-cleanup registry after setup fails.
+        # In particular, the isolated fixture can reject startup with SystemExit.
+        guards.close()
+        raise
+    _module_guards = guards
+
+
+def tearDownModule():
+    global _module_guards
+    guards, _module_guards = _module_guards, None
+    if guards is not None:
+        guards.close()
 
 
 def expected(health="recognized", kind="resolution-unsatisfiable"):

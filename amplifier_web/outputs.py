@@ -217,14 +217,32 @@ class Outputs:
         return self.image_pair(await self._read_images(sid,identities))
 
     async def _read_images(self,sid,identities):
-        # Detach exact bodies, decode/hash/validate off-lock, then recheck every
-        # request relationship before returning any part of the ordered set.
+        # Detach the selected set once. Hash/decode/PNG/base64 work shares one
+        # worker turn, rather than queuing behind the busy app loop per image
+        # and per conversion. The database never crosses the worker boundary.
+        from . import resource_files, retained_files
         async with self.app.lock:
             records=[self.image_record(sid,item['id'],item['sha256']) for item in identities]
-        images=[]
-        for record in records:
-            data=await self.content_async(record)
-            images.append(await asyncio.to_thread(self.image_value,record,data))
+            sources=[resource_files.detach(self.app.db,record['body']['$resource']) for record in records]
+        def read_roots():
+            values=[]
+            for record,source in zip(records,sources):
+                if record.get('bodyFormat') == retained_files.FORMAT:
+                    values.append(retained_files.manifest(source,record))
+                else:
+                    value=resource_files.read_detached(source,max_bytes=6*20*1024*1024+4096)
+                    values.append(self.image_value(record,self.decode_content(record,value)))
+            return values
+        images=await asyncio.to_thread(read_roots)
+        chunked=[index for index,record in enumerate(records) if record.get('bodyFormat') == retained_files.FORMAT]
+        if chunked:
+            async with self.app.lock:
+                chunks={index:[resource_files.detach(self.app.db,item['$resource']) for item in images[index]]
+                        for index in chunked}
+            def read_chunks():
+                return {index:self.image_value(records[index],retained_files.materialize(sources,records[index],MAX_FILE))
+                        for index,sources in chunks.items()}
+            for index,value in (await asyncio.to_thread(read_chunks)).items():images[index]=value
         async with self.app.lock:
             current=[self.image_record(sid,item['id'],item['sha256']) for item in identities]
             if current!=records:

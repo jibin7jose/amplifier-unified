@@ -58,7 +58,8 @@ class Member(ScriptedProvider):
         return self.final('The isolated fixture was verified; the source is unchanged.')
 
 
-async def test_native_first_request_sees_isolated_placement_and_saved_objective(app, tmp_path, monkeypatch):
+@pytest.mark.parametrize('binding', ['sourceRevision', 'expectedCommit'])
+async def test_native_first_request_sees_isolated_placement_and_saved_objective(app, tmp_path, monkeypatch, binding):
     host = app.runtime = CommissioningHost()
     host.app = app
     host.provider = Member()
@@ -72,11 +73,16 @@ async def test_native_first_request_sees_isolated_placement_and_saved_objective(
     source = app.state['sessions'][0]
     plan(app, source)
     root = repository(tmp_path)
+    if binding == 'expectedCommit':
+        from amplifier_worktrees.git import MAX_BYTES
+        with (root / 'retained-evidence.bin').open('wb') as stream:
+            stream.truncate(MAX_BYTES + 1)
+    inspected = app.worktrees.git.inspect(root, mode='clean' if binding == 'expectedCommit' else None)
     async with asyncio.timeout(40):
         receipt = await commission(app, source, 'native-commission',
             objective='Verify the isolated fixture', constraints=['Keep the source unchanged'],
             execution={'kind': 'worktree', 'repositoryPath': str(root),
-                       'sourceRevision': app.worktrees.git.inspect(root)['sourceRevision']},
+                       binding: inspected[binding]},
             returnNotification=False)
         await initial_accepted(app, receipt['initialInputId'])
         await until(lambda: receipt['sessionId'] in host.roots)

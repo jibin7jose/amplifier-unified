@@ -38,10 +38,10 @@ not current acceptance evidence or new authority.
    optional `constraints` belong to that objective. Creation reserves its result
    notification before the worker runs. Keep the returned request identity
    instead of creating a second worker after a slow or lost response.
-3. For a new independent source writer, obtain the exact source revision with
-   `worktree.inspect`, then include `execution: {kind:"worktree", sourceRevision}`
+3. For a new independent source writer, use `worktree.inspect` with `mode:"clean"`
+   and an optional `ref`, then include `execution: {kind:"worktree", expectedCommit}`
    and the relevant `repositoryPath` when commissioning. The host prepares a clean
-   committed checkout and the objective before the first working turn; no
+   committed checkout without scanning unrelated local changes, and saves the objective before the first working turn. `expectedCommit` is the returned full Git commit ID; `sourceRevision` is a different, legacy working-folder snapshot digest. No
    setup-only model turn or manager handoff exchange is needed. The receipt's
    `checkoutId`, `objectiveTaskId` and final `workingDirectory` identify the result.
    Default creation still inherits the manager's folder, useful for read-only
