@@ -25,6 +25,7 @@ on:
           - updater-omitted-ref
           - updater-synthetic-acquisition
           - updater-expanded-lock
+          - native-child-fixtures
       core_wheels:
         description: Qualify published Core wheels and real runtime on both Linux architectures
         type: boolean
@@ -73,6 +74,7 @@ jobs:
               'shared-work-continuity': ['tests/test_task_continuity.py', 'tests/test_coordination_delivery.py', 'tests/test_work_invocation.py', 'tests/test_schedules.py', 'tests/test_collaboration_input.py', 'tests/test_coordination_revisions.py', 'tests/test_release_qualification.py', 'tests/test_voice_visual.py', 'tests/test_surface_context.py', 'tests/test_output_image_pairs.py', 'tests/test_memory_personalization.py', 'tests/test_capacity.py'],
               'shared-work-native': ['tests/test_native_provider.py', 'tests/test_coordination_delivery.py', 'tests/test_work_native_effects.py', 'tests/test_work_origin.py', 'tests/test_capacity.py', 'tests/test_release_qualification.py'],
               'manager-exception-boundary': ['tests/test_manager_exception_boundary.py', 'tests/test_manager_failure_details.py', 'tests/test_session_health.py', 'tests/test_retained_failure_recovery.py', 'tests/test_runtime.py'],
+              'native-child-fixtures': ['tests/test_child_app_assignment_capture.py', 'tests/test_history_scope_native.py', 'tests/test_file_source_native_children.py'],
           }
           selection = os.environ['CHECK_SUITE']
           if selection not in suites:
@@ -184,7 +186,7 @@ jobs:
           print(json.dumps(result, indent=2))
           PY
       - name: Run the selected repair suite
-        if: ${{ env.CHECK_SUITE != 'full' }}
+        if: ${{ env.CHECK_SUITE != 'full' && env.CHECK_SUITE != 'native-child-fixtures' }}
         shell: bash
         run: |
           mapfile -t targets < output/python-checks/targets.txt
@@ -206,6 +208,182 @@ jobs:
             grep -q '/original/amplifier_web/runtime_worker.py' output/python-checks/original-red.log
           fi
           uv run --no-sync pytest -v --tb=short --junitxml=output/python-checks/junit.xml "${targets[@]}" 2>&1 | tee output/python-checks/pytest.log
+      - name: Run and retain exact native child fixture evidence
+        if: ${{ env.CHECK_SUITE == 'native-child-fixtures' }}
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python -u - <<'PY' 2>&1 | tee output/python-checks/pytest.log
+          import hashlib, importlib, importlib.machinery, importlib.metadata as md
+          import json, os, re, subprocess, sys, xml.etree.ElementTree as ET
+          from pathlib import Path
+          from urllib.parse import urlsplit
+          import pytest
+
+          TARGETS = ['tests/test_child_app_assignment_capture.py', 'tests/test_history_scope_native.py',
+                     'tests/test_file_source_native_children.py']
+          def expected_cases():
+              rows = {}
+              rows[TARGETS[0]] = ['test_first_child_mount_retains_invoking_assignment_through_provider_wait[' + value + ']'
+                  for value in ('unchanged', 'input', 'generation', 'stop', 'activation', 'missing-owner', 'replaced-owner')]
+              rows[TARGETS[1]] = ['test_native_root_and_child_history_scope[' + value + ']'
+                  for value in ('finite', 'resumed', 'persistent', 'nested', 'recipe')]
+              rows[TARGETS[2]] = ['test_native_child_file_reads_are_not_inherited[' + value + ']'
+                  for value in ('finite', 'resumed', 'persistent', 'nested')]
+              rows[TARGETS[2]].append('test_resumed_native_child_retains_saved_write_ceiling_after_parent_grant')
+              return [path + '::' + name for path, names in rows.items() for name in names]
+
+          def validate_selection(selection, targets, revision, tree, run_id, attempt):
+              assert selection == {'suite': 'native-child-fixtures', 'fullSuite': False, 'targets': TARGETS,
+                  'revision': revision, 'tree': tree, 'runId': run_id, 'runAttempt': attempt, 'missing': []}
+              assert targets == TARGETS
+
+          def resolved_source(name, value, root):
+              if value is None:
+                  assert name in {'amplifier-core', 'pytest'}, 'Missing resolved VCS source for ' + name
+                  return None  # Registry version/binary is recorded; no direct URL is attested.
+              sources = {
+                  'amplifier-foundation': ('amplifier-foundation', None),
+                  'amplifier-module-loop-live': ('amplifier-module-loop-live', None),
+                  'amplifier-module-loop-streaming': ('amplifier-module-loop-streaming', None),
+                  'amplifier-module-context-simple': ('amplifier-module-context-simple', None),
+                  'amplifier-module-tool-filesystem': ('amplifier-module-tool-filesystem', None),
+                  'amplifier-module-tool-apply-patch': ('amplifier-bundle-filesystem', 'modules/tool-apply-patch'),
+                  'amplifier-module-tool-delegate': ('amplifier-foundation', 'modules/tool-delegate'),
+              }
+              repository, subdirectory = sources[name]
+              url = urlsplit(value['url'])
+              assert not url.username and not url.password and not url.query and not url.fragment
+              if url.scheme == 'file':
+                  assert name == 'amplifier-module-loop-live' and not url.netloc
+                  assert value.get('subdirectory') is None
+                  assert Path(url.path).resolve() == root / '.ci/loop-live'
+                  commit = git('-C', '.ci/loop-live', 'rev-parse', 'HEAD')
+                  assert re.fullmatch('[0-9a-f]{40}', commit)
+                  return {'url': 'file:.ci/loop-live', 'checkoutCommit': commit}
+              assert url.scheme == 'https' and url.netloc == 'github.com'
+              assert url.path.removesuffix('.git') == '/microsoft/' + repository
+              vcs = value['vcs_info']
+              assert vcs['vcs'] == 'git' and re.fullmatch('[0-9a-f]{40}', vcs['commit_id'])
+              result = {'url': url.geturl(), 'vcs': 'git', 'commitId': vcs['commit_id']}
+              subdir = value.get('subdirectory')
+              assert subdir == subdirectory
+              if subdir is not None:
+                  result['subdirectory'] = subdir
+              return result
+
+          def module_identity(name):
+              module = importlib.import_module(name)
+              path = Path(module.__file__).resolve()
+              assert path.is_file() and path.stat().st_size <= 128 * 1024 * 1024
+              with path.open('rb') as stream:
+                  digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+              return {'origin': str(path), 'sha256': digest}
+
+          def validate_results(collected, document, exit_code):
+              expected = expected_cases()
+              assert len(collected) == len(set(collected)) == 17 and set(collected) == set(expected)
+              assert exit_code == 0
+              assert document.tag == 'testsuites'
+              counts = {'tests': '17', 'failures': '0', 'errors': '0', 'skipped': '0'}
+              assert all(document.get(key) in (None, value) for key, value in counts.items())
+              suites = list(document)
+              assert len(suites) == 1 and suites[0].tag == 'testsuite'
+              suite = suites[0]
+              assert {key: suite.get(key) for key in ('tests', 'failures', 'errors', 'skipped')} == {
+                  'tests': '17', 'failures': '0', 'errors': '0', 'skipped': '0'}
+              cases = suite.findall('testcase')
+              assert len(cases) == 17 and len(document.findall('.//testcase')) == 17
+              identities = [(case.get('classname'), case.get('name')) for case in cases]
+              wanted = [(path.removesuffix('.py').replace('/', '.'), name)
+                        for path, name in (node.split('::') for node in expected)]
+              assert len(set(identities)) == 17 and set(identities) == set(wanted)
+              assert all(not any(case.find(kind) is not None for kind in ('failure', 'error', 'skipped')) for case in cases)
+              assert all(child.tag in {'testcase', 'properties', 'system-out', 'system-err'} for child in suite)
+
+          output = Path('output/python-checks')
+          git = lambda *args: subprocess.check_output(['git', *args], text=True).strip()
+          selection = json.loads((output / 'selection.json').read_text())
+          record = {'schemaVersion': 1, 'phase': 'preflight', 'passed': False, 'selection': selection,
+                    'python': {'executable': sys.executable, 'version': sys.version, 'assertionsEnabled': __debug__},
+                    'provenanceScope': 'same pytest process; not an installed-wheel or subprocess attestation',
+                    'distributions': {}, 'modules': {}, 'collected': []}
+          def save():
+              (output / 'native-child-fixtures.json').write_text(json.dumps(record, indent=2) + '\n')
+          save()
+          try:
+              if not __debug__ or sys.flags.optimize:
+                  raise RuntimeError('Native fixture assertions must be enabled')
+              validate_selection(selection, (output / 'targets.txt').read_text().splitlines(),
+                  git('rev-parse', 'HEAD'), git('rev-parse', 'HEAD^{tree}'),
+                  os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT'])
+              assert selection['revision'] == os.environ['GITHUB_SHA']
+              record['sourceSha256'] = {path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                  for path in [*TARGETS, '.github/workflows/python-checks.yml', 'uv.lock']}
+              save()
+
+              class Evidence:
+                  def pytest_sessionstart(self, session):
+                      record['phase'] = 'pytest-imports'
+                      try:
+                          for name in ('amplifier-core', 'amplifier-foundation', 'amplifier-module-loop-live',
+                                       'amplifier-module-loop-streaming', 'amplifier-module-context-simple',
+                                       'amplifier-module-tool-filesystem', 'amplifier-module-tool-apply-patch',
+                                       'amplifier-module-tool-delegate', 'pytest'):
+                              dist = md.distribution(name)
+                              identity = record['distributions'][name] = {
+                                  'version': dist.version, 'directSourceStatus': 'unverified'}
+                              try:
+                                  identity['directSource'] = resolved_source(name,
+                                      json.loads(dist.read_text('direct_url.json') or 'null'), Path.cwd().resolve())
+                                  identity['directSourceStatus'] = 'registry' if identity['directSource'] is None else 'verified'
+                              except Exception:
+                                  identity['directSourceStatus'] = 'refused'
+                                  record['provenanceFailureDistribution'] = name
+                                  raise
+                          for name in ('amplifier_core', 'amplifier_core._engine', 'amplifier_foundation',
+                                       'amplifier_foundation.bundle', 'amplifier_module_loop_live',
+                                       'amplifier_module_loop_live.runtime', 'amplifier_module_loop_live.orchestrator',
+                                       'amplifier_module_loop_streaming', 'amplifier_module_context_simple',
+                                       'amplifier_module_tool_delegate',
+                                       'amplifier_module_tool_filesystem', 'amplifier_module_tool_apply_patch',
+                                       'amplifier_module_tool_apply_patch.engines.native'):
+                              record['modules'][name] = module_identity(name)
+                          assert any(record['modules']['amplifier_core._engine']['origin'].endswith(suffix)
+                                     for suffix in importlib.machinery.EXTENSION_SUFFIXES)
+                          entries = md.entry_points(group='amplifier.modules')
+                          for name in ('loop-live', 'context-simple', 'tool-filesystem', 'tool-apply-patch'):
+                              entry, = [row for row in entries if row.name == name]
+                              module = importlib.import_module('amplifier_module_' + name.replace('-', '_'))
+                              assert callable(module.mount) and entry.load() is module.mount
+                          record['canonicalMounts'] = True
+                      finally:
+                          save()
+
+                  def pytest_collection_finish(self, session):
+                      record['collected'] = [item.nodeid for item in session.items]
+                      record['phase'] = 'collected'
+                      save()
+                      actual = record['collected']
+                      if len(actual) != 17 or len(set(actual)) != 17 or set(actual) != set(expected_cases()):
+                          raise pytest.UsageError('Native fixture collection does not match the fixed 17 cases')
+
+              # Exactly one normal pytest session; no collection-only or retry run.
+              code = int(pytest.main(['-v', '--tb=short', '--junitxml=output/python-checks/junit.xml', *TARGETS],
+                                     plugins=[Evidence()]))
+              record['pytestExitCode'] = code
+              record['phase'] = 'validation'
+              junit = output / 'junit.xml'
+              assert junit.is_file() and junit.stat().st_size <= 8 * 1024 * 1024
+              validate_results(record['collected'], ET.fromstring(junit.read_bytes()), code)
+              record.update(phase='complete', passed=True)
+          except BaseException as exc:
+              record['errorType'] = type(exc).__name__
+              raise
+          finally:
+              save()
+          PY
       - name: Verify installed native receipt boundary outside checkout
         if: ${{ env.CHECK_SUITE == 'shared-work-native' }}
         shell: bash

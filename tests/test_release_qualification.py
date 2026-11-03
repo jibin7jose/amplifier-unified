@@ -509,7 +509,7 @@ def test_manual_python_selection_is_fixed_and_preserves_full_and_core_modes():
     workflow = yaml.load((ROOT / '.github/workflows/python-checks.yml').read_text(), Loader=yaml.BaseLoader)
     selection = workflow['on']['workflow_dispatch']['inputs']['suite']
     assert selection['type'] == 'choice' and selection['default'] == 'full'
-    assert selection['options'] == ['full', 'inline-chat-card', 'queued-configuration', 'security-redaction', 'patch-placement-recovery', 'patch-placement-native', 'managed-removal-recovery', 'fresh-cleanup-native', 'shared-work-continuity', 'manager-exception-boundary', 'remote-test-origins', 'shared-work-native', 'cold-control-restore', 'goal-peer-publisher-0410', 'updater-omitted-ref', 'updater-synthetic-acquisition', 'updater-expanded-lock']
+    assert selection['options'] == ['full', 'inline-chat-card', 'queued-configuration', 'security-redaction', 'patch-placement-recovery', 'patch-placement-native', 'managed-removal-recovery', 'fresh-cleanup-native', 'shared-work-continuity', 'manager-exception-boundary', 'remote-test-origins', 'shared-work-native', 'cold-control-restore', 'goal-peer-publisher-0410', 'updater-omitted-ref', 'updater-synthetic-acquisition', 'updater-expanded-lock', 'native-child-fixtures']
     assert workflow['on']['workflow_call']['inputs'] == {'revision': {'type': 'string', 'required': 'true'}}
     assert workflow['on']['workflow_call']['secrets'] == {'LOOP_LIVE_CI_READ_KEY': {'required': 'true'}}
     assert workflow['permissions'] == {'contents': 'read'}
@@ -546,7 +546,7 @@ def test_manual_python_selection_is_fixed_and_preserves_full_and_core_modes():
     complete = next(step for step in steps if step.get('name') == 'Run the complete Python suite')
     focused = next(step for step in steps if step.get('name') == 'Run the selected repair suite')
     assert complete['if'] == "${{ env.CHECK_SUITE == 'full' }}"
-    assert focused['if'] == "${{ env.CHECK_SUITE != 'full' }}" and focused['shell'] == 'bash'
+    assert focused['if'] == "${{ env.CHECK_SUITE != 'full' && env.CHECK_SUITE != 'native-child-fixtures' }}" and focused['shell'] == 'bash'
     assert 'mapfile -t targets < output/python-checks/targets.txt' in focused['run']
     assert 'test "${#targets[@]}" -gt 0' in focused['run']
     assert '"${targets[@]}"' in focused['run'] and 'set -o pipefail' in focused['run']
@@ -974,6 +974,7 @@ def test_offline_preflight_does_not_run_import_or_independent_install_probes():
     ('shared-work-continuity', ['tests/test_task_continuity.py', 'tests/test_coordination_delivery.py', 'tests/test_work_invocation.py', 'tests/test_schedules.py', 'tests/test_collaboration_input.py', 'tests/test_coordination_revisions.py', 'tests/test_release_qualification.py', 'tests/test_voice_visual.py', 'tests/test_surface_context.py', 'tests/test_output_image_pairs.py', 'tests/test_memory_personalization.py', 'tests/test_capacity.py']),
     ('shared-work-native', ['tests/test_native_provider.py', 'tests/test_coordination_delivery.py', 'tests/test_work_native_effects.py', 'tests/test_work_origin.py', 'tests/test_capacity.py', 'tests/test_release_qualification.py']),
     ('manager-exception-boundary', ['tests/test_manager_exception_boundary.py', 'tests/test_manager_failure_details.py', 'tests/test_session_health.py', 'tests/test_retained_failure_recovery.py', 'tests/test_runtime.py']),
+    ('native-child-fixtures', ['tests/test_child_app_assignment_capture.py', 'tests/test_history_scope_native.py', 'tests/test_file_source_native_children.py']),
 ])
 @pytest.mark.parametrize('missing', [False, True])
 def test_python_selection_records_exact_source_and_refuses_missing_files(tmp_path, monkeypatch, suite, targets, missing):
@@ -1023,6 +1024,269 @@ def test_python_selection_rejects_arbitrary_input_before_commands(tmp_path, monk
     with pytest.raises(SystemExit, match='Unknown fixed Python suite:'):
         exec(compile(script, 'workflow-python-selection', 'exec'), {})
     assert not (tmp_path / 'output').exists()
+
+
+def native_child_workflow():
+    workflow = yaml.load((ROOT / '.github/workflows/python-checks.yml').read_text(), Loader=yaml.BaseLoader)
+    step, = [row for row in workflow['jobs']['python']['steps']
+             if row.get('name') == 'Run and retain exact native child fixture evidence']
+    lines = step['run'].splitlines()
+    assert lines[:2] == ['set -euo pipefail',
+                        "uv run --no-sync python -u - <<'PY' 2>&1 | tee output/python-checks/pytest.log"]
+    assert lines[-1] == 'PY'
+    return workflow, step, '\n'.join(lines[2:-1])
+
+
+def native_child_validation():
+    """Exercise the actual inline validators, without importing native packages."""
+    import ast
+    from urllib.parse import urlsplit
+    _, _, code = native_child_workflow()
+    module = ast.parse(code)
+    nodes = [row for row in module.body if isinstance(row, ast.FunctionDef)
+             and row.name in {'expected_cases', 'validate_selection', 'resolved_source', 'validate_results'}]
+    targets, = [row for row in module.body if isinstance(row, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == 'TARGETS' for target in row.targets)]
+    namespace = {'Path': Path, 're': re, 'urlsplit': urlsplit}
+    exec(compile(ast.Module(body=[targets, *nodes], type_ignores=[]), 'native-child-inline-validation', 'exec'), namespace)
+    return namespace
+
+
+def test_native_child_ci_uses_existing_prerequisites_one_pytest_and_partial_upload():
+    import ast
+    workflow, step, code = native_child_workflow()
+    steps = workflow['jobs']['python']['steps']
+    assert workflow['jobs']['python']['timeout-minutes'] == '90'
+    assert step['if'] == "${{ env.CHECK_SUITE == 'native-child-fixtures' }}"
+    assert step['timeout-minutes'] == '10' and step['shell'] == 'bash'
+    install, = [row for row in steps if row.get('name') == 'Install runtime prerequisites for host and child tests']
+    mount, = [row for row in steps if row.get('name') == 'Require native file-policy modules and Core entry points']
+    assert steps.index(install) < steps.index(mount) < steps.index(step)
+    assert 'amplifier-bundle-filesystem@main#subdirectory=modules/tool-apply-patch' in install['run']
+    assert 'mount is not module.mount' in mount['run']
+    assert 'native-child-fixtures' not in install.get('if', '')
+    assert 'continue-on-error' not in step
+    assert steps[-1]['if'] == 'always()' and 'output/python-checks/' in steps[-1]['with']['path']
+    module = ast.parse(code)
+    calls = [node for node in ast.walk(module) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+             and node.func.value.id == 'pytest' and node.func.attr == 'main']
+    assert len(calls) == 1
+    assert ast.unparse(calls[0].args[0]) == "['-v', '--tb=short', '--junitxml=output/python-checks/junit.xml', *TARGETS]"
+    assert ast.unparse(calls[0].keywords[0].value) == '[Evidence()]'
+    for required in ('pytest_sessionstart', 'pytest_collection_finish', 'sys.executable', 'sys.version',
+                     'sys.flags.optimize', '__debug__', 'direct_url.json', 'commit_id', 'hashlib.file_digest',
+                     'amplifier_core._engine', 'amplifier_foundation.bundle', 'amplifier_module_loop_live.runtime',
+                     'amplifier_module_loop_streaming', 'amplifier_module_context_simple',
+                     'amplifier_module_tool_filesystem', 'amplifier_module_tool_apply_patch.engines.native',
+                     'entry.load() is module.mount', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT'):
+        assert required in code
+    assert 'os.environ.items' not in code and 'pip' not in code and 'collect-only' not in code
+    expected = native_child_validation()['expected_cases']()
+    actual = []
+    for path in native_child_validation()['TARGETS']:
+        for node in ast.parse((ROOT / path).read_text()).body:
+            if not isinstance(node, ast.AsyncFunctionDef) or not node.name.startswith('test_'):
+                continue
+            parameters = [row for row in node.decorator_list if isinstance(row, ast.Call)
+                          and isinstance(row.func, ast.Attribute) and row.func.attr == 'parametrize']
+            assert len(parameters) <= 1
+            if parameters:
+                actual.extend(path + '::' + node.name + '[' + value + ']'
+                              for value in ast.literal_eval(parameters[0].args[1]))
+            else:
+                actual.append(path + '::' + node.name)
+    assert len(actual) == 17 and set(actual) == set(expected)
+
+
+@pytest.mark.parametrize('change', ['none', 'suite', 'targets', 'target-file', 'revision', 'tree', 'runId', 'runAttempt'])
+def test_native_child_ci_refuses_wrong_selection_identity(change):
+    ns = native_child_validation()
+    record = {'suite': 'native-child-fixtures', 'fullSuite': False, 'targets': ns['TARGETS'],
+              'revision': 'a' * 40, 'tree': 'b' * 40, 'runId': '1', 'runAttempt': '2', 'missing': []}
+    targets = list(ns['TARGETS'])
+    if change == 'target-file':
+        targets[0] = 'tests/test_service.py'
+    elif change == 'targets':
+        record['targets'] = targets[::-1]
+    elif change != 'none':
+        record[change] = 'wrong'
+    arguments = (record, targets, 'a' * 40, 'b' * 40, '1', '2')
+    if change == 'none':
+        ns['validate_selection'](*arguments)
+    else:
+        with pytest.raises(AssertionError):
+            ns['validate_selection'](*arguments)
+
+
+@pytest.mark.parametrize('change', [
+    'none', 'collection-missing', 'collection-duplicate', 'collection-foreign', 'exit-code',
+    'case-missing', 'case-duplicate', 'case-foreign', 'failure', 'error', 'skipped',
+    'tests-counter', 'failure-counter', 'error-counter', 'skip-counter', 'missing-counter', 'root-counter', 'extra-suite',
+])
+def test_native_child_ci_requires_exact_collection_and_successful_junit(change):
+    import xml.etree.ElementTree as ET
+    ns = native_child_validation()
+    collected = ns['expected_cases']()
+    root = ET.Element('testsuites')
+    suite = ET.SubElement(root, 'testsuite', tests='17', failures='0', errors='0', skipped='0')
+    for node in collected:
+        path, name = node.split('::')
+        ET.SubElement(suite, 'testcase', classname=path.removesuffix('.py').replace('/', '.'), name=name)
+    code = 0
+    if change == 'collection-missing': collected.pop()
+    elif change == 'collection-duplicate': collected[-1] = collected[0]
+    elif change == 'collection-foreign': collected[-1] = 'tests/test_service.py::test_other'
+    elif change == 'exit-code': code = 1
+    elif change == 'case-missing': suite.remove(suite[-1])
+    elif change == 'case-duplicate': suite[-1].attrib.update(suite[0].attrib)
+    elif change == 'case-foreign': suite[-1].set('classname', 'tests.test_other')
+    elif change in {'failure', 'error', 'skipped'}: ET.SubElement(suite[0], change)
+    elif change == 'tests-counter': suite.set('tests', '18')
+    elif change == 'failure-counter': suite.set('failures', '1')
+    elif change == 'error-counter': suite.set('errors', '1')
+    elif change == 'skip-counter': suite.set('skipped', '1')
+    elif change == 'missing-counter': del suite.attrib['tests']
+    elif change == 'root-counter': root.set('failures', '1')
+    elif change == 'extra-suite': ET.SubElement(root, 'testsuite')
+    if change == 'none':
+        ns['validate_results'](collected, root, code)
+    else:
+        with pytest.raises(AssertionError):
+            ns['validate_results'](collected, root, code)
+
+
+@pytest.mark.parametrize('change', [
+    'none', 'token', 'query', 'foreign-host', 'moving-ref', 'subdirectory', 'foreign-file-host',
+    'missing-subdirectory', 'wrong-repository', 'wrong-checkout-distribution', 'missing-commit',
+    'missing:amplifier-foundation', 'missing:amplifier-module-loop-live',
+    'missing:amplifier-module-loop-streaming', 'missing:amplifier-module-context-simple',
+    'missing:amplifier-module-tool-filesystem', 'missing:amplifier-module-tool-apply-patch',
+    'missing:amplifier-module-tool-delegate',
+])
+def test_native_child_ci_records_only_actual_public_vcs_provenance(change, tmp_path):
+    ns = native_child_validation()
+    name = 'amplifier-module-tool-apply-patch'
+    value = {'url': 'https://github.com/microsoft/amplifier-bundle-filesystem',
+             'vcs_info': {'vcs': 'git', 'commit_id': 'c' * 40, 'requested_revision': 'main'},
+             'subdirectory': 'modules/tool-apply-patch'}
+    if change == 'token': value['url'] = 'https://credential@github.com/microsoft/amplifier-bundle-filesystem'
+    elif change == 'query': value['url'] += '?token=private'
+    elif change == 'foreign-host': value['url'] = 'https://other.invalid/microsoft/module'
+    elif change == 'moving-ref': value['vcs_info']['commit_id'] = 'main'
+    elif change == 'subdirectory': value['subdirectory'] = '../../private'
+    elif change == 'foreign-file-host':
+        name, value = 'amplifier-module-loop-live', {'url': 'file://other-host' + str(tmp_path / '.ci/loop-live')}
+    elif change == 'missing-subdirectory': del value['subdirectory']
+    elif change == 'wrong-repository': value['url'] = 'https://github.com/microsoft/amplifier-foundation'
+    elif change == 'wrong-checkout-distribution': value = {'url': (tmp_path / '.ci/loop-live').as_uri()}
+    elif change == 'missing-commit': del value['vcs_info']['commit_id']
+    elif change.startswith('missing:'): name, value = change.split(':', 1)[1], None
+    if change == 'none':
+        assert ns['resolved_source'](name, value, tmp_path) == {
+            'url': value['url'], 'vcs': 'git', 'commitId': 'c' * 40, 'subdirectory': 'modules/tool-apply-patch'}
+        for registry in ('amplifier-core', 'pytest'):
+            assert ns['resolved_source'](registry, None, tmp_path) is None
+        for distribution, repository, subdirectory in [
+            ('amplifier-foundation', 'amplifier-foundation', None),
+            ('amplifier-module-loop-live', 'amplifier-module-loop-live', None),
+            ('amplifier-module-loop-streaming', 'amplifier-module-loop-streaming', None),
+            ('amplifier-module-context-simple', 'amplifier-module-context-simple', None),
+            ('amplifier-module-tool-filesystem', 'amplifier-module-tool-filesystem', None),
+            ('amplifier-module-tool-delegate', 'amplifier-foundation', 'modules/tool-delegate'),
+        ]:
+            direct = {'url': 'https://github.com/microsoft/' + repository,
+                      'vcs_info': value['vcs_info'], **({'subdirectory': subdirectory} if subdirectory else {})}
+            assert ns['resolved_source'](distribution, direct, tmp_path) == {
+                'url': direct['url'], 'vcs': 'git', 'commitId': 'c' * 40,
+                **({'subdirectory': subdirectory} if subdirectory else {})}
+        def checkout_commit(*args):
+            assert args == ('-C', '.ci/loop-live', 'rev-parse', 'HEAD')
+            return 'd' * 40
+        ns['git'] = checkout_commit
+        assert ns['resolved_source']('amplifier-module-loop-live',
+                {'url': (tmp_path / '.ci/loop-live').as_uri()}, tmp_path) == {
+            'url': 'file:.ci/loop-live', 'checkoutCommit': 'd' * 40}
+    else:
+        with pytest.raises((AssertionError, KeyError)):
+            ns['resolved_source'](name, value, tmp_path)
+
+
+@pytest.mark.parametrize('change', [
+    'none', 'missing-native-engine', 'wrong-mount', 'duplicate-entry',
+    'missing:amplifier-foundation', 'missing:amplifier-module-loop-live',
+    'missing:amplifier-module-loop-streaming', 'missing:amplifier-module-context-simple',
+    'missing:amplifier-module-tool-filesystem', 'missing:amplifier-module-tool-apply-patch',
+    'missing:amplifier-module-tool-delegate',
+])
+def test_native_child_ci_import_hook_retains_partial_provenance(change, tmp_path):
+    import ast
+    from copy import deepcopy
+    from types import SimpleNamespace
+    _, _, code = native_child_workflow()
+    module = ast.parse(code)
+    evidence, = [node for node in ast.walk(module) if isinstance(node, ast.ClassDef) and node.name == 'Evidence']
+    mounts = {name: lambda: None for name in ('loop-live', 'context-simple', 'tool-filesystem', 'tool-apply-patch')}
+    entries = [SimpleNamespace(name=name, load=lambda mount=mount: mount) for name, mount in mounts.items()]
+    if change == 'wrong-mount':
+        entries[-1].load = lambda: object()
+    elif change == 'duplicate-entry':
+        entries.append(entries[-1])
+    def identity(name):
+        if change == 'missing-native-engine' and name == 'amplifier_module_tool_apply_patch.engines.native':
+            raise ModuleNotFoundError('missing fixture native engine')
+        return {'origin': str(tmp_path / (name + ('.so' if name == 'amplifier_core._engine' else '.py'))),
+                'sha256': 'a' * 64}
+    provenance = native_child_validation()
+    provenance['git'] = lambda *args: 'd' * 40
+    missing = change.split(':', 1)[1] if change.startswith('missing:') else None
+    def distribution(name):
+        direct = None
+        if name not in {'amplifier-core', 'pytest', missing}:
+            if name == 'amplifier-module-loop-live':
+                direct = {'url': (Path.cwd() / '.ci/loop-live').as_uri()}
+            else:
+                repository = {'amplifier-module-tool-apply-patch': 'amplifier-bundle-filesystem',
+                              'amplifier-module-tool-delegate': 'amplifier-foundation'}.get(name, name)
+                direct = {'url': 'https://github.com/microsoft/' + repository,
+                          'vcs_info': {'vcs': 'git', 'commit_id': 'c' * 40, 'requested_revision': 'main'}}
+                if name in {'amplifier-module-tool-apply-patch', 'amplifier-module-tool-delegate'}:
+                    direct['subdirectory'] = 'modules/' + name.removeprefix('amplifier-module-')
+        def read_text(path):
+            assert path == 'direct_url.json'
+            return json.dumps(direct) if direct is not None else None
+        return SimpleNamespace(version='1.2.3', read_text=read_text)
+    record = {'passed': False, 'distributions': {}, 'modules': {}}
+    saved = []
+    namespace = {
+        'record': record, 'save': lambda: saved.append(deepcopy(record)),
+        'module_identity': identity, 'resolved_source': provenance['resolved_source'],
+        'md': SimpleNamespace(distribution=distribution, entry_points=lambda group: entries),
+        'importlib': SimpleNamespace(machinery=SimpleNamespace(EXTENSION_SUFFIXES=['.so']),
+            import_module=lambda name: SimpleNamespace(mount=mounts[name.removeprefix('amplifier_module_').replace('_', '-')])),
+        'json': json, 'Path': Path,
+    }
+    exec(compile(ast.Module(body=[evidence], type_ignores=[]), 'native-child-import-hook', 'exec'), namespace)
+    hook = namespace['Evidence']().pytest_sessionstart
+    if change == 'none':
+        hook(None)
+        assert record['canonicalMounts'] is True
+        assert 'amplifier_module_tool_apply_patch.engines.native' in record['modules']
+    else:
+        with pytest.raises((ModuleNotFoundError, AssertionError, ValueError)):
+            hook(None)
+        assert 'canonicalMounts' not in record
+    assert saved == [record] and record['phase'] == 'pytest-imports' and record['passed'] is False
+    assert record['distributions']['amplifier-core'] == {
+        'version': '1.2.3', 'directSourceStatus': 'registry', 'directSource': None}
+    if missing:
+        assert record['provenanceFailureDistribution'] == missing
+        assert record['distributions'][missing] == {'version': '1.2.3', 'directSourceStatus': 'refused'}
+        assert not record['modules']  # Refused before native imports or collection.
+    else:
+        assert 'provenanceFailureDistribution' not in record
+        assert 'amplifier_core._engine' in record['modules']
+        assert record['distributions']['amplifier-module-tool-apply-patch']['directSource']['commitId'] == 'c' * 40
 
 
 def test_browser_retains_only_the_successfully_built_public_web_payload():
