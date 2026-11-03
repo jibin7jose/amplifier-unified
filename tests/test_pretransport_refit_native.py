@@ -51,6 +51,8 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
 
     class Surfaces(Previous):
         epoch = ['original-input']
+        # This fixture supplies a successfully observed input identity.
+        epoch_available = True
         image_capabilities = SimpleNamespace(supports=AsyncMock(return_value=True))
 
     def change_work(version):
