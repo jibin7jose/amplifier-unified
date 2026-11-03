@@ -164,7 +164,16 @@ async def test_exact_dismiss_preserves_new_request_and_notifies_only_once(app):
     old = (await agent(app, source, 'capability.request', args, 'old', _configurationWait=True))['result']
     source['interruptionRevision'] = source.get('interruptionRevision', 0) + 1
     app._publish_changes(sessions={source['id']})
-    source['collaborationGeneration'] = {'id':'new-generation', 'inputIds':['new-human'], 'terminal':False}
+    epoch = source['interruptionRevision']
+    await app.on_runtime_event('runtime.generation', {
+        'sessionId': source['id'], 'rootSessionId': source['id'], 'event': 'generation.started',
+        'generation_id': 'new-generation', 'interruptionRevision': epoch})
+    await app.on_runtime_event('runtime.status', {
+        'sessionId': source['id'], 'status': 'working', 'event': 'input.delivered', 'inputId': 'new-human'})
+    assert source['collaborationGeneration']['id'] == 'new-generation'
+    assert source['collaborationGeneration']['inputIds'] == ['new-human']
+    assert source['collaborationGeneration']['interruptionRevision'] == epoch
+    assert old['interruptionRevision'] != epoch  # The old request remains across Stop.
     fresh = (await agent(app, source, 'capability.request', args, 'fresh'))['result']
     live = (await app.dispatch('capability.grant', {**args, 'reason':'Separate usable grant'},
                               command_id='live'))['result']

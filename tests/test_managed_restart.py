@@ -1,6 +1,7 @@
 """A restart command receipt is not evidence that the successor is serving."""
 from amplifier_web.state_records import load as load_saved_state
 import asyncio
+import copy
 import json
 import os
 import sys
@@ -146,6 +147,35 @@ async def test_managed_activation_never_falls_back_to_an_unmanaged_host(tmp_path
         await service.close()
 
 
+async def assert_message_saved_during_failed_handoff(service, session, identity, text):
+    from amplifier_web.session_projection import hydrate
+    marker = copy.deepcopy(service.state['updates']['pendingRestart'])
+    args = {'sessionId': session['id'], 'text': text}
+    receipt = await service.dispatch('conversation.send', args, command_id=identity)
+    assert receipt['accepted'] and receipt['delivery'] == 'queued_for_update'
+    assert (receipt['sessionId'], receipt['inputId']) == (session['id'], identity)
+    message, = [row for row in session['messages'] if row.get('inputId') == identity]
+    assert message['role'] == 'user' and message['text'] == text
+    assert message['delivery']['status'] == 'queued_for_update'
+    assert message['delivery']['attemptId'] == service.state['updates']['drain']['attemptId']
+    assert message['updateAdmission']['interruptionRevision'] == session.get('interruptionRevision', 0)
+    saved = load_saved_state(service.db)
+    hydrate(service.data_dir, saved, service.db)
+    stored_session, = [row for row in saved['sessions'] if row['id'] == session['id']]
+    stored_message, = [row for row in stored_session['messages'] if row.get('inputId') == identity]
+    assert {key: stored_message[key] for key in ('id', 'inputId', 'role', 'text', 'delivery', 'updateAdmission')} == {
+        key: message[key] for key in ('id', 'inputId', 'role', 'text', 'delivery', 'updateAdmission')}
+    command = json.loads(service.db.execute('SELECT receipt FROM commands WHERE id=?', (identity,)).fetchone()[0])
+    assert command['inputId'] == identity and command['delivery'] == 'queued_for_update'
+    assert [session['id'], identity] in saved['updates']['drain']['messages']
+    assert service.state['updates']['pendingRestart'] == saved['updates']['pendingRestart'] == marker
+    assert not service.runtime.sent
+    assert not any(row['phase'] == 'restart-ack' for row in service.state['updates']['diagnostics']['events'])
+    with pytest.raises(Exception, match='update is activating'):
+        await service.dispatch('conversation.retry', {'sessionId': session['id'], 'inputId': identity})
+    assert not service.runtime.sent and service.state['updates']['pendingRestart'] == marker
+
+
 async def test_unmanaged_helper_failure_preserves_installed_handoff(tmp_path,monkeypatch):
     service,manager,_=await prepared_activation(tmp_path,monkeypatch)
     async def command(*args,**kwargs):return '99.0.0' if '-c' in args else ''
@@ -155,12 +185,14 @@ async def test_unmanaged_helper_failure_preserves_installed_handoff(tmp_path,mon
     monkeypatch.setattr(app_updates.asyncio,'create_subprocess_exec',spawn)
     monkeypatch.setattr(app_updates.os,'kill',lambda *args:pytest.fail('failed helper must not terminate the retained host'))
     try:
+        await service.dispatch('session.create', {'title': 'Synthetic handoff message fixture'})
+        session = service._session()
         await app_updates.activate(manager)
         assert service.state['updates']['phase']=='activating'
         assert service.state['updates']['pendingRestart']['version']=='99.0.0'
         assert 'helper could not start' in service.state['updates']['error']
-        with pytest.raises(Exception,match='update is activating'):
-            await service.dispatch('conversation.send',{'text':'Do not admit work after helper failure'})
+        await assert_message_saved_during_failed_handoff(service, session, 'helper-failure-message',
+                                                       'Do not admit work after helper failure')
     finally:
         await service.close()
 
@@ -182,14 +214,16 @@ async def test_postreplacement_helper_setup_failure_keeps_work_paused(tmp_path,m
     else:
         monkeypatch.setattr(app_updates,'write_private',unavailable_helper)
     try:
+        await service.dispatch('session.create', {'title': 'Synthetic handoff setup fixture'})
+        session = service._session()
         await manager.command('app')
         state=service.state['updates']
         assert state['phase']=='activating'
         assert state['pendingRestart']['version']=='99.0.0'
         assert state['diagnostics']['lastFailure']['phase']==failure_phase
         assert state['error']
-        with pytest.raises(Exception,match='update is activating'):
-            await service.dispatch('conversation.send',{'text':'Cannot use outgoing process after replacement'})
+        await assert_message_saved_during_failed_handoff(service, session, 'setup-failure-message',
+                                                       'Cannot use outgoing process after replacement')
     finally:
         await service.close()
 

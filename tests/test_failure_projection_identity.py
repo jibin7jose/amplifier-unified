@@ -3,6 +3,7 @@ import copy
 
 import pytest
 
+from amplifier_operations.coordination import peer_input
 from amplifier_web.runtime import normalize_event
 from amplifier_web.session_health import current_terminal_failure
 from test_collaborative_workspaces import app, generation, settled
@@ -68,8 +69,18 @@ async def test_warming_preserves_recovery_evidence_until_exact_admission(app, bo
     old_receipt = app.db.execute('SELECT receipt FROM commands WHERE id=?', (old_input,)).fetchone()
     assignment = copy.deepcopy(app.assignments.current(source))
     original = app.runtime.collaboration_input
+    continuation = app.collaboration.receipt(old_input)['subscription']['continuationId'] if bound else None
 
     async def warm_then_admit(session, args, guard, emit):
+        if (session['id'], args['inputId']) != (target['id'], 'resume-member'):
+            # Only the retained failed-generation return may reach the other
+            # recipient. Do not simulate member warming for that notification.
+            assert bound and (session['id'], args['inputId']) == (source['id'], continuation)
+            notice = app.collaboration.receipt(continuation)
+            assert notice['origin'] == 'system' and notice['mode'] == 'auto'
+            assert notice['dependencyRequestId'] == old_input and notice['dependencySatisfied'] is False
+            assert args['automaticDelivery'] is True and guard() is None
+            return await original(session, args, guard, emit)
         assert guard() is None
         await emit('runtime.status', {'sessionId': target['id'], 'status': 'starting'})
         await emit('runtime.status', {'sessionId': target['id'], 'status': 'ready'})
@@ -85,7 +96,26 @@ async def test_warming_preserves_recovery_evidence_until_exact_admission(app, bo
     assert target['failure'] == failure
     assert app.db.execute('SELECT receipt FROM commands WHERE id=?', (old_input,)).fetchone() == old_receipt
     assert app.assignments.current(source) == assignment
-    assert len(app.runtime.inputs) == 1 and app.runtime.inputs[0][1] == 'resume-member'
+    expected = [(target['id'], 'resume-member')]
+    if bound:
+        notice = await settled(app, continuation, 'accepted')
+        assert notice['requestId'] == notice['inputId'] == continuation
+        assert notice['senderSessionId'] == target['id'] and notice['target']['sessionId'] == source['id']
+        assert notice['origin'] == 'system' and notice['mode'] == 'auto'
+        assert notice['dependencyRequestId'] == old_input and notice['dependencySatisfied'] is False
+        assert notice['continuationReason'] == 'failed'
+        assert notice['outcomeSnapshot']['status'] == 'observed'
+        assert notice['outcomeSnapshot']['outcome'] == 'failed' and notice['outcomeSnapshot']['qualified'] is False
+        assert notice['admission']['accepted'] is True
+        message, = [row for row in source['messages'] if row.get('inputId') == continuation]
+        assert message['peerEnvelope']['replyToRequestId'] == old_input
+        assert message['peerEnvelope']['recipientSessionId'] == source['id']
+        delivered, = [row for row in app.runtime.inputs if row[:2] == (source['id'], continuation)]
+        assert delivered[2] == peer_input(message['peerEnvelope'], message['text'])
+        expected.append((source['id'], continuation))
+    assert sorted((sid, identity) for sid, identity, _ in app.runtime.inputs) == sorted(expected)
+    assert app.db.execute('SELECT receipt FROM commands WHERE id=?', (old_input,)).fetchone() == old_receipt
+    assert target['failure'] == failure and app.assignments.current(source) == assignment
     await generation(app, target, 'fresh-generation', ['resume-member'])
     assert not target.get('failure') and not target.get('error')
 

@@ -242,9 +242,11 @@ async def test_public_preparation_recovery_rechecks_owner_before_dependency_clea
     source = app.state['sessions'][0]
     before = app.operations.requests.list(row['sessionId'])
     entered, release = threading.Event(), threading.Event()
-    require_resolved = owner.require_resolved_removal
-    def waiting(current_app, current_row, exclude_request_id=None, legacy=None):
-        require_resolved(current_app, current_row, exclude_request_id, legacy)
+    require_resolved = Mock(wraps=owner.require_resolved_removal)
+    def waiting(current_app, current_row, exclude_request_id=None, legacy=None, fresh_cleanup=None):
+        require_resolved(current_app, current_row, exclude_request_id, legacy, fresh_cleanup)
+        assert require_resolved.call_args.args[4] is fresh_cleanup
+        assert fresh_cleanup == original.get('cleanupRecoveryQualification')
         assert exclude_request_id == 'remove'
         entered.set()
         assert release.wait(5)
@@ -257,7 +259,11 @@ async def test_public_preparation_recovery_rechecks_owner_before_dependency_clea
             'requestId': 'guarded-recovery', 'previousRequestId': 'remove'}
     task = asyncio.create_task(agent(app, source, 'workspace.environments.finishCleanup', args, 'guarded-recovery'))
     try:
-        assert await asyncio.to_thread(entered.wait, 5)
+        await until(lambda: entered.is_set() or task.done())
+        if task.done():
+            await task  # Surface setup/validator failure instead of a blind five-second wait.
+            pytest.fail('Recovery completed before the held owner recheck')
+        assert entered.is_set()
         if change == 'moved':
             source['workingDirectory'] = str(app.data_dir / 'moved-source')
         else:
@@ -272,6 +278,7 @@ async def test_public_preparation_recovery_rechecks_owner_before_dependency_clea
             await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 5)
     cleanup.assert_not_called()
     invoke.assert_not_called()
+    require_resolved.assert_called_once()
     assert [action for action, _ in backend].count('remove') == 1
     assert owner.get(app.data_dir, row['sessionId'], row['id']) == row
     assert app.operations.requests.read(row['sessionId'], 'remove') == original
