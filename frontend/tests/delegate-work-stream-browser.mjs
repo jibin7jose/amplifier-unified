@@ -11,6 +11,7 @@ import {chromium, expect} from '@playwright/test';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
+import {readComposerDraft} from './composer-test-helpers.mjs';
 import {delegateStreamDiagnostics} from './delegate-stream-diagnostics.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -22,6 +23,7 @@ const desktop={width:1280,height:1000},mobile={width:390,height:844};
 const viewports=mobileOnly?[['mobile',mobile]]:[['desktop',desktop],['mobile',mobile],['small',{width:320,height:844}]];
 const navigationEntries=[];
 const layoutChecks=[],apiFailures=[],transitionChecks=[];
+const appearanceScopeChecks=[];
 const diagnostics=delegateStreamDiagnostics();
 const lookupEvents=[],lookupRequests=new Map();
 const nodeEvidence=node=>node?{
@@ -117,6 +119,84 @@ async function checkWorkLayout(page,work,label) {
     assert.ok(measured.jump.bottom<=measured.composer.top+1,label+': jump control must not cover composer');
   }
   assert.ok(measured.composer.bottom<=page.viewportSize().height+1,label+': composer remains in viewport');
+}
+async function checkAsideAppearanceScope(page,work,viewport) {
+  const action=async(action,args={})=>{
+    const receipt=await page.evaluate(([action,args])=>window.amplifier.dispatch(action,args),[action,args]);
+    assert.equal(receipt.accepted,true,action);return receipt.result;
+  };
+  const priorTheme=await page.evaluate(()=>window.amplifier.getState().theme);
+  const priorPresentation=await page.evaluate(()=>window.amplifier.getShellState().effectiveComposition);
+  const present=async composition=>{
+    const applied=await page.evaluate(async composition=>{
+      const shell=window.amplifier.getShellState(),clientId=window.amplifier.shellClientId;
+      const prepared=await window.amplifier.dispatch('shell.changes.prepare',{
+        clientId,expectedRevision:shell.revision,composition});
+      if(!prepared.accepted)throw Error('Appearance-scope presentation prepare failed');
+      const receipt=await window.amplifier.dispatch('shell.changes.apply',{
+        clientId,expectedRevision:shell.revision,changeId:prepared.result.id});
+      if(!receipt.accepted)throw Error('Appearance-scope presentation apply failed');
+      return receipt.result.appliedRevision;
+    },composition);
+    await expect.poll(()=>page.evaluate(()=>window.amplifier.getShellState().revision)).toBe(applied);
+  };
+  // This is the production DelegateStreamStatus <aside>, not injected markup.
+  const status=work.getByRole('complementary',{name:'Review status',exact:true});
+  await expect(status).toBeVisible();
+  const selected=await page.evaluate(()=>window.amplifier.getState().selectedSessionId);
+  const draft=await readComposerDraft(page.getByRole('textbox',{name:'Message Amplifier',exact:true}));
+  const listed=await action('theme.list');
+  assert.deepEqual(listed.errors,[]);
+  const builtins=listed.items.filter(row=>row.source==='built-in');
+  assert.ok(builtins.some(row=>row.id==='builtin:digital-rain'),'The affected built-in must be exercised');
+  for(const entry of builtins){
+    const theme=await action('theme.read',{id:entry.id});
+    await action('theme.apply',{name:theme.name,css:theme.css});
+    await expect.poll(()=>page.locator('#amp-one > style').evaluateAll((nodes,css)=>
+      nodes.some(node=>node.textContent===css),theme.css)).toBe(true);
+    for(const scheme of ['light','dark']){
+      await present({...priorPresentation,presentation:{...priorPresentation.presentation,scheme}});
+      await expect(page.locator('#amp-one')).toHaveAttribute('data-theme-scheme',scheme);
+      await status.scrollIntoViewIfNeeded();
+      const details=status.getByRole('button',{name:'Review delegation details',exact:true});
+      await details.focus();await details.press('Tab');await expect(details).not.toBeFocused();
+      await page.keyboard.press('Shift+Tab');await expect(details).toBeFocused();
+      const measured=await status.evaluate(el=>{
+        const style=getComputedStyle(el),box=el.getBoundingClientRect();
+        const first=el.querySelector(':scope > .a-caption'),range=document.createRange();
+        range.selectNodeContents(first);
+        const text=range.getBoundingClientRect(),button=el.querySelector(':scope > button');
+        const focus=getComputedStyle(button),control=button.getBoundingClientRect();
+        return {shadow:style.boxShadow,background:style.backgroundColor,radius:style.borderRadius,
+          border:[style.borderLeftWidth,style.borderRightWidth],width:box.width,scrollWidth:el.scrollWidth,
+          clientWidth:el.clientWidth,textInset:text.left-box.left,
+          control:{width:control.width,height:control.height,outline:focus.outlineStyle,
+            outlineWidth:parseFloat(focus.outlineWidth)}};
+      });
+      const navigationShadow=await page.locator('[data-part="navigation"] > .a-nav-rail')
+        .evaluate(el=>getComputedStyle(el).boxShadow);
+      appearanceScopeChecks.push({theme:entry.id,scheme,viewport,navigationShadow,...measured});
+      writeFileSync(artifact('delegate-aside-appearance-scope.json'),JSON.stringify(appearanceScopeChecks,null,2));
+      assert.equal(measured.shadow,'none','Navigation accent must not paint the worker status aside');
+      assert.match(measured.background,/rgba\(0, 0, 0, 0\)|transparent/,'Status keeps its native unboxed surface');
+      assert.equal(measured.radius,'0px');assert.deepEqual(measured.border,['0px','0px']);
+      assert.ok(measured.width>0&&measured.textInset>=0);
+      assert.ok(measured.scrollWidth<=measured.clientWidth+1,'Worker controls wrap without horizontal overflow');
+      assert.ok(measured.control.width>0&&measured.control.height>0);
+      assert.notEqual(measured.control.outline,'none');assert.ok(measured.control.outlineWidth>0);
+      assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),selected);
+      if(entry.id==='builtin:digital-rain')
+        assert.match(navigationShadow,/inset/,'The actual navigation retains its inset accent');
+      if(entry.id==='builtin:digital-rain'&&scheme==='dark'&&viewport!=='small')
+        await page.screenshot({path:artifact(`delegate-aside-digital-rain-${viewport}.png`)});
+    }
+  }
+  // Restore the exact composition, not a merge that leaves temporary keys.
+  await present(priorPresentation);
+  await action('theme.apply',{name:priorTheme.name,css:priorTheme.css});
+  assert.deepEqual(await page.evaluate(()=>window.amplifier.getShellState().effectiveComposition),priorPresentation);
+  const editor=page.getByRole('textbox',{name:'Message Amplifier',exact:true});
+  assert.equal(await readComposerDraft(editor),draft,'Appearance checks preserve the draft');
 }
 async function checkHeader(page,region,label) {
   const heading=region.locator('header>span').first();
@@ -374,6 +454,7 @@ try {
     await expect(toggle).toHaveCount(1);
     if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
     await expect(work.locator('[data-node-id="stream-main-model"]')).toBeVisible();
+    await checkAsideAppearanceScope(page,work,name);
     // No intervening Delegate or Worker activity drawer is needed to read it.
     await expect(work.getByRole('button', {name: /Worker activity/})).toHaveCount(0);
     await expect(work.locator('[data-kind="worker"] > button')).toHaveCount(0);
