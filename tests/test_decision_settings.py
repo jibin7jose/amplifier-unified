@@ -28,6 +28,35 @@ async def test_absence_ambient_credentials_and_registration_do_not_enable_select
     decisions.apply(bundle,{'decision_models':{'selection':{'browser':{'mode':'decision'}}}})
     assert bundle.to_mount_plan()==before
 
+
+async def test_connection_save_and_removal_publish_matching_decision_choices(manager,tmp_path,monkeypatch):
+    monkeypatch.setenv('FIXTURE_KEY','synthetic-account-key')
+    before=copy.deepcopy(manager.config(tmp_path).providers)
+    result=await manager.perform('providers.save',{'workspace':str(tmp_path),'scope':'global',
+        'id':'new-account','module':'provider-fixture','apiKeyEnv':'FIXTURE_KEY','config':{'chat_enabled':False}})
+    assert {row['id'] for row in result['decisionModels']['catalog']}=={'fixture','new-account'}
+    assert result['decisionModels']['selection']=={} and result['decisionModels']['backends']=={}
+    assert result['decisionModelsError'] is None
+    assert manager.config(tmp_path).providers[0]==before[0]
+    assert 'synthetic-account-key' not in repr(result)
+    result=await manager.perform('providers.remove',{'workspace':str(tmp_path),'scope':'global','id':'new-account'})
+    assert [row['id'] for row in result['decisionModels']['catalog']]==['fixture']
+    assert result['decisionModels']['selection']=={}
+
+
+async def test_optional_metadata_failure_does_not_report_committed_account_as_failed(manager,tmp_path,monkeypatch):
+    def broken(*args):raise RuntimeError('private provider detail')
+    with monkeypatch.context() as patch:
+        patch.setattr(decisions,'describe',broken)
+        result=await manager.perform('providers.save',{'workspace':str(tmp_path),'scope':'global',
+            'id':'new-account','module':'provider-fixture','config':{'default_model':'ordinary'}})
+    assert any(row['id']=='new-account' for row in result['providers'])
+    assert result['decisionModelsError'] and 'private provider detail' not in repr(result)
+    assert 'decisionModels' not in result
+    refreshed=await manager.perform('providers.decisionModels',{'workspace':str(tmp_path)})
+    assert refreshed['decisionModelsError'] is None
+    assert {row['id'] for row in refreshed['decisionModels']['catalog']}=={'fixture','new-account'}
+
 async def test_selection_reuses_account_and_keeps_surface_models_independent(manager,tmp_path):
     await select(manager,tmp_path)
     await select(manager,tmp_path,purpose='computer',backend={'provider':'fixture','model':'other'})

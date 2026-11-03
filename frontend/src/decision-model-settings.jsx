@@ -12,8 +12,21 @@ function preference(data,purpose){
 export function DecisionModelSettings({state,act,navigate,onConnect,labels}){
  const data=state.setup?.decisionModels,catalog=data?.catalog||[];
  const [chosenPurpose,setPurpose]=useState(null),[draft,setDraft]=useState(null),[pending,setPending]=useState(null),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ const [requestingChoices,setRequestingChoices]=useState(false),[choiceRequestError,setChoiceRequestError]=useState('');
  const sending=useRef(false),alive=useRef(true),id=useConfigurationId(),scope=useConfigurationScope(draft?.scope);
- useEffect(()=>{alive.current=true;act('providers.decisionModels',{});return()=>{alive.current=false}},[]);
+ // Check current choices on open; saves already publish their updated catalog.
+ useEffect(()=>{alive.current=true;refreshChoices();return()=>{alive.current=false}},[]);
+ const choicesOperation=state.setup?.operations?.['providers.decisionModels:'];
+ const loadingChoices=requestingChoices||setupPending(choicesOperation);
+ const choicesError=choiceRequestError||state.setup?.decisionModelsError||(choicesOperation?.phase==='error'?(choicesOperation.error||'Please try again.'):'');
+ async function refreshChoices(){
+  setRequestingChoices(true);setChoiceRequestError('');
+  try{
+   const receipt=await act('providers.decisionModels',{});
+   if(!receipt?.accepted)throw Error(receipt?.error||'Could not request decision model choices.');
+  }catch(e){if(alive.current)setChoiceRequestError(e.message)}
+  finally{if(alive.current)setRequestingChoices(false)}
+ }
  const browser=preference(data,'browser'),computer=preference(data,'computer'),same=JSON.stringify(browser)===JSON.stringify(computer);
  const purpose=chosenPurpose||(same?'both':'browser'),saved=purpose==='computer'?computer:browser;
  const value=draft||{...saved,allowExternalState:purpose==='both'&&!same?false:saved.allowExternalState};
@@ -43,12 +56,13 @@ export function DecisionModelSettings({state,act,navigate,onConnect,labels}){
  return <div data-part="decision-model-settings">
   <p>Ordinary models handle browser and computer use by default. A decision model can help choose the next observed action. Tool permissions still apply.</p>
   <UIUseSetup state={state} act={act} kind="decisions" onConnect={onConnect} connectionDisabled={busy||!!draft}/>
-  {!data?<p role="status">{state.setup?.operations?.['providers.decisionModels:']?.phase==='error'?'Could not load decision model choices.':'Loading decision model choices…'} <button className="a-link" onClick={()=>act('providers.decisionModels',{})}>Refresh choices</button></p>:<>
-   {!catalog.length&&<div data-part="decision-connect"><p>Connect a provider to choose a decision model. Installing support does not connect an account.</p>{onConnect&&(data.services?.length?data.services.map(service=><button key={service.module} type="button" className="a-soft" disabled={busy||!!draft} onClick={()=>onConnect(service.module)}>Connect {service.name}</button>):<button type="button" className="a-link" disabled={busy||!!draft} onClick={()=>onConnect()}>Add an AI connection</button>)}</div>}
+  {(!data||loadingChoices||choicesError)&&<p role={choicesError?'alert':'status'}>{choicesError?`Could not load decision model choices. ${choicesError}`:loadingChoices?'Updating decision model choices…':'Loading decision model choices…'} <button type="button" className="a-link" disabled={loadingChoices} onClick={refreshChoices}>Refresh choices</button></p>}
+  {data&&<>
+   {!catalog.length&&!loadingChoices&&!choicesError&&<div data-part="decision-connect"><p>Connect a provider to choose a decision model. Installing support does not connect an account.</p>{onConnect&&(data.services?.length?data.services.map(service=><button key={service.module} type="button" className="a-soft" disabled={busy||!!draft} onClick={()=>onConnect(service.module)}>Connect {service.name}</button>):<button type="button" className="a-link" disabled={busy||!!draft} onClick={()=>onConnect()}>Add an AI connection</button>)}</div>}
    <dl data-part="decision-current" aria-label="Saved choices for new chats"><dt>Browser use</dt><dd>{summary(browser)}</dd><dt>Computer use</dt><dd>{summary(computer)}</dd></dl>
    <label htmlFor={id('decision-purpose')}>Use for</label><select id={id('decision-purpose')} value={purpose} disabled={busy||!!draft} onChange={e=>{const next=e.target.value;setPurpose(next);if(next==='both'&&!same)setDraft({...value,allowExternalState:false});setNotice('');setError('')}}><option value="both">Browser and computer</option><option value="browser">Browser only</option><option value="computer">Computer only</option></select>
    <p className="a-caption">Both can use decision models. Save the same choice for both, or configure each separately.{purpose==='both'&&!same?' Saving will replace both existing selections.':''}</p>
-   <label htmlFor={id('decision-mode')}>Action selection</label><select id={id('decision-mode')} value={value.mode} disabled={busy} onChange={e=>edit({mode:e.target.value,...(e.target.value==='decision'&&!value.backend?.provider&&catalog.length===1?{backend:{provider:catalog[0].id,model:catalog[0].default_model}}:{}),allowExternalState:false})}><option value="standard">Ordinary model (default)</option><option value="decision" disabled={!catalog.length}>Decision assisted</option></select>
+   <label htmlFor={id('decision-mode')}>Action selection</label><select id={id('decision-mode')} value={value.mode} disabled={busy} onChange={e=>edit({mode:e.target.value,...(e.target.value==='decision'&&!value.backend?.provider&&catalog.length===1?{backend:{provider:catalog[0].id,model:catalog[0].default_model}}:{}),allowExternalState:false})}><option value="standard">Ordinary model (default)</option><option value="decision" disabled={!catalog.length}>Decision assisted{!catalog.length?(loadingChoices?' (loading choices…)':choicesError?' (choices unavailable)':' (connect a provider first)'):''}</option></select>
    {value.mode==='decision'&&<>
     <label htmlFor={id('decision-service')}>Provider connection</label><select id={id('decision-service')} value={value.backend?.provider||''} disabled={busy} onChange={e=>choose(e.target.value)}><option value="">Choose a connection</option>{catalog.map(row=><option key={row.id} value={row.id}>{connectionLabel(row)}</option>)}</select>
     <label htmlFor={id('decision-model')}>{definition?.model_label||'Decision model'}</label>{definition?.fixed_models?<select id={id('decision-model')} value={value.backend?.model||''} disabled={busy} onChange={e=>edit({backend:{...value.backend,model:e.target.value}})}>{(definition.models||[]).map(model=><option key={model} value={model}>{definition.model_labels?.[model]||model}</option>)}</select>:<input id={id('decision-model')} value={value.backend?.model||''} disabled={busy} onChange={e=>edit({backend:{...value.backend,model:e.target.value}})}/>}

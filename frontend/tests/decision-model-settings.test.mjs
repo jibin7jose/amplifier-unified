@@ -25,9 +25,50 @@ test('fresh settings expose a canonical connection action without installing, sa
   await act(async()=>section.props.onToggle({currentTarget:{open:true}}));
   assert.equal(root.root.findByProps({id:'decision-purpose'}).props.value,'both');
   assert.equal(root.root.findByProps({value:'decision'}).props.disabled,true);
+  assert.match(root.root.findByProps({value:'decision'}).children.join(''),/connect a provider first/);
   await click(root,'Connect Jev');
   assert.deepEqual(calls.filter(([action])=>action.startsWith('settings.connection.')),[['settings.connection.select',{scope:'global',module:'provider-jev'}]]);
   assert.ok(calls.every(([action])=>!['providers.save','providers.models','providers.login','updates.featureInstall'].includes(action)));
+ }finally{await act(async()=>root?.unmount())}
+});
+
+test('pending and failed reads explain unavailable choices and support retry without reconnecting',async()=>{
+ let root,calls=[],reject=false;
+ let state={setup:{decisionModels:empty,operations:{'providers.decisionModels:':{phase:'working',commandId:'initial'}}}};
+ const render=()=>React.createElement(DecisionModelSettings,{state,navigate:()=>{},onConnect:()=>{throw Error('must not reconnect')},act:async(...args)=>{calls.push(args);if(reject)throw Error('Connection interrupted');return {accepted:true,operationId:'retry'}}});
+ try{
+  await act(async()=>{root=create(render())});
+  assert.match(root.root.findByProps({value:'decision'}).children.join(''),/loading choices/);
+  assert.equal(root.root.findAllByProps({'data-part':'decision-connect'}).length,0);
+  assert.equal(button(root,'Refresh choices').props.disabled,true);
+  state={setup:{...state.setup,operations:{'providers.decisionModels:':{phase:'error',commandId:'initial',error:'Read failed'}}}};
+  await act(async()=>root.update(render()));
+  assert.ok(JSON.stringify(root.toJSON()).includes('Read failed'));
+  reject=true;
+  await click(root,'Refresh choices');
+  assert.ok(JSON.stringify(root.toJSON()).includes('Connection interrupted'));
+  assert.equal(button(root,'Refresh choices').props.disabled,false);
+  reject=false;await click(root,'Refresh choices');
+  state={setup:{decisionModels:available,operations:{'providers.decisionModels:':{phase:'ready',commandId:'retry'}}}};
+  await act(async()=>root.update(render()));
+  assert.equal(root.root.findByProps({value:'decision'}).props.disabled,false);
+  assert.equal(root.root.findAllByProps({role:'alert'}).length,0);
+  assert.deepEqual(calls,[['providers.decisionModels',{}],['providers.decisionModels',{}],['providers.decisionModels',{}]]);
+ }finally{await act(async()=>root?.unmount())}
+});
+
+test('saved choices remain usable during refresh and optional metadata errors remain visible',async()=>{
+ let root;
+ let state={setup:{decisionModels:available,operations:{'providers.decisionModels:':{phase:'working'}}}};
+ const render=()=>React.createElement(DecisionModelSettings,{state,navigate:()=>{},act:async()=>({accepted:true})});
+ try{
+  await act(async()=>{root=create(render())});
+  assert.equal(root.root.findByProps({value:'decision'}).props.disabled,false);
+  state={setup:{decisionModels:available,decisionModelsError:'Refresh choices to try again.'}};
+  await act(async()=>root.update(render()));
+  assert.ok(JSON.stringify(root.toJSON()).includes('Could not load decision model choices.'));
+  assert.equal(button(root,'Refresh choices').props.disabled,false);
+  assert.equal(root.root.findByProps({value:'decision'}).props.disabled,false);
  }finally{await act(async()=>root?.unmount())}
 });
 
