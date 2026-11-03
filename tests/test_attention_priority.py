@@ -382,6 +382,63 @@ def test_application_groups_keep_revision_and_exact_feature_scope(tmp_path):
     assert len(active(state)) == 3
 
 
+def test_verified_browser_launch_and_completed_restart_recover_only_prior_browser_failures(tmp_path):
+    state, diagnostics = fixture(tmp_path)
+    diagnostics.begin('application', 'a'*40, application_extras=['managed-browser'])
+    old = diagnostics.record('managed-browser-install', 'failed', errorType='CommandFailure')
+    unrelated = diagnostics.record('candidate-install', 'failed', errorType='CommandFailure')
+    diagnostics.begin('application', 'b'*40, application_extras=['decisions-jev','managed-browser'])
+    assert diagnostics.state['batch']['recoveringFailures'] == {}
+    diagnostics.browser_qualified()
+    assert len(active(state)) == 2, 'Qualification is not activation'
+    attempt = diagnostics.state['attemptId']
+    # Activation re-enters this exact candidate; retain its original snapshot.
+    diagnostics.begin('application', 'b'*40, attempt, application_extras=['decisions-jev','managed-browser'])
+    diagnostics.record('restart-ack', 'succeeded')
+    failures = list(diagnostics.state['activeFailures'].values())
+    assert len(failures) == 1 and failures[0]['latest']['id'] == unrelated['id']
+    assert old['id'] in diagnostics.path.read_text(), 'Keep the original failure history'
+
+
+@pytest.mark.parametrize('scope', [None, [], ['managed-browser']])
+def test_restart_without_verified_browser_launch_does_not_clear_old_revision(tmp_path, scope):
+    state, diagnostics = fixture(tmp_path)
+    diagnostics.begin('application', 'a'*40, application_extras=scope)
+    diagnostics.record('managed-browser-install', 'failed', errorType='CommandFailure')
+    diagnostics.begin('application', 'b'*40, application_extras=['managed-browser'])
+    if scope != ['managed-browser']:
+        diagnostics.browser_qualified()  # Missing/unknown old scope is never inferred.
+    diagnostics.record('restart-ack', 'succeeded')
+    assert len(active(state)) == 1
+
+
+def test_browser_recovery_never_adopts_a_later_failure_or_another_attempt(tmp_path):
+    state, diagnostics = fixture(tmp_path)
+    diagnostics.begin('application', 'a'*40, application_extras=['managed-browser'])
+    diagnostics.record('managed-browser-probe', 'failed', errorType='CommandFailure')
+    diagnostics.begin('application', 'b'*40, application_extras=['managed-browser'])
+    diagnostics.browser_qualified()
+    # A late occurrence for the old cause is outside this attempt's evidence.
+    old_group = next(iter(diagnostics.state['activeFailures'].values()))
+    old_group['latest'] = {**old_group['latest'], 'id':'late-occurrence'}
+    diagnostics.record('restart-ack', 'succeeded')
+    assert len(active(state)) == 1
+    diagnostics.begin('application', 'c'*40, application_extras=['managed-browser'])
+    diagnostics.record('restart-ack', 'succeeded')
+    assert len(active(state)) == 1, 'The next attempt needs its own blank launch'
+
+
+@pytest.mark.parametrize('phase', ['restart-reconcile','restart-superseded'])
+def test_browser_qualification_of_superseded_candidate_is_not_current_browser_proof(tmp_path,phase):
+    state, diagnostics = fixture(tmp_path)
+    diagnostics.begin('application', 'a'*40, application_extras=['managed-browser'])
+    diagnostics.record('managed-browser-install','failed',errorType='CommandFailure')
+    diagnostics.begin('application', 'b'*40, application_extras=['managed-browser'])
+    diagnostics.browser_qualified()
+    diagnostics.record(phase,'succeeded')
+    assert len(active(state)) == 1
+
+
 async def test_real_attention_read_and_restart_preserve_unresolved_failure(tmp_path):
     from amplifier_web.service import AppService
     from amplifier_web.updates import UpdateManager

@@ -112,6 +112,9 @@ async def test_status_reports_pending_guard_without_installing(helper_manager, p
     assert status["appRevision"] == REVISION
     assert status["installedExtras"] == ["tui"]
     assert status["action"] == "updates.featureInstall"
+    assert {row['id']:row['providerModule'] for row in status['features'] if row['id'].startswith('decisions-')} == {
+        'decisions-openai':'provider-openai', 'decisions-azure':'provider-azure-openai',
+        'decisions-jev':'provider-jev', 'decisions-local':'provider-local-decisions'}
     await helper_manager.lock.acquire()
     assert app_features.status(helper_manager)["pending"] is True
     helper_manager.lock.release()

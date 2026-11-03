@@ -8,8 +8,8 @@ function savedRequest(kind){
  try{const value=JSON.parse(sessionStorage.getItem(requestKey(kind))||'null');return value&&typeof value.id==='string'&&value.id&&typeof value.args?.feature==='string'&&typeof value.args?.hostInstanceId==='string'?value:null}catch{return null}
 }
 
-export function UIUseSetup({state,act,kind,report}){
- const [loaded,setLoaded]=useState(report||null),[pending,setPending]=useState(()=>savedRequest(kind)),[choice,setChoice]=useState(()=>savedRequest(kind)?.args.feature||'decisions-openai'),[sending,setSending]=useState(false),[checking,setChecking]=useState(false),[error,setError]=useState('');
+export function UIUseSetup({state,act,kind,report,onConnect,connectionDisabled=false}){
+ const [loaded,setLoaded]=useState(report||null),[pending,setPending]=useState(()=>savedRequest(kind)),[choice,setChoice]=useState(()=>savedRequest(kind)?.args.feature||null),[sending,setSending]=useState(false),[checking,setChecking]=useState(false),[error,setError]=useState('');
  const alive=useRef(true),request=useRef(false),checkSequence=useRef(0);
  const receipts=state.updates?.featureResults||{},changes=JSON.stringify(receipts);
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;checkSequence.current++}},[]);
@@ -32,8 +32,9 @@ export function UIUseSetup({state,act,kind,report}){
    setPending(null);
   }
  },[pending?.id,matching?.phase,kind]);
- const current=loaded||report,setup=current?.featureSetup,feature=kind==='browser'?'managed-browser':choice;
+ const current=loaded||report,setup=current?.featureSetup;
  const features=(setup?.features||[]).filter(row=>kind==='browser'?row.id==='managed-browser':row.id.startsWith('decisions-'));
+ const feature=kind==='browser'?'managed-browser':choice||features.find(row=>row.installed)?.id||features[0]?.id;
  const selected=features.find(row=>row.id===feature),results=Object.values(receipts).filter(row=>row.feature===feature).sort((a,b)=>b.updatedAt-a.updatedAt),result=results[0];
  const busy=sending||checking||setup?.pending||Object.values(receipts).some(row=>pendingPhases.has(row.phase));
  async function install(reconcile=false){
@@ -62,12 +63,13 @@ export function UIUseSetup({state,act,kind,report}){
   <summary>{kind==='browser'?'Add browser support':'Add a decision provider'}</summary>
   <p>{kind==='browser'?'Installs a private browser on the Amplifier host. You can also connect a browser on your own device.':'Install support for the provider you want, then choose its connection and model. Local support connects to a model service you already run; it does not download a model.'}</p>
   {!current?<p role="status">{error||'Checking installed support…'}</p>:!setup?.supported?<p>{setup?.reason||'Ask the service owner to add this support.'}</p>:<>
-   {kind!=='browser'&&<label>Provider support <select aria-label="Decision provider support" value={choice} disabled={busy||Boolean(pending)} onChange={e=>{setChoice(e.target.value);setError('')}}>{features.map(row=><option value={row.id} key={row.id}>{row.label}{row.installed?' · installed':''}</option>)}</select></label>}
-   {selected?.installed&&<p>Support is installed.{kind==='browser'?' Check or repair its browser files below.':' Use Updates to prepare conversation components before using it in a new chat.'}</p>}
-   <button className="a-soft" disabled={busy||!selected||Boolean(pending)} onClick={()=>install()}>{busy?'Preparing support…':kind==='browser'&&selected?.installed?'Check browser installation':selected?.installed?'Check installed support':kind==='browser'?'Install Amplifier browser':'Install provider support'}</button>
-   <p className="a-caption">Keeps your existing setup. Any app restart waits until work is idle.{kind!=='browser'?' After installation, update conversation components in Updates, then configure the provider below.':''}</p>
+   {kind!=='browser'&&<label>Provider support <select aria-label="Decision provider support" value={feature||''} disabled={busy||Boolean(pending)} onChange={e=>{setChoice(e.target.value);setError('')}}>{features.map(row=><option value={row.id} key={row.id}>{row.label}{row.installed?' · installed':''}</option>)}</select></label>}
+   {selected?.installed&&<p>Support is installed.{kind==='browser'?' Check or repair its browser files below.':' Next, connect an account and choose where to use its decision model.'}</p>}
+   {kind!=='browser'&&selected?.installed&&onConnect&&selected.providerModule&&<button type="button" className="a-primary" disabled={busy||Boolean(pending)||connectionDisabled} onClick={()=>onConnect(selected.providerModule)}>Connect this provider</button>}
+   <button className="a-soft" disabled={busy||!selected||Boolean(pending)} onClick={()=>kind!=='browser'&&selected?.installed?checkSupport():install()}>{busy?'Preparing support…':kind==='browser'&&selected?.installed?'Check browser installation':selected?.installed?'Check installed support':kind==='browser'?'Install Amplifier browser':'Install provider support'}</button>
+   <p className="a-caption">Keeps your existing setup. Any app restart waits until work is idle.{kind!=='browser'?' Installing support does not connect an account or change your model.':''}</p>
   </>}
-  {result&&<p role="status">{labels[result.phase]||result.phase.replaceAll('_',' ')}. {result.detail}</p>}
+  {result&&<p role="status">{labels[result.phase]||result.phase.replaceAll('_',' ')}. {kind!=='browser'&&['installed','already_installed'].includes(result.phase)?'Connect an account to configure its decision model.':result.detail}</p>}
   {current&&error&&<p role="alert">{error}</p>}
   {pending&&!matching&&<><p role="status">The installation request is awaiting confirmation. Checking it uses the same request and does not start a second installation.</p><button className="a-link" disabled={sending||checking} onClick={()=>install(true)}>Check installation request</button></>}
   {error&&<button className="a-link" disabled={sending||checking} onClick={checkSupport}>Check support again</button>}

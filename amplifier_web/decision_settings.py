@@ -74,10 +74,11 @@ def describe(settings, providers=None):
 
 def configure(manager, args, workspace, scope):
     purpose, mode = args.get('purpose'), args.get('mode')
-    if purpose not in {'browser', 'computer'} or mode not in {'standard', 'decision'}:
-        raise ValueError('Choose browser or computer and ordinary or decision selection')
+    if purpose not in {'browser', 'computer', 'both'} or mode not in {'standard', 'decision'}:
+        raise ValueError('Choose browser, computer, or both and ordinary or decision selection')
+    purposes = ('browser', 'computer') if purpose == 'both' else (purpose,)
     effective = manager.config(workspace)
-    binding = {'mode': 'standard', 'backend': None, 'allow_external_state': False}
+    bindings = {name: {'mode': 'standard', 'backend': None, 'allow_external_state': False} for name in purposes}
     selected, backend = None, None
     if mode == 'decision':
         choice = args.get('backend') or {}
@@ -91,8 +92,8 @@ def configure(manager, args, workspace, scope):
             raise ValueError('Choose whether observations may be sent to this decision service')
         definition = catalogs()[selected['module']]
         backend = {**definition[1]({k: v for k, v in choice.items() if k != 'provider'}), 'enabled': True}
-        identity = 'ui-' + purpose + '-' + row_id(selected)
-        binding = {'mode': 'decision', 'backend': identity, 'allow_external_state': True}
+        bindings = {name: {'mode': 'decision', 'backend': 'ui-' + name + '-' + row_id(selected),
+                           'allow_external_state': True} for name in purposes}
     from .shared_settings import overlay, settings_paths, read_yaml
     paths = settings_paths(workspace, shared_home=manager.store.shared_home, global_only=manager.global_only)
 
@@ -127,15 +128,17 @@ def configure(manager, args, workspace, scope):
             models = copy.deepcopy(old.get('backends') or {})
             if old.get('id') and 'backends' not in old:
                 models[old['id']] = {k: v for k, v in old.items() if k != 'id'}
-            models[binding['backend']] = backend
+            for binding in bindings.values():
+                models[binding['backend']] = copy.deepcopy(backend)
             config['decisions'] = {**old, 'enabled': True, 'backends': models}
-        settings.setdefault('decision_models', {}).setdefault('selection', {})[purpose] = binding
+        settings.setdefault('decision_models', {}).setdefault('selection', {}).update(bindings)
         combined = preview(settings)
-        if combined.get('decision_models', {}).get('selection', {}).get(purpose) != binding:
+        selections = combined.get('decision_models', {}).get('selection', {})
+        if any(selections.get(name) != binding for name, binding in bindings.items()):
             raise ValueError('This workspace overrides decision preferences. Save in its workspace scope.')
         if selected:
             row = next((r for r in combined['config']['providers'] if row_id(r) == row_id(selected)), {})
-            if (_backends(row).get(binding['backend']) != backend or
+            if (any(_backends(row).get(binding['backend']) != backend for binding in bindings.values()) or
                     row.get('config', {}).get('decisions', {}).get('enabled') is not True):
                 raise ValueError('This workspace overrides decision models. Save in its workspace scope.')
     manager.store.update(workspace, scope, save)

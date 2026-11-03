@@ -117,7 +117,7 @@ def running_application(manager):
 def status(manager):
     if manager is None:
         return {'supported': False, 'reason': 'Feature installation requires the managed Unified app updater.'}
-    from .app_updates import installed_extras
+    from .app_updates import installed_extras, OPTIONAL_EXTRAS
     try:
         app = running_application(manager)
     except (ValueError, OSError, metadata.PackageNotFoundError):
@@ -129,6 +129,8 @@ def status(manager):
         'pending': bool(manager.lock.locked() or manager.awaiting_restart() or state.get('pendingApp') or state.get('pendingRelease')),
         'action': 'updates.featureInstall', 'feature': 'native-desktop',
         'features': [{'id': key, 'label': label, 'installed': key in installed,
+                      **({'providerModule': OPTIONAL_EXTRAS[key][-1].removeprefix('amplifier-module-')}
+                         if key.startswith('decisions-') else {}),
                       'requiresConversationUpdate': key.startswith('decisions-')}
                      for key, label in FEATURES.items()],
         'detail': 'Add native observation to this same app revision, preserving installed components and optional features. The app restarts when all work is idle. This installs no desktop-control grant and requests no OS permission.'}

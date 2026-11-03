@@ -234,6 +234,7 @@ print(json.dumps(asyncio.run(asyncio.wait_for(qualify_managed_browser(),timeout=
                 or not isinstance(receipt.get('launchArgs'), list)
                 or not all(isinstance(arg, str) for arg in receipt['launchArgs'])):
             raise ValueError('Invalid browser qualification receipt.')
+        manager.diagnostics.browser_qualified()
         return receipt
     except (OSError, RuntimeError, TimeoutError, ValueError, TypeError) as error:
         raise ValueError('The browser could not start in this service. Inspect the managed-browser-probe '

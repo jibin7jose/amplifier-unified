@@ -132,6 +132,9 @@ async def add_recovery_fixture(app):
  app.router.add_post('/fixture/recovery-release',release)
 
 async def main(home):
+ if os.environ.get('SETTINGS_DECISION_SETUP_FIXTURE'):
+  from decision_setup import prepare
+  prepare()
  # Never read or change a developer's real machine resource authority.
  from amplifier_web import test_host_resources as resources
  resources.identity=lambda:'fixture-machine'
@@ -151,6 +154,9 @@ async def main(home):
   app['allowed_origins']=app['allowed_origins']|{'http://127.0.0.1:8957','http://127.0.0.1:8958'}
  service=app['service'];await service.dispatch('session.create',{'title':'Settings test','workspace':str(workspace),'bundle':'anchors'})
  if recovery:await add_recovery_fixture(app)
+ if os.environ.get('SETTINGS_DECISION_SETUP_FIXTURE'):
+  from decision_setup import attach
+  attach(app,workspace)
  async def agent_view(request):
   payload=await request.json()
   result=await service.app_bridge('dispatch',{'action':'view.update','args':{'clientId':payload['clientId'],'patch':payload['patch']}},service._session()['id'])

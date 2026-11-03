@@ -44,7 +44,7 @@ try{
  await panel.getByLabel('Action selection',{exact:true}).selectOption('decision');
  const identity=await panel.getByLabel('Provider connection',{exact:true}).locator('option').evaluateAll(rows=>rows.find(row=>row.textContent.includes('Jev'))?.value);
  assert.ok(identity);await panel.getByLabel('Provider connection',{exact:true}).selectOption(identity);
- await panel.getByLabel('Allow observations from this surface to be sent to this decision service',{exact:true}).check();
+ await panel.getByLabel('Allow observations from the browser to be sent to this decision service',{exact:true}).check();
  await panel.getByRole('button',{name:'Save selection',exact:true}).click();
  await panel.getByText('Saved for new conversations. Applies to bundles with UI use enabled.',{exact:true}).waitFor();
  await page.waitForFunction(()=>window.amplifier.getState().setup.decisionModels.selection.browser.mode==='decision');

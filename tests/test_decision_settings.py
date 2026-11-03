@@ -42,6 +42,46 @@ async def test_selection_reuses_account_and_keeps_surface_models_independent(man
     assert settings['decision_models']['selection']['computer']['mode']=='decision'
     with pytest.raises(ValueError,match='workspace overrides'):await select(manager,tmp_path)
 
+
+async def test_both_saves_independent_bindings_without_changing_chat_or_credentials(manager,tmp_path):
+    result = await select(manager, tmp_path, purpose='both')
+    assert result['decisionSetupCompletion']['purpose'] == 'both'
+    selection = result['decisionModels']['selection']
+    assert {name: row['backend'] for name, row in selection.items()} == {
+        'browser': 'ui-browser-fixture', 'computer': 'ui-computer-fixture'}
+    config = manager.config(tmp_path).providers[0]['config']
+    assert config['api_key'] == '${FIXTURE_KEY}' and config['default_model'] == 'chat'
+    assert {row['model'] for row in config['decisions']['backends'].values()} == {'test'}
+    await select(manager, tmp_path, purpose='browser', backend={'provider':'fixture','model':'changed'})
+    assert manager.config(tmp_path).providers[0]['config']['decisions']['backends']['ui-computer-fixture']['model'] == 'test'
+    result = await select(manager, tmp_path, purpose='both', mode='standard')
+    assert all(row == {'mode':'standard','backend':None,'allow_external_state':False}
+               for row in result['decisionModels']['selection'].values())
+
+
+@pytest.mark.parametrize('conflict', ['selection', 'backend'])
+async def test_both_rejects_entire_save_when_one_purpose_has_a_narrower_override(manager,tmp_path,conflict):
+    await select(manager, tmp_path)
+    if conflict == 'selection':
+        await select(manager, tmp_path, purpose='computer', scope='local', mode='standard')
+    else:
+        await select(manager, tmp_path, purpose='computer', scope='local', backend={'provider':'fixture','model':'local'})
+    before = {scope: manager.store.read(tmp_path, scope) for scope in ('global','project','local')}
+    with pytest.raises(ValueError, match='workspace overrides'):
+        await select(manager, tmp_path, purpose='both', backend={'provider':'fixture','model':'new'})
+    assert {scope: manager.store.read(tmp_path, scope) for scope in before} == before
+
+
+async def test_both_still_requires_explicit_consent_and_scope_owned_account(manager,tmp_path):
+    before = manager.store.read(tmp_path, 'global')
+    with pytest.raises(ValueError, match='observations'):
+        await select(manager, tmp_path, purpose='both', allowExternalState=False)
+    assert manager.store.read(tmp_path, 'global') == before
+    manager.store.update(tmp_path,'local',lambda settings:settings.update({'config':{'providers':[{'id':'local','module':'provider-fixture','config':{'api_key':'local-secret'}}]}}))
+    with pytest.raises(ValueError, match='workspace scope'):
+        await select(manager, tmp_path, purpose='both', backend={'provider':'local','model':'test'})
+    assert manager.store.read(tmp_path, 'global') == before
+
 async def test_unavailable_no_consent_and_inline_secrets_leave_settings_unchanged(manager,tmp_path):
     before=manager.store.read(tmp_path,'global')
     for patch in ({'backend':{'provider':'missing','model':'x'}},{'allowExternalState':False},{'backend':{'provider':'fixture','model':'x','api_key':'secret'}}):

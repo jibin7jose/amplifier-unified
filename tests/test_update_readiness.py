@@ -101,6 +101,38 @@ async def test_constructor_waits_for_real_listener_readiness(tmp_path,monkeypatc
         await service.close()
 
 
+@pytest.mark.parametrize('outcome', ['pass','failed','changed-target'])
+async def test_successor_of_old_updater_proves_browser_recovery_before_clearing_attention(tmp_path,monkeypatch,outcome):
+    from amplifier_web import app_updates, app_replacement
+    from test_ui_use_packaging import QUALIFIED_BROWSER
+    service,manager=make_manager(tmp_path,monkeypatch)
+    diagnostics=manager.diagnostics
+    try:
+        diagnostics.begin('application', 'e'*40, application_extras=['managed-browser'])
+        failure=diagnostics.record('managed-browser-install','failed',errorType='CommandFailure')
+        diagnostics.begin('application', REVISION, ATTEMPT, application_extras=['managed-browser'])
+        # This is the persisted shape produced by 0.47.1, before this repair.
+        diagnostics.state['batch'].pop('browserFailures')
+        diagnostics.state['batch'].pop('verifiedBrowserFailures')
+        service.state['updates']['pendingRestart']={**TARGET,'qualification':{'extras':['managed-browser']}}
+        monkeypatch.setattr(app_replacement,'matches_running',lambda *_:True)
+        calls=[]
+        async def process(*args,**kwargs):
+            calls.append(args)
+            if outcome=='failed':raise RuntimeError('Synthetic browser launch failure')
+            if outcome=='changed-target':service.state['updates']['pendingRestart']['attemptId']='f'*32
+            return json.dumps(QUALIFIED_BROWSER)
+        monkeypatch.setattr(app_updates,'process',process)
+        assert await manager.confirm_readiness(health(manager)) is (outcome!='changed-target')
+        assert len(calls)==1 and 'qualify_managed_browser' in calls[0][-1]
+        failures=list(diagnostics.state['activeFailures'].values())
+        if outcome=='pass':assert failures==[]
+        else:assert any(group['latest']['id']==failure['id'] for group in failures)
+        assert failure['id'] in diagnostics.path.read_text(), 'Recovery retains historical failure'
+    finally:
+        await service.close()
+
+
 async def test_application_result_survives_component_failure_and_service_reload(tmp_path,monkeypatch):
     service,manager=make_manager(tmp_path,monkeypatch)
     try:

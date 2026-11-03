@@ -57,7 +57,7 @@ try{
    assert.ok(metrics.actions.every(row=>separate(metrics.title,row)&&(row.label==='Home'||separate(metrics.home,row))));
    assert.ok(metrics.actions.every((row,i)=>metrics.actions.slice(i+1).every(other=>separate(row,other))));
    assert.notEqual(metrics.home.display,'none');assert.ok(metrics.home.width>=44&&metrics.home.height>=44);
-   assert.deepEqual(metrics.actions.map(row=>row.label),['Open navigation','Home','Back in navigation history','Forward in navigation history','Recent places','Chat','Open canvas']);
+   assert.deepEqual(metrics.actions.map(row=>row.label),['Open navigation','Home','Back in navigation history','Forward in navigation history','Recent places','Browser & computer','Chat','Open canvas']);
    assert.ok(metrics.actions.every(row=>contained(row)&&row.width>=44&&row.height>=44&&row.x>=0&&row.x+row.width<=width));
   }
   await page.screenshot({path:`${out}/chat-${width}.png`});

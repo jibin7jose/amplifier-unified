@@ -259,7 +259,10 @@ class UpdateDiagnostics:
             return
         batch = self.state.get('batch', {})
         active = self.state.setdefault('activeFailures', {})
-        for key, observed in batch.get('recoveringFailures', {}).items():
+        covered = dict(batch.get('recoveringFailures', {}))
+        if phase == 'restart-ack':
+            covered.update(batch.get('verifiedBrowserFailures', {}))
+        for key, observed in covered.items():
             group = active.get(key)
             # Only failures covered when this exact attempt began. A later
             # occurrence invalidates that evidence, including an identical cause.
@@ -303,8 +306,32 @@ class UpdateDiagnostics:
                     and (event.get('kind') == 'rollback') == rollback):
                 recovery[key] = event.get('id')
 
+    def browser_qualified(self):
+        """A validated blank launch covers this attempt's earlier browser failures.
+
+        Qualification alone does not settle attention. The application must still
+        complete its guarded activation/restart acknowledgement.
+        """
+        batch = self.state.get('batch', {})
+        if self.state.get('kind') == 'application':
+            batch['verifiedBrowserFailures'] = dict(batch.get('browserFailures', {}))
+
+    def browser_failures(self, extras):
+        extras = sanitized_application_extras(extras)
+        if extras is None or 'managed-browser' not in extras:
+            return {}
+        result = {}
+        for key, group in self.state.get('activeFailures', {}).items():
+            failure = group['latest']
+            scope = sanitized_application_extras(failure.get('applicationExtras'))
+            if (group['kind'] == 'application' and scope is not None and 'managed-browser' in scope
+                    and failure.get('phase') in {'managed-browser-install', 'managed-browser-probe'}):
+                result[key] = failure.get('id')
+        return result
+
     def begin(self,kind,revision=None,attempt_id=None,*,tier=None,components=(),application_extras=None):
         self._pending_failure = None
+        previous_revision = self.state.get('revision')
         identity=attempt_id if isinstance(attempt_id,str) and re.fullmatch(r'[a-f0-9]{32}',attempt_id) else uuid.uuid4().hex
         self.state.update(attemptId=identity,kind=kind)
         if revision and re.fullmatch(r'[a-f0-9]{32,40}',revision):self.state['revision']=revision
@@ -320,6 +347,7 @@ class UpdateDiagnostics:
         if extras is not None:
             self.state['batch']['applicationExtras'] = extras
         recovering = {}
+        browser_failures = self.browser_failures(extras) if kind == 'application' else {}
         for key, group in self.state.get('activeFailures', {}).items():
             failure = group['latest']
             if group['kind'] == kind == 'application':
@@ -340,6 +368,13 @@ class UpdateDiagnostics:
             # Re-entering an existing attempt cannot adopt intervening failures.
             recovering = previous_batch.get('recoveringFailures', {})
         self.state['batch']['recoveringFailures'] = recovering
+        if kind == 'application':
+            same_attempt = (previous_batch.get('attemptId') == identity and previous_revision == revision
+                            and previous_batch.get('kind') == kind and previous_batch.get('applicationExtras') == extras)
+            # An older updater has no browser snapshot. The successor may take
+            # one before its own verified blank launch, never infer that proof.
+            self.state['batch']['browserFailures'] = previous_batch.get('browserFailures', browser_failures) if same_attempt else browser_failures
+            self.state['batch']['verifiedBrowserFailures'] = previous_batch.get('verifiedBrowserFailures', {}) if same_attempt else {}
         self.manager.service.state['updates'].pop('probeProgress',None)
         return identity
 

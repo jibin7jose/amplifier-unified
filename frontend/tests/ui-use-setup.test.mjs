@@ -23,6 +23,18 @@ async function render(props){let root;await renderAct(async()=>{root=create(Reac
 async function click(root,text){const target=button(root,text);assert.ok(target,text);assert.equal(Boolean(target.props.disabled),false,text+' should be usable');await renderAct(async()=>target.props.onClick())}
 const stored=kind=>JSON.parse(storage.get('amplifier.uiUseSetup.request.'+kind)||'null');
 
+test('installed decision support offers connection setup and checking it never starts an install',async()=>{
+ const calls=[],connected=[];let reads=0;
+ const report={...support,featureSetup:{...support.featureSetup,features:support.featureSetup.features.map(row=>row.id==='decisions-jev'?{...row,installed:true,providerModule:'provider-jev'}:row)}};
+ globalThis.fetch=async()=>{reads++;return new Response(JSON.stringify(report))};
+ const root=await render({kind:'decisions',report,onConnect:module=>connected.push(module),act:async(...args)=>calls.push(args)});
+ assert.equal(root.root.findByType('select').props.value,'decisions-jev');
+ await click(root,'Connect this provider');assert.deepEqual(connected,['provider-jev']);
+ await click(root,'Check installed support');assert.equal(reads,1);assert.deepEqual(calls,[]);
+ assert.ok(!JSON.stringify(root.toJSON()).includes('Use Updates to prepare'));
+ assert.equal(stored('decisions'),null);
+});
+
 test('lost admission survives fresh status, remount and exact-ID reconciliation',async()=>{
  const calls=[];let lose=true,reads=0;
  const dispatch=async(action,args,meta)=>{calls.push({action,args:{...args},meta:{...meta}});if(lose)throw Object.assign(Error('Connection interrupted'),{unconfirmed:true,requestPath:'/api/actions'});return {accepted:true,requestId:meta.id}};

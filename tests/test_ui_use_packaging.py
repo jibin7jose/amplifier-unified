@@ -3,7 +3,7 @@ import json
 import sys
 from types import ModuleType, SimpleNamespace
 import tomllib
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -114,7 +114,7 @@ def test_managed_browser_requires_package_and_real_executable(tmp_path, monkeypa
 
 
 async def test_browser_preparation_owns_cache_and_never_installs_os_packages(tmp_path):
-    diagnostics = SimpleNamespace(run=AsyncMock(side_effect=['', json.dumps(QUALIFIED_BROWSER)]))
+    diagnostics = SimpleNamespace(run=AsyncMock(side_effect=['', json.dumps(QUALIFIED_BROWSER)]), browser_qualified=Mock())
     manager = SimpleNamespace(home=tmp_path, diagnostics=diagnostics)
     await app_updates.prepare_browser(manager, '/owned/python', [])
     diagnostics.run.assert_not_awaited()
@@ -125,6 +125,20 @@ async def test_browser_preparation_owns_cache_and_never_installs_os_packages(tmp
     assert not any('--with-deps' in str(value) for value in call.args)
     assert (tmp_path / 'browsers').is_dir()
     assert diagnostics.run.await_args_list[1].args[0] == 'managed-browser-probe'
+    diagnostics.browser_qualified.assert_called_once_with()
+
+
+@pytest.mark.parametrize('receipt', [QUALIFIED_BROWSER, {**QUALIFIED_BROWSER, 'blankLaunchVerified':False}, {}])
+async def test_browser_recovery_requires_validated_launch_receipt(tmp_path, receipt):
+    diagnostics = SimpleNamespace(run=AsyncMock(return_value=json.dumps(receipt)), browser_qualified=Mock())
+    manager = SimpleNamespace(home=tmp_path, diagnostics=diagnostics)
+    if receipt == QUALIFIED_BROWSER:
+        assert await app_updates.qualify_browser(manager, '/owned/python') == receipt
+        diagnostics.browser_qualified.assert_called_once_with()
+    else:
+        with pytest.raises(ValueError, match='could not start'):
+            await app_updates.qualify_browser(manager, '/owned/python')
+        diagnostics.browser_qualified.assert_not_called()
 
 
 @pytest.mark.parametrize('fails', [False, True])
