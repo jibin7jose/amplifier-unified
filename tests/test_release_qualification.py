@@ -204,6 +204,10 @@ def test_workflow_requires_parallel_lanes_before_write_permission():
     assert set(jobs['release']['needs']) == {'prepare', *qualification.LANES}
     assert jobs['release']['permissions'] == {'contents': 'write'}
     steps = jobs['release']['steps']
+    assert steps[0]['with'] == {
+        'ref': '${{ needs.prepare.outputs.revision }}', 'fetch-depth': '1'}
+    # Prepare retains history for explicit historical release ancestry checks.
+    assert jobs['prepare']['steps'][0]['with']['fetch-depth'] == '0'
     verify = next(i for i, step in enumerate(steps) if 'verify-receipts' in step.get('run', ''))
     publish = next(i for i, step in enumerate(steps) if 'publish --tag' in step.get('run', ''))
     assert verify < publish
