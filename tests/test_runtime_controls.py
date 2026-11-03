@@ -127,6 +127,93 @@ class ControlsTests(unittest.TestCase):
             validate_plan(plan)
 
 
+@pytest.mark.parametrize('bound', [False, True])
+async def test_disabled_agent_persistence_retains_exact_edited_and_added_definitions(tmp_path, monkeypatch, bound):
+    """Public Foundation toggles, including cold restore; no agent invocation."""
+    import copy
+    import json
+    from types import SimpleNamespace
+    from amplifier_core.testing import MockCoordinator
+    from amplifier_foundation import SessionConfigurator
+    from amplifier_foundation.bundle import Bundle
+    from amplifier_web.provider_environment import credential_bindings, rebind_provider_credentials
+    from amplifier_web.runtime_controls import RuntimeControls
+
+    monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(tmp_path))
+    original = {'instruction': 'Initial definition', 'api_key': 'synthetic-agent-metadata'}
+    edited = {**original, 'instruction': 'Edited before disabling',
+        'providers': [{'module': 'provider-fixture', 'source': 'fixture-source', 'id': 'fixture',
+                       'config': {'api_key': 'synthetic-nested-key', 'model': 'fixture'}}]}
+    added = {'instruction': 'Added after preparation', 'values': {'nested': [1, 2, 3]}}
+
+    async def make(plan, initial_disabled=False):
+        coordinator = MockCoordinator()
+        coordinator.config.clear()
+        coordinator.config.update(copy.deepcopy(plan))
+        coordinator.session_state.clear()
+        await coordinator.mount('orchestrator', SimpleNamespace(root_provider=None))
+        session = SimpleNamespace(session_id='agent-persistence', coordinator=coordinator)
+        prepared = SimpleNamespace(bundle=Bundle(name='fixture', agents=copy.deepcopy(plan.get('agents', {}))))
+        configurator = SessionConfigurator(session, prepared)
+        coordinator.register_capability('web.configurator', configurator)
+        coordinator.register_capability('web.provider_credentials_bound', bound)
+        if initial_disabled:
+            # Same pre-shared-settings seam as the host; no prepared-plan fallback.
+            coordinator.register_capability('web.agent_definitions', copy.deepcopy(plan['agents']))
+            configurator.agent_disable('original')
+        controls = RuntimeControls(session, SimpleNamespace(generation=None, queued_inputs=0))
+        return controls, configurator
+
+    controls, configurator = await make({'agents': {'original': original}}, initial_disabled=True)
+    restored = None
+    try:
+        controls.persist()
+        effective_path = controls.state_path().with_name('effective-configuration.json')
+        assert json.loads(effective_path.read_text())['agents']['original'] == (
+            {'instruction': original['instruction']} if bound else original)
+        await controls.perform('configuration.toggle', {'section': 'agents', 'name': 'original', 'enabled': True})
+        controls.coordinator.config['agents']['original'] = copy.deepcopy(edited)
+        controls.coordinator.config['agents']['added'] = copy.deepcopy(added)
+        for name in ('original', 'added'):
+            await controls.perform('configuration.toggle', {'section': 'agents', 'name': name, 'enabled': False})
+        assert controls.coordinator.config['agents'] == {}
+        expected = {'agents': {'original': edited, 'added': added}}
+        saved = json.loads(effective_path.read_text())
+        assert saved == (credential_bindings(expected) if bound else expected)
+        assert json.loads(controls.state_path().read_text())['configurator']['disabled']['agents'] == ['original', 'added']
+        # Saved declarations must not alias a mutable live or retained mapping.
+        controls.persist()
+        assert json.loads(effective_path.read_text()) == saved
+        if bound:
+            restored_plan, was_bound = rebind_provider_credentials(saved, expected)
+            restored_expected = copy.deepcopy(expected)
+            restored_expected['agents']['original'].pop('api_key')
+            assert was_bound and restored_plan == restored_expected
+            changed = copy.deepcopy(expected)
+            changed['agents']['original']['providers'][0]['source'] = 'different-source'
+            with pytest.raises(ValueError, match='instance/source'):
+                rebind_provider_credentials(saved, changed)
+        else:
+            restored_plan = saved
+            restored_expected = expected
+        restored, cold_configurator = await make(restored_plan)
+        await restored.restore()
+        assert restored.coordinator.config['agents'] == {}
+        assert cold_configurator.snapshot()['agents']['disabled'] == ['original', 'added']
+        assert json.loads(effective_path.read_text()) == saved
+        for name, definition in restored_expected['agents'].items():
+            await restored.perform('configuration.toggle', {'section': 'agents', 'name': name, 'enabled': True})
+            assert restored.coordinator.config['agents'][name] == definition
+        # Removing an enabled definition must not resurrect the retained copy.
+        restored.coordinator.config['agents'].pop('added')
+        restored.persist()
+        assert 'added' not in json.loads(effective_path.read_text())['agents']
+    finally:
+        await controls.close()
+        if restored:
+            await restored.close()
+
+
 def test_real_core_controls_and_tool_approval():
     python=os.environ.get('UNIFIED_RUNTIME_PYTHON')
     if not python:

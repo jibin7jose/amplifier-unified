@@ -132,6 +132,9 @@ class RuntimeControls:
         self.coordinator = session.coordinator
         self.configurator = self.coordinator.get_capability("web.configurator")
         self.prepared = self.coordinator.get_capability("web.prepared")
+        self.agent_definitions = copy.deepcopy({
+            **(self.coordinator.get_capability("web.agent_definitions") or {}),
+            **self.coordinator.config.get("agents", {})})
         self.lock = asyncio.Lock()
         self.selection = None
         # Session preparation has already applied the new-chat root choice.
@@ -232,6 +235,16 @@ class RuntimeControls:
         if task_only:
             return
         plan = {key:value for key,value in self.coordinator.config.items() if key in PLAN_KEYS}
+        disabled_agents = snapshot.get("agents", {}).get("disabled", [])
+        if disabled_agents:
+            # This is a restorable configuration, not the live availability
+            # map. Never temporarily enable an agent or persist a redacted
+            # inspector summary in place of its exact declaration.
+            plan["agents"] = dict(plan.get("agents", {}))
+            for name in disabled_agents:
+                if name not in self.agent_definitions:
+                    raise ValueError(f"Disabled agent {name!r} has no retained definition")
+                plan["agents"][name] = self.agent_definitions[name]
         from .decision_accounts import logical_plan
         plan = logical_plan(plan)
         if self.coordinator.get_capability("web.provider_credentials_bound"):
@@ -415,6 +428,9 @@ class RuntimeControls:
                 function = getattr(self.configurator,"tool" + suffix + "_module")
             else:
                 function = getattr(self.configurator, singular + suffix)
+            if section == "agents" and not enabled and name in self.coordinator.config.get("agents", {}):
+                # Retain runtime edits/additions, not only the initial bundle.
+                self.agent_definitions[name] = copy.deepcopy(self.coordinator.config["agents"][name])
             result = function(name)
             if inspect.isawaitable(result):
                 await result

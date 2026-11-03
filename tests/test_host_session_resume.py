@@ -36,11 +36,12 @@ def mounted_host(tmp_path, monkeypatch):
     provider = SimpleNamespace(get_info=lambda: SimpleNamespace(id="fixture", defaults={"model": "offline"}))
     loop = SimpleNamespace(_select_provider=lambda _: provider, load_failures=[])
     capabilities = {}
+    mounted_config = {}
     coordinator = SimpleNamespace(get=lambda key: {"context": context, "orchestrator": loop,
         "providers": {"fixture": provider}, "tools": {}}.get(key), get_capability=capabilities.get,
         register_capability=lambda key, value: capabilities.update({key: value}),
-        hooks=SimpleNamespace(register=Mock()), register_cleanup=Mock())
-    session = SimpleNamespace(coordinator=coordinator, config={}, cleanup=AsyncMock(), execute=AsyncMock())
+        hooks=SimpleNamespace(register=Mock()), register_cleanup=Mock(), config=mounted_config)
+    session = SimpleNamespace(coordinator=coordinator, config=mounted_config, cleanup=AsyncMock(), execute=AsyncMock())
     prepared = SimpleNamespace(mount_plan={"session": {"orchestrator": {"module": "loop-live"}}},
                                create_session=AsyncMock(return_value=session))
     loaded = SimpleNamespace(hooks=[], to_mount_plan=lambda: copy.deepcopy(prepared.mount_plan),
@@ -74,11 +75,34 @@ def mounted_host(tmp_path, monkeypatch):
     return SimpleNamespace(prepare=prepare, store=store, held=held, checkpoint=checkpoint,
         writes=writes, runtime=runtime, session=session, prepared=prepared, registry=registry,
         context=context, capabilities=capabilities, home=home, config=config, loaded=loaded,
+        configurator=configurator,
         path=store.directory(runtime.session_id) / "transcript.jsonl")
 
 
 def snapshot(messages):
     return {"messages": copy.deepcopy(messages), "metadata": {}, "bundle": "anchors"}
+
+
+async def test_host_retains_agent_definitions_before_saved_settings_disable_them(mounted_host):
+    h = mounted_host
+    definition = {'instruction': 'Synthetic agent', 'metadata': {'values': ['original']}}
+    expected = {'fixture': copy.deepcopy(definition)}
+    h.session.config['agents'] = {'fixture': definition}
+    assert h.session.coordinator.config is h.session.config
+    settings = {'disabled': {'agents': ['fixture']}}
+    h.config.settings['configurator'] = settings
+
+    async def disable(saved):
+        assert saved == settings
+        assert h.capabilities['web.agent_definitions'] == expected
+        h.session.coordinator.config['agents'].pop('fixture')
+        definition['metadata']['values'].append('later mutation')
+
+    h.configurator.apply_saved_settings.side_effect = disable
+    await h.prepare()
+    h.configurator.apply_saved_settings.assert_awaited_once_with(settings)
+    assert h.session.config['agents'] == {}
+    assert h.capabilities['web.agent_definitions'] == expected
 
 
 async def test_checkpoints_persist_tools_without_republishing_unchanged_message_anchors(mounted_host):
@@ -197,7 +221,7 @@ async def test_prepared_new_chat_selection_reaches_public_controls_and_first_req
     from amplifier_web.runtime_controls import RuntimeControls
     h = mounted_host
     coordinator = h.session.coordinator
-    coordinator.config, coordinator.session_state = {}, {}
+    coordinator.session_state = {}
     loop = coordinator.get('orchestrator')
     provider = coordinator.get('providers')['fixture']
     class Info(SimpleNamespace):

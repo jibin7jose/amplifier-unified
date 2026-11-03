@@ -1160,6 +1160,10 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         coordinator.register_capability("web.configurator", configurator)
         coordinator.register_capability("web.prepared", prepared)
         coordinator.register_capability("web.registry", registry)
+        # Foundation removes disabled agents from the live map. Retain the
+        # exact mounted declarations before shared settings can disable them.
+        coordinator.register_capability("web.agent_definitions",
+                                        copy.deepcopy(coordinator.config.get("agents", {})))
         with startup_timing.phase('manager.settings'):
             if not snapshot:
                 await configurator.apply_saved_settings(config.settings.get("configurator") or {})
