@@ -131,38 +131,39 @@ still applies when editing source through that tool; it is not a requirement to
 read each generated file before a checked archive import. Preserve local changes
 and reject changed inputs, unexpected paths or links before copying.
 
-### Efficient post-release monitoring
+### Release completion and follow-up
 
-Assign one monitor the exact published source and workflow run IDs. Passive
-watching should wait for completion, not wake a model for each progress line.
-With Bash, use a direct `action: run` with an explicit supported timeout and a
-bounded/private progress log, then read the exact GitHub conclusion. Managed
-`wait` wakes on output as well as completion; `wait_ms` does not extend the
-process's start-time lifetime. Do not nest a long wait inside a shorter
-`tool_exec` deadline. If the lifetime expires, inspect that exact remote run
-before renewing within the original task deadline. Keep actual failures and
-cancellation visible. This is a bounded tool call, not a durable detached watch
-or authority to retry publishing, replay work or adopt the release on a host.
+Routine release work ends after immutable publication and the short published
+asset/install smoke. Do not create a per-release model monitor, full-suite task,
+or broad acceptance campaign. GitHub records conclusions and tracks failures;
+assign an owner only when a failure needs investigation. A skipped nightly suite
+is not evidence that it passed, and a smoke success cannot close its failure issue.
 
-## Local-first, fast publication policy (updated October 14, 2026)
+## Local-first, fast publication policy (updated November 4, 2026)
 
-The development loop depends on published releases reaching local development
-installations quickly. Target roughly two minutes for a warm publication run;
-this is an operating target, not a guarantee about GitHub queues, downloads or
-cold dependency builds. Exhaustive testing must not silently become a publication
-or merge prerequisite again.
+Target **five minutes or less in total for a ready candidate's routine release**:
+reuse matching focused PR/DTU evidence, run the existing short publication graph,
+and verify the published package. This replaces automatic broad testing after
+every publication; putting hours in the background does not meet the policy.
+The observed warm publisher took 175 seconds; resolving its published identity,
+install smoke and reporting took about 48 seconds, roughly 3 minutes 43 seconds
+combined. These measurements exclude scheduling delay and are not a guarantee.
+Report queue, cold-build and required-check overhead separately. An overrun is a
+measurement to address, never permission to skip a required check or claim success.
 
-Before requesting merge, run the affected backend and frontend tests locally,
-and exercise changed user flows in an owned DTU with synthetic state. Reuse owned
-dependencies where appropriate. Aim for 1–3 minutes of focused local checks and
-about five minutes for the normal foreground budget. The full local suite is not
-a merge or release prerequisite, including for substantial integrations. Select
-specific pre-release checks for material risks such as destructive migrations or
-authorization changes. Fix failures attributable to the candidate's changed
-behavior before publishing; record the exact source, commands, results, skips and
-limits in the PR. Unrelated broad-suite findings remain visible follow-up work.
-A green GitHub check is not a substitute for focused qualification. Follow
-workspace DTU rules; never use a shared application installation as a test target.
+Before requesting merge, qualify affected backend/frontend behavior and changed
+user flows in an owned DTU with synthetic state. Reuse dependencies and exact
+qualified inputs; do not rerun unrelated suites or paid acceptance solely for a
+version change. Select specific checks for material risks such as destructive
+migrations or authorization changes. Fix candidate-related failures before
+publication and retain source, commands, outcomes and limits. A green CI check
+is not a substitute for focused qualification. Follow workspace DTU rules.
+
+Broad coverage runs once nightly around **01:00 America/Los_Angeles** from the
+single schedule in `post-release.yml`, or by explicit manual investigation. It
+must not also run automatically per release, PR or main push. Affected integration
+lanes on PRs remain path-scoped. Remove duplication only with an identified
+coverage owner; retain distinct installed-package, platform and media boundaries.
 
 For changes affecting repeated reads, publication, persistence or preparation,
 apply [performance validation](performance.md) to the affected workload. Retain
@@ -278,17 +279,25 @@ publish. Matching candidate/dependency receipts, fresh installed-wheel probing,
 immutable tags, checksums and the short real-runtime regression suite still gate
 publication. The exhaustive readiness suite no longer runs on PRs or main pushes.
 
-**Post-release verification** starts from successful completion of the publisher,
-including publishers using `GITHUB_TOKEN`. It reads that run's retained candidate,
-checks the actual published stable tag resolves to the candidate commit, and uses
-that immutable revision for all broad tests. It does not substitute the current
-main head or whichever release happens to be latest. The installed-package lane
-downloads both published distributions, verifies their checksums, and installs
-and probes the wheel outside the source checkout. The full Python, broad readiness, extended browser, and owned integration
-suites run in independent jobs after publication. The [integration ownership
-checklist](integration-coverage.md) maps optional-dependency skips to configured
-execution lanes, runs affected lanes on PRs, and rejects unexpected skips. The
-existing publication runtime group is not duplicated in that matrix.
+**Release smoke** starts after a successful publisher, including publishers using
+`GITHUB_TOKEN`. It verifies that run's retained candidate and actual published
+stable tag. The installed-package lane downloads both distributions, verifies
+checksums, then installs and probes the wheel outside the source checkout. These
+are the only automatic per-release checks after publication.
+
+**Nightly verification** freezes the latest actual published release and verifies
+the latest successful canonical publisher's candidate/attempt against it. A
+historical rerun mismatch fails visibly and can be corrected by dispatching the
+matching publisher explicitly; it never silently tests an older release or moving
+main. All broad lanes receive the same verified immutable revision. Manual
+`post-release.yml` dispatch defaults to smoke; `broad: true` explicitly requests
+readiness, full Python, registered browsers and owned integrations as well.
+
+Readiness retains its distinct browser and installed-media checks; duplicate
+Python subsets now belong to the full Python lane and frontend units/build are
+already qualified by the publication graph. The [integration ownership
+checklist](integration-coverage.md) assigns optional dependencies and rejects
+unexpected skips. The short publication runtime group is not duplicated there.
 The full Python lane has a 90-minute limit and prints each test's identity as it
 runs, so a timeout does not conceal failed or unfinished test identities.
 It retains the verbose log and, when pytest completes, JUnit results. A partial
@@ -342,8 +351,7 @@ probe (that has its own lane). Canonical Work explicitly selects multiprocess
 Chromium there; its extended default is also multiprocess. Empty-host failure and
 lost-response modes and the four session-health modes in the extended plan remain
 separate because their arguments exercise different behavior. The full Python
-suite remains the complete source oracle; readiness's focused Python checks are
-retained as earlier recovery diagnostics, not a substitute for full-suite success.
+lane owns source-unit coverage; readiness no longer repeats its Python subsets.
 
 Do not infer complete history from DOM Work-group counts. The reusable
 `scripts/browser_dom_recorder.js` probe reports grouped headers and standalone
@@ -360,22 +368,20 @@ can raise or lower header counts without adding or losing work. Historical
 captures made with older counting semantics must retain that limitation.
 
 The reporting job writes a run summary and opens or updates one tracked issue per
-release when any expected lane fails, is cancelled, is skipped or is missing.
+release and scope (smoke or broad) when any expected lane fails, is cancelled, is skipped or is missing.
 A successful rerun closes its existing failure issue; green releases create no
 issue. Test jobs have read-only repository access; only the isolated reporting
 job can write issues. A failure does not withdraw the release, change its bytes,
 replay work or modify installed hosts. Investigate it and ship a corrective release
 when needed. Published and exhaustively verified remain distinct states.
 
-Publication completion is the foreground handoff. Delegate monitoring and triage
-of broad local and post-release verification, and continue the next task without
-waiting for those jobs. Notify on actionable findings, not unchanged polling.
-When a next release is already in progress, incorporate relevant corrections
-there; otherwise address findings directly while idle. Newly discovered urgent
-regressions still receive prompt attention. Reusing earlier qualification requires
-matching the exact tested inputs; affected checks run again when those inputs
-change. The frontend lane implements the exact-input reuse described below;
-other passing runs are not blanket waivers for a later candidate.
+Publication plus installed-package smoke is the routine handoff. Broad suites
+belong to the nightly/manual owner, without per-release model polling. Follow up
+on actionable failures, combining corrections with the next release when
+appropriate; urgent regressions still warrant prompt attention. Reusing evidence
+requires matching tested inputs; affected checks rerun when those inputs change.
+The frontend lane implements the exact-input reuse described below; other passing
+runs are not blanket waivers for a later candidate.
 
 The broad suites also remain manually runnable. Changing this policy requires an
 explicit decision and an update to this document, tests and repository rules.
@@ -422,7 +428,7 @@ always use that fallback. Backend-only changes can also cause a conservative
 whole-tree mismatch; avoiding duplicated work never takes priority over exact
 evidence. The frontend lane still issues a fresh receipt for the current release
 candidate and retains a separate artifact stating whether and which proof was
-reused. Broad post-release coverage is unchanged.
+reused. Broad coverage remains in the nightly/manual owner.
 
 The runtime job checks out the declared loop-live source and current recipe
 source as before. It resolves a new runtime lock with refresh and upgrade before
@@ -445,10 +451,10 @@ the dedicated-key checkout does not grant other cache readers its package build.
 
 | Previous serial stage | Job |
 |---|---|
-| Full pytest suite | Local, manual and automatic post-release workflows |
+| Full pytest suite | Affected local checks, explicit manual and nightly workflows |
 | Distribution verification, isolated wheel install and import/assets/login probe | Package |
 | npm tests, frontend build and committed-assets comparison | Frontend |
-| Browser scenarios and their conditional file guards | Local, manual and automatic post-release workflows |
+| Browser scenarios and their conditional file guards | Affected local checks, explicit manual and nightly workflows |
 | Real Core/loop-live surface, child, component and cache tests | Runtime |
 | Immutable tag/asset checks and publication | Release, after all jobs |
 

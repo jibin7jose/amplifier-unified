@@ -42,29 +42,31 @@ follow [version choice and release notes](docs/validation/release-qualification.
 The release owner checks the shipped changes and high-impact guidance; a version
 bump and passing format validator alone are not a complete release summary.
 
-User direction, October 14, 2026: keep the foreground development-to-release loop
-to a few minutes. Qualify affected behavior locally in the owned DTU, retaining
-exact-source evidence and explicit limits. Aim for 1–3 minutes of focused checks
-and about five minutes for the normal local budget. Run relevant browser/runtime
-smoke tests; do not make the full local suite a merge or release prerequisite.
-Use specific pre-release checks for material risks such as destructive migrations
-or changed authorization, instead of automatically running every unrelated test.
+User direction, November 4, 2026: the **total routine per-release loop targets
+five minutes or less**, including publication and the published-package smoke;
+moving an hour of work into the background for every release is not acceptable.
+Reuse maintained release commands and exact-input PR/DTU evidence; do not recreate
+one-off qualification harnesses or full-tree evidence packages for each version-only
+release. Run affected checks when inputs
+change, with specific checks for material risks such as migrations or authority
+changes. Do not repeat full suites for version-only preparation.
 
-Keep publication on the short package/frontend/native-runtime path, targeting
-roughly two minutes when warm. Broad readiness, full Python and extended browser
-coverage runs automatically after publication and reports failures for follow-up.
-Do not add exhaustive PR/main/publication gates without an explicit decision and
-an update to [the release policy](docs/validation/release-qualification.md).
-Published does not mean post-release checks passed. Investigate failures and ship
-corrections; never move published tags or replace released bytes to hide a failure.
+Keep the existing short package/frontend/native-runtime publication graph and one
+published-asset checksum/install probe. Broad Python, readiness, browser and
+integration coverage runs **once nightly around 01:00 America/Los_Angeles**, or by
+explicit manual investigation. Do not launch broad campaigns or model-powered
+monitor sessions for every release. The scheduled workflow owns reporting;
+assign human/agent follow-up only for actionable failures. Remove duplicated
+coverage only when another owner exercises the same boundary; preserve distinct
+installed-package, platform and media behavior.
 
-Full suites, broad browser/platform coverage and stress tests run in the background.
-Delegate their monitoring and triage and continue foreground work as soon as the
-release is published. Report actionable changes, not routine polling. Fold failures
-into the next release when one is in progress, or address them directly when idle;
-newly discovered urgent regressions still warrant prompt attention. Reuse verified
-qualification only when the exact tested inputs match the candidate being shipped;
-changed inputs require the affected checks again.
+This is a measured target, not permission to suppress failures, cancel slow checks
+into success, change branch protection, or relabel old evidence. Report queue,
+cold-build and required-check overruns separately and fix their causes. Published,
+smoke-verified and broadly verified are distinct. Preserve failures and immutable
+release bytes; a smoke pass cannot close a broad-suite failure. Do not expand the
+routine graph without an explicit decision and an update to
+[the release policy](docs/validation/release-qualification.md).
 
 ## Bundled client and server evolve together
 

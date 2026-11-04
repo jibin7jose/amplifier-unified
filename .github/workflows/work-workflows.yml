@@ -30,7 +30,7 @@ jobs:
         run: uv run --no-sync pytest -q tests/test_release_automation.py tests/test_release_qualification.py tests/test_frontend_release_proof.py tests/test_frontend_build_artifact.py tests/test_goal_peer_junit.py tests/test_post_release_checks.py tests/test_integration_checks.py tests/test_integration_clients.py tests/test_browser_check_runner.py tests/test_active_client_diagnostics.py
       - name: Check standing access authorization and revocation
         run: uv run --no-sync pytest -q tests/test_access_mode.py tests/test_configuration_authority.py
-      # Full Python and browser coverage runs locally and after publication.
+      # Full Python and browser coverage runs nightly or by explicit investigation.
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
       - name: Test frontend

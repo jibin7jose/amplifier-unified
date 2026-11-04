@@ -12,7 +12,7 @@ and its 87 records remain frozen.
 - **Affected pull requests:** `Owned integration checks` selects lanes using the
   manifest's changed-path rules. Shared runtime/dependency/runner changes select
   every automated lane. Documentation-only changes do not launch integrations.
-- **After publication:** `Post-release verification` calls every automated lane
+- **Nightly:** `Release smoke and nightly verification` calls every automated lane
   against the immutable published revision. Its report includes the integration
   result; failed, cancelled, missing, or skipped jobs cannot count as success.
 - **Manual:** the same automated matrix can be dispatched on a selected ref.
@@ -23,8 +23,10 @@ and its 87 records remain frozen.
   ten audited opt-in cases. It now verifies its JUnit report for skips and missing
   required selectors. It is not rerun as another integration lane.
 
-There is no new nightly schedule or exhaustive release gate. Broad verification
-runs in the background; publication and verification completion remain distinct.
+The single schedule in `post-release.yml` owns broad coverage around 01:00
+America/Los_Angeles. There is no second integration schedule or automatic broad
+per-release campaign. Publication, installed-package smoke and broad verification
+remain distinct.
 
 ## Accountable checklist and initial results
 
@@ -35,18 +37,18 @@ servers, browsers, displays, or filesystem behavior fail their designated owner.
 
 | ID / owner | Coverage | Initial owned-DTU result | Desired result |
 | --- | --- | --- | --- |
-| IC-01 native | Real Core, Foundation, loop, provider serialization, context, native jobs, kernels, processes, attachments, terminal, controls, warm/history workers | 77 passed, 0 skipped; 35.50s execution with clean local loop source | Same coverage on affected PRs and after every release |
+| IC-01 native | Real Core, Foundation, loop, provider serialization, context, native jobs, kernels, processes, attachments, terminal, controls, warm/history workers | 77 passed, 0 skipped; 35.50s execution with clean local loop source | Same coverage on affected PRs and nightly |
 | IC-02 release-runtime | Existing guidance, child/recipe lifecycle, module cache group | Release 0.20.167: 109 passed, 0 skipped in the existing group | Keep the existing short publication owner; reject new skips |
-| IC-03 browser-headless | External-link authentication, service-worker forwarding, narrow/wide setup renderer | 3 passed, 0 skipped; 5.91s | Reproducible disposable Chromium on affected PRs and post-release |
+| IC-03 browser-headless | External-link authentication, service-worker forwarding, narrow/wide setup renderer | 3 passed, 0 skipped; 5.91s | Reproducible disposable Chromium on affected PRs and nightly |
 | IC-04 browser-installed | Real installed-PWA launch and entry behavior | Not qualified by this Linux/headless run | Explicit installed-app/display acceptance for changes to PWA launch/install/entry behavior |
 | IC-05 cli-interop | CLI → Unified → CLI history, ownership, provider settings and portability | 3 passed, 0 skipped; 4.15s with freshly prepared CLI environment | Same execution with recorded CLI and loop revisions |
 | IC-06 filesystem-aliases | Concurrent create cannot overwrite case/Unicode filename aliases | 3 passed, 0 skipped on GitHub macOS; Linux prerequisite probe correctly rejects non-aliasing filesystem | Both alias variants execute on macOS; a skip fails |
-| IC-07 uv-reset | Actual package corruption/missing-dependency repair using uv | 1 passed, 0 skipped; 0.62s in fresh prepared environment | Repeat on reset/dependency changes and post-release |
+| IC-07 uv-reset | Actual package corruption/missing-dependency repair using uv | 1 passed, 0 skipped; 0.62s in fresh prepared environment | Repeat on reset/dependency changes and nightly |
 | IC-08 context-intelligence | Real isolated server/database, authenticated graph routing and content redaction | 1 passed, 0 skipped; 2.96s | Real disposable Neo4j + server, no production endpoint or account |
 | IC-09 connected-documents | Native upstream composition, shared UI/agent invocation, policy and idempotence | 2 passed, 0 skipped; 1.62s against explicit local upstream copy | Manual optional-overlay acceptance; synthetic Graph transport, no live account writes |
 | IC-10 profiling | Real optional capture library, revocation, privacy, retention and receipts | 10 passed, 0 skipped; 10.28s against clean local library `8edea47c3a05eb4e6206211ac993a0a673245b8a` | Repeat against an explicit clean source; automate when canonical source distribution is available |
 | IC-11 Stories joined | Actual worker storage → real Stories MCP import/retained read → native MCP App review/export/reconnect | Passed against explicit source and supported Agent; separate fresh-install defect repaired upstream | [Manual optional-integration owner](stories-joined-acceptance.md), required on affected changes/source adoption; missing prerequisites fail, never skip |
-| IC-12 native additions | Root/child read policy with actual filesystem/search, both ripgrep and Python fallback; default capability inheritance; Foundation export roundtrip | Registered separately from the 87-record baseline; source-bound execution receipts report actual results | Existing native owner on affected PRs and after publication; current tool packages and ripgrep required before pytest |
+| IC-12 native additions | Root/child read policy with actual filesystem/search, both ripgrep and Python fallback; default capability inheritance; Foundation export roundtrip | Registered separately from the 87-record baseline; source-bound execution receipts report actual results | Existing native owner on affected PRs and nightly; current tool packages and ripgrep required before pytest |
 | IC-13 default-installed | Real offline behavior composition, runtime destination/write policy, full mount/export and finite Core/DelegateTool routing | Explicit installed-wheel owner; registration is not a claim of new acceptance | On changes to these boundaries, run copied tests with prepared exact sources and enforce every selector with zero skips |
 
 The initial [GitHub matrix](https://github.com/microsoft/amplifier-unified/actions/runs/38873044197)

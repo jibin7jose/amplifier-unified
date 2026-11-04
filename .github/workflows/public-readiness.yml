@@ -38,25 +38,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --prefix frontend
-      - name: Recovery, authentication, repair and diagnostics
-        run: >-
-          uv run --no-sync pytest -q --tb=short
-          tests/test_service.py tests/test_client_layout.py tests/test_browser_detail.py tests/test_execution.py tests/test_cold_execution_compaction.py
-          tests/test_bundle_selection.py tests/test_worker_install_overrides.py
-          tests/test_worker_diagnostics.py tests/test_session_health.py tests/test_runtime.py tests/test_coordination_wait_transport.py tests/test_request_recovery.py
-          tests/test_worker_background_naming.py tests/test_agent_canvas_scope.py tests/test_client_navigation.py tests/test_live_clients.py
-          tests/test_history_revision.py tests/test_session_fork.py tests/test_fork_input_boundaries.py
-          tests/test_conversation_navigation.py tests/test_delegate_exchange.py tests/test_peer_attribution.py tests/test_active_client_projections.py tests/test_event_log_view.py
-          tests/test_conversation_export.py tests/test_history_query.py tests/test_voice_input_projection.py tests/test_voice.py tests/test_portability_voice.py
-          tests/test_questions.py tests/test_auth.py tests/test_browser_auth.py tests/test_server_auth.py tests/test_browser_events.py tests/test_companion.py tests/test_client_observations.py
-          tests/test_reset.py tests/test_repository_access.py tests/test_friendly_reset.py tests/test_feedback_diagnostics.py
-          tests/test_update_replacement.py tests/test_update_readiness.py tests/test_update_drain.py tests/test_update_admission.py tests/test_update_responsiveness.py tests/test_runtime_retention.py tests/test_deployment_service.py
-          tests/test_release_qualification.py tests/test_release_automation.py tests/test_release_notes.py
-      - name: Check chat naming and internal terminal sessions
-        run: uv run --no-sync pytest -q tests/test_automatic_naming.py tests/test_chat_title_preview.py tests/test_naming_backfill.py tests/test_fallback_titles.py tests/test_naming.py tests/test_naming_controls.py tests/test_headless.py tests/test_automatic_history.py tests/test_provider_probe.py tests/test_setup.py tests/test_image_setup.py tests/test_image_defaults.py tests/test_provider_environment.py tests/test_readiness101.py tests/test_installer_script.py tests/test_host_dependencies.py
-      - name: Check demand-scoped catalogs and retained worker evidence
-        run: uv run --no-sync pytest -q tests/test_chat_demand.py tests/test_browser_demand.py tests/test_provider_catalog.py tests/test_provider_publication.py tests/test_conversation_models.py
-      - run: npm test --prefix frontend
+      # Full Python belongs to the nightly Python lane. Frontend units already
+      # qualified this immutable release; this lane owns distinct browser/package flows.
       - run: npm run build --prefix frontend
       - name: Install browser
         id: browser_runtime
@@ -122,14 +105,11 @@ jobs:
         run: node tests/embedded-diagram-layout-browser.mjs
       - name: Check exact inline artifacts and image follow-ups
         run: |
-          uv run --no-sync pytest -q tests/test_inline_artifacts.py tests/test_canvas_downloads.py tests/test_canvas_files.py tests/test_canvas_pdf.py tests/test_canvas_draft.py tests/test_canvas_views.py tests/test_canvas_versions.py tests/test_image_generation_ui.py tests/test_image_results.py tests/test_generated_images.py tests/test_output_images.py
           cd frontend
           node tests/inline-artifacts-browser.mjs
           node tests/canvas-usability-browser.mjs
           node tests/pdf-browser.mjs
           node tests/generated-images-browser.mjs
-      - name: Check canonical media and transaction ownership regressions
-        run: uv run --no-sync pytest -q tests/test_output_media.py tests/test_resource_files.py tests/test_portability_outputs.py tests/test_shell_modules.py
       - name: Check retained inline media in installed package
         # A required backend failure must not conceal independent phase and
         # physical evidence. It still fails the job and source recording gate.
@@ -189,7 +169,6 @@ jobs:
           if-no-files-found: error
       - name: Check immediate chat recency and receipt ownership
         run: |
-          uv run --no-sync pytest -q tests/test_chat_navigation.py tests/test_message_delivery.py tests/test_collaborative_workspaces.py tests/test_session_warmup.py
           cd frontend
           AMPLIFIER_HUMAN_POST_ONLY=1 node tests/sidebar-activity-browser.mjs
       - name: Check pending message edits and recovery
@@ -200,7 +179,6 @@ jobs:
           node tests/multiple-window-stream-browser.mjs
       - name: Check workspace storage, unread state, plans and formatted copy
         run: |
-          uv run --no-sync pytest -q tests/test_storage_usage.py tests/test_storage_scan.py tests/test_storage_workspace_scope.py tests/test_configuration_target.py tests/test_history_cleanup.py tests/test_canvas_paths.py tests/test_chat_plan.py tests/test_completion_attention.py tests/test_workspace_navigation.py tests/test_schedules.py
           cd frontend
           node tests/attention-inbox-browser.mjs
           node tests/workspace-switching-browser.mjs
@@ -211,7 +189,6 @@ jobs:
           node tests/feedback-browser.mjs
       - name: Check reviewed feedback attachment recovery
         run: |
-          uv run --no-sync pytest -q tests/test_feedback_additions.py tests/test_feedback_followup.py tests/test_feedback_attachments.py
           cd frontend
           node tests/feedback-additions-browser.mjs
       - name: Gate full-scenario core inline media regression
