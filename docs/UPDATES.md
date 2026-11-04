@@ -227,6 +227,15 @@ Unknown, truncated legacy scope, unrelated activations and newer failures remain
 unresolved. Keep full component scope in canonical receipts; truncate only the
 displayed preview, never the data used to decide recovery.
 
+The client has one update-status projection for the headline, status icon,
+application result, details disclosure and operation notice. A current operation
+or an unconfirmed restart takes precedence over older failure attention; those
+unresolved occurrences remain visible alongside it. When no operation is active,
+canonical actionable attention prevents an all-current presentation. Rendering
+must not resolve failures, recheck installation identity, or reinterpret a
+successful application update as success of its later component batch. Reload
+uses the same projection of saved host state, not a client recovery cache.
+
 The main update card identifies the current component batch and shows successful
 configuration checks out of the total admitted for that attempt. Preparation and
 compatibility have separate counters; failed checks do not count as completed.

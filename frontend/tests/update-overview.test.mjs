@@ -75,8 +75,8 @@ test('new batch shows real successful configuration count and retains installed 
   completedBatches:[{attemptId:'old',tier:'other',completedAt:2}]};
  const result=updateOverview({phase:'validating',sequence:{stage:'other',install:true},diagnostics,
   probeProgress:{attemptId:'new',phase:'prepare',completed:24,total:37}});
- assert.equal(result.title,'Updating other components');
- assert.match(result.detail,/24 of 37 completed/);
+ assert.equal(result.title,'Finishing your update');
+ assert.equal(result.currentProgress.completed,24);assert.equal(result.currentProgress.total,37);
  assert.equal(result.completedBatches[0].attemptId,'old');
  assert.equal(result.currentBatch.components[0],'approval');
 });
@@ -136,4 +136,41 @@ test('a waiting runner does not conceal an installable app or component update',
  const hot=updateOverview({phase:'staged',pendingSmartTools,pendingRelease:'candidate',plan:{activation:'per-worker'}});
  assert.equal(hot.title,'Finishing your update');assert.equal(hot.waiting,false);
  assert.equal(updateOverview({phase:'app-staged',pendingSmartTools,pendingApp:{},sequence:{nextStage:'included'}}).waiting,true);
+});
+
+const unresolvedComponent={id:'updates:failure:component',page:'updates',actionRequired:true,
+ title:'Component update needs attention',detail:'Saved component issue remains unresolved.'};
+test('one current status owns attention, app result and retry boundaries after reload',()=>{
+ const healthy={phase:'checked',application:componentFailure.application,applicationResult:confirmedApp,sequence:{stage:'complete'}};
+ const restore=value=>JSON.parse(JSON.stringify(value));
+ for(const saved of [healthy,restore(healthy)]){
+  const issue=updateOverview(saved,{},[unresolvedComponent]);
+  assert.equal(issue.tone,'error');
+  assert.equal(issue.title,unresolvedComponent.title);
+  assert.equal(issue.application.state,'current');
+  assert.equal(issue.applicationResult.version,confirmedApp.version);
+  assert.equal(issue.busy,false);
+ }
+ const retry=updateOverview({...healthy,phase:'validating',sequence:{stage:'other',install:true}}, {}, [unresolvedComponent]);
+ assert.equal(retry.tone,'working');
+ assert.equal(retry.attention.length,1); // Preparing a retry does not resolve its old issue.
+ assert.notEqual(retry.title,unresolvedComponent.title);
+ const continuation=updateOverview({...healthy,sequence:{stage:'application',nextStage:'included',install:true}}, {}, [unresolvedComponent]);
+ assert.equal(continuation.tone,'working');assert.equal(continuation.busy,true);
+ assert.equal(updateOverview(restore(healthy),{},[]).tone,'ready');
+ for(const pending of [{pendingRestart:{requestStatus:'uncertain'}},{pendingReplacement:{}}]){
+  const result=updateOverview(restore({...healthy,...pending}),{},[unresolvedComponent]);
+  assert.equal(result.applicationResult,null);
+  assert.notEqual(result.application.state,'current');
+  assert.notEqual(result.title,unresolvedComponent.title);
+  assert.equal(result.busy,true);
+ }
+});
+test('the exact current component failure wins over an older actionable episode',()=>{
+ const result=updateOverview(componentFailure,{},[unresolvedComponent]);
+ assert.equal(result.title,'Some components were not updated');
+ assert.match(result.detail,/foundation/);
+ assert.match(result.detail,/Check for updates again/);
+ assert.equal(result.application.state,'current');
+ assert.equal(result.attention.length,1);
 });

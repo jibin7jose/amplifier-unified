@@ -182,6 +182,21 @@ async def main(home):
         elif stage=='clear-app-result':
             await manager.publish(applicationResult=None,pendingRestart=None,phase='installed',error=None,
                 sequence={'stage':'complete','install':False})
+        elif stage=='covered-retry':
+            # Same diagnostic owner and occurrence fences as a real retry. Only
+            # the installation effect is synthetic in this presentation fixture.
+            diagnostics.begin('ecosystem', '8'*32, tier='other', components=[
+                'amplifier-foundation', 'amplifier-module-hooks-approval',
+                *[f'fixture-component-{index}' for index in range(6)]])
+            await manager.publish(phase='validating', error=None, pendingApp=None,
+                pendingRestart=None, pendingReplacement=None, pendingRelease=None,
+                pendingSmartTools=[], sequence={'stage':'other','install':True})
+        elif stage=='covered-activation':
+            diagnostics.record('ecosystem-activation', 'succeeded')
+            diagnostics.clear_failure()
+            await manager.publish(phase='installed', error=None,
+                detail='Qualified component batch activated.',
+                sequence={'stage':'complete','install':False})
         elif stage=='compatibility':
             await manager.publish(probeProgress={'attemptId':attempt,'phase':'compatibility','completed':12,'total':37,'startedAt':time.time()})
         else:raise web.HTTPBadRequest()
