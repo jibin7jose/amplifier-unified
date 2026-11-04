@@ -5,6 +5,7 @@ not delete files itself, and never treats source/result archives as a cache.
 """
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 import time
 import uuid
@@ -12,7 +13,7 @@ import uuid
 from amplifier_operations.coordination import fingerprint
 from .errors import AppError
 
-DEFAULTS = {'revision': 0, 'enabled': True, 'keepDays': 7, 'maxUnusedBytes': 10 * 1024**3}
+DEFAULTS = {'revision': 0, 'enabled': True, 'keepDays': 7, 'maxUnusedBytes': 10 * 1024**3, 'workspaceArchiveKeepDays': None}
 POLICY = 'storage-cleanup-policy'
 OBSERVATION = 'storage-cleanup-observation'
 LATEST = 'storage-cleanup-latest'
@@ -22,10 +23,11 @@ def definitions(schema, string):
     return {
         'storage.cleanup.read': ('Read global automatic cleanup settings and the last receipt without scanning or starting work.', schema({}, [])),
         'storage.cleanup.evidence': ('Read one bounded page of recorded saved test sizes. Does not measure current files, connect to machines, start work or delete evidence.', schema({'before': {'type': 'integer', 'minimum': 1, 'maximum': 2**53-1}}, [])),
-        'storage.cleanup.save': ('Save global unused component/test-runner code retention under standing Full or user control. Saved test sources, results, chats and working folders are always kept.', schema({
+        'storage.cleanup.save': ('Save global unused component/test-runner code retention under standing Full or user control. Sources, results, chats and project folders stay. Optional temporary queued-test workspace expiry applies only to newly submitted checks.', schema({
             'expectedRevision': {'type': 'integer', 'minimum': 0}, 'enabled': {'type': 'boolean'},
             'keepDays': {'type': 'integer', 'minimum': 0, 'maximum': 3650},
             'maxUnusedBytes': {'type': 'integer', 'minimum': 0, 'maximum': 2**53-1},
+            'workspaceArchiveKeepDays': {'type': ['integer', 'null'], 'minimum': 1, 'maximum': 3650},
         }, ['expectedRevision', 'enabled', 'keepDays', 'maxUnusedBytes'])),
         'storage.cleanup.preview': ('Measure a bounded set of unused code copies and protected storage. Never starts workers or deletes files. Incomplete measurements are reported.', schema({}, [])),
         'storage.cleanup.run': ('Apply the saved cleanup policy under standing Full or user control. Each owner rechecks unused code before removal. Reuse the request ID to observe an uncertain outcome without replay.', schema({
@@ -54,7 +56,7 @@ def public(value):
 
 def read(app):
     return {'policy': policy(app), 'lastCleanup': public(record(app, LATEST)),
-            'scope': 'All workspaces on this Amplifier installation. Only unused component code, test runner code, and qualified reusable test dependencies are eligible.',
+            'scope': 'All workspaces on this Amplifier installation. Unused code and dependencies, plus explicitly temporary retired test workspace copies when enabled, are eligible.',
             'preserved': 'Chats, working folders, saved test sources and results, other dependency stores, current and rollback versions, and uncertain work are kept.'}
 
 
@@ -166,7 +168,7 @@ def unresolved(app):
 
 
 async def preview(app):
-    from . import update_retention, managed_runner_updates, test_dependency_layers
+    from . import update_retention, managed_runner_updates, test_dependency_layers, workspace_archive_retention
     manager = app.update_manager
     settings = policy(app)
     # Restore only scan position, never a prior eligibility decision. Preview
@@ -186,6 +188,10 @@ async def preview(app):
         dependencies = await asyncio.to_thread(test_dependency_layers.inspect, app.data_dir)
     except (TimeoutError, ValueError, OSError):
         dependencies = {'candidates': [], 'protectedIds': [], 'complete': False}
+    try:
+        archives = await asyncio.to_thread(workspace_archive_retention.inspect, app.data_dir, settings, saved.get('workspaceArchiveCursor', 0))
+    except (TimeoutError, ValueError, OSError, sqlite3.Error):
+        archives = {'candidates': [], 'complete': False, 'workspaceArchiveCursor': saved.get('workspaceArchiveCursor', 0)}
     held = unresolved(app)
     candidates = [row for row in generations.get('candidates', []) + (runners or []) + dependencies['candidates'] if (row['kind'], row['id']) not in held]
     now = time.time()
@@ -202,6 +208,8 @@ async def preview(app):
     seen = observations(record(app, OBSERVATION, {}) or {}, candidates, now,
                         protected=observed_protected, present=present)
     rows = plan(candidates, settings, seen, now)
+    # Workspace promises have their own captured duration, never code-cache pressure.
+    rows.extend(row for row in archives['candidates'] if (row['kind'], row['id']) not in held)
     protected = []
     eligible = {(row['kind'], row['id']) for row in rows}
     # This is metadata enumeration, not a scan of workspaces or chat history.
@@ -231,7 +239,7 @@ async def preview(app):
         if (row['kind'], row.get('id')) in held:
             row['reason'] = 'An earlier cleanup has an unconfirmed outcome; its files are kept for inspection'
     protected.append({'kind': 'evidence', 'label': 'Saved work and test evidence',
-                      'reason': 'Source/result archives, working folders and histories are never cleanup targets'})
+                      'reason': 'Source and result archives, project folders, histories, legacy/manual workspaces and uncertain work stay protected'})
     protected_measured = 0
     protected_complete = True
     measured_paths = {path for row in candidates for path in row.get('paths', [])}
@@ -252,8 +260,8 @@ async def preview(app):
         except (ValueError, OSError, TimeoutError):
             row['fileBytes'] = None
             protected_complete = False
-    complete = generations.get('complete', False) and runner_complete and dependencies['complete']
-    return {'policy': settings, 'rows': [{k: v for k, v in row.items() if k not in {'paths', 'stamp'}} for row in rows],
+    complete = generations.get('complete', False) and runner_complete and dependencies['complete'] and archives['complete']
+    return {'policy': settings, 'workspaceArchiveCursor': archives['workspaceArchiveCursor'], 'rows': [{k: v for k, v in row.items() if k not in {'paths', 'stamp'}} for row in rows],
             **{key: generations[key] for key in ('generationCursor', 'retiredCursor') if key in generations},
             **({'retentionReasons': generations['retentionReasons']} if generations.get('retentionReasons') else {}),
             'protected': protected[:128], 'protectedCount': len(protected),
@@ -271,7 +279,7 @@ async def preview(app):
 
 
 async def run(app, identity, *, expected_revision=None, automatic=False, authority=None):
-    from . import update_retention, managed_runner_updates, test_dependency_layers
+    from . import update_retention, managed_runner_updates, test_dependency_layers, workspace_archive_retention
     async with lock(app):
         key = 'storage-cleanup-run:' + identity
         previous = retained_run(app, identity, expected_revision, (authority or {}).get('sessionId'))
@@ -294,7 +302,7 @@ async def run(app, identity, *, expected_revision=None, automatic=False, authori
                                 protected=report.get('observedProtected', []))
         store(app, OBSERVATION, seen)
         result = {'id': identity, 'expectedRevision': expected_revision, 'status': 'running', 'startedAt': now, 'policy': settings,
-                  **{key: report[key] for key in ('generationCursor', 'retiredCursor', 'retentionReasons') if key in report},
+                  **{key: report[key] for key in ('generationCursor', 'retiredCursor', 'retentionReasons', 'workspaceArchiveCursor') if key in report},
                   'selectedFileBytes': report['selectedFileBytes'], 'removedFileBytes': 0,
                   'effects': [], 'completeInspection': report['complete']}
         if authority is not None:
@@ -338,6 +346,21 @@ async def run(app, identity, *, expected_revision=None, automatic=False, authori
                     asyncio.run_coroutine_threadsafe(dependency_evidence(status, item), loop).result(timeout=10)
                 await asyncio.to_thread(test_dependency_layers.retire, app.data_dir,
                     {identity: row for (kind, identity), row in chosen.items() if kind == 'test-dependencies'}, record_dependency)
+            if result['status'] == 'running' and policy(app) == settings:
+                loop = asyncio.get_running_loop()
+                async def archive_callback(status, item):
+                    if result['status'] != 'running':
+                        raise ValueError('Storage cleanup stopped before workspace expiry.')
+                    if status == 'guard':
+                        from .task_environments import require_resolved_removal
+                        require_resolved_removal(app, item)
+                    else:
+                        evidence(status, item)
+                def archive_record(status, item):
+                    asyncio.run_coroutine_threadsafe(archive_callback(status, item), loop).result(timeout=10)
+                await asyncio.to_thread(workspace_archive_retention.retire, app.data_dir, settings,
+                    {identity: row for (kind, identity), row in chosen.items() if kind == 'test-workspace'},
+                    archive_record, lambda row: archive_record('guard', row))
             if result['status'] == 'running':
                 result['status'] = 'needs-inspection' if any(row['status'] == 'attempting' for row in result['effects']) else 'completed'
         finally:
@@ -397,6 +420,10 @@ async def dispatch(app, action, args, origin, command_id, caller_session_id=None
         if (type(value['enabled']) is not bool or type(value['keepDays']) is not int or not 0 <= value['keepDays'] <= 3650
                 or type(value['maxUnusedBytes']) is not int or not 0 <= value['maxUnusedBytes'] <= 2**53-1):
             raise AppError('Choose valid cleanup settings.', 400)
+        days = args.get('workspaceArchiveKeepDays', current.get('workspaceArchiveKeepDays'))
+        if days is not None and (type(days) is not int or not 1 <= days <= 3650):
+            raise AppError('Choose a temporary test workspace retention between 1 and 3650 days, or disable it.', 400)
+        value['workspaceArchiveKeepDays'] = days
         value['revision'] = current['revision'] + 1
         receipt = {'accepted': True, 'commandAction': action, 'result': {**read(app), 'policy': value}}
         if authority is not None:

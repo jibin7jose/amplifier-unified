@@ -15,9 +15,9 @@ export function StorageCleanupSettings({act,navigate=()=>{}}){
   if(mounted.current&&version===epoch.current){setReport(response.result);if(!draftRef.current)setDraft(response.result.policy)}
  }catch(e){if(mounted.current&&version===epoch.current)setError(e.message)}finally{if(mounted.current&&version===epoch.current)setBusy(false)}}
  useEffect(()=>{mounted.current=true;load();return()=>{mounted.current=false;epoch.current++}},[]);
- const dirty=!!draft&&!!report&&['enabled','keepDays','maxUnusedBytes'].some(name=>draft[name]!==report.policy[name]);
+ const dirty=!!draft&&!!report&&['enabled','keepDays','maxUnusedBytes','workspaceArchiveKeepDays'].some(name=>draft[name]!==report.policy[name]);
  useSettingsDraft('storage-cleanup',{label:'Automatic cleanup',dirty:dirty||!!pending,review:()=>navigate('storage'),discard:()=>setDraft(report?.policy||null)});
- const valid=draft&&Number.isSafeInteger(draft.keepDays)&&draft.keepDays>=0&&draft.keepDays<=3650&&Number.isSafeInteger(draft.maxUnusedBytes)&&draft.maxUnusedBytes>=0;
+ const valid=draft&&Number.isSafeInteger(draft.keepDays)&&draft.keepDays>=0&&draft.keepDays<=3650&&Number.isSafeInteger(draft.maxUnusedBytes)&&draft.maxUnusedBytes>=0&&(draft.workspaceArchiveKeepDays==null||(Number.isSafeInteger(draft.workspaceArchiveKeepDays)&&draft.workspaceArchiveKeepDays>=1&&draft.workspaceArchiveKeepDays<=3650));
  async function send(action,args){
   if(busy)return;const request=pending||{id:crypto.randomUUID(),action,args};if(!retain(request))return;setBusy(true);setError('');setNotice('');const version=++epoch.current;
   try{const response=await act(request.action,request.args,{id:request.id,feedback:false});if(!response?.accepted){const failure=Error(response?.error||'The request was not confirmed.');failure.status=response?.status;throw failure}
@@ -40,8 +40,11 @@ export function StorageCleanupSettings({act,navigate=()=>{}}){
     <label className="a-field">Size target for unused copies (GiB)<input type="number" min="0" step="any" value={draft?.maxUnusedBytes===undefined?'':draft.maxUnusedBytes/gib} onChange={e=>setDraft({...draft,maxUnusedBytes:e.target.value===''?'':Math.round(Number(e.target.value)*gib)})}/></label>
     <p className="a-caption">Older unused copies are removed when their retention time ends, or sooner to meet this size target. Zero days keeps no extra waiting period; zero size disables the size target. This does not limit active storage or delete saved work. Checks run in small batches while Amplifier is open.</p>
    </details>
+   <label><input type="checkbox" checked={draft?.workspaceArchiveKeepDays!=null} onChange={e=>setDraft({...draft,workspaceArchiveKeepDays:e.target.checked?7:null})}/> Expire temporary test workspace copies</label>
+   {draft?.workspaceArchiveKeepDays!=null&&<label className="a-field">Keep temporary test workspaces for days<input type="number" min="1" max="3650" step="1" value={draft.workspaceArchiveKeepDays} onChange={e=>setDraft({...draft,workspaceArchiveKeepDays:e.target.value===''?'':Number(e.target.value)})}/></label>}
+   <p className="a-caption">Applies to new queued tests after their environment is removed. Seven days is recommended. Original source, saved results and receipts stay. Tests explicitly kept for review remain available. Existing archives, manual environments and uncertain work stay protected. Turning this off pauses expiry; longer durations extend existing promises.</p>
   </fieldset>
-  <button className="a-primary" disabled={busy||!report||(!pending&&(!dirty||!valid||draft.revision!==report.policy.revision))} onClick={()=>send('storage.cleanup.save',{expectedRevision:draft.revision,enabled:draft.enabled,keepDays:draft.keepDays,maxUnusedBytes:draft.maxUnusedBytes})}>{pending?'Check the same request':'Save cleanup settings'}</button>
+  <button className="a-primary" disabled={busy||!report||(!pending&&(!dirty||!valid||draft.revision!==report.policy.revision))} onClick={()=>send('storage.cleanup.save',{expectedRevision:draft.revision,enabled:draft.enabled,keepDays:draft.keepDays,maxUnusedBytes:draft.maxUnusedBytes,workspaceArchiveKeepDays:draft.workspaceArchiveKeepDays??null})}>{pending?'Check the same request':'Save cleanup settings'}</button>
   <button className="a-soft" disabled={busy||!!pending} onClick={load}>Reload cleanup settings</button>
   {draft&&report&&draft.revision!==report.policy.revision&&<p role="alert">Settings changed elsewhere. Your edits are kept. Use the saved settings before editing again.</p>}
   {dirty&&!pending&&<button className="a-link" disabled={busy} onClick={()=>setDraft({...report.policy})}>Discard edits and use saved settings</button>}

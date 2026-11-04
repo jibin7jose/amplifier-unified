@@ -24,6 +24,7 @@ export function SavedTestStorage({act}){
    {data.items.length===0?<p>No saved test size records in this page.</p>:<ul>{data.items.map(item=><li key={item.position}><details>
     <summary>{item.label}{item.createdAt?` · ${new Date(item.createdAt*1000).toLocaleString()}`:''} · {size(item.totalBytes)}</summary>
     <p>Original source: {size(item.sourceBytes)}.</p>
+    {item.workspaceAvailability==='expired'&&<p>Temporary workspace copy expired under its saved policy. Sizes below describe the original export; source and test results remain retained.</p>}
     {item.combinedArchive?<p>Final workspace and results are included in a full environment archive: {size(item.otherArchiveBytes)}. Their separate sizes were not recorded.</p>:<p>Final workspace: {size(item.workspaceBytes)}. Test results: {size(item.resultBytes)}.</p>}
     {item.custody&&<p className="a-caption">{item.custody}</p>}
     {item.detail&&<p>{item.detail}</p>}<p className="a-caption">Test reference: {item.id}</p>
