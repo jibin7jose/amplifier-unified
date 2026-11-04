@@ -12,8 +12,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+import tomllib
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +32,63 @@ def select_lanes(changed=None, coverage=None, *, include_manual=False):
             if lane['mode'] in ({'automatic', 'manual'} if include_manual else {'automatic'}) and (changed is None or any(
                 fnmatch.fnmatchcase(path, pattern)
                 for path in changed for pattern in coverage['commonPaths'] + lane['paths']))]
+
+
+def release_only_changes(changed, base, head):
+    """Prove a version-only preparation, not a branch/label or evidence waiver.
+
+    Fast checks still validate release identity and rebuild/compare every static
+    asset. Compare all dependency/build metadata, ignoring only this app's version.
+    """
+    metadata = {'pyproject.toml', 'uv.lock', 'amplifier_web/__init__.py'}
+    if not metadata <= set(changed) or any(
+        path not in metadata and path != 'amplifier_web/release-notes.json'
+        and not path.startswith(('amplifier_web/static/', 'docs/'))
+        and not ('/' not in path and path.endswith('.md')) for path in changed
+    ):
+        return False
+
+    def read(revision, path):
+        return subprocess.check_output(['git', 'show', f'{revision}:{path}'], cwd=ROOT).decode()
+
+    def normalized(revision):
+        project = tomllib.loads(read(revision, 'pyproject.toml'))
+        version = project['project'].pop('version')
+        if project['project']['name'] != 'amplifier-unified' or not isinstance(version, str):
+            raise ValueError('Not the application project')
+        lock = tomllib.loads(read(revision, 'uv.lock'))
+        local, = [row for row in lock['package'] if row['name'] == 'amplifier-unified']
+        if local['source'] != {'editable': '.'} or local.pop('version') != version:
+            raise ValueError('Not the matching local application lock record')
+        init = read(revision, 'amplifier_web/__init__.py')
+        init, count = re.subn(r'^__version__ = "' + re.escape(version) + r'"$',
+                              '__version__ = "<release>"', init, flags=re.MULTILINE)
+        if count != 1:
+            raise ValueError('Not the matching application version declaration')
+        return version, (project, lock, init)
+
+    try:
+        old_version, old = normalized(base)
+        new_version, new = normalized(head)
+        return old_version != new_version and old == new
+    except (OSError, subprocess.CalledProcessError, ValueError, KeyError, TypeError):
+        return False  # Missing/malformed comparison keeps the ordinary owners.
+
+
+def select_revision_lanes(base, head, *, include_manual=False):
+    """PR selection; absent/unavailable comparisons retain the full matrix."""
+    if not all(re.fullmatch(r'[0-9a-f]{40}', value or '') for value in (base, head)):
+        return select_lanes(include_manual=include_manual)
+    try:
+        ancestor = subprocess.check_output(['git', 'merge-base', base, head], cwd=ROOT, text=True).strip()
+        changed = subprocess.check_output(
+            ['git', 'diff', '--no-renames', '--name-only', '-z', ancestor, head], cwd=ROOT).decode().split('\0')
+        changed = [path for path in changed if path]
+    except (OSError, subprocess.CalledProcessError, UnicodeError):
+        return select_lanes(include_manual=include_manual)
+    if release_only_changes(changed, ancestor, head):
+        return []
+    return select_lanes(changed, include_manual=include_manual)
 
 
 def verify_junit(path, selectors):
@@ -116,6 +175,8 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     plan = commands.add_parser('plan')
     plan.add_argument('--changed', type=Path, help='newline-separated changed paths; absent means all automated lanes')
+    plan.add_argument('--base', help='Exact PR base SHA for content-aware release preparation selection')
+    plan.add_argument('--head', help='Exact PR head SHA; unavailable comparisons retain ordinary coverage')
     plan.add_argument('--include-manual', action='store_true', help='Also report affected manual owners; does not execute them')
     run = commands.add_parser('run')
     run.add_argument('--lane', choices=manifest()['lanes'], required=True)
@@ -128,8 +189,11 @@ def main():
     check.add_argument('--junit', type=Path, required=True)
     args = parser.parse_args()
     if args.command == 'plan':
-        print(json.dumps({'include': select_lanes(args.changed.read_text().splitlines() if args.changed else None,
-                                                 include_manual=args.include_manual)}))
+        lanes = (select_revision_lanes(args.base, args.head, include_manual=args.include_manual)
+                 if args.base is not None or args.head is not None else
+                 select_lanes(args.changed.read_text().splitlines() if args.changed else None,
+                              include_manual=args.include_manual))
+        print(json.dumps({'include': lanes}))
         return 0
     if args.command == 'check':
         print(f"{verify_junit(args.junit, manifest()['lanes'][args.lane]['selectors'])} passed; no skips")

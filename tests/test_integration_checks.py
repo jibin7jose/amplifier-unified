@@ -2,6 +2,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -46,6 +47,126 @@ def test_changed_feature_selects_its_owner_without_full_matrix():
     assert not {'release-runtime', 'browser-installed'} & {job['lane'] for job in all_jobs}
 
 
+@pytest.fixture
+def release_repository(tmp_path, monkeypatch):
+    """Actual Git comparisons, including complete metadata and merge-base semantics."""
+    coverage = checks.manifest()
+    monkeypatch.setattr(checks, 'manifest', lambda: coverage)
+    monkeypatch.setattr(checks, 'ROOT', tmp_path)
+    def git(*args):
+        return subprocess.check_output(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                                        *args], cwd=tmp_path, text=True).strip()
+    def write(path, value):
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(value)
+    def commit():
+        git('add', '-A')
+        git('commit', '-qm', 'fixture')
+        return git('rev-parse', 'HEAD')
+    git('init', '-q')
+    write('pyproject.toml', '[project]\nname="amplifier-unified"\nversion="1.0.0"\n'
+          'dependencies=["provider>=1"]\n[build-system]\nrequires=["hatchling>=1"]\n')
+    write('uv.lock', 'version=1\nrevision=3\n[[package]]\nname="amplifier-unified"\n'
+          'version="1.0.0"\nsource={editable="."}\ndependencies=[{name="provider"}]\n'
+          '[[package]]\nname="provider"\nversion="2.0.0"\n'
+          'source={git="https://example.invalid/provider?rev=main#abc"}\n'
+          'wheels=[{url="https://example.invalid/provider.whl",hash="sha256:abc"}]\n')
+    write('amplifier_web/__init__.py', '"""Host."""\n__version__ = "1.0.0"\n')
+    write('amplifier_web/service.py', '# existing runtime owner\n')
+    base = commit()
+    for path in ('pyproject.toml', 'uv.lock', 'amplifier_web/__init__.py'):
+        target = tmp_path / path
+        target.write_text(target.read_text().replace('1.0.0', '1.0.1'))
+    write('amplifier_web/release-notes.json', '[{"version":"1.0.1"}]\n')
+    write('amplifier_web/static/assets/app-new.js', '// rebuilt version\n')
+    write('docs/release.md', 'Release notes\n')
+    return SimpleNamespace(base=base, root=tmp_path, git=git, write=write, commit=commit)
+
+
+def test_proven_release_preparation_skips_broad_lanes_but_nightly_and_manual_stay_full(release_repository):
+    repo = release_repository
+    head = repo.commit()
+    assert checks.select_revision_lanes(repo.base, head) == []
+    assert checks.select_revision_lanes(repo.base, head, include_manual=True) == []
+    assert len(checks.select_lanes()) == 6
+    assert len(checks.select_lanes(include_manual=True)) > 6
+    # A caller supplying only filenames has no content proof and keeps old behavior.
+    assert checks.select_lanes(['pyproject.toml', 'uv.lock']) == checks.select_lanes()
+
+
+def test_plan_command_uses_exact_pr_comparison_only_when_supplied(release_repository, monkeypatch, capsys):
+    repo = release_repository
+    monkeypatch.setattr(checks.sys, 'argv', ['integration_checks.py', 'plan', '--base', repo.base,
+                                         '--head', repo.commit()])
+    assert checks.main() == 0
+    assert json.loads(capsys.readouterr().out) == {'include': []}
+    monkeypatch.setattr(checks.sys, 'argv', ['integration_checks.py', 'plan'])
+    assert checks.main() == 0
+    assert json.loads(capsys.readouterr().out) == {'include': checks.select_lanes()}
+
+
+@pytest.mark.parametrize('path,before,after', [
+    ('pyproject.toml', 'provider>=1', 'provider>=2'),
+    ('pyproject.toml', 'hatchling>=1', 'hatchling>=2'),
+    ('pyproject.toml', '', '\n[tool.uv.sources]\nprovider={git="https://example.invalid/other"}\n'),
+    ('uv.lock', 'version="2.0.0"', 'version="2.0.1"'),
+    ('uv.lock', '#abc', '#def'),
+    ('uv.lock', 'sha256:abc', 'sha256:def'),
+    ('uv.lock', 'revision=3', 'revision=4'),
+    ('uv.lock', '', '\n[manifest]\nmembers=["unexpected"]\n'),
+    ('amplifier_web/__init__.py', '', '\nimport another_runtime\n'),
+])
+def test_release_version_does_not_hide_dependency_build_source_or_other_metadata_changes(
+        release_repository, path, before, after):
+    repo = release_repository
+    target = repo.root / path
+    text = target.read_text()
+    target.write_text(text.replace(before, after) if before else text + after)
+    assert checks.select_revision_lanes(repo.base, repo.commit()) == checks.select_lanes()
+
+
+@pytest.mark.parametrize('problem', ['malformed', 'missing', 'duplicate-local', 'version-mismatch',
+                                    'runtime-source', 'runtime-moved-to-docs', 'configuration'])
+def test_unproven_release_changes_retain_ordinary_affected_owners(release_repository, problem):
+    repo = release_repository
+    if problem == 'malformed':
+        repo.write('uv.lock', 'not toml')
+    elif problem == 'missing':
+        (repo.root / 'uv.lock').unlink()
+    elif problem == 'duplicate-local':
+        with (repo.root / 'uv.lock').open('a') as f:
+            f.write('\n[[package]]\nname="amplifier-unified"\nversion="1.0.1"\nsource={editable="."}\n')
+    elif problem == 'version-mismatch':
+        repo.write('amplifier_web/__init__.py', '__version__ = "9.9.9"\n')
+    elif problem == 'runtime-source':
+        repo.write('amplifier_web/service.py', '# actual runtime change\n')
+    elif problem == 'runtime-moved-to-docs':
+        (repo.root / 'amplifier_web/service.py').rename(repo.root / 'docs/moved.py')
+    else:
+        repo.write('bundle.yaml', 'bundle: changed\n')
+    assert checks.select_revision_lanes(repo.base, repo.commit()) == checks.select_lanes()
+
+
+def test_missing_git_comparison_cannot_establish_release_exemption(release_repository):
+    repo = release_repository
+    for base, head in [(repo.base, '0' * 40), ('not-a-sha', repo.commit()), (repo.base, None)]:
+        assert checks.select_revision_lanes(base, head) == checks.select_lanes()
+
+
+def test_asset_only_change_and_diverged_base_do_not_hide_runtime_work(release_repository):
+    repo = release_repository
+    release = repo.commit()
+    repo.write('amplifier_web/static/assets/app-new.js', '// a different client\n')
+    assets = repo.commit()
+    assert checks.select_revision_lanes(release, assets) == [{'lane': 'browser-headless', 'os': 'ubuntu-latest'}]
+    repo.git('checkout', '-q', repo.base)
+    repo.write('amplifier_web/service.py', '# new accepted base runtime\n')
+    advanced_base = repo.commit()
+    # Compare against the actual merge base, not unrelated later base contents.
+    assert checks.select_revision_lanes(advanced_base, release) == []
+
+
 @pytest.mark.parametrize('probe', ['warm_worker_probe.py', 'history_edit_probe.py', 'attachments_runtime_probe.py',
                                   'live_terminal_probe.py', 'standalone_controls_probe.py', 'computation_runtime.py', 'bundle_switch_probe.py',
                                   'provider_isolation_native.py'])
@@ -82,6 +203,11 @@ def test_publication_stays_short_and_background_owns_integration():
     workflow = yaml.load((ROOT / '.github/workflows/integration-checks.yml').read_text(), Loader=yaml.BaseLoader)
     assert {'pull_request', 'workflow_call', 'workflow_dispatch'} <= set(workflow['on'])
     assert 'pull_request_target' not in workflow['on']
+    planner = next(step for step in workflow['jobs']['plan']['steps'] if step.get('id') == 'plan')
+    assert planner['env']['BASE'] == '${{ github.event.pull_request.base.sha }}'
+    assert planner['env']['HEAD'] == '${{ github.event.pull_request.head.sha }}'
+    assert "if os.environ['EVENT'] == 'pull_request':" in planner['run']
+    assert "['--base', os.environ['BASE'], '--head', os.environ['HEAD']]" in planner['run']
 
 
 @pytest.mark.parametrize('changed', ['pyproject.toml', 'uv.lock', '.github/workflows/integration.yml',

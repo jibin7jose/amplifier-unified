@@ -12,6 +12,13 @@ and its 87 records remain frozen.
 - **Affected pull requests:** `Owned integration checks` selects lanes using the
   manifest's changed-path rules. Shared runtime/dependency/runner changes select
   every automated lane. Documentation-only changes do not launch integrations.
+  Version preparation also skips these broad lanes only when the complete Git
+  diff contains a matching application version bump, notes, generated assets or
+  documentation, with all other project/lock metadata unchanged. Dependency,
+  runtime source, configuration and workflow changes retain affected owners;
+  missing or malformed comparisons never establish this exemption. Required Fast
+  checks still rebuild and compare committed assets and validate release identity;
+  publication keeps its existing short package/frontend/native-runtime checks.
 - **Nightly:** `Release smoke and nightly verification` calls every automated lane
   against the immutable published revision. Its report includes the integration
   result; failed, cancelled, missing, or skipped jobs cannot count as success.
