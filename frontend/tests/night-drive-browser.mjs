@@ -40,7 +40,7 @@ try{
  const status=async(id,value)=>{const response=await page.request.post(url+'/fixture/appearance-status',{data:{sessionId:id,status:value}});assert.ok(response.ok())};
  const shot=async name=>{assert.ok(report.screenshots.length<8);const bytes=await page.screenshot({path:out+'/'+name+'.png'});report.screenshots.push({name,sha256:hash(bytes)})};
  const scanner=()=>header.evaluate(el=>{const style=getComputedStyle(el,'::after'),box=el.getBoundingClientRect();return {animation:style.animationName,duration:style.animationDuration,position:style.backgroundPosition,image:style.backgroundImage,height:parseFloat(style.height),top:box.bottom-parseFloat(style.bottom)-parseFloat(style.height)-2,bottom:box.bottom-parseFloat(style.bottom),display:style.display,content:style.content}});
- const measure=async label=>{const value=await scanner();report.measurements.push({label,...value});return value};
+ const measure=async label=>{const value=await scanner();report.measurements.push({label,...value});assert.ok(value.height>=4&&value.height<=6,label+': scanner has visible painted height');return value};
  // Park real pointer outside controls for unfiltered text/paint measurements.
  const contrast=async(locator,label)=>{
   await page.mouse.move(0,999);

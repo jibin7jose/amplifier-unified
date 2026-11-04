@@ -22,7 +22,7 @@
   --nd-code: light-dark(#e0e6eb, #090b0e);
   --nd-code-ink: light-dark(#35434f, #ffd3c0);
   --a-header-decoration-height: 16px;
-  --nd-scanner-height: light-dark(4px, 6px);
+  --nd-scanner-height: 6px;
   --nd-scanner-off: light-dark(#56616b, #170a0d);
   --nd-scanner-gap: light-dark(#cbd3db, #08090b);
   --nd-scanner-low: light-dark(#895758, #631c24);
@@ -55,7 +55,7 @@
   background: var(--a-bg);
   font-family: var(--nd-ui);
 }
-#amp-one[data-theme-scheme="light"] { color-scheme: light; }
+#amp-one[data-theme-scheme="light"] { color-scheme: light; --nd-scanner-height: 4px; }
 #amp-one[data-theme-scheme="dark"] { color-scheme: dark; }
 
 /* The scanner has its own reserved edge below real header controls. */

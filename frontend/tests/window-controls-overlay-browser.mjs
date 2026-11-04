@@ -1,4 +1,6 @@
 import './composer-test-helpers.mjs';
+import {showFixtureConversation} from './browser-chat-pages.mjs';
+import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
 // Run against the already-built production app. Only navigator's native geometry
 // is simulated; never inject/rewrite the shipped CSS or claim OS drag acceptance.
 import {spawn} from 'node:child_process';
@@ -10,8 +12,9 @@ import {chromium,expect} from '@playwright/test';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',[root+'tests/fixtures/empty_host_ui_server.py'],{stdio:['ignore','pipe','inherit']});
+const stop=ownFixture(fixture,{label:'Window controls geometry fixture'});
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||root+'output/window-controls-overlay';
-let browser,ordinaryBrowser;
+let browser,ordinaryBrowser,failure;
 const launchOptions={headless:true,args:process.env.CHROMIUM_SINGLE_PROCESS==='1'?['--single-process','--no-zygote']:[]};
 // Chromium screenshots encode RGB/RGBA PNGs. Decode only the one-row samples
 // used here; compression and one-channel raster rounding are not visual seams.
@@ -105,7 +108,7 @@ try{
     assert.deepEqual(left,center,'Unpainted band below left native controls');
     assert.deepEqual(right,center,'Unpainted band below right native controls');
   };
-  await page.goto(url);await page.getByRole('textbox',{name:'Message Amplifier'}).waitFor();
+  await page.goto(url);await showFixtureConversation(page);await page.getByRole('textbox',{name:'Message Amplifier'}).waitFor();
   await expect(app).toHaveAttribute('data-window-controls-overlay','true');
   const manifest=await page.evaluate(()=>fetch('/manifest.webmanifest').then(r=>r.json()));
   assert.deepEqual(manifest.display_override,['window-controls-overlay','standalone']);
@@ -297,8 +300,9 @@ try{
   assert.equal(await page.locator('.a-work-header').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(21, 37, 51)');
   ordinaryBrowser=await chromium.launch(launchOptions);
   const ordinary=await ordinaryBrowser.newPage({extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
-  await ordinary.goto(url);await ordinary.getByRole('textbox',{name:'Message Amplifier'}).waitFor();
+  await ordinary.goto(url);await showFixtureConversation(ordinary);await ordinary.getByRole('textbox',{name:'Message Amplifier'}).waitFor();
   await expect(ordinary.locator('#amp-one')).not.toHaveAttribute('data-window-controls-overlay','true');await ordinary.close();
   assert.deepEqual(errors,[]);
   console.log('SIMULATED WCO GEOMETRY passed against shipped build: left/right/nonzero-y, 320–1280px, off/malformed recovery, menus/dialogs/compact Settings, retained viewer and saved appearance reload. Native installed launch, OS controls and dragging NOT verified.');
-}finally{await ordinaryBrowser?.close();await browser?.close();fixture.kill()}
+}catch(error){failure=error;throw error}
+finally{await finishFixture({label:'Window controls geometry fixture',close:[['Ordinary browser',()=>ordinaryBrowser?.close()],['WCO browser',()=>browser?.close()]],stop,originalError:failure})}
