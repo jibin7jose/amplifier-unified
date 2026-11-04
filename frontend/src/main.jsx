@@ -71,7 +71,7 @@ import {createRoot} from 'react-dom/client';
 import {Phone,MessageCircle,Bell,ArrowUp,X,GitBranch,Download,ChevronRight,AudioLines} from 'lucide-react';
 import {request,download,visibleView} from './api';
 import {createPendingView} from './pending-view';
-import {createSettingsActionQueue,settingsDraftKey,isProviderCatalogRead,isDraftDefaultsRead,isConversationChoiceRead} from './settings-action-queue';
+import {createSettingsActionQueue,settingsDraftKey,isProviderCatalogRead,isDraftDefaultsRead,isConversationChoiceRead,isAppearanceRead} from './settings-action-queue';
 import {applyStateDelta,onlyStateRevisionChanged} from './state-transport';
 import {createViewReporter} from './view-reporter';
 import {createConversationNavigation,isNavigationAction,usesNavigationQueue} from './conversation-navigation';
@@ -390,15 +390,16 @@ function App(){
   // Reviewing exact item fingerprints is independent of send admission and view changes.
   const exactReview=action==='attention.read'&&Array.isArray(args.ids)&&args.ids.length>0&&args.ids.every(id=>typeof args.fingerprints?.[id]==='string');
   const defaultsRead=isDraftDefaultsRead(action,meta),choiceRead=isConversationChoiceRead(action,args,meta),catalogRead=isProviderCatalogRead(action,meta)||defaultsRead||choiceRead;
+  const appearanceRead=isAppearanceRead(action,meta);
   // Optional plan summaries have their own exact read result; they must not
   // hold up browsing or ordered mutations while canonical files are read.
   const planRead=action==='session.plans';
   // Reveal joins document ordering AND visibility ordering without merging their
   // queues globally. Capture the prior visibility tail before publishing this one.
-  const after=permissionHistory?canvasVisibilityQueue.current:catalogRead&&!choiceRead?commandQueue.current:null;
+  const after=permissionHistory?canvasVisibilityQueue.current:(catalogRead&&!choiceRead||appearanceRead)?commandQueue.current:null;
   // A read-only Canvas reveal must not hold a pending card's guarded read or
   // decision. Keep those individual calls ordered, independent of Canvas work.
-  const queue=capabilityCard?capabilityCardQueue:usesNavigationQueue(action,args)?navigationQueue:action==='call.mute'?voiceControlQueue:localVoiceControl||action.startsWith('coordination.')||meta.presentation||defaultsRead||choiceRead||planRead?{current:Promise.resolve()}:action==='canvas.visibility'?canvasVisibilityQueue:exactReview?reviewQueue:['conversation.send','message.edit','question.answer'].includes(action)?sendQueue:catalogRead?providerReadQueue:commandQueue;
+  const queue=capabilityCard?capabilityCardQueue:usesNavigationQueue(action,args)?navigationQueue:action==='call.mute'?voiceControlQueue:localVoiceControl||action.startsWith('coordination.')||meta.presentation||defaultsRead||choiceRead||planRead||appearanceRead?{current:Promise.resolve()}:action==='canvas.visibility'?canvasVisibilityQueue:exactReview?reviewQueue:['conversation.send','message.edit','question.answer'].includes(action)?sendQueue:catalogRead?providerReadQueue:commandQueue;
   const queuedAt=performance.now();
   const timedExecute=()=>{const startedAt=performance.now();return Promise.resolve().then(execute).finally(()=>recordActionTiming(action,queuedAt,startedAt))};
   const promise=enqueueSettings.current(queue,timedExecute,settingsDraftKey(action,args,meta),after).then(result=>{
