@@ -26,7 +26,7 @@ For performance-sensitive changes, use [performance validation](docs/validation/
 at design and review. Describe the affected operation, scaling inputs, measured
 budget and semantic checks in the PR; distinguish source tests from installed or
 live evidence. Select checks for the changed risk under the
-[release policy](docs/validation/release-qualification.md#local-first-fast-publication-policy-updated-october-14-2026).
+[release policy](docs/validation/release-qualification.md#local-first-fast-publication-policy-updated-november-4-2026).
 
 For release acceptance, use the [platform and first-use checklist](docs/validation/release-acceptance.md).
 

@@ -17,6 +17,7 @@ import subprocess
 import zipfile
 
 CHECKS = ('resolve', 'installed-package', 'readiness', 'python', 'browser', 'integrations')
+SMOKE_CHECKS = ('resolve', 'installed-package')
 REPOSITORY = 'microsoft/amplifier-unified'
 PUBLISHER = '.github/workflows/release.yml'
 CANDIDATE_ARTIFACT = 'host-source-resolution'
@@ -68,6 +69,17 @@ def resolve_publication(repository, event_name, ref, event):
             raise ValueError('Manual post-release verification requires main')
         run_id = positive_id(event.get('inputs', {}).get('publication_run_id'))
         run = gh('api', f'repos/{repository}/actions/runs/{run_id}')
+    elif event_name == 'schedule':
+        if ref != 'refs/heads/main':
+            raise ValueError('Nightly verification requires main')
+        # One immutable publisher snapshot, then the same attempt/artifact/tag
+        # verification as automatic release smoke. Never test a moving main.
+        runs = gh('api', f'repos/{repository}/actions/workflows/release.yml/runs'
+                  '?branch=main&status=success&per_page=1')['workflow_runs']
+        if len(runs) != 1:
+            raise ValueError('No successful publisher is available for nightly verification')
+        run = runs[0]
+        run_id = positive_id(run.get('id'))
     elif event_name == 'workflow_run':
         run = event['workflow_run']
         run_id = positive_id(run.get('id'))
@@ -200,7 +212,10 @@ def verify_downloads(destination, version):
     return report
 
 
-def build_report(results, repository, run_id, publication_id):
+def build_report(results, repository, run_id, publication_id, scope='broad'):
+    if scope not in {'smoke', 'broad'}:
+        raise ValueError('Unknown verification scope')
+    expected = SMOKE_CHECKS if scope == 'smoke' else CHECKS
     outputs = results.get('resolve', {}).get('outputs', {})
     publication_id = str(positive_id(publication_id)) if publication_id else ''
     tag = outputs.get('tag') or (
@@ -210,15 +225,17 @@ def build_report(results, repository, run_id, publication_id):
                if outputs.get('publication_run_attempt') else '')
     publication = (f'[Publication run](https://github.com/{repository}/actions/runs/{publication_id}{attempt})'
                    if publication_id else 'Publication run: unverified (resolution failed)')
-    failed = [name for name in CHECKS if results.get(name, {}).get('result') != 'success']
-    marker = f'<!-- amplifier-post-release:{tag} -->'
-    title = f'Post-release verification: {tag}'
+    failed = [name for name in expected if results.get(name, {}).get('result') != 'success']
+    marker = f'<!-- amplifier-post-release{"-smoke" if scope == "smoke" else ""}:{tag} -->'
+    title = f'{"Release smoke" if scope == "smoke" else "Post-release verification"}: {tag}'
     body = '\n'.join([
-        marker, f'Post-release verification **{"failed" if failed else "passed"}** for `{tag}`.',
+        marker, f'{"Release smoke" if scope == "smoke" else "Broad verification"} **{"failed" if failed else "passed"}** for `{tag}`.',
         f'Release tag: `{outputs["tag"]}`.' if outputs.get('tag') else 'Release tag: unresolved.',
         f'Published revision: `{revision}`.', '',
         f'[Verification run](https://github.com/{repository}/actions/runs/{run_id}) · {publication}', '',
-        *[f'- {name}: {results.get(name, {}).get("result", "missing")}' for name in CHECKS], '',
+        *[f'- {name}: {results.get(name, {}).get("result", "missing")}' for name in expected], '',
+        ('Broad suites were not run in this smoke check; their failures remain separately tracked.'
+         if scope == 'smoke' else 'Full configured broad coverage was requested.'), '',
         'These checks run after publication. This report does not withdraw the release, '
         'move a tag, replace assets, or change installed applications.',
     ])
@@ -254,6 +271,11 @@ def main():
     args = parser.parse_args()
     repository = os.environ['GITHUB_REPOSITORY']
     if args.command == 'resolve':
+        # Freeze the actual latest published release before selecting its publisher.
+        # A historical publisher rerun must not silently qualify an older release.
+        latest = (gh('release', 'view', '--repo', repository,
+                     '--json', 'tagName,isDraft,isPrerelease,publishedAt')
+                  if os.environ['GITHUB_EVENT_NAME'] == 'schedule' else None)
         run = resolve_publication(repository, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'],
                                   json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()))
         # Retain only verified publisher identity even if later artifact/tag
@@ -262,6 +284,9 @@ def main():
             stream.write(f'publication_run_id={run["id"]}\npublication_run_attempt={run["run_attempt"]}\n')
         candidate = load_candidate(repository, run)
         tag = 'v' + stable_version(candidate.get('version'))
+        if latest is not None and latest.get('tagName') != tag:
+            raise ValueError('Latest successful publisher does not match the latest published release; '
+                             'dispatch the matching publication run explicitly')
         release = gh('release', 'view', tag, '--repo', repository,
                      '--json', 'tagName,isDraft,isPrerelease,publishedAt')
         result = resolve_candidate(candidate, release, published_revision(repository, tag))
@@ -277,7 +302,8 @@ def main():
         verify_downloads(args.destination, version)
     else:
         report = build_report(json.loads(os.environ['RELEASE_RESULTS']), repository,
-                              os.environ['GITHUB_RUN_ID'], os.environ['RELEASE_RUN_ID'])
+                              os.environ['GITHUB_RUN_ID'], os.environ['RELEASE_RUN_ID'],
+                              os.environ.get('VERIFICATION_SCOPE', 'broad'))
         with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:
             stream.write(report['body'] + '\n')
         track_report(repository, report)

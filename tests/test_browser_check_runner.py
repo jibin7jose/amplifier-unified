@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import signal
 import sys
 import subprocess
@@ -371,22 +370,6 @@ def test_voice_refinement_has_four_additive_standard_ux_owners():
                           ('chat-scroll-call-boundaries', 'semantic-settings', 'history-refresh', 'voice-work-message')}
 
 
-def assert_readiness_python_coverage(workflow, *, targets, run_blocks_sha256):
-    """Count real normal-lane arguments; retain order and duplicates as evidence."""
-    runs = [step['run'] for step in workflow['jobs']['critical']['steps'] if 'run' in step]
-    files = []
-    for run in runs:
-        for line in run.splitlines():
-            if line.strip().startswith('uv run --no-sync pytest '):
-                argv = shlex.split(line, comments=True)
-                files.extend(arg for arg in argv[4:] if re.fullmatch(r'tests/test_\w+\.py', arg))
-    assert len(files) == len(set(files)) == targets, 'Normal readiness target count or duplicate changed'
-    # A fixed pre-diagnostic oracle also detects altered ordering or a duplicate
-    # command written in an unrecognized shell form. Do not sort/deduplicate it.
-    assert hashlib.sha256(json.dumps(runs).encode()).hexdigest() == run_blocks_sha256, 'Normal readiness commands changed'
-    return files
-
-
 def test_compact_composer_peer_preview_and_artifact_keep_automatic_inventory_owners():
     plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
     ledger = json.loads((ROOT / 'frontend/tests/standard-ux-inventory-deltas.json').read_text())
@@ -442,34 +425,7 @@ def test_compact_composer_peer_preview_and_artifact_keep_automatic_inventory_own
     assert dirty == {'id': 'canvas-dirty', 'command': ['node', 'tests/canvas-dirty-browser.mjs']}
 
 
-@pytest.mark.parametrize('change', ['diagnostic-noise', 'duplicate-step', 'duplicate-argument',
-                                  'alternate-duplicate', 'reorder'])
-def test_readiness_inventory_distinguishes_diagnostic_mentions_from_real_commands(change):
-    runs = ['uv run --no-sync pytest -q tests/test_first.py',
-            'uv run --no-sync pytest -q tests/test_second.py']
-    expected = hashlib.sha256(json.dumps(runs).encode()).hexdigest()
-    steps = [{'run': run} for run in runs]
-    workflow = {'jobs': {'critical': {'steps': steps}, 'diagnostic': {'steps': [
-        {'run': "allowed = {'tests/test_first.py'}"},
-        {'run': 'uv run --no-sync pytest -q tests/test_first.py'},
-    ]}}}
-    if change == 'duplicate-step':
-        steps.append(steps[0].copy())
-    elif change == 'duplicate-argument':
-        steps[0]['run'] += ' tests/test_first.py'
-    elif change == 'alternate-duplicate':
-        steps.append({'run': 'python -m pytest tests/test_first.py'})
-    elif change == 'reorder':
-        steps.reverse()
-    if change == 'diagnostic-noise':
-        assert assert_readiness_python_coverage(workflow, targets=2, run_blocks_sha256=expected) == [
-            'tests/test_first.py', 'tests/test_second.py']
-    else:
-        with pytest.raises(AssertionError, match='Normal readiness'):
-            assert_readiness_python_coverage(workflow, targets=2, run_blocks_sha256=expected)
-
-
-def test_workflow_keeps_independent_artifacts_and_readiness_unique_python_coverage():
+def test_workflow_keeps_independent_artifacts_and_one_full_python_owner():
     workflows = ROOT / '.github/workflows'
     browser = yaml.load((workflows / 'browser-checks.yml').read_text(), Loader=yaml.BaseLoader)
     steps = browser['jobs']['browser']['steps']
@@ -499,14 +455,24 @@ def test_workflow_keeps_independent_artifacts_and_readiness_unique_python_covera
     assert build['run'] == 'npm run build --prefix frontend'
     assert steps.index(build) < steps.index(static)
     readiness = yaml.load((workflows / 'public-readiness.yml').read_text(), Loader=yaml.BaseLoader)
-    # Ordered normal critical run blocks from reviewed a99ab643, before the
-    # independent diagnostic job was merged, plus host helper recovery coverage.
-    # Eight pytest calls / 103 targets; pending-update admission, legacy drain,
-    # event-driven readiness and retention coverage are additive; ordering retained.
-    assert_readiness_python_coverage(
-        readiness, targets=103,
-        run_blocks_sha256='d44aefd9f103f8f5c55e098d43543297a7f353c052af96386cbbee1aff429371',
-    )
+    readiness_commands = '\n'.join(step.get('run', '') for step in readiness['jobs']['critical']['steps'])
+    assert 'pytest' not in readiness_commands and 'npm test' not in readiness_commands
+    # The nightly caller keeps the immutable revision and selects the complete
+    # Python owner, rather than silently losing the removed readiness subsets.
+    post = yaml.load((workflows / 'post-release.yml').read_text(), Loader=yaml.BaseLoader)
+    caller = post['jobs']['python']
+    assert caller['uses'] == './.github/workflows/python-checks.yml'
+    assert caller['with'] == {'revision': '${{ needs.resolve.outputs.revision }}'}
+    assert caller['if'] == ("github.event_name == 'schedule' || "
+                            "(github.event_name == 'workflow_dispatch' && inputs.broad)")
+    python = yaml.load((workflows / 'python-checks.yml').read_text(), Loader=yaml.BaseLoader)
+    job = python['jobs']['python']
+    assert job['env']['CHECK_SUITE'] == "${{ inputs.suite || 'full' }}"
+    complete = next(step for step in job['steps'] if step.get('name') == 'Run the complete Python suite')
+    assert complete['if'] == "${{ env.CHECK_SUITE == 'full' }}"
+    assert complete['run'] == 'python -u scripts/browser_check_runner.py --python-suite --output output/python-checks'
+    assert runner.PYTHON_COMMAND == ['.venv/bin/python', '-u', '-m', 'pytest', '-v', '--tb=short',
+                                     '--junitxml=output/python-checks/junit.pending.xml']
 
 
 @pytest.mark.parametrize('fault', ['none', 'python-skip', 'frontend-skip', 'unrun-browser', 'missing-junit'])
