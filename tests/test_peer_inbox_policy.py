@@ -175,6 +175,7 @@ async def test_relaxing_inbox_policy_resumes_saved_return_without_external_event
 
 async def test_creation_failure_return_resumes_without_repeating_unknown_creation(app, monkeypatch):
     source = app.state['sessions'][0]
+    app.runtime.unavailable_boundaries.add(source['id'])
     plan(app, source)
     entered, release = asyncio.Event(), asyncio.Event()
     calls = []

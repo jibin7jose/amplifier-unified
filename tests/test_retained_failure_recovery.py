@@ -20,6 +20,9 @@ async def submit(app, source, target, human):
 
 async def historical_failure(app, event='generation.failed', native=False):
     source = app.state['sessions'][0]
+    # A failed commission also returns to its manager. Hold that unrelated
+    # automatic input at an explicit unavailable boundary during target recovery.
+    app.runtime.unavailable_boundaries.add(source['id'])
     # A native observation belongs to a later generation, not a duplicate start
     # of the commissioning generation (which must preserve its admitted inputs).
     target, creation = await child(app, source, identity='initial-helper' if native else 'helper')

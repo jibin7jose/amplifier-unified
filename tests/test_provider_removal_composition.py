@@ -1,6 +1,6 @@
 """Removing one account suppresses that identity through real settings loading."""
 import copy
-from types import SimpleNamespace
+from amplifier_foundation import Bundle
 
 import pytest
 import yaml
@@ -23,7 +23,7 @@ def test_remove_suppresses_declared_provider_and_preserves_sibling(tmp_path, ide
         'config': {'providers': [provider, sibling]}}))
     manager._provider_mutation({'id': identity}, str(tmp_path), scope, remove=True)
     config = manager.config(str(tmp_path))
-    bundle = SimpleNamespace(providers=[copy.deepcopy(provider)], tools=[], hooks=[], session={})
+    bundle = Bundle(name='provider-removal', providers=[copy.deepcopy(provider)])
     rows = _apply_settings(bundle, config).providers
     assert [row.get('instance_id') or row.get('id') or row['module'].removeprefix('provider-')
             for row in rows] == ['kept']
