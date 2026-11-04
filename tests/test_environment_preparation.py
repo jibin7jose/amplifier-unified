@@ -48,7 +48,9 @@ def test_profiles_preserve_small_check_and_fit_browser_workload():
     browser = profiles.get('browser-test')
     assert browser['defaultTimeoutSeconds'] > 11 * 60
     assert browser['memoryMiB'] >= 4096 and browser['shmMiB'] >= 1024
-    assert browser['environment']['HOME'] == '/artifacts/home'
+    assert browser['environment']['HOME'] == '/tmp/unified-test/home'
+    assert browser['environment']['XDG_CACHE_HOME'] == '/tmp/unified-test/cache'
+    assert browser['environment']['AMPLIFIER_TEST_ARTIFACTS'] == '/artifacts'
     browser['environment']['PATH'] = 'mutated'
     assert profiles.get('python-project')['environment']['PATH'] != 'mutated'
 
@@ -171,14 +173,15 @@ def test_initializer_copies_writable_node_modules_and_rejects_conflicting_source
         folder.mkdir(parents=True)
     (prefix / 'node/frontend/dependency.js').write_text('dependency')
     (prefix / 'plan.json').write_text(json.dumps({'profileId': 'browser-test', 'preparationId': 'exact', 'nodeDirectory': 'frontend', 'nodeKey': 'frontend'}))
-    initializer.initialize(prefix, workspace, artifacts)
+    initializer.initialize(prefix, workspace)
+    assert not artifacts.exists()
     target = workspace / 'frontend/node_modules'
     assert not target.is_symlink() and (target / 'dependency.js').read_text() == 'dependency'
     (target / 'output').write_text('writable')
-    initializer.initialize(prefix, workspace, artifacts)
+    initializer.initialize(prefix, workspace)
     (workspace / '.unified-prepared-dependencies.json').unlink()
     with pytest.raises(ValueError, match='already supplies'):
-        initializer.initialize(prefix, workspace, artifacts)
+        initializer.initialize(prefix, workspace)
 
 
 def test_docker_builder_has_bounded_resources_no_mounts_and_immutable_commit(tmp_path, monkeypatch):

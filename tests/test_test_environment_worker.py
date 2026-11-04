@@ -1254,13 +1254,14 @@ def test_manual_and_durable_transport_share_environment(library, tmp_path, profi
     assert calls[-1][2]['timeout_seconds'] == 15  # Observer, not manual timeout.
 
 
-def test_manual_guest_reuses_fixed_identity_and_execs_without_login_shell(monkeypatch):
+def test_manual_guest_reuses_fixed_identity_and_execs_without_login_shell(monkeypatch, tmp_path):
     events = []
     monkeypatch.setattr(guest.os, 'setgroups', lambda groups: events.append(('groups', groups)))
     monkeypatch.setattr(guest.os, 'setgid', lambda gid: events.append(('gid', gid)))
     monkeypatch.setattr(guest.os, 'setuid', lambda uid: events.append(('uid', uid)))
     monkeypatch.setattr(guest.os, 'chdir', lambda cwd: events.append(('cwd', cwd)))
     monkeypatch.setattr(guest.os, 'execve', lambda *args: events.append(('exec', args)))
+    monkeypatch.setattr(guest, 'SCRATCH', tmp_path / 'scratch')
     monkeypatch.setenv('PRIVATE_HOST_SECRET', 'not-forwarded')
     value = {'command': 'python -V; exit 7', 'environment': profiles.get('browser-test')['environment']}
     guest.execute(value)
@@ -1283,6 +1284,36 @@ def test_manual_privilege_failure_never_runs_command(monkeypatch, failure):
     monkeypatch.setattr(guest.os, 'execve', lambda *args: pytest.fail('root fallback'))
     with pytest.raises(PermissionError, match='cannot drop identity'):
         guest.execute({'command': 'true'})
+
+
+def test_disposable_home_cache_restart_and_explicit_report_paths(monkeypatch, tmp_path):
+    scratch, artifacts = tmp_path / 'temporary', tmp_path / 'artifacts'
+    artifacts.mkdir()
+    (artifacts / 'report.xml').write_text('<testsuite/>')
+    monkeypatch.setattr(guest, 'SCRATCH', scratch)
+    for name in ('setgroups', 'setgid', 'setuid'):
+        monkeypatch.setattr(guest.os, name, lambda value: None)
+    guest.become_worker()
+    environment = guest.worker_environment({})
+    for key in ('HOME', 'XDG_CACHE_HOME'):
+        directory = Path(environment[key])
+        assert directory.is_relative_to(scratch)
+        assert directory.stat().st_mode & 0o777 == 0o700
+        (directory / 'generated-cache').write_text('disposable data')
+    # The unchanged exporter retains selected source/results roots, not scratch.
+    with tarfile.open(tmp_path / 'artifacts.tar', 'w') as archive:
+        archive.add(artifacts, arcname='artifacts')
+    with tarfile.open(tmp_path / 'artifacts.tar') as archive:
+        assert archive.getnames() == ['artifacts', 'artifacts/report.xml']
+    import shutil
+    shutil.rmtree(scratch)  # A stopped/restarted guest may lose temporary files.
+    guest.become_worker()
+    assert Path(environment['HOME']).is_dir()
+    assert Path(environment['XDG_CACHE_HOME']).is_dir()
+    assert (artifacts / 'report.xml').read_text() == '<testsuite/>'
+    overrides = {'HOME': '/custom-home', 'XDG_CACHE_HOME': '/custom-cache',
+                 'AMPLIFIER_TEST_ARTIFACTS': '/custom-reports'}
+    assert all(guest.worker_environment({'environment': overrides})[k] == v for k, v in overrides.items())
 
 
 def test_manual_host_payload_selects_resource_profile_without_caller_environment(tmp_path, monkeypatch):
@@ -1428,6 +1459,12 @@ for root in ('/workspace', '/artifacts'):
     path.write_text('owned workload')
     assert path.read_text() == 'owned workload'
     assert path.stat().st_uid == 65534
+for key in ('HOME', 'XDG_CACHE_HOME'):
+    path = Path(os.environ[key]) / 'generated-cache'
+    path.write_text('disposable cache')
+    assert path.is_relative_to('/tmp/unified-test')
+    assert path.stat().st_uid == 65534
+assert sorted(p.name for p in Path('/artifacts').iterdir()) == ['proof.txt']
 assert not os.access('/var/lib/unified-jobs', os.R_OK)
 assert not os.access('/var/lib/unified-jobs', os.W_OK)
 print(json.dumps({'uid': os.getuid(), 'gid': os.getgid(), 'groups': os.getgroups(),

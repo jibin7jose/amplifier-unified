@@ -19,6 +19,7 @@ import time
 
 CONTROL = Path('/var/lib/unified-jobs')
 WORKSPACE = '/workspace'
+SCRATCH = Path('/tmp/unified-test')
 OUTPUT_BYTES = 8192
 TERMINAL = {'passed', 'failed', 'cancelled', 'timed_out'}
 
@@ -152,10 +153,16 @@ def become_worker():
     os.setgroups([])
     os.setgid(65534)
     os.setuid(65534)
+    # Disposable defaults belong to the workload, not the retained evidence
+    # volume. Recreate them after a guest restart clears its temporary mount.
+    SCRATCH.mkdir(mode=0o700, exist_ok=True)
+    for name in ('home', 'cache'):
+        (SCRATCH / name).mkdir(mode=0o700, exist_ok=True)
 
 
 def worker_environment(payload):
-    return {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/artifacts/home', 'LANG': 'C.UTF-8',
+    return {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': str(SCRATCH / 'home'),
+            'XDG_CACHE_HOME': str(SCRATCH / 'cache'), 'LANG': 'C.UTF-8',
             **payload.get('environment', {})}
 
 
