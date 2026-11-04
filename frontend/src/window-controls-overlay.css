@@ -45,6 +45,7 @@
   padding-top:var(--wco-safe-top)!important;
 }
 #amp-one[data-window-controls-overlay=true][data-window-controls-overlay-stacked=true] .a-work-header{
+  min-height:calc(48px + var(--wco-decoration-height))!important;
   padding-bottom:calc(4px + var(--wco-decoration-height))!important;
 }
 /* Focused Canvas retains the actual header visibility toggle. Other background

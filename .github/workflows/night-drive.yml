@@ -53,7 +53,7 @@ jobs:
           plan = {'schemaVersion': 1, 'scenarios': [
             {'id': 'night-drive', 'command': ['node', 'tests/night-drive-browser.mjs'],
              'env': {**env, 'AMPLIFIER_TEST_ARTIFACTS': str(output / 'theme')}},
-            {'id': 'native-geometry', 'command': ['node', 'tests/window-controls-overlay-browser.mjs'],
+            {'id': 'native-geometry', 'command': ['node', 'tests/window-controls-overlay-browser.mjs', '--header-clearance-only'],
              'env': {**env, 'AMPLIFIER_TEST_ARTIFACTS': str(output / 'native-geometry')}},
           ]}
           (output / 'plan.json').write_text(json.dumps(plan, indent=2))

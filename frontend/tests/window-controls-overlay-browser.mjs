@@ -14,6 +14,7 @@ const root=fileURLToPath(new URL('../../',import.meta.url));
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',[root+'tests/fixtures/empty_host_ui_server.py'],{stdio:['ignore','pipe','inherit']});
 const stop=ownFixture(fixture,{label:'Window controls geometry fixture'});
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||root+'output/window-controls-overlay';
+const headerOnly=process.argv.includes('--header-clearance-only');
 let browser,ordinaryBrowser,failure;
 const launchOptions={headless:true,args:process.env.CHROMIUM_SINGLE_PROCESS==='1'?['--single-process','--no-zygote']:[]};
 // Chromium screenshots encode RGB/RGBA PNGs. Decode only the one-row samples
@@ -112,6 +113,27 @@ try{
   await expect(app).toHaveAttribute('data-window-controls-overlay','true');
   const manifest=await page.evaluate(()=>fetch('/manifest.webmanifest').then(r=>r.json()));
   assert.deepEqual(manifest.display_override,['window-controls-overlay','standalone']);
+  if(headerOnly){
+    // The changed owner is header clearance. The existing full journey below
+    // retains separate focused-Canvas/artwork/menu coverage and its failures.
+    for(const width of [1280,800,390,320]){
+      await page.setViewportSize({width,height:900});
+      for(const rect of [{x:80,y:0,width:width-80,height:32},{x:86,y:0,width:width-180,height:38},{x:0,y:0,width:width-140,height:32},{x:80,y:0,width:width-80,height:24},{x:70,y:8,width:width-210,height:52}]){
+        await geometry(rect);
+        for(const reserved of [0,16]){
+          await action('theme.preview',{name:'Header decoration clearance',css:`#amp-one{--a-header-decoration-height:${reserved}px}`});
+          await clearHeader('.a-work-header',rect);await centeredChrome('.a-work-header',rect);
+          const stacked=await app.getAttribute('data-window-controls-overlay-stacked')==='true';
+          const actual=await page.locator('.a-work-header').evaluate(el=>el.getBoundingClientRect().height);
+          assert.ok(actual>=Math.max(48,rect.y+rect.height)-rect.y+reserved-1,'Reserved strip must have layout space');
+          if(!stacked)assert.equal(Math.round(actual),Math.max(48,rect.y+rect.height)-rect.y+reserved);
+          await action('theme.revert');
+        }
+      }
+    }
+    assert.deepEqual(errors,[]);
+    console.log('SIMULATED HEADER CLEARANCE passed: 0/16px decoration strips, 20 left/right/nonzero-y geometries at 320/390/800/1280px, native control centering unchanged. No focused-Canvas/OS-drag acceptance claimed.');
+  }else{
   // WorkDialog is a real portal into the app, not a hand-authored fixture.
   await page.getByRole('button',{name:'Choose workspace',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Choose a workspace'})).toBeVisible();
@@ -304,5 +326,6 @@ try{
   await expect(ordinary.locator('#amp-one')).not.toHaveAttribute('data-window-controls-overlay','true');await ordinary.close();
   assert.deepEqual(errors,[]);
   console.log('SIMULATED WCO GEOMETRY passed against shipped build: left/right/nonzero-y, 320–1280px, off/malformed recovery, menus/dialogs/compact Settings, retained viewer and saved appearance reload. Native installed launch, OS controls and dragging NOT verified.');
+  }
 }catch(error){failure=error;throw error}
 finally{await finishFixture({label:'Window controls geometry fixture',close:[['Ordinary browser',()=>ordinaryBrowser?.close()],['WCO browser',()=>browser?.close()]],stop,originalError:failure})}
