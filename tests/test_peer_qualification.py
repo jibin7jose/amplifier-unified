@@ -14,11 +14,11 @@ def test_peer_hosted_route_is_fixed_and_separate():
     assert workflow['on']['workflow_dispatch']['inputs']['peer_messages'] == {
         'description': 'Fixed peer groups, formatting negative control and installed-wheel browser proof',
         'type': 'boolean', 'default': 'false'}
-    assert set(workflow['jobs']) == {'browser', 'mcp-boundary', 'destination-history', 'peer-messages', 'compact-composer', 'canvas-qualification', 'attachment-experience'}
+    assert set(workflow['jobs']) == {'browser', 'mcp-boundary', 'destination-history', 'peer-messages', 'compact-composer', 'canvas-qualification', 'attachment-experience', 'readiness-trio', 'permissions-history'}
     for name in ('browser', 'mcp-boundary', 'destination-history'):
         assert '!inputs.peer_messages' in workflow['jobs'][name]['if']
     job = workflow['jobs']['peer-messages']
-    assert job['if'] == "${{ github.event_name == 'workflow_dispatch' && inputs.peer_messages }}"
+    assert job['if'] == "${{ !inputs.permissions_history && !inputs.readiness_trio && github.event_name == 'workflow_dispatch' && inputs.peer_messages }}"
     assert job['runs-on'] == 'ubuntu-latest' and job['timeout-minutes'] == '30'
     steps = job['steps']
     reject = steps[0]

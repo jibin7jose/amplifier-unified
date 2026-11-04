@@ -84,7 +84,8 @@ def test_shared_routing_and_session_changes_invalidate_mount(tmp_path):
 
 
 def test_shared_module_overrides_and_routing_apply_without_app_paths(tmp_path):
-    bundle = SimpleNamespace(providers=[], tools=[], hooks=[{'module': 'hooks-routing'}],
+    from amplifier_foundation import Bundle
+    bundle = Bundle(name='shared-settings', hooks=[{'module': 'hooks-routing'}],
         session={'context': {'module': 'context-simple', 'config': {'other': True}},
                  'orchestrator': {'module': 'loop-streaming'}})
     config = SimpleNamespace(settings={'overrides': {

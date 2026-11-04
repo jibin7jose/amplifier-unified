@@ -15,6 +15,9 @@ from test_native_directory import seed
 @pytest.mark.parametrize('operation', ['workspace_counts', 'shortcuts'])
 def test_catalog_extracts_each_live_scalar_once_per_statement(tmp_path, automatic_index, operation):
     state, directory = directory_fixture(tmp_path, 8)
+    # This workload measures all 500 chats. The navigation fixture otherwise
+    # includes two archived chats, which workspace counts correctly exclude.
+    state['conversationOrganization']['archived'].clear()
     catalog = NativeCatalog(tmp_path / 'native.sqlite3', tmp_path / 'native')
     project, workspace = seed(catalog, tmp_path / 'workspace', 500)
     for number, row in enumerate(state['sessions']):

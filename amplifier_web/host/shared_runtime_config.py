@@ -74,7 +74,7 @@ def resolve_config(config, *, workspace, session_id):
         # override merely because the corresponding shared setting is absent.
         for key in ("default_matrix", "overrides", "custom_routing_dirs"):
             hook.get("config", {}).pop(key, None)
-    model = SimpleNamespace(providers=[], tools=[], session={},
+    model = SimpleNamespace(providers=[], tools=[], session={}, agents={},
                             hooks=existing or [{"module": "hooks-routing", "source": ROUTING_SOURCE}])
     _apply_settings(model, host)
     if not model.providers:

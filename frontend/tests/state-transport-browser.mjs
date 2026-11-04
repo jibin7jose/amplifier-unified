@@ -1,6 +1,8 @@
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 // Production assets, real HTTP/SSE and a disposable Spark-sized catalog.
 import {spawn} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {dirname} from 'node:path';
@@ -10,12 +12,44 @@ import {chromium,expect} from '@playwright/test';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const evidencePath=process.env.AMPLIFIER_PERF_EVIDENCE||root+'output/state-transport-browser/evidence.json';
 const tracePath=evidencePath.replace(/\.json$/,'')+'.trace.zip';
-const errors=[],responses=[],frames=[],initialFrames=[],paint=[],pending=new Map();
+const errors=[],responses=[],catalogResponses=[],frames=[],initialFrames=[],paint=[],pending=new Map();
 const evidence={status:'running',stage:'fixture',thresholdMs:250,paint,diagnostics:[],rendererUnits:'Seconds except LayoutCount and RecalcStyleCount',errors,modelCalls:0,
  runner:{platform:process.platform,arch:process.arch,node:process.version,parallelism:availableParallelism(),ci:process.env.CI==='true',loadAverage:loadavg()}};
 const persist=async()=>{await mkdir(dirname(evidencePath),{recursive:true});await writeFile(evidencePath,JSON.stringify(evidence,null,2)+'\n')};
 const recordFrame=(kind,bytes)=>{if(measured)frames.push({kind,bytes});else if(!evidence.initialCoverageSettled){initialFrameCount++;initialMaxBytes=Math.max(initialMaxBytes,bytes);if(initialFrames.length<256)initialFrames.push({kind,bytes})}};
 const pendingActions=()=>[...pending.values()].slice(0,32);
+// Compact transport omits state, not an explicitly requested domain body
+// (docs/browser-state-transport.md). This fixture opens seven bundled thumbnails.
+// Their measured maximum at c6e04df is 142,211 bytes including JSON escaping;
+// 160 KB bounds each complete stylesheet, not arbitrary reads or mutations.
+function assertActionResponse(row){
+ assert.equal(row.hasState,false,`${row.action} must not carry a state snapshot`);
+ if(row.action!=='theme.read'){assert.ok(row.bytes<16_000,JSON.stringify(row));return;}
+ assert.equal(row.accepted,true);assert.equal(row.resultId,row.requestId);
+ assert.equal(row.source,'built-in');assert.ok(row.cssBytes>0);
+ assert.match(row.catalogFingerprint||'',/^[a-f0-9]{64}$/);
+ assert.equal(row.fingerprint,row.catalogFingerprint,'Read matches the independently delivered catalog');
+ assert.equal(row.fingerprint,row.cssSha256,'The complete requested CSS matches its fingerprint');
+ assert.ok(row.envelopeBytes<16_000,JSON.stringify(row));
+ assert.ok(row.bytes<160_000,JSON.stringify(row));
+}
+async function captureResponse(request){
+ const response=await request.response();
+ assert.ok(response,`No response for ${request.postDataJSON().action}`);
+ return {request:request.postDataJSON(),body:await response.body()};
+}
+function actionResponse({request,body},catalog){
+ const value=JSON.parse(body),{action,args}=request;
+ const row={action,bytes:body.length,hasState:Object.hasOwn(value,'state')};
+ if(action==='theme.read'){
+  const {css,...metadata}=value.result||{};
+  Object.assign(row,{accepted:value.accepted,requestId:args.id,resultId:metadata.id,source:metadata.source,
+   fingerprint:metadata.fingerprint,catalogFingerprint:catalog.get(args.id),cssBytes:typeof css==='string'?Buffer.byteLength(css):0,
+   cssSha256:typeof css==='string'?createHash('sha256').update(css).digest('hex'):null,
+   envelopeBytes:Buffer.byteLength(JSON.stringify({...value,result:metadata}))});
+ }
+ return row;
+}
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',[root+'tests/fixtures/active_client_performance_server.py'],{stdio:['ignore','pipe','inherit'],env:{...process.env,AMPLIFIER_TRANSPORT_FIXTURE:'1'}});
 let browser,context,page,cdp,tracing=false,failed=false,measured=false,heldPrepares=0,persistenceReleased=false,initialFrameCount=0,initialMaxBytes=0;
 let releasePersistence;const persistenceGate=new Promise(resolve=>{releasePersistence=()=>{persistenceReleased=true;resolve()}});
@@ -59,9 +93,17 @@ try{
   window.transportLongTasks={rows,record,observer};
  });
  page.on('pageerror',error=>errors.push(error.message));
- page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/actions')pending.set(request,{action:String(request.postDataJSON()?.action||'unknown').slice(0,120)})});
+ page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/actions'){
+  pending.set(request,{action:String(request.postDataJSON()?.action||'unknown').slice(0,120)});
+  // Bind the window at request admission, including bodies that finish later.
+  // Settle only after cold paint measurements; never prewarm the gallery.
+  if(measured||request.postDataJSON().action==='theme.list'){
+   const captured=captureResponse(request).catch(error=>({error:error.message}));
+   if(measured)responses.push(captured);
+   if(request.postDataJSON().action==='theme.list')catalogResponses.push(captured);
+  }
+ }});
  page.on('requestfinished',request=>pending.delete(request));page.on('requestfailed',request=>pending.delete(request));
- page.on('response',response=>{if(measured&&response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/actions')responses.push(response.body().then(body=>({action:response.request().postDataJSON().action,bytes:body.length})))});
  cdp=await context.newCDPSession(page);await cdp.send('Network.enable');await cdp.send('Performance.enable');
  cdp.on('Network.eventSourceMessageReceived',event=>{recordFrame(event.eventName,Buffer.byteLength(event.data))});
  cdp.on('Network.webSocketFrameReceived',event=>{try{const frame=JSON.parse(event.response.payloadData);recordFrame(frame.event,Buffer.byteLength(event.response.payloadData))}catch{}});
@@ -112,9 +154,33 @@ try{
  assert.equal(await page.locator('#amp-one').evaluate(node=>node.style.colorScheme),'dark');evidence.rejectionRollback=true;
  await page.unroute('**/api/actions');
  measured=false;
- const receipts=await Promise.all(responses),deltas=frames.filter(row=>row.kind==='state-delta');
- Object.assign(evidence,{stage:'transport and paint assertions',actionCount:receipts.length,maxActionBytes:Math.max(...receipts.map(row=>row.bytes)),deltaCount:deltas.length,maxDeltaBytes:Math.max(...deltas.map(row=>row.bytes))});await persist();
- assert.ok(deltas.length>=12);assert.ok(receipts.every(row=>row.bytes<16_000),JSON.stringify(receipts));
+ // Parse/hash only after the measured interaction. Merely deferring Promise.all
+ // would not defer work in the asynchronous response callbacks.
+ const catalog=new Map();
+ for(const captured of await Promise.all(catalogResponses)){
+  assert.equal(captured.error,undefined);const value=JSON.parse(captured.body);
+  assert.equal(value.accepted,true);
+  for(const item of value.result.items)catalog.set(item.id,item.fingerprint);
+ }
+ const receipts=(await Promise.all(responses)).map(captured=>{assert.equal(captured.error,undefined);return actionResponse(captured,catalog)}),
+  deltas=frames.filter(row=>row.kind==='state-delta');
+ const reads=receipts.filter(row=>row.action==='theme.read'),compact=receipts.filter(row=>row.action!=='theme.read');
+ Object.assign(evidence,{stage:'transport and paint assertions',receipts,actionCount:receipts.length,maxActionBytes:Math.max(...receipts.map(row=>row.bytes)),
+  compactCount:compact.length,maxCompactBytes:Math.max(...compact.map(row=>row.bytes)),themeReadCount:reads.length,
+  themeReadBytes:reads.reduce((sum,row)=>sum+row.bytes,0),deltaCount:deltas.length,maxDeltaBytes:Math.max(...deltas.map(row=>row.bytes))});await persist();
+ assert.ok(deltas.length>=12);
+ for(const row of receipts){assert.equal(row.error,undefined);assertActionResponse(row);}
+ assert.ok(compact.filter(row=>row.action==='view.update').length>=12);
+ assert.ok(reads.some(row=>row.bytes>=16_000),'Exercise real demand bodies larger than a compact receipt');
+ assert.ok(reads.length<=7,'Only this seven-entry gallery is demanded');
+ assert.equal(new Set(reads.map(row=>row.requestId)).size,reads.length,'No duplicate thumbnail body reads');
+ assert.ok(evidence.themeReadBytes<7*160_000,'Aggregate gallery bytes stay bounded');
+ // Negative controls prove classification cannot hide receipt/state inflation,
+ // oversized demand bodies, a wrong source, or a shortened/mismatched CSS body.
+ const read=reads.find(row=>row.bytes>=16_000);
+ for(const patch of [{action:'view.update'},{hasState:true},{bytes:160_000},{envelopeBytes:16_000},
+  {resultId:'builtin:wrong'},{cssSha256:'wrong'},{fingerprint:'a'.repeat(64),cssSha256:'a'.repeat(64)}])assert.throws(()=>assertActionResponse({...read,...patch}));
+ evidence.responseNegativeControls=7;
  assert.ok(deltas.every(row=>row.bytes<30_000),JSON.stringify(deltas));
  assert.ok(paint.every(row=>row.visible&&row.ms<250),JSON.stringify(paint));
  // A fresh page gets an authoritative baseline after reconnect.
@@ -128,5 +194,12 @@ finally{
  try{
   if(tracing){await context.tracing.stop(failed?{path:tracePath}:{});if(failed)evidence.failureTrace=tracePath}
  }catch(error){evidence.traceError=error.message}
- try{await persist()}finally{try{await browser?.close()}finally{fixture.kill()}}
+ try{await persist()}finally{try{await browser?.close()}finally{
+  if(fixture.exitCode===null&&fixture.signalCode===null){
+   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);
+   try{const exited=once(fixture,'exit',{signal:controller.signal});fixture.kill();await exited;}
+   catch(error){evidence.status='failed';evidence.fixtureCleanup='unconfirmed';await persist();throw error;}
+   finally{clearTimeout(timer)}
+  }
+ }}
 }

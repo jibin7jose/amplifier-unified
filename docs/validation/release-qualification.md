@@ -293,6 +293,22 @@ The full Python lane has a 90-minute limit and prints each test's identity as it
 runs, so a timeout does not conceal failed or unfinished test identities.
 It retains the verbose log and, when pytest completes, JUnit results. A partial
 log or absent JUnit file is not a successful or complete suite.
+The full-Python runner retains XML up to 8 MiB as `junit.xml`. Larger reports
+use lossless `junit.xml.gz`, still capped at 8 MiB retained, with a streaming
+validation pass capped at 32 MiB of source XML and a checked five-second scan
+deadline. The 32 MiB scan budget accommodates the observed multi-megabyte
+parameter identities plus ordinary suite cases without building a larger XML
+tree. Unfinished XML tokens are bounded to 8 MiB plus one 64 KiB read; parser
+attributes can temporarily occupy that bound. The receipt names the encoding,
+file, retained hash and, for gzip, exact source bytes/hash. Compression omits
+no identities, outcome elements or diagnostic content; it is not a summary
+promoted to full JUnit. Declared counts must match observed structure through
+valid EOF. Invalid, incomplete, over-budget or unsafe evidence never supplies
+authoritative counts. Exit, interruption and cleanup still determine session
+completion independently. The deadline is checked between bounded operations,
+not hard preemption of filesystem/parser calls. These are finalization and
+retention bounds, not limits on pytest's existing in-process XML construction
+or pending-file growth. The verbose log retains its separate head/tail bound.
 
 Extended browser checks use the explicit `frontend/tests/browser-checks.json`
 plan, preserving distinct flags and modes. Scenarios run serially in separate

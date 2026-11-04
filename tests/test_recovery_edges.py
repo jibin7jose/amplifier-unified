@@ -12,10 +12,19 @@ from test_peer_resume import paused_member, submit
 from test_collaborative_workspaces import settled
 
 
+async def fresh_generation(app, target, identity, inputs, epoch):
+    """Emit the epoch captured by this fresh input's admission, not an old worker."""
+    await generation(app, target, identity, inputs, interruption_revision=epoch)
+    current = target['collaborationGeneration']
+    assert current['id'] == identity and current['inputIds'] == inputs
+    assert current['interruptionRevision'] == epoch and not current['terminal']
+
+
 async def provider_failure(app, target, category, *, terminal_id='failed-generation',
                            terminal_inputs=None, terminal_category='unknown'):
     """Do not seed the failure identity required by peer recovery."""
-    await generation(app, target, 'failed-generation', ['failed-input'])
+    await fresh_generation(app, target, 'failed-generation', ['failed-input'],
+                           target.get('interruptionRevision', 0))
     failure = RuntimeError({'authentication': 'Authentication failed',
                             'rate_limit': 'Rate limit reached',
                             'context_limit': 'Maximum context window exceeded',
@@ -132,7 +141,8 @@ async def test_detached_new_work_only_blocks_unresolved_historical_stop(app, rec
         'sessionId': target['id'],
         'expectedRevision': app.assignments.current(source)['revision'],
     }, command_id='detach-child')
-    await generation(app, target, 'independent-generation', ['independent-input'])
+    await fresh_generation(app, target, 'independent-generation', ['independent-input'],
+                           target.get('interruptionRevision', 0))
     held = SharedSessionStore(target['workspace'], target['id']).acquire(app='independent-work')
     before = copy.deepcopy(target)
     try:
@@ -157,7 +167,8 @@ async def test_stop_does_not_clear_safety_halt_but_inspection_and_new_human_inpu
     if category == 'computer_capture_stop':
         await provider_failure(app, target, category)
     else:
-        await generation(app, target, 'safety-generation', ['halted-input'])
+        await fresh_generation(app, target, 'safety-generation', ['halted-input'],
+                               target.get('interruptionRevision', 0))
         await app.on_runtime_event(*normalize_event({
             'type': 'generation.failed', 'generation_id': 'safety-generation',
             'input_ids': ['halted-input'], 'error_category': 'content_filter',
@@ -215,9 +226,10 @@ async def test_fresh_recovery_rechecks_enabled_local_and_assignment_limits(app, 
         human = app._message(source, 'user', 'Reconcile and resume the worker with its current limits.',
                              inputId='budget-human', inputOrigin='ui')
         await generation(app, source, 'budget-manager', ['budget-human'])
+        epoch = target.get('interruptionRevision', 0)
         await submit(app, source, target, human)
         await settled(app, 'resume-member', 'accepted')
-        await generation(app, target, 'recovery-generation', ['resume-member'])
+        await fresh_generation(app, target, 'recovery-generation', ['resume-member'], epoch)
         assert await worker.tasks.continuation_allowed(resume=True)
         next_call = call(target, 'new-call', turnId='resume-member')
         if local_limit == 20:
@@ -305,6 +317,7 @@ async def test_budget_recheck_uses_only_fresh_host_admitted_human_input(app, mon
         with pytest.raises(ValueError):
             await worker.capacity.guard(call(target, 'denied-call'))
         await limits(app, source, maxTotalTokens=200)
+        epoch = target.get('interruptionRevision', 0)
         if case == 'human':
             await app.dispatch('conversation.send', {
                 'sessionId': target['id'], 'text': 'Continue the remaining work using current limits.',
@@ -316,7 +329,7 @@ async def test_budget_recheck_uses_only_fresh_host_admitted_human_input(app, mon
             await generation(app, source, 'budget-manager', ['budget-human'])
             await submit(app, source, target, human, identity='fresh-input')
             await settled(app, 'fresh-input', 'accepted')
-        await generation(app, target, 'recovery-generation', ['fresh-input'])
+        await fresh_generation(app, target, 'recovery-generation', ['fresh-input'], epoch)
         row = call(target, 'new-call', turnId='fresh-input')
         if case in {'missing_receipt', 'ordinary_peer', 'wrong_target'}:
             if case == 'missing_receipt':

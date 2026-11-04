@@ -1,0 +1,1843 @@
+EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEFF............F..........FF.........F [ 37%]
+F.....FFFFFFFFF........F..FF.........FF.F............................... [ 74%]
+.F...F........FFFFFFFFFFFFF...F.........F.F.....FF                       [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of ParseFormTests.test_ansi_cr_nul_and_unicode_controls_reject_before_matching _
+tests/test_uv_diagnostic_forms.py:111: in setUpModule
+    expanded = definitions("qualified_expanded_lock", "tests/fixtures/omitted_ref_expanded_lock.py")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_uv_diagnostic_forms.py:94: in definitions
+    exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+tests/fixtures/omitted_ref_expanded_lock.py:30: in <module>
+    raise SystemExit('Requires absolute guest Python with -I -S -B')
+E   SystemExit: Requires absolute guest Python with -I -S -B
+_ ERROR at setup of ParseFormTests.test_complete_conflict_with_optional_single_final_lf _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_complete_nested_toml_does_not_claim_root_or_cli_cause _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_complete_offline_project_keeps_both_reported_flags _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_complete_offline_workspace_keeps_nested_resolution_context _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_exit_codes_are_exact_positive_bounded_integers _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_extra_causes_multiple_diagnostics_and_cli_text_remain_unknown _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_incomplete_capture_requires_singleton_true _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_inconsistent_names_versions_and_equivalent_versions_reject _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_invalid_utf8_never_recognizes_valid_prefix _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_missing_altered_or_unrelated_hint_is_not_offline_proof _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_oversize_boundary_never_accepts_recognizable_prefix _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_partial_or_altered_toml_body_is_not_complete_nested_form _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_____ ERROR at setup of ParseFormTests.test_payload_types_are_exact_bytes ______
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_sensitive_literals_and_recognized_tokens_never_leave_parser _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_synthetic_parameter_variants_without_copying_parser_patterns _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ParseFormTests.test_version_is_exact_pinned_string_and_never_echoed _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ValidateFormTests.test_all_supported_and_unknown_states_validate_and_roundtrip _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ValidateFormTests.test_cross_field_states_cannot_invent_a_diagnosis _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ValidateFormTests.test_exact_keys_required_at_record_and_flags_levels _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ValidateFormTests.test_exact_types_reject_bool_integer_aliases_and_subclasses _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ValidateFormTests.test_malicious_values_at_every_leaf_and_cycles_are_rejected_quietly _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_capture_changed_hash_size_and_incomplete_are_failed_unknown _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_capture_complete_binds_exact_bytes_without_mutating_primary_facts _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_capture_parser_failure_and_invalid_parser_result_are_failed_unknown _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_capture_read_errors_and_malformed_facts_do_not_export_private_data _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_durable_report_io_failures_are_false_without_exception_text _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_durable_report_orders_fsync_replace_fsync_and_saves_only_write_intent _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_durable_report_rejects_malicious_diagnostic_schema_before_writing _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_postreplace_directory_fsync_failure_leaves_passed_intent_not_durability _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_real_main_exit_zero_with_capture_failure_is_not_fixture_success _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_real_main_fake_exit_23_remains_primary_failure _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_real_main_final_directory_fsync_failure_keeps_exit_23_and_returns_one _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_real_main_observer_exception_does_not_replace_exit_23_or_pass _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ ERROR at setup of ExpandedAdapterTests.test_real_main_receipt_failure_after_exit_23_never_becomes_pass _
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:361: in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/runner.py:536: in setup
+    col.setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/unittest.py:248: in setup
+    super().setup()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/python.py:1710: in setup
+    self._request._fillfixtures()
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:806: in _fillfixtures
+    item.funcargs[argname] = self.getfixturevalue(argname)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:630: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:726: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/opt/unified-prepared/venv/lib/python3.13/site-packages/_pytest/fixtures.py:1221: in execute
+    assert not self._finalizers
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+=================================== FAILURES ===================================
+_ test_catalog_extracts_each_live_scalar_once_per_statement[workspace_counts-True] _
+tests/test_directory_live_materialization.py:48: in test_catalog_extracts_each_live_scalar_once_per_statement
+    assert result[workspace['path']]['chatCount'] == 500
+E   assert 498 == 500
+_ test_catalog_extracts_each_live_scalar_once_per_statement[workspace_counts-False] _
+tests/test_directory_live_materialization.py:48: in test_catalog_extracts_each_live_scalar_once_per_statement
+    assert result[workspace['path']]['chatCount'] == 500
+E   assert 498 == 500
+_ test_actual_worker_overwrites_claimed_input_provenance_and_freezes_child_binding _
+tests/test_observation_input.py:112: in test_actual_worker_overwrites_claimed_input_provenance_and_freezes_child_binding
+    bridge=worker.app_access_bridge(worker.session.coordinator)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/runtime_worker.py:314: in app_access_bridge
+    {key: (self.start_config or {}).get(key, 0) for key in
+           ^^^^^^^^^^^^^^^^^
+E   AttributeError: 'Worker' object has no attribute 'start_config'
+___ test_creation_failure_return_resumes_without_repeating_unknown_creation ____
+tests/test_peer_inbox_policy.py:197: in test_creation_failure_return_resumes_without_repeating_unknown_creation
+    assert app.collaboration.receipt(identity)['delivery'] == 'queued'
+E   AssertionError: assert 'accepted' == 'queued'
+E     
+E     - queued
+E     + accepted
+_________________ test_peer_hosted_route_is_fixed_and_separate _________________
+tests/test_peer_qualification.py:17: in test_peer_hosted_route_is_fixed_and_separate
+    assert set(workflow['jobs']) == {'browser', 'mcp-boundary', 'destination-history', 'peer-messages', 'compact-composer', 'canvas-qualification', 'attachment-experience'}
+E   AssertionError: assert {'attachment-...oundary', ...} == {'attachment-...oundary', ...}
+E     
+E     Extra items in the left set:
+E     'permissions-history'
+E     'readiness-trio'
+E     Use -v to get more diff
+_ test_recording_defaults_do_not_change_child_agent_inheritance_filters[none-expected0] _
+tests/test_provider_recording.py:134: in test_recording_defaults_do_not_change_child_agent_inheritance_filters
+    result = child_plan(parent, {'agents':selection})
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/children.py:106: in child_plan
+    parent, overlay = logical_plan(parent), logical_plan(overlay)
+                                            ^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/decision_accounts.py:122: in logical_plan
+    visit(result)
+amplifier_web/decision_accounts.py:119: in visit
+    for child in node.get("agents", {}).values():
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'str' object has no attribute 'values'
+_ test_recording_defaults_do_not_change_child_agent_inheritance_filters[selection1-expected1] _
+tests/test_provider_recording.py:134: in test_recording_defaults_do_not_change_child_agent_inheritance_filters
+    result = child_plan(parent, {'agents':selection})
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/children.py:106: in child_plan
+    parent, overlay = logical_plan(parent), logical_plan(overlay)
+                                            ^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/decision_accounts.py:122: in logical_plan
+    visit(result)
+amplifier_web/decision_accounts.py:119: in visit
+    for child in node.get("agents", {}).values():
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'list' object has no attribute 'values'
+_ test_remove_suppresses_declared_provider_and_preserves_sibling[global-None] __
+tests/test_provider_removal_composition.py:27: in test_remove_suppresses_declared_provider_and_preserves_sibling
+    rows = _apply_settings(bundle, config).providers
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+__ test_remove_suppresses_declared_provider_and_preserves_sibling[global-id] ___
+tests/test_provider_removal_composition.py:27: in test_remove_suppresses_declared_provider_and_preserves_sibling
+    rows = _apply_settings(bundle, config).providers
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+_ test_remove_suppresses_declared_provider_and_preserves_sibling[global-instance_id] _
+tests/test_provider_removal_composition.py:27: in test_remove_suppresses_declared_provider_and_preserves_sibling
+    rows = _apply_settings(bundle, config).providers
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+__ test_remove_suppresses_declared_provider_and_preserves_sibling[local-None] __
+tests/test_provider_removal_composition.py:27: in test_remove_suppresses_declared_provider_and_preserves_sibling
+    rows = _apply_settings(bundle, config).providers
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+___ test_remove_suppresses_declared_provider_and_preserves_sibling[local-id] ___
+tests/test_provider_removal_composition.py:27: in test_remove_suppresses_declared_provider_and_preserves_sibling
+    rows = _apply_settings(bundle, config).providers
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+_ test_remove_suppresses_declared_provider_and_preserves_sibling[local-instance_id] _
+tests/test_provider_removal_composition.py:27: in test_remove_suppresses_declared_provider_and_preserves_sibling
+    rows = _apply_settings(bundle, config).providers
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+_ test_classified_provider_failure_binds_terminal_identity_without_losing_cause[authentication] _
+tests/test_recovery_edges.py:63: in test_classified_provider_failure_binds_terminal_identity_without_losing_cause
+    await submit(app, source, target, human)
+tests/test_peer_resume.py:31: in submit
+    return await agent_action(app, source, 'coordination.send',
+tests/test_collaborative_workspaces.py:689: in agent_action
+    return await app.app_bridge("dispatch", {"action": action, "args": args, "id": identity,
+amplifier_web/service.py:5116: in app_bridge
+    return await self._bound_app_bridge(operation, args, session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5145: in _bound_app_bridge
+    return await self._client_app_bridge(operation, args, session_id, transport)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5151: in _client_app_bridge
+    return await self._app_bridge(operation, args, session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5482: in _app_bridge
+    result = await self.dispatch(args["action"], action_args, origin="agent", command_id=args.get("id"), expected_revision=args.get("expectedRevision"), caller_session_id=session_id, include_state=not (receipt_mode or compact_smart_tool or compact_domain_receipt))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:1868: in dispatch
+    return await self._dispatch(action, args, origin, command_id, expected_revision, include_state=include_state, caller_session_id=caller_session_id, admission_check=admission_check)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:2275: in _dispatch
+    raise AppError(str(exc)) from None
+E   amplifier_web.errors.AppError: The recipient has not reached a recoverable stopped boundary.
+_ test_classified_provider_failure_binds_terminal_identity_without_losing_cause[rate_limit] _
+tests/test_recovery_edges.py:63: in test_classified_provider_failure_binds_terminal_identity_without_losing_cause
+    await submit(app, source, target, human)
+tests/test_peer_resume.py:31: in submit
+    return await agent_action(app, source, 'coordination.send',
+tests/test_collaborative_workspaces.py:689: in agent_action
+    return await app.app_bridge("dispatch", {"action": action, "args": args, "id": identity,
+amplifier_web/service.py:5116: in app_bridge
+    return await self._bound_app_bridge(operation, args, session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5145: in _bound_app_bridge
+    return await self._client_app_bridge(operation, args, session_id, transport)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5151: in _client_app_bridge
+    return await self._app_bridge(operation, args, session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5482: in _app_bridge
+    result = await self.dispatch(args["action"], action_args, origin="agent", command_id=args.get("id"), expected_revision=args.get("expectedRevision"), caller_session_id=session_id, include_state=not (receipt_mode or compact_smart_tool or compact_domain_receipt))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:1868: in dispatch
+    return await self._dispatch(action, args, origin, command_id, expected_revision, include_state=include_state, caller_session_id=caller_session_id, admission_check=admission_check)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:2275: in _dispatch
+    raise AppError(str(exc)) from None
+E   amplifier_web.errors.AppError: The recipient has not reached a recoverable stopped boundary.
+_ test_classified_provider_failure_binds_terminal_identity_without_losing_cause[context_limit] _
+tests/test_recovery_edges.py:63: in test_classified_provider_failure_binds_terminal_identity_without_losing_cause
+    await submit(app, source, target, human)
+tests/test_peer_resume.py:31: in submit
+    return await agent_action(app, source, 'coordination.send',
+tests/test_collaborative_workspaces.py:689: in agent_action
+    return await app.app_bridge("dispatch", {"action": action, "args": args, "id": identity,
+amplifier_web/service.py:5116: in app_bridge
+    return await self._bound_app_bridge(operation, args, session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5145: in _bound_app_bridge
+    return await self._client_app_bridge(operation, args, session_id, transport)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5151: in _client_app_bridge
+    return await self._app_bridge(operation, args, session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5482: in _app_bridge
+    result = await self.dispatch(args["action"], action_args, origin="agent", command_id=args.get("id"), expected_revision=args.get("expectedRevision"), caller_session_id=session_id, include_state=not (receipt_mode or compact_smart_tool or compact_domain_receipt))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:1868: in dispatch
+    return await self._dispatch(action, args, origin, command_id, expected_revision, include_state=include_state, caller_session_id=caller_session_id, admission_check=admission_check)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:2275: in _dispatch
+    raise AppError(str(exc)) from None
+E   amplifier_web.errors.AppError: The recipient has not reached a recoverable stopped boundary.
+____ test_fresh_recovery_rechecks_enabled_local_and_assignment_limits[100] _____
+tests/test_recovery_edges.py:228: in test_fresh_recovery_rechecks_enabled_local_and_assignment_limits
+    await worker.capacity.guard(next_call)
+amplifier_web/capacity.py:241: in guard
+    raise ModelAdmissionPaused('Task budget paused future model calls: ' + '; '.join(result['reasons']))
+E   amplifier_web.model_admission.ModelAdmissionPaused: Task budget paused future model calls: Total tokens (including cache writes) limit reached (20 of 20)
+_____ test_budget_recheck_uses_only_fresh_host_admitted_human_input[human] _____
+tests/test_recovery_edges.py:364: in test_budget_recheck_uses_only_fresh_host_admitted_human_input
+    await provider.complete(SimpleNamespace(model='fixture'))
+amplifier_web/execution_events.py:252: in complete
+    return await self.provider_call(sid, provider, request, lambda: original(request, **kwargs), run_id=run_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/execution_events.py:207: in provider_call
+    return await self._observed_provider_call(sid, provider, request, invoke, label=label, run_id=run_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/execution_events.py:213: in _observed_provider_call
+    row = await self._begin_provider_call(sid, provider, request, label=label, run_id=run_id)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/execution_events.py:182: in _begin_provider_call
+    await self.admission_guard(row)
+amplifier_web/capacity.py:241: in guard
+    raise ModelAdmissionPaused('Task budget paused future model calls: ' + '; '.join(result['reasons']))
+E   amplifier_web.model_admission.ModelAdmissionPaused: Task budget paused future model calls: Total tokens (including cache writes) limit reached (20 of 20)
+_____ test_budget_recheck_uses_only_fresh_host_admitted_human_input[peer] ______
+tests/test_recovery_edges.py:364: in test_budget_recheck_uses_only_fresh_host_admitted_human_input
+    await provider.complete(SimpleNamespace(model='fixture'))
+amplifier_web/execution_events.py:252: in complete
+    return await self.provider_call(sid, provider, request, lambda: original(request, **kwargs), run_id=run_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/execution_events.py:207: in provider_call
+    return await self._observed_provider_call(sid, provider, request, invoke, label=label, run_id=run_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/execution_events.py:213: in _observed_provider_call
+    row = await self._begin_provider_call(sid, provider, request, label=label, run_id=run_id)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/execution_events.py:182: in _begin_provider_call
+    await self.admission_guard(row)
+amplifier_web/capacity.py:241: in guard
+    raise ModelAdmissionPaused('Task budget paused future model calls: ' + '; '.join(result['reasons']))
+E   amplifier_web.model_admission.ModelAdmissionPaused: Task budget paused future model calls: Total tokens (including cache writes) limit reached (20 of 20)
+_ test_explicit_terminal_cause_replaces_earlier_provider_classification[authentication] _
+tests/test_recovery_edges.py:390: in test_explicit_terminal_cause_replaces_earlier_provider_classification
+    await submit(app, source, target, human)
+tests/test_peer_resume.py:31: in submit
+    return await agent_action(app, source, 'coordination.send',
+tests/test_collaborative_workspaces.py:689: in agent_action
+    return await app.app_bridge("dispatch", {"action": action, "args": args, "id": identity,
+amplifier_web/service.py:5116: in app_bridge
+    return await self._bound_app_bridge(operation, args, session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5145: in _bound_app_bridge
+    return await self._client_app_bridge(operation, args, session_id, transport)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5151: in _client_app_bridge
+    return await self._app_bridge(operation, args, session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5482: in _app_bridge
+    result = await self.dispatch(args["action"], action_args, origin="agent", command_id=args.get("id"), expected_revision=args.get("expectedRevision"), caller_session_id=session_id, include_state=not (receipt_mode or compact_smart_tool or compact_domain_receipt))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:1868: in dispatch
+    return await self._dispatch(action, args, origin, command_id, expected_revision, include_state=include_state, caller_session_id=caller_session_id, admission_check=admission_check)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:2275: in _dispatch
+    raise AppError(str(exc)) from None
+E   amplifier_web.errors.AppError: The recipient has not reached a recoverable stopped boundary.
+_ test_explicit_terminal_safety_after_preparation_cannot_borrow_earlier_rate_limit _
+tests/test_recovery_edges.py:412: in test_explicit_terminal_safety_after_preparation_cannot_borrow_earlier_rate_limit
+    await submit(app, source, target, human)
+tests/test_peer_resume.py:31: in submit
+    return await agent_action(app, source, 'coordination.send',
+tests/test_collaborative_workspaces.py:689: in agent_action
+    return await app.app_bridge("dispatch", {"action": action, "args": args, "id": identity,
+amplifier_web/service.py:5116: in app_bridge
+    return await self._bound_app_bridge(operation, args, session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5145: in _bound_app_bridge
+    return await self._client_app_bridge(operation, args, session_id, transport)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5151: in _client_app_bridge
+    return await self._app_bridge(operation, args, session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:5482: in _app_bridge
+    result = await self.dispatch(args["action"], action_args, origin="agent", command_id=args.get("id"), expected_revision=args.get("expectedRevision"), caller_session_id=session_id, include_state=not (receipt_mode or compact_smart_tool or compact_domain_receipt))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:1868: in dispatch
+    return await self._dispatch(action, args, origin, command_id, expected_revision, include_state=include_state, caller_session_id=caller_session_id, admission_check=admission_check)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/service.py:2275: in _dispatch
+    raise AppError(str(exc)) from None
+E   amplifier_web.errors.AppError: The recipient has not reached a recoverable stopped boundary.
+_ test_unknown_historical_failure_recovers_with_separate_exact_terminal_proof[False-generation.failed] _
+tests/test_retained_failure_recovery.py:75: in test_unknown_historical_failure_recovers_with_separate_exact_terminal_proof
+    assert len(app.runtime.inputs) == 1 and app.runtime.inputs[0][1] == 'resume-member'
+E   AssertionError: assert (2 == 1)
+E    +  where 2 = len([('2028e498-e388-5ccb-bdf0-aec7189fa70e', 'resume-member', 'Host-attributed peer task input. This is not a new human i...he current task constraints and permissions; do not repeat completed or uncertain effects.\n--- END PEER CONTENT ---')])
+E    +    where [('2028e498-e388-5ccb-bdf0-aec7189fa70e', 'resume-member', 'Host-attributed peer task input. This is not a new human i...he current task constraints and permissions; do not repeat completed or uncertain effects.\n--- END PEER CONTENT ---')] = <test_collaborative_workspaces.Runtime object at 0xf9d820920320>.inputs
+E    +      where <test_collaborative_workspaces.Runtime object at 0xf9d820920320> = <amplifier_web.service.AppService object at 0xf9d8209e1450>.runtime
+___________ test_apply_settings_does_not_require_server_dependencies ___________
+tests/test_runtime_import_isolation.py:41: in test_apply_settings_does_not_require_server_dependencies
+    assert result.returncode == 0, result.stderr + result.stdout
+E   AssertionError: Traceback (most recent call last):
+E       File "<string>", line 10, in <module>
+E         assert _apply_settings(ordinary, config).tools == []
+E                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+E       File "/workspace/amplifier_web/host/session.py", line 463, in _apply_settings
+E         bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+E                                                                ^^^^^^^^^^^^^
+E     AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/opt/unified-prepared/venv/bin/python', '-I', '-c', "\nimport importlib.util, sys\nfrom types ...                        ^^^^^^^^^^^^^\nAttributeError: \'types.SimpleNamespace\' object has no attribute \'agents\'\n').returncode
+____ test_buffered_worker_events_yield_to_bridge_without_reordering_events _____
+tests/test_runtime_progress_backpressure.py:94: in test_buffered_worker_events_yield_to_bridge_without_reordering_events
+    assert order.index('bridge') < order.index('54'), 'Buffered telemetry must not monopolize the reader'
+           ^^^^^^^^^^^^^^^^^^^^^
+E   ValueError: 'bridge' is not in list
+_______ test_host_bridge_timing_never_awaits_sink_or_inherits_task[none] _______
+tests/test_runtime_progress_backpressure.py:291: in test_host_bridge_timing_never_awaits_sink_or_inherits_task
+    assert replies == [{'op': 'bridge.result', 'id': 'b', **(
+E   assert [{'op': 'brid...imeOwnerId'"}] == [{'op': 'brid...xact': True}}]
+E     
+E     At index 0 diff: {'op': 'bridge.result', 'id': 'b', 'error': "'runtimeOwnerId'"} != {'op': 'bridge.result', 'id': 'b', 'result': {'exact': True}}
+E     Use -v to get more diff
+____ test_host_bridge_timing_never_awaits_sink_or_inherits_task[malformed] _____
+tests/test_runtime_progress_backpressure.py:291: in test_host_bridge_timing_never_awaits_sink_or_inherits_task
+    assert replies == [{'op': 'bridge.result', 'id': 'b', **(
+E   assert [{'op': 'brid...imeOwnerId'"}] == [{'op': 'brid...xact': True}}]
+E     
+E     At index 0 diff: {'op': 'bridge.result', 'id': 'b', 'error': "'runtimeOwnerId'"} != {'op': 'bridge.result', 'id': 'b', 'result': {'exact': True}}
+E     Use -v to get more diff
+____ test_host_bridge_timing_never_awaits_sink_or_inherits_task[serialize] _____
+tests/test_runtime_progress_backpressure.py:291: in test_host_bridge_timing_never_awaits_sink_or_inherits_task
+    assert replies == [{'op': 'bridge.result', 'id': 'b', **(
+E   assert [{'op': 'brid...imeOwnerId'"}] == [{'op': 'brid...ation error'}]
+E     
+E     At index 0 diff: {'op': 'bridge.result', 'id': 'b', 'error': "'runtimeOwnerId'"} != {'op': 'bridge.result', 'id': 'b', 'error': 'controlled serialization error'}
+E     Use -v to get more diff
+______ test_host_bridge_timing_never_awaits_sink_or_inherits_task[cancel] ______
+tests/test_runtime_progress_backpressure.py:287: in test_host_bridge_timing_never_awaits_sink_or_inherits_task
+    with pytest.raises(asyncio.CancelledError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE CancelledError
+______________ test_scope_instances_sources_and_domain_boundaries ______________
+tests/test_shared_runtime_config.py:43: in test_scope_instances_sources_and_domain_boundaries
+    result = bridge.resolve_config(base, workspace=workspace, session_id='native-session')
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/shared_runtime_config.py:79: in resolve_config
+    _apply_settings(model, host)
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+___________ test_disabled_instances_and_no_private_provider_fallback ___________
+tests/test_shared_runtime_config.py:63: in test_disabled_instances_and_no_private_provider_fallback
+    bridge.resolve_config(base, workspace=workspace, session_id='native-session')
+amplifier_web/host/shared_runtime_config.py:79: in resolve_config
+    _apply_settings(model, host)
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+_________ test_private_routing_choices_do_not_survive_shared_adoption __________
+tests/test_shared_runtime_config.py:71: in test_private_routing_choices_do_not_survive_shared_adoption
+    result = bridge.resolve_config(base, workspace=workspace, session_id='native-session')
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/shared_runtime_config.py:79: in resolve_config
+    _apply_settings(model, host)
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+______________ test_shared_sources_override_stale_private_sources ______________
+tests/test_shared_runtime_config.py:85: in test_shared_sources_override_stale_private_sources
+    result = bridge.resolve_config(base, workspace=workspace, session_id='native-session')
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/shared_runtime_config.py:79: in resolve_config
+    _apply_settings(model, host)
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+______ test_custom_matrix_edits_change_identity_even_with_same_selection _______
+tests/test_shared_runtime_config.py:92: in test_custom_matrix_edits_change_identity_even_with_same_selection
+    first = bridge.resolve_config(base, workspace=workspace, session_id='native-session')
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/shared_runtime_config.py:79: in resolve_config
+    _apply_settings(model, host)
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+____ test_prepare_replaces_bundle_defaults_but_preserves_child_preferences _____
+tests/test_shared_runtime_config.py:102: in test_prepare_replaces_bundle_defaults_but_preserves_child_preferences
+    config = bridge.resolve_config(base, workspace=workspace, session_id='native-session')
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/shared_runtime_config.py:79: in resolve_config
+    _apply_settings(model, host)
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+__________ test_changed_routing_during_startup_refused_before_prepare __________
+tests/test_shared_runtime_config.py:127: in test_changed_routing_during_startup_refused_before_prepare
+    config = bridge.resolve_config(base, workspace=workspace, session_id='native-session')
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/shared_runtime_config.py:79: in resolve_config
+    _apply_settings(model, host)
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+__ test_credentials_load_without_persisting_or_overriding_launch_environment ___
+tests/test_shared_runtime_config.py:137: in test_credentials_load_without_persisting_or_overriding_launch_environment
+    result = bridge.resolve_config(base, workspace=workspace, session_id='native-session')
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/shared_runtime_config.py:79: in resolve_config
+    _apply_settings(model, host)
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+_ test_environment_model_changes_affect_resume_identity_but_key_rotation_does_not _
+tests/test_shared_runtime_config.py:148: in test_environment_model_changes_affect_resume_identity_but_key_rotation_does_not
+    first = bridge.resolve_config(base, workspace=workspace, session_id='native-session')
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+amplifier_web/host/shared_runtime_config.py:79: in resolve_config
+    _apply_settings(model, host)
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+_______ test_shared_module_overrides_and_routing_apply_without_app_paths _______
+tests/test_shared_settings.py:94: in test_shared_module_overrides_and_routing_apply_without_app_paths
+    _apply_settings(bundle, config)
+amplifier_web/host/session.py:463: in _apply_settings
+    bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+                                                           ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'agents'
+__________ test_busy_root_keeps_result_queued_then_admits_after_idle ___________
+tests/test_test_queue_notifications.py:102: in test_busy_root_keeps_result_queued_then_admits_after_idle
+    assert notifications(app, request)[0]['delivery'] == 'queued'
+E   AssertionError: assert 'accepted' == 'queued'
+E     
+E     - queued
+E     + accepted
+_ test_notification_commit_failure_retries_durably_without_reexecuting[after] __
+tests/test_test_queue_notifications.py:133: in test_notification_commit_failure_retries_durably_without_reexecuting
+    assert not transport.inputs
+E   AssertionError: assert not [('a189cd93-07d9-4473-b4b8-46ec27d72c21', 'e7e1af07-8bcb-5ec3-80a4-e7c02fb11998', {'id': '5c42ecc1-80e0-41fb-9113-5760...ply the current task constraints and permissions; do not repeat completed or uncertain effects.', 'via': 'peer', ...})]
+E    +  where [('a189cd93-07d9-4473-b4b8-46ec27d72c21', 'e7e1af07-8bcb-5ec3-80a4-e7c02fb11998', {'id': '5c42ecc1-80e0-41fb-9113-5760...ply the current task constraints and permissions; do not repeat completed or uncertain effects.', 'via': 'peer', ...})] = <test_coordination_generation.Transport object at 0xf9d823df9f20>.inputs
+------------------------------ Captured log call -------------------------------
+ERROR    asyncio:base_events.py:1890 Task exception was never retrieved
+future: <Task finished name='Task-2131' coro=<Collaboration.drain() done, defined at /workspace/amplifier_web/collaboration.py:1078> exception=OSError('Injected continuation commit failure')>
+Traceback (most recent call last):
+  File "/workspace/amplifier_web/collaboration.py", line 1165, in drain
+    self.publish_receipt(receipt)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/workspace/amplifier_web/collaboration.py", line 762, in publish_receipt
+    self.service._publish_changes(sessions=ids)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/workspace/tests/test_test_queue_notifications.py", line 124, in fail
+    raise OSError('Injected continuation commit failure')
+OSError: Injected continuation commit failure
+_ test_control_after_result_before_admission_suppresses_queued_notification[stop] _
+tests/test_test_queue_notifications.py:243: in test_control_after_result_before_admission_suppresses_queued_notification
+    assert notifications(app, request)[0]['delivery'] == 'queued'
+E   AssertionError: assert 'accepted' == 'queued'
+E     
+E     - queued
+E     + accepted
+_ test_control_after_result_before_admission_suppresses_queued_notification[assignment-stop] _
+tests/test_test_queue_notifications.py:243: in test_control_after_result_before_admission_suppresses_queued_notification
+    assert notifications(app, request)[0]['delivery'] == 'queued'
+E   AssertionError: assert 'accepted' == 'queued'
+E     
+E     - queued
+E     + accepted
+=========================== short test summary info ============================
+FAILED tests/test_directory_live_materialization.py::test_catalog_extracts_each_live_scalar_once_per_statement[workspace_counts-True]
+FAILED tests/test_directory_live_materialization.py::test_catalog_extracts_each_live_scalar_once_per_statement[workspace_counts-False]
+FAILED tests/test_observation_input.py::test_actual_worker_overwrites_claimed_input_provenance_and_freezes_child_binding
+FAILED tests/test_peer_inbox_policy.py::test_creation_failure_return_resumes_without_repeating_unknown_creation
+FAILED tests/test_peer_qualification.py::test_peer_hosted_route_is_fixed_and_separate
+FAILED tests/test_provider_recording.py::test_recording_defaults_do_not_change_child_agent_inheritance_filters[none-expected0]
+FAILED tests/test_provider_recording.py::test_recording_defaults_do_not_change_child_agent_inheritance_filters[selection1-expected1]
+FAILED tests/test_provider_removal_composition.py::test_remove_suppresses_declared_provider_and_preserves_sibling[global-None]
+FAILED tests/test_provider_removal_composition.py::test_remove_suppresses_declared_provider_and_preserves_sibling[global-id]
+FAILED tests/test_provider_removal_composition.py::test_remove_suppresses_declared_provider_and_preserves_sibling[global-instance_id]
+FAILED tests/test_provider_removal_composition.py::test_remove_suppresses_declared_provider_and_preserves_sibling[local-None]
+FAILED tests/test_provider_removal_composition.py::test_remove_suppresses_declared_provider_and_preserves_sibling[local-id]
+FAILED tests/test_provider_removal_composition.py::test_remove_suppresses_declared_provider_and_preserves_sibling[local-instance_id]
+FAILED tests/test_recovery_edges.py::test_classified_provider_failure_binds_terminal_identity_without_losing_cause[authentication]
+FAILED tests/test_recovery_edges.py::test_classified_provider_failure_binds_terminal_identity_without_losing_cause[rate_limit]
+FAILED tests/test_recovery_edges.py::test_classified_provider_failure_binds_terminal_identity_without_losing_cause[context_limit]
+FAILED tests/test_recovery_edges.py::test_fresh_recovery_rechecks_enabled_local_and_assignment_limits[100]
+FAILED tests/test_recovery_edges.py::test_budget_recheck_uses_only_fresh_host_admitted_human_input[human]
+FAILED tests/test_recovery_edges.py::test_budget_recheck_uses_only_fresh_host_admitted_human_input[peer]
+FAILED tests/test_recovery_edges.py::test_explicit_terminal_cause_replaces_earlier_provider_classification[authentication]
+FAILED tests/test_recovery_edges.py::test_explicit_terminal_safety_after_preparation_cannot_borrow_earlier_rate_limit
+FAILED tests/test_retained_failure_recovery.py::test_unknown_historical_failure_recovers_with_separate_exact_terminal_proof[False-generation.failed]
+FAILED tests/test_runtime_import_isolation.py::test_apply_settings_does_not_require_server_dependencies
+FAILED tests/test_runtime_progress_backpressure.py::test_buffered_worker_events_yield_to_bridge_without_reordering_events
+FAILED tests/test_runtime_progress_backpressure.py::test_host_bridge_timing_never_awaits_sink_or_inherits_task[none]
+FAILED tests/test_runtime_progress_backpressure.py::test_host_bridge_timing_never_awaits_sink_or_inherits_task[malformed]
+FAILED tests/test_runtime_progress_backpressure.py::test_host_bridge_timing_never_awaits_sink_or_inherits_task[serialize]
+FAILED tests/test_runtime_progress_backpressure.py::test_host_bridge_timing_never_awaits_sink_or_inherits_task[cancel]
+FAILED tests/test_shared_runtime_config.py::test_scope_instances_sources_and_domain_boundaries
+FAILED tests/test_shared_runtime_config.py::test_disabled_instances_and_no_private_provider_fallback
+FAILED tests/test_shared_runtime_config.py::test_private_routing_choices_do_not_survive_shared_adoption
+FAILED tests/test_shared_runtime_config.py::test_shared_sources_override_stale_private_sources
+FAILED tests/test_shared_runtime_config.py::test_custom_matrix_edits_change_identity_even_with_same_selection
+FAILED tests/test_shared_runtime_config.py::test_prepare_replaces_bundle_defaults_but_preserves_child_preferences
+FAILED tests/test_shared_runtime_config.py::test_changed_routing_during_startup_refused_before_prepare
+FAILED tests/test_shared_runtime_config.py::test_credentials_load_without_persisting_or_overriding_launch_environment
+FAILED tests/test_shared_runtime_config.py::test_environment_model_changes_affect_resume_identity_but_key_rotation_does_not
+FAILED tests/test_shared_settings.py::test_shared_module_overrides_and_routing_apply_without_app_paths
+FAILED tests/test_test_queue_notifications.py::test_busy_root_keeps_result_queued_then_admits_after_idle
+FAILED tests/test_test_queue_notifications.py::test_notification_commit_failure_retries_durably_without_reexecuting[after]
+FAILED tests/test_test_queue_notifications.py::test_control_after_result_before_admission_suppresses_queued_notification[stop]
+FAILED tests/test_test_queue_notifications.py::test_control_after_result_before_admission_suppresses_queued_notification[assignment-stop]
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_ansi_cr_nul_and_unicode_controls_reject_before_matching
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_complete_conflict_with_optional_single_final_lf
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_complete_nested_toml_does_not_claim_root_or_cli_cause
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_complete_offline_project_keeps_both_reported_flags
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_complete_offline_workspace_keeps_nested_resolution_context
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_exit_codes_are_exact_positive_bounded_integers
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_extra_causes_multiple_diagnostics_and_cli_text_remain_unknown
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_incomplete_capture_requires_singleton_true
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_inconsistent_names_versions_and_equivalent_versions_reject
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_invalid_utf8_never_recognizes_valid_prefix
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_missing_altered_or_unrelated_hint_is_not_offline_proof
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_oversize_boundary_never_accepts_recognizable_prefix
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_partial_or_altered_toml_body_is_not_complete_nested_form
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_payload_types_are_exact_bytes
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_sensitive_literals_and_recognized_tokens_never_leave_parser
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_synthetic_parameter_variants_without_copying_parser_patterns
+ERROR tests/test_uv_diagnostic_forms.py::ParseFormTests::test_version_is_exact_pinned_string_and_never_echoed
+ERROR tests/test_uv_diagnostic_forms.py::ValidateFormTests::test_all_supported_and_unknown_states_validate_and_roundtrip
+ERROR tests/test_uv_diagnostic_forms.py::ValidateFormTests::test_cross_field_states_cannot_invent_a_diagnosis
+ERROR tests/test_uv_diagnostic_forms.py::ValidateFormTests::test_exact_keys_required_at_record_and_flags_levels
+ERROR tests/test_uv_diagnostic_forms.py::ValidateFormTests::test_exact_types_reject_bool_integer_aliases_and_subclasses
+ERROR tests/test_uv_diagnostic_forms.py::ValidateFormTests::test_malicious_values_at_every_leaf_and_cycles_are_rejected_quietly
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_capture_changed_hash_size_and_incomplete_are_failed_unknown
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_capture_complete_binds_exact_bytes_without_mutating_primary_facts
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_capture_parser_failure_and_invalid_parser_result_are_failed_unknown
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_capture_read_errors_and_malformed_facts_do_not_export_private_data
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_durable_report_io_failures_are_false_without_exception_text
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_durable_report_orders_fsync_replace_fsync_and_saves_only_write_intent
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_durable_report_rejects_malicious_diagnostic_schema_before_writing
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_postreplace_directory_fsync_failure_leaves_passed_intent_not_durability
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_real_main_exit_zero_with_capture_failure_is_not_fixture_success
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_real_main_fake_exit_23_remains_primary_failure
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_real_main_final_directory_fsync_failure_keeps_exit_23_and_returns_one
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_real_main_observer_exception_does_not_replace_exit_23_or_pass
+ERROR tests/test_uv_diagnostic_forms.py::ExpandedAdapterTests::test_real_main_receipt_failure_after_exit_23_never_becomes_pass
+42 failed, 117 passed, 35 errors in 25.11s

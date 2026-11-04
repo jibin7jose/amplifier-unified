@@ -116,8 +116,12 @@ def logical_plan(value, *, definitions=None):
                 raise ValueError("Duplicate logical decision account identity")
             for record in sorted(records, key=lambda row: row["index"]):
                 providers.insert(min(record["index"], len(providers)), record["provider"])
-        for child in node.get("agents", {}).values():
-            visit(child)
+        # Child overlays also use "none" or a name list as inheritance selectors.
+        # Only declaration mappings contain nested account projections.
+        agents = node.get("agents", {})
+        if isinstance(agents, dict):
+            for child in agents.values():
+                visit(child)
 
     visit(result)
     return result

@@ -25,7 +25,10 @@ The user and agent use the same actions. The workspace's existing test section
 shows waiting and completed checks; there is no new chat-header control. User
 submission does not automatically start a model turn. Agent submission defaults
 to a guarded completion notification and can use `notify:false` for inspection
-only. A busy chat receives that notification at its ordinary idle boundary.
+only. A busy chat receives that automatic notification at its next supported
+native model-request boundary, or as ordinary input when idle. A positive
+no-effect boundary refusal keeps the same notification queued; Stop and current
+admission controls still apply.
 The result does not satisfy a shared-task dependency or prove product acceptance.
 
 ## Lifecycle and ownership
