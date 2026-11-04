@@ -243,10 +243,12 @@ class StateProjections:
 
     def workspace_dependencies(self, state):
         resources = getattr(getattr(self.service, 'shell', None), 'resources', None)
-        # The service advances this epoch only after actual committed registry
-        # changes. Standalone projection owners have no commit publisher.
-        registry = (resources._epochs({'workspaces'}) if resources is not None else
-                    json.dumps(state.get('workspaces', []), sort_keys=True, separators=(',', ':')))
+        # Workspace summaries exclude archived chats. Both registry and archive
+        # commits must refresh them; standalone owners have no commit publisher.
+        fields = {'workspaces', 'conversationOrganization'}
+        registry = (resources._epochs(fields) if resources is not None else
+                    json.dumps({key: state.get(key) for key in sorted(fields)},
+                               sort_keys=True, separators=(',', ':')))
         stamp = (self.directory.workspace_revision, registry)
         if getattr(self, '_workspace_dependencies', None) != stamp:
             workspace_keys = {'workspace-index', 'workspace-counts', 'workspaces', 'workspace-shortcuts', 'pinned-navigation'}

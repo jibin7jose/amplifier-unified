@@ -6,6 +6,7 @@ not a native delegated session. Process transport alone is replaced by a queue.
 """
 import asyncio
 import copy
+import errno
 import importlib
 import json
 from pathlib import Path
@@ -24,7 +25,15 @@ from amplifier_web.service import AppService
 PRIVATE = "PRIVATE_MANAGER_MESSAGE_AND_LOCAL"
 
 
-async def test_real_post_provider_manager_exception_reaches_public_inspection(tmp_path, monkeypatch):
+def retain_failure(worker, terminal):
+    """Use the real observer before the loop retires its failed generation."""
+    worker.runtime.session_id = 'root'
+    worker.observe({'type': 'generation.failed', **terminal})
+    return worker.failed_generation
+
+
+@pytest.mark.parametrize('cleanup_conflict', [False, True])
+async def test_real_post_provider_manager_exception_reaches_public_inspection(tmp_path, monkeypatch, cleanup_conflict):
     # The original-code subprocess disables repository conftest discovery.
     # Apply the same file isolation explicitly to both red and green cases.
     for key, folder in (("AMPLIFIER_HOME", "amplifier"), ("AMPLIFIER_WEB_HOME", "unified"),
@@ -33,6 +42,12 @@ async def test_real_post_provider_manager_exception_reaches_public_inspection(tm
     monkeypatch.delenv("AMPLIFIER_CONTEXT_INTELLIGENCE_BASE_PATH", raising=False)
     # Required imports: an unavailable real boundary is a failure, never a skip.
     from amplifier_module_loop_live.runtime import Input, Runtime
+    from amplifier_web.host.session import _NativeTranscriptGuard
+
+    native = tmp_path / 'private-transcript.jsonl'
+    native.write_text('original\n')
+    guard = _NativeTranscriptGuard(native)
+    expected_type = 'OSError' if cleanup_conflict else 'ValueError'
 
     paths = {name: Path(importlib.import_module("amplifier_module_" + name.replace("-", "_")).__file__).parent
              for name in ("loop-live", "context-simple")}
@@ -54,6 +69,10 @@ async def test_real_post_provider_manager_exception_reaches_public_inspection(tm
         def observe(event):
             raw.append(copy.deepcopy(event))
             worker.observe(event)  # Production terminal publication, not a fake.
+            if cleanup_conflict and event['type'] == 'session.closed':
+                # A real guard detects the changed file during loop teardown.
+                # It must not hide the original exception from this generation.
+                guard.check()
         worker.runtime = Runtime(root["id"], observer=observe)
         coordinator = session.coordinator
         coordinator.register_capability("live.runtime", worker.runtime)
@@ -69,6 +88,9 @@ async def test_real_post_provider_manager_exception_reaches_public_inspection(tm
 
         def manager_admission_sentinel():
             private_local = PRIVATE
+            if cleanup_conflict:
+                native.write_text('partial-save\n')
+                raise OSError(errno.ENOSPC, private_local, str(native))
             raise ValueError(private_local)
 
         class Provider:
@@ -106,7 +128,7 @@ async def test_real_post_provider_manager_exception_reaches_public_inspection(tm
         worker.executed(task)  # Production callback still has the real cause.
         terminal = next(row for row in raw if row["type"] == "generation.failed")
         exit_event = next(row for row in published if row["type"] == "runtime.error")
-        assert terminal["error_type"] == "ValueError"
+        assert terminal["error_type"] == expected_type
         assert terminal["error_category"] == "unknown" and terminal["error_stage"] == "manager_turn"
         assert terminal["input_ids"] == ["boundary-input"]
         completed_calls = [event["event"] for event in published
@@ -169,20 +191,33 @@ async def test_real_post_provider_manager_exception_reaches_public_inspection(tm
         print("BOUNDARY_SEQUENCE", json.dumps({"events": sequence, "branches": branches}))
         receipt = await app.dispatch("session.inspect", {"id": root["id"]})
         failure = receipt["result"]["failure"]
-        assert failure["errorType"] == "ValueError" and failure["category"] == "unknown"
+        assert failure["errorType"] == expected_type and failure["category"] == "unknown"
         assert failure["stage"] == "manager_turn" and failure["retryable"] is False
         assert failure["generationId"] == terminal["generation_id"] and failure["inputIds"] == ["boundary-input"]
         retained_terminal = next(event for event in app._session(root["id"])["generations"] if event["event"] == "generation.failed")
         assert failure["recordedAt"] == retained_terminal["at"]
         chain = failure.get("exceptionChain", [])
-        assert any(item["errorType"] == "ValueError" and
+        assert any(item["errorType"] == expected_type and
                    any(frame["function"] == "manager_admission_sentinel" for frame in item["frames"]) for item in chain)
+        if cleanup_conflict:
+            assert next(item for item in chain if item['errorType'] == 'OSError')['errno'] == errno.ENOSPC
+            assert failure['secondaryFailure']['stage'] == 'loop_exit'
+            assert failure['secondaryFailure']['exceptionChain'][0]['errorType'] == 'NativeTranscriptConflict'
+            # The reporting correction does not accept the changed transcript.
+            assert native.read_text() == 'partial-save\n'
+            with pytest.raises(RuntimeError):
+                guard.check()
         assert failure["effects"] == "not_rolled_back" and failure["replayed"] is False
         supplements = [event for event in published if "terminalFailure" in event]
         assert PRIVATE not in json.dumps([supplements, delivered, receipt["result"]])
+        assert str(native) not in json.dumps([supplements, receipt['result']['failure']])
         assert provider.calls == 1 and list(worker.runtime.accepted) == ["boundary-input"]
         assert len(app.state["sessions"]) == 1 and loop.jobs["controlled-child"]["task"].done()
         assert loop.jobs["controlled-child"]["task"].cancelled()
+        await app.close()
+        app = AppService(tmp_path / 'app', workspace=tmp_path)
+        reopened = await app.dispatch('session.inspect', {'id': root['id']})
+        assert reopened['result']['failure'] == failure
     finally:
         if task and not task.done():
             task.cancel()
@@ -206,6 +241,95 @@ def test_capture_rejects_payloads_and_bounds_frames():
     assert public_exception_chain([{"errorType": "ValueError", "frames": [{**frame, "file": "/private/fixture.py"}]}])[0]["frames"] == []
     for bad in (None, [], {}, {"exceptionChain": value, "generationId": "g", "inputIds": [True], "errorType": "ValueError"}):
         assert terminal_exception_capture(bad) is None
+
+
+def test_os_error_numbers_are_bounded_typed_facts_not_message_parsing():
+    from amplifier_web.support_diagnostics import exception_chain, public_exception_chain, terminal_exception_capture
+    error = OSError(errno.EIO, PRIVATE, '/private/secret-history')
+    error.winerror = 112  # Typed Windows error also survives export on other test platforms.
+    safe = public_exception_chain(exception_chain(error))
+    assert safe == [{'errorType': 'OSError', 'frames': [], 'errno': errno.EIO, 'winerror': 112}]
+    assert PRIVATE not in json.dumps(safe) and '/private/' not in json.dumps(safe)
+    custom = ValueError('errno=28 winerror=112')
+    custom.errno = 28
+    assert 'errno' not in exception_chain(custom)[0]
+    for invalid in (True, -1, 2**32, '28', None):
+        assert public_exception_chain([{'errorType': 'OSError', 'frames': [], 'errno': invalid,
+                                        'winerror': invalid}]) == [{'errorType': 'OSError', 'frames': []}]
+    capture = {'generationId': 'g', 'inputIds': ['i'], 'errorType': 'OSError', 'exceptionChain': safe,
+               'secondaryFailure': {'stage': 'loop_exit', 'exceptionChain': safe, 'message': PRIVATE}}
+    assert terminal_exception_capture(capture)['secondaryFailure'] == {'stage': 'loop_exit', 'exceptionChain': safe}
+    capture['secondaryFailure']['stage'] = PRIVATE
+    assert 'secondaryFailure' not in terminal_exception_capture(capture)
+
+
+@pytest.mark.parametrize('boundary', ['current', 'stop', 'stop-requested', 'new-generation', 'other-input',
+                                    'runtime-replaced', 'old-turn', 'remount', 'yield', 'cancel', 'cancel-context', 'foreign-wrapper'])
+async def test_cleanup_context_capture_cannot_cross_current_execution(monkeypatch, boundary):
+    from types import SimpleNamespace
+    from amplifier_module_loop_live.failures import ManagerTurnError
+    from amplifier_web.host.session import NativeTranscriptConflict
+    worker = runtime_worker.Worker()
+    worker.runtime = SimpleNamespace(stop_requested=False, generation={'id': 'g', 'input_ids': ['i']})
+    terminal = {'generation_id': 'g', 'input_ids': ['i'], 'error_type': 'OSError',
+                'error_category': 'unknown', 'error_stage': 'manager_turn'}
+    published = []
+    monkeypatch.setattr(runtime_worker, 'publish', published.append)
+    if boundary == 'old-turn':
+        retain_failure(worker, terminal)
+    published.clear()
+    class Foreign(ManagerTurnError):
+        pass
+    class Loop:
+        async def execute(self):
+            if boundary != 'old-turn':
+                retain_failure(worker, terminal)
+                published.clear()
+            try:
+                try:
+                    raise OSError(errno.EIO, PRIVATE)
+                except OSError as cause:
+                    wrapper = Foreign if boundary == 'foreign-wrapper' else ManagerTurnError
+                    raise wrapper({**terminal, 'error_message': 'Safe'}) from cause
+            finally:
+                if boundary == 'stop':
+                    worker.stop_revision += 1
+                elif boundary == 'stop-requested':
+                    worker.runtime.stop_requested = True
+                elif boundary == 'new-generation':
+                    worker.runtime.generation = {'id': 'new', 'input_ids': ['i']}
+                elif boundary == 'other-input':
+                    worker.runtime.generation = {'id': 'g', 'input_ids': ['other']}
+                elif boundary == 'runtime-replaced':
+                    worker.runtime = SimpleNamespace(stop_requested=False, generation={'id': 'g', 'input_ids': ['i']})
+                elif boundary == 'remount':
+                    worker.remounting = True
+                elif boundary == 'yield':
+                    worker.ownership.yielding = True
+                elif boundary == 'cancel':
+                    raise asyncio.CancelledError()
+                elif boundary == 'cancel-context':
+                    try:
+                        raise asyncio.CancelledError()
+                    except asyncio.CancelledError:
+                        raise NativeTranscriptConflict(PRIVATE)
+                raise NativeTranscriptConflict(PRIVATE)
+    loop = Loop()
+    worker.session = SimpleNamespace(coordinator=SimpleNamespace(get=lambda name: loop))
+    worker.capture_manager_failures()
+    expected = asyncio.CancelledError if boundary == 'cancel' else NativeTranscriptConflict
+    with pytest.raises(expected):
+        await loop.execute()
+    assert worker.failed_generation['generation_id'] == terminal['generation_id']
+    if boundary == 'current':
+        assert len(published) == 1
+        capture = published[0]['terminalFailure']
+        assert capture['generationId'] == 'g' and capture['inputIds'] == ['i']
+        assert capture['exceptionChain'][1]['errno'] == errno.EIO
+        assert capture['secondaryFailure']['exceptionChain'][0]['errorType'] == 'NativeTranscriptConflict'
+        assert PRIVATE not in json.dumps(published)
+    else:
+        assert published == []
 
 
 @pytest.mark.parametrize("change", ["stop", "new-generation", "wrong-generation", "wrong-input",
@@ -266,9 +390,10 @@ async def test_unsupported_or_stopped_capture_does_not_change_execution(monkeypa
                 raise ManagerTurnError({"error_type": "ValueError", "error_category": "unknown",
                                         "error_stage": "manager_turn", "error_message": "Safe"}) from error
     loop = Loop()
-    worker.runtime = SimpleNamespace(stop_requested=False)
-    worker.failed_generation = {"generation_id": "g", "input_ids": ["i"], "error_type": "ValueError",
-                                "error_category": "unknown", "error_stage": "manager_turn"}
+    worker.runtime = SimpleNamespace(stop_requested=False, generation={'id': 'g', 'input_ids': ['i']})
+    retain_failure(worker, {"generation_id": "g", "input_ids": ["i"], "error_type": "ValueError",
+                           "error_category": "unknown", "error_stage": "manager_turn"})
+    published.clear()
     worker.session = SimpleNamespace(coordinator=SimpleNamespace(get=lambda name: loop))
     worker.capture_manager_failures()
     original = loop.execute
@@ -287,15 +412,19 @@ async def test_capture_transport_failure_cannot_replace_original_error(monkeypat
                                "error_stage": "manager_turn", "error_message": "Safe"})
     class Loop:
         async def execute(self):
+            retain_failure(worker, {"generation_id": "g", "input_ids": ["i"], "error_type": "ValueError",
+                                   "error_category": "unknown", "error_stage": "manager_turn"})
             raise wrapper from original
     worker = runtime_worker.Worker()
-    worker.runtime = SimpleNamespace(stop_requested=False)
-    worker.failed_generation = {"generation_id": "g", "input_ids": ["i"], "error_type": "ValueError",
-                                "error_category": "unknown", "error_stage": "manager_turn"}
+    worker.runtime = SimpleNamespace(stop_requested=False, generation={'id': 'g', 'input_ids': ['i']})
+    monkeypatch.setattr(runtime_worker, 'publish', lambda row: None)
+    retain_failure(worker, {"generation_id": "g", "input_ids": ["i"], "error_type": "ValueError",
+                           "error_category": "unknown", "error_stage": "manager_turn"})
     loop = Loop()
     worker.session = SimpleNamespace(coordinator=SimpleNamespace(get=lambda name: loop))
     def broken_transport(row):
-        raise BrokenPipeError("closed")
+        if "terminalFailure" in row:
+            raise BrokenPipeError("closed")
     monkeypatch.setattr(runtime_worker, "publish", broken_transport)
     worker.capture_manager_failures()
     with pytest.raises(ManagerTurnError) as caught:

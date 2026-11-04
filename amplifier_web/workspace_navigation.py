@@ -216,8 +216,9 @@ def _index(state, *, aggregates=None):
     attention = state.get('attention', {})
     unread_sessions = attention.get('sessions', {})
     reviewed_errors = reviewed_session_errors(attention)
+    archived = state.get('conversationOrganization', {}).get('archived', {})
     for session in (() if aggregates is not None else state.get('sessions', [])):
-        if not is_top_level(session) or session.get('id') in seen:
+        if not is_top_level(session) or session.get('id') in seen or session.get('id') in archived:
             continue
         seen.add(session.get('id'))
         workspace = by_id.get(session.get('workspaceId')) or by_path.get(_path(session.get('workspace')))

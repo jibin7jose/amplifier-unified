@@ -450,6 +450,32 @@ async def test_settled_context_observes_committed_workspace_and_shared_history_c
         assert first == old and changed is not first
 
 
+async def test_archive_restore_refreshes_settled_workspace_counts_and_preserves_chat(service):
+    from test_shell_modules import settled_resources
+    service.state['view']['navWorkspaceMode'] = 'recent'
+    service._save_changes(sessions={'alpha', 'beta'}, globals={'workspaces'})
+    service.clients.attach('archive-count')
+    with service.clients.bind('archive-count'):
+        service.shell.client('archive-count')['baselineView']['navWorkspaceMode'] = 'recent'
+        service.shell.resources.register('archive-count', 1,
+            ['workspaceExplorer', 'workspaceShortcuts'], resources.scope_for(service.state))
+    first = await settled_resources(service, 'archive-count')
+    preserved = deepcopy(first)
+    def counts(envelope):
+        values = envelope['instances']['workspaces']['resources']
+        explorer = values['workspaceExplorer']['value']['workspaceExplorer']['rows']
+        shortcuts = values['workspaceShortcuts']['value']['workspaceShortcuts']
+        return [next(row['chatCount'] for row in rows if row['workspaceId'] == 'one')
+                for rows in (explorer, shortcuts)]
+    assert counts(first) == [1, 1]
+    for action, expected in [('session.archive', 0), ('session.restore', 1)]:
+        await service.dispatch(action, {'id': 'alpha'})
+        current = await settled_resources(service, 'archive-count')
+        assert counts(current) == [expected, expected]
+        assert service._session('alpha')['title'] == 'alpha'
+        assert first == preserved
+
+
 @pytest.mark.parametrize('damage', ['missing', 'corrupt'])
 async def test_unavailable_custom_package_does_not_break_builtin_resources(service, damage):
     from test_shell_modules import stage, record_validation, prepare, command
