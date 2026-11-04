@@ -207,6 +207,25 @@ async function expectLayout(stage,expected,{canonicalReady=true}={}){
  if(proof)writeFileSync(join(proof,'commentary-checkpoints.json'),JSON.stringify(checkpoints,null,2));
 }
 const settleComposerLayout=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+async function prepareTranscriptSelection(node,stage,{blur=true}={}){
+ // Resize and editor transactions must commit before navigation. Otherwise the
+ // test installs a Range while the previous reading anchor is still restoring.
+ // Blur before scrolling, as a real transcript selection leaves editor focus.
+ if(blur)await page.evaluate(()=>document.activeElement?.blur());
+ await settleComposerLayout();
+ await node.scrollIntoViewIfNeeded();
+ // Observe the resulting position, never re-scroll/reselect to repair a failure.
+ // A later anchor overwrite must fail here rather than become a missing toolbar.
+ await node.evaluate(node=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ const geometry=await node.evaluate(node=>{
+  const r=node.getBoundingClientRect(),p=node.closest('.a-messages').getBoundingClientRect();
+  return {top:r.top,bottom:r.bottom,paneTop:p.top,paneBottom:p.bottom};
+ });
+ assert.ok(geometry.bottom>geometry.paneTop&&geometry.top<geometry.paneBottom,
+  'Selection source stays in the reading pane after navigation: '+JSON.stringify(geometry));
+ checkpoints.push({stage:'selection navigation: '+stage,geometry});
+ if(proof)writeFileSync(join(proof,'commentary-checkpoints.json'),JSON.stringify(checkpoints,null,2));
+}
 async function measureCompact(){
  const surface=page.locator('.a-compact-composer [data-part="composer-surface"]');
  await expect(surface).toHaveAttribute('data-expanded','true');
@@ -499,7 +518,7 @@ try{
  // Native transcript selection also works in an empty draft.
  const nativeBinding=selectionBinding(page,'direct-range','native-empty-draft','.a-detail-text');
  await page.setViewportSize({width:1280,height:900});
- await a.locator('.a-detail-text').scrollIntoViewIfNeeded();
+ await prepareTranscriptSelection(a.locator('.a-detail-text'),'native-empty-draft');
  const nativeSelection=await a.locator('.a-detail-text').evaluate((node,binding)=>{
   const walker=document.createTreeWalker(node,NodeFilter.SHOW_TEXT);let text;
   while((text=walker.nextNode())){const start=text.textContent.indexOf('second line');if(start<0)continue;
@@ -513,10 +532,43 @@ try{
  assert.equal(references(await documentValue())[0].quote.excerpt,'second line');
  await observeCards('direct rendered selection');
  await quotes.first().getByRole('button',{name:'Remove quote',exact:true}).click();await expect(quotes).toHaveCount(0);
+ // Also cross the actual input boundary: the browser, not addRange, creates a
+ // first passage selection after a fresh reload/empty-editor/resize transition.
+ // No pre-blur: the actual gesture must transfer focus out of the composer.
+ await page.setViewportSize({width:320,height:844});await page.reload();
+ await editor.fill(Array.from({length:30},(_,i)=>'Pointer draft line '+i).join('\n'));
+ await editor.fill('');await page.setViewportSize({width:1280,height:900});
+ const pointerBinding=selectionBinding(page,'pointer-drag','native-pointer-drag','.a-detail-text');
+ retainSelectionObservation('before-navigation',await a.locator('.a-detail-text').evaluate((node,binding)=>
+  window.multiQuoteBindSelection(node,binding,'second line','fixture-excerpt'),pointerBinding));
+ await prepareTranscriptSelection(a.locator('.a-detail-text'),'native-pointer-drag',{blur:false});
+ assert.equal(await editor.evaluate(node=>node.contains(document.activeElement)),true,'The editor holds focus before the gesture');
+ const drag=await a.locator('.a-detail-text').evaluate(node=>{
+  const walker=document.createTreeWalker(node,NodeFilter.SHOW_TEXT);let text;
+  while((text=walker.nextNode())){const start=text.textContent.indexOf('second line');if(start<0)continue;
+   const range=document.createRange();range.setStart(text,start);range.setEnd(text,start+'second line'.length);
+   const r=range.getBoundingClientRect(),p=node.closest('.a-messages').getBoundingClientRect();
+   return {left:r.left,right:r.right,y:(r.top+r.bottom)/2,inside:r.top>=p.top&&r.bottom<=p.bottom};
+  }throw Error('Native drag fixture text is missing');
+ });
+ assert.ok(drag.inside,'Native drag starts on visible transcript text');
+ await page.mouse.move(drag.left,drag.y);await page.mouse.down();
+ await page.mouse.move(drag.right,drag.y,{steps:8});await page.mouse.up();
+ retainSelectionObservation('pointer-selected',await page.evaluate(()=>window.multiQuoteSelectionProbe()));
+ assert.equal(await page.evaluate(()=>window.getSelection().toString()),'second line');
+ assert.equal(await editor.evaluate(node=>node.contains(document.activeElement)),false,'Native gesture transfers composer focus');
+ await page.getByRole('button',{name:'Quote selection',exact:true}).click();await expect(quotes).toHaveCount(1);
+ const pointerQuote=references(await documentValue())[0].quote;
+ assert.equal(pointerQuote.excerpt,'second line');assert.equal(pointerQuote.messageId,sourceA);
+ const pointerStart=originalA.indexOf('second line');
+ assert.deepEqual(pointerQuote.spans,[{start:[...originalA.slice(0,pointerStart)].length,end:[...originalA.slice(0,pointerStart+'second line'.length)].length}]);
+ checkpoints.push({stage:'native pointer selection',drag,quote:pointerQuote});
+ await quotes.first().getByRole('button',{name:'Remove quote',exact:true}).click();await expect(quotes).toHaveCount(0);
  const c=page.locator('.a-message').filter({hasText:'Quote fixture source C'}).first();
  const selectContents=async(selector,stage='rendered-contents',binding=selectionBinding(page,'selectContents',stage,selector))=>{
   const node=c.locator('.a-detail-text '+selector);
-  await node.scrollIntoViewIfNeeded();
+  if(stage==='source-revision-before-admission')await prepareTranscriptSelection(node,stage);
+  else await node.scrollIntoViewIfNeeded();
   const installed=await node.evaluate((node,binding)=>{
    // A real selection gesture in the transcript leaves the editor's focus.
    // Merely installing a Range while ProseMirror still owns focus lets its next
@@ -696,6 +748,14 @@ try{
  await page.getByRole('button',{name:'Remove refusal.txt',exact:true}).click();
  await quotes.first().getByRole('button',{name:'Remove quote',exact:true}).click();await editor.fill('');
  await page.setViewportSize({width:1280,height:900});await expect(page.locator('.a-quote-selection')).toHaveCount(0);
+ // Reload reset B's demand-loaded full text. Reading C brings B within the
+ // 400px detail margin; its late expansion moves C by 408px even with unchanged
+ // scrollTop. Finish reading B before the single navigation/selection of C.
+ await b.locator('.a-detail-text').scrollIntoViewIfNeeded();
+ const precedingDetail=await b.locator('.a-detail-text').evaluate(node=>({height:node.getBoundingClientRect().height,complete:node.textContent.includes('END OF EXACT LONG SOURCE')}));
+ await expect(b.locator('.a-detail-text')).toContainText('END OF EXACT LONG SOURCE');
+ checkpoints.push({stage:'preceding source complete before selection',before:precedingDetail,
+  after:await b.locator('.a-detail-text').evaluate(node=>({height:node.getBoundingClientRect().height,complete:node.textContent.includes('END OF EXACT LONG SOURCE')}))});
  // Source revision changes before snapshot admission reject the captured digest.
  // This is a fresh source gesture after editor/quote removal, not a synthetic
  // selectionchange replay while the transcript's prior gesture is dismissed.
