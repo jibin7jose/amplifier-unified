@@ -37,7 +37,7 @@ jobs:
       - run: npm ci --prefix frontend
       - name: Focused text, catalog and deterministic-document units
         working-directory: frontend
-        run: node --test tests/markdown.test.mjs tests/message-actions.test.mjs tests/appearance-catalog.test.mjs tests/appearance-thumbnail-document.test.mjs
+        run: node --test tests/markdown.test.mjs tests/message-actions.test.mjs tests/appearance-settings.test.mjs tests/appearance-catalog.test.mjs tests/appearance-thumbnail-document.test.mjs
       - run: npm run build --prefix frontend
       - name: Prepare Chromium
         working-directory: frontend

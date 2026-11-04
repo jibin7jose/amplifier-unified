@@ -14,12 +14,13 @@ const stubs={
  './settings-layout':`import React from 'react';export const SettingsLayoutContext=React.createContext({active:true});`,
  './settings-ui':`export const FileDrop=()=>null;`,
  './working-label':`export const WorkingLabel=({children})=>children;`,
- './theme-presentation':`export const ThemeDecorationControl=()=>null;`,
+ './theme-presentation':`export const ThemeDecorationControl=()=>null;export const useThemeScheme=scheme=>scheme==='dark'?'dark':'light';`,
+ './appearance-thumbnail':`export const AppearanceThumbnail=()=>null;`,
  './execution-observability.jsx':`export const ObservabilityPreferences=()=>null;`,
- 'lucide-react':`export const Check=()=>null,Download=Check,Upload=Check,Palette=Check,Sun=Check,Moon=Check,Monitor=Check,FolderOpen=Check,RefreshCw=Check;`,
+ 'lucide-react':`export const Check=()=>null,Download=Check,Upload=Check,Palette=Check,Sun=Check,Moon=Check,Monitor=Check,FolderOpen=Check,RefreshCw=Check,Copy=Check,LoaderCircle=Check,AlertCircle=Check;`,
 };
 const compiled=await build({
- stdin:{contents:`export {AppearanceSettings} from './appearance-settings.jsx';export {useAppearanceEditor,appearanceEditorKey} from './appearance-editor.jsx';export {SettingsLayoutContext} from './settings-layout';`,resolveDir:fileURLToPath(new URL('../src/',import.meta.url))},
+ stdin:{contents:`export {AppearanceSettings} from './appearance-settings.jsx';export {useAppearanceEditor,appearanceEditorKey} from './appearance-editor.jsx';export {SettingsLayoutContext} from './settings-layout';export {clearAppearanceCatalogs} from './appearance-catalog';`,resolveDir:fileURLToPath(new URL('../src/',import.meta.url))},
  bundle:true,write:false,platform:'node',format:'cjs',external:['react'],loader:{'.css':'empty'},
  plugins:[{name:'visual-children',setup(bundler){
   bundler.onResolve({filter:/.*/},args=>Object.hasOwn(stubs,args.path)?{path:args.path,namespace:'visual-child'}:undefined);
@@ -28,7 +29,8 @@ const compiled=await build({
 });
 const module={exports:{}};
 new Function('require','module','exports',compiled.outputFiles[0].text)(require,module,module.exports);
-const {AppearanceSettings,useAppearanceEditor,appearanceEditorKey,SettingsLayoutContext}=module.exports;
+const {AppearanceSettings,useAppearanceEditor,appearanceEditorKey,SettingsLayoutContext,clearAppearanceCatalogs}=module.exports;
+test.beforeEach(()=>clearAppearanceCatalogs());
 function memoryStorage(){const values=new Map();return {getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)}}
 function EditorHost({storage,open=true,active=true,...props}){
  const editor=useAppearanceEditor(props.state.theme,props.defaultSkin,{storage});
