@@ -80,13 +80,19 @@ The frontend embeds the package version from `pyproject.toml` in both its
 JavaScript bundle and `static/build.json`. After updating the Python package
 versions (including the local `amplifier-unified` entry in `uv.lock`) and release
 notes, verify `uv sync --locked --dry-run --group dev --group artifacts` in the
-owned environment, then run `npm ci --prefix frontend`,
-`npm test --prefix frontend`, and `npm run build --prefix frontend`. Include all
-resulting `amplifier_web/static` changes in the release commit. Rebuild once more
-and require `git diff --exit-code -- amplifier_web/static` to pass before merging
-the release candidate; a version-only edit still changes generated bundle hashes.
-Keep the release workflow's committed-assets comparison enabled when a matching
-trusted PR proof is unavailable; a reused proof includes that same comparison.
+owned environment. Reuse installed dependencies that match the current lockfiles
+and toolchain; run `npm ci --prefix frontend` only when that preparation is missing
+or stale. Build once with `npm run build --prefix frontend` and include all
+resulting `amplifier_web/static` changes in the release commit: a version-only
+edit still changes generated bundle hashes.
+
+Reuse focused behavior evidence for unchanged tested inputs. Do not add a local
+full frontend suite or a second manual build solely for a version change.
+**Fast release checks** still tests, builds and compares committed assets for the
+candidate. The publisher reuses only its verified exact-source PR proof, or runs
+the frontend checks itself when that proof is unavailable; an earlier version's
+proof does not qualify the new version. Package/native qualification and candidate
+receipts remain fresh under the existing publication workflow.
 
 The installed-wheel probe also loads worker-owned app packages in a fresh
 `-I -S` child outside the checkout. A successful host import is not worker
@@ -170,21 +176,23 @@ apply [performance validation](performance.md) to the affected workload. Retain
 measured budgets and semantic checks; this adds no blanket benchmark or exhaustive
 suite requirement to merge or publication.
 
-Typical local commands, inside the owned test environment:
+Illustrative local commands, selected as needed inside the owned test environment;
+this is not a mandatory every-release checklist:
 
 ```sh
+# Prepare dependencies only when the existing environment does not match.
 uv sync --locked --group dev --group artifacts
-uv run --no-sync pytest -q --tb=short tests/test_affected_feature.py
 npm ci --prefix frontend
-npm test --prefix frontend
+# Qualify changed behavior; reuse matching prior evidence for unchanged inputs.
+uv run --no-sync pytest -q --tb=short tests/test_affected_feature.py
+(cd frontend && node --test tests/affected-feature.test.mjs)
+# Build changed client/version inputs once, then review and commit generated assets.
 npm run build --prefix frontend
-git diff --exit-code -- amplifier_web/static
 # Select relevant browser scripts from frontend/package.json.
-# Optional broader local coverage runs separately in the background:
-# uv run --no-sync pytest -v --tb=short
+# Full suites and committed-assets comparison remain with their CI owners.
 ```
 
-Replace the illustrative test filename with the actual affected suite. Real
+Replace the illustrative test filenames with the actual affected suites. Real
 runtime checks require their declared runtime dependencies; report host-only
 skips accurately. Keep source, state, services and ports isolated and clean up
 owned temporary resources after evidence is retained.
