@@ -87,8 +87,14 @@ test('expanded peer and ordinary user messages share exact Markdown body renderi
  const structure=html=>[...html.matchAll(/<(p|h[1-6]|ul|ol|li|table|tr|td|th|pre|code|strong)\b[^>]*>/g)].map(row=>row[1]);
  assert.deepEqual(structure(peer),structure(user));
  for(const html of [peer,user]){
-  assert.match(html,/<p>First <strong>paragraph<\/strong>\.<\/p>/);
-  assert.match(html,/<p>Second paragraph with a soft\nline break\.<\/p>/);
+  // Canonical quote-source spans preserve source offsets inside text leaves.
+  // Compare paragraph semantics without treating those annotations as content.
+  const paragraphs=[...html.matchAll(/<p>[\s\S]*?<\/p>/g)]
+   .map(([paragraph])=>paragraph.replace(/<\/?span\b[^>]*>/g,''));
+  assert.deepEqual(paragraphs,[
+   '<p>First <strong>paragraph</strong>.</p>',
+   '<p>Second paragraph with a soft\nline break.</p>',
+  ]);
   assert.match(html,/<ul>/);assert.match(html,/<table>/);assert.match(html,/language-js/);
  }
  assert.doesNotMatch(peer,/a-delegate-markdown|a-execution-payload/);
