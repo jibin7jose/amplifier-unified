@@ -71,6 +71,18 @@ accepted execution -> runtime admission -> working -> safely evictable when idle
    initial migration can scan in the background with visible progress and throttling.
    Broken: every refresh parses every events file or missing a watcher loses a session forever. Affected: legacy users.
 
+### Nested tool checkpoint boundary
+
+A verified active `tools.dispatch` child does not append a conversation result.
+Its automatic completion boundary persists control changes and validates the
+current native writer without copying, encoding or checkpointing the full
+transcript. Existing enclosing tool, explicit checkpoint, compaction and terminal
+error/cancellation boundaries still save context changes. The loop retains
+ownership of ordered parent-result append; this optimization adds no new durable
+append callback or stronger crash-recovery guarantee. Unknown or expired dispatch
+attribution uses the existing full checkpoint. Observed effects are never inferred
+to have rolled back or replayed merely because the parent is interrupted.
+
 ## Not in v1
 
 Automatic deletion or archival compression; promote only under a separate retention

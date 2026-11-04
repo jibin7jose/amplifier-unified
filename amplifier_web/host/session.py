@@ -940,6 +940,41 @@ async def prepare_dependencies(workspace, *, bundle=None, install_overrides=None
         source_resolver=lambda module, source: module_source(config, snapshot, module, source, components))
 
 
+def install_checkpoint_hooks(coordinator, runtime, checkpoint):
+    """Keep automatic nested completion cheap; enclosing saves are unchanged."""
+    import asyncio
+    from amplifier_core import HookResult
+    async def checkpoint_hook(event, data):
+        if data.get("session_id", runtime.session_id) == runtime.session_id:
+            from ..performance_diagnostics import PhaseTiming, TIMING_ENABLED
+            emit = coordinator.get_capability('web.performance.emit')
+            timing = (PhaseTiming(kind='checkpoint', toolCallId=data.get('tool_call_id'),
+                runtimeSessionId=runtime.session_id,
+                generationId=(runtime.generation or {}).get('id'))
+                if TIMING_ENABLED and callable(emit) else None)
+            outcome = 'completed'
+            if timing:
+                timing.mark('checkpoint.start')
+            try:
+                from ..coordination_delivery import nested_checkpoint
+                await checkpoint(timing=timing, transcript_required=not (
+                    event in {"tool:post", "tool:error"}
+                    and nested_checkpoint(coordinator, data)))
+            except BaseException as exc:
+                outcome = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'
+                raise
+            finally:
+                if timing:
+                    timing.mark('checkpoint.end')
+                    try:
+                        emit(timing.snapshot(outcome))
+                    except Exception:
+                        pass
+        return HookResult()
+    for event in ("tool:post", "tool:error", "orchestrator:complete", "context:compaction_finished"):
+        coordinator.hooks.register(event, checkpoint_hook, name="unified-checkpoint-" + event)
+
+
 async def prepare_manager(workspace, *, runtime=None, bundle=None, background_delegate=True,
                           ask=None, report_dir=None, resume=False, selection=None,
                           application_host="Amplifier Unified", shared_handle=None,
@@ -1216,13 +1251,22 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             native_guard.check()
             if held is not None:
                 held.check()
-        async def checkpoint(status="in_progress", *, timing=None):
+        async def checkpoint(status="in_progress", *, timing=None, transcript_required=True):
             nonlocal published_anchors
             if write_guard:
                 write_guard()
             persist_controls = coordinator.get_capability("web.controls.persist")
             if persist_controls:
                 persist_controls()
+            if not transcript_required:
+                # Inner tools have not appended a conversation result. Keep
+                # authority and control persistence at every boundary; the
+                # existing enclosing/terminal saves retain context changes.
+                held = shared_handle_getter() if shared_handle_getter else shared_handle
+                native_guard.check()
+                if held is not None:
+                    held.check()
+                return
             if timing:timing.mark('context.start')
             transcript = await coordinator.get("context").get_messages()
             if timing:timing.mark('context.end')
@@ -1256,32 +1300,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         from ..context_continuity import install as install_continuity
         continuity = install_continuity(coordinator, runtime.session_id, edited_path.parent,
                                        checkpoint, writer_guard=recovery_write_guard)
-        async def checkpoint_hook(event, data):
-            if data.get("session_id", runtime.session_id) == runtime.session_id:
-                from ..performance_diagnostics import PhaseTiming, TIMING_ENABLED
-                emit = coordinator.get_capability('web.performance.emit')
-                timing = (PhaseTiming(kind='checkpoint', toolCallId=data.get('tool_call_id'),
-                    runtimeSessionId=runtime.session_id,
-                    generationId=(runtime.generation or {}).get('id'))
-                    if TIMING_ENABLED and callable(emit) else None)
-                outcome = 'completed'
-                if timing:
-                    timing.mark('checkpoint.start')
-                try:
-                    await checkpoint(timing=timing)
-                except BaseException as exc:
-                    outcome = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'
-                    raise
-                finally:
-                    if timing:
-                        timing.mark('checkpoint.end')
-                        try:
-                            emit(timing.snapshot(outcome))
-                        except Exception:
-                            pass
-            return HookResult()
-        for event in ("tool:post", "tool:error", "orchestrator:complete", "context:compaction_finished"):
-            coordinator.hooks.register(event, checkpoint_hook, name="unified-checkpoint-" + event)
+        install_checkpoint_hooks(coordinator, runtime, checkpoint)
         async def cleanup_jobs():
             jobs.close()
         coordinator.register_cleanup(cleanup_jobs)

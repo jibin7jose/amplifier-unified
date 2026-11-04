@@ -38,6 +38,31 @@ WORK_ATTEMPT = ContextVar('unified_work_delivery_attempt', default=None)
 WORK_NESTED = ContextVar('unified_work_nested_origin', default=None)
 WORK_EXECUTION = ContextVar('unified_work_tool_execution', default=None)
 
+
+def nested_checkpoint(coordinator, data):
+    """Only our active, verified dispatch child belongs to its parent's save.
+
+    Event fields alone are not proof. The native lease and private task-local
+    observation were established before the tool ran. This is a persistence
+    boundary, never permission to run a tool or replay an uncertain result.
+    """
+    nested = WORK_NESTED.get()
+    if not nested or not nested['active'] or not nested['verified']:
+        return False
+    lease = nested['lease']
+    source = data.get('dispatch_source')
+    if not isinstance(source, dict):
+        return False
+    return (not lease.closed and lease.scope.active and lease.scope.run.active
+            and lease.scope.run.coordinator is coordinator
+            and source.get('session_id') == coordinator.session_id
+            and source.get('run_id') == lease.scope.run.identity
+            and source.get('parent_tool_call_id') == nested['parent']['tool_call_id']
+            and data.get('parent_tool_call_id') == nested['parent']['tool_call_id']
+            and source.get('tool_call_id') == data.get('tool_call_id') == nested['callId']
+            and source.get('tool_name') == data.get('tool_name') == nested['name']
+            and ('tool_input' not in data or _same_json(data['tool_input'], nested['arguments'])))
+
 @dataclass(frozen=True)
 class InvocationOrigin:
     """Private host value, never reconstructed from tool arguments."""
