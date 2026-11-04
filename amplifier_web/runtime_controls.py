@@ -264,10 +264,14 @@ class RuntimeControls:
             raise ValueError("Finish or stop the active workers before changing session configuration")
 
     def recovery_contract(self):
-        """Exact mounted choices; no credentials or configuration are exported."""
+        """Exact durable choices; only their digest is stored by recovery."""
+        from .decision_accounts import logical_plan
         loop, context = self.coordinator.get("orchestrator"), self.coordinator.get("context")
         return copy.deepcopy({
-            "plan": self.coordinator.config,
+            # Decision-account projection binds a fresh UUID on every mount.
+            # Validate and recover the logical declaration, retaining its exact
+            # account, source, credentials and settings, not a redacted view.
+            "plan": logical_plan(self.coordinator.config),
             "selection": self.selection,
             "maxOutputTokens": self.max_output_tokens,
             "context": getattr(context, "config", {}),

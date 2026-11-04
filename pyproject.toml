@@ -67,6 +67,11 @@ exclude = ["/.ci/**"]
 [tool.uv]
 # Core publishes native wheels; never compile it while installing this app.
 no-build-package = ["amplifier-core"]
+# Keep the existing test context implementation when context-managed declares
+# its branch-policy dependency. This does not override mounted runtime sources.
+override-dependencies = [
+    "amplifier-module-context-simple @ git+https://github.com/microsoft/amplifier-module-context-simple@db641363013ff906b656f49498a87ab01f5c506f",
+]
 
 [[tool.uv.index]]
 url = "https://pypi.org/simple"
@@ -78,6 +83,10 @@ dev = [
     # Offline native-input fixtures use the real loop/context, not a fake mount.
     "amplifier-module-loop-live @ git+https://github.com/microsoft/amplifier-module-loop-live@670f405f711658c3c38e81dbd50a35d3d8c2ac3c",
     "amplifier-module-context-simple @ git+https://github.com/microsoft/amplifier-module-context-simple@db641363013ff906b656f49498a87ab01f5c506f",
+    # Qualified upstream recovery API; provider stays on the existing locked
+    # source shared with the optional decisions extra.
+    "amplifier-module-context-managed @ git+https://github.com/microsoft/amplifier-bundle-context-managed@12166f8effb5e26737bb5f9f7885cbb9bd4cdf43#subdirectory=modules/context-managed",
+    "amplifier-module-provider-openai @ git+https://github.com/microsoft/amplifier-module-provider-openai@main",
     # Ordinary-root switch fixtures retain the real local capture hook offline.
     "amplifier-module-hook-context-intelligence @ git+https://github.com/microsoft/amplifier-bundle-context-intelligence@a80ce69d0e96e9a343501f238dcd867350dd9aa2#subdirectory=modules/hook-context-intelligence",
     # Installed skills checks exercise the real loader and companion-file tool.

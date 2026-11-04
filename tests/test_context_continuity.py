@@ -1,19 +1,23 @@
-"""Host adapter against the actual optional context-managed boundary module."""
+"""Host adapter against the actual context-managed module and maintained dev dependencies."""
 import copy
 from contextlib import asynccontextmanager
-import importlib.util
 import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
+import openai
 import pytest
+import amplifier_module_context_managed
+import amplifier_module_loop_streaming
+import amplifier_module_provider_openai as provider_module
+from amplifier_foundation.bundle import Bundle, BundleModuleResolver, PreparedBundle
+from amplifier_module_context_managed import boundary
 from amplifier_web.context_continuity import ContextContinuity, digest
 from amplifier_web.runtime_controls import RuntimeControls
 from test_task_continuity import Coordinator
-
-boundary = pytest.importorskip('amplifier_module_context_managed.boundary')
 
 
 async def mount(directory, messages, *, context_config=None):
@@ -384,7 +388,6 @@ class RecoveryWire:
         return value
 
     async def transport(self, request):
-        import httpx
         body = json.loads(request.content)
         if request.url.path.endswith('/input_tokens'):
             count = self.count(body)
@@ -439,12 +442,8 @@ async def ordinary_recovery_case(directory, wire, messages=()):
     a substitute orchestrator, request builder, context recovery or provider.
     """
     from amplifier_core import HookResult, ToolResult
-    from amplifier_foundation.bundle import Bundle, BundleModuleResolver, PreparedBundle
     from amplifier_web.host.session import SelectedProvider
     from amplifier_web.shared_state import ActivationGate
-    httpx = pytest.importorskip('httpx')
-    openai = pytest.importorskip('openai')
-    provider_module = pytest.importorskip('amplifier_module_provider_openai')
     plan = {'session': {
         'orchestrator': {'module': 'loop-streaming', 'config': {
             'use_streaming': False, 'extended_thinking': True,
@@ -453,9 +452,8 @@ async def ordinary_recovery_case(directory, wire, messages=()):
             'durable_checkpoints': True, 'archive_recovery': False,
             'max_tokens': RECOVERY_BUDGET, 'summarize_trigger': RECOVERY_TRIGGER,
             'native_min_new_tokens': 0, 'compaction_notice_enabled': False}}}}
-    paths = {name: Path(importlib.util.find_spec(
-        'amplifier_module_' + name.replace('-', '_')).origin).parent
-        for name in ('loop-streaming', 'context-managed')}
+    paths = {'loop-streaming': Path(amplifier_module_loop_streaming.__file__).parent,
+             'context-managed': Path(amplifier_module_context_managed.__file__).parent}
     session = await PreparedBundle(plan, BundleModuleResolver(paths),
         Bundle(name='ordinary-recovery', session=plan['session'])).create_session(
             session_id='ordinary-recovery')
@@ -817,6 +815,188 @@ async def test_recovery_intent_remount_and_preparation_fences(tmp_path, monkeypa
         assert wire.effects == 1 and wire.unknown_invocations == 0
         assert wire.unknown == RECOVERY_UNKNOWN
         assert second.context.config['max_tokens'] == RECOVERY_BUDGET
+
+
+def recovery_decision_accounts():
+    return [{'module': 'provider-fixture-decision', 'instance_id': name,
+             'source': 'git+https://example.test/decision@exact', 'enabled': enabled,
+             'config': {'api_key': secret, 'decisions': {
+                 'enabled': True, 'backends': {'fixture': {'model': 'decision-model'}}}}}
+            for name, enabled, secret in (
+                ('decision-active', True, 'DECISION-ACTIVE-SECRET-72'),
+                ('decision-disabled', False, 'DECISION-DISABLED-SECRET-81'))]
+
+
+@pytest.fixture
+def project_recovery_accounts(monkeypatch):
+    from amplifier_web import decision_accounts as accounts
+    definitions = {'provider-fixture-decision': 'hooks-fixture-decisions'}
+    # Replace only package metadata discovery. UUID allocation, projection and
+    # logical-plan validation are real; no decision hook or service is invoked.
+    monkeypatch.setattr(accounts, 'catalogs', lambda: definitions)
+
+    def project(case, rows):
+        logical = accounts.logical_plan(case.session.coordinator.config)
+        logical['providers'] = copy.deepcopy(rows)
+        logical.setdefault('hooks', [])
+        projection = accounts.DecisionAccounts(
+            logical, None, lambda module, source: source)
+        case.session.coordinator.config.clear()
+        case.session.coordinator.config.update(projection.plan)
+        return logical, projection
+
+    return project
+
+
+@pytest.mark.parametrize('change', [
+    'unchanged', 'account', 'source', 'credential', 'settings', 'disabled-credential',
+])
+async def test_decision_account_remount_recovery_uses_exact_logical_choices(
+        tmp_path, monkeypatch, project_recovery_accounts, change):
+    monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(tmp_path / 'home'))
+    directory, wire = tmp_path / 'session', RecoveryWire()
+    rows = recovery_decision_accounts()
+    secrets = [row['config']['api_key'] for row in rows] + ['ROTATED-DECISION-SECRET-96']
+    async with ordinary_recovery_case(directory, wire) as first:
+        logical, projection = project_recovery_accounts(first, rows)
+        first_plan = copy.deepcopy(first.session.coordinator.config)
+        contract = first.controls.recovery_contract()
+        assert contract['plan'] == logical
+        assert first.session.coordinator.config == first_plan  # Inspection is not a remount.
+        bindings = {row['binding_id'] for row in projection.records}
+        assert len(bindings) == 2 and len(projection.expected) == 1
+        await first.session.execute('SEED-EFFECT: save report-v1 once; preserve ORBIT.')
+        await append_recovery_evidence(first.context, ['A', 'B', 'C'])
+        before_failure = len(wire.completions)
+        with pytest.raises(RuntimeError, match=r'Execution failed: CompactionError:.*native_no_reduction'):
+            await first.session.execute('Failing preparation with decision accounts before remount.')
+        assert len(wire.completions) == before_failure
+        source = copy.deepcopy(await first.context.get_messages())
+        saved = first.adapter.path.read_bytes() if first.adapter.path.exists() else None
+        command = recovery_command(wire)
+        before_arm = (len(wire.counts), len(wire.compactions), len(wire.completions))
+        pending = await first.controls.perform('context.recovery.request', command)
+        assert pending['state'] == 'pending' and pending['attempts'] == 1
+        assert (len(wire.counts), len(wire.compactions), len(wire.completions)) == before_arm
+        journal_path = first.adapter.recovery_path
+        journal = json.loads(journal_path.read_text())
+        assert journal['attempts'][journal['current']]['contract'] == {
+            'version': 1, 'sha256': digest(contract)}
+        for secret in secrets:
+            assert secret not in journal_path.read_text() + json.dumps(pending)
+        first.gate.release(first.activation)
+
+    if change == 'account':
+        rows[0]['instance_id'] = 'different-account'
+    elif change == 'source':
+        rows[0]['source'] += '-changed'
+    elif change in {'credential', 'disabled-credential'}:
+        rows[1 if change == 'disabled-credential' else 0]['config']['api_key'] = secrets[-1]
+    elif change == 'settings':
+        rows[0]['config']['decisions']['backends']['fixture']['model'] = 'different-decision-model'
+    retained_journal = journal_path.read_bytes()
+    before = (len(wire.counts), len(wire.compactions), len(wire.completions))
+    async with ordinary_recovery_case(directory, wire, source) as second:
+        logical, projection = project_recovery_accounts(second, rows)
+        assert bindings.isdisjoint(row['binding_id'] for row in projection.records)
+        assert len(projection.records) == 2 and len(projection.expected) == 1
+        assert second.session.coordinator.config != first_plan
+        assert second.gate is not first.gate and not first.gate.current_valid
+        next_contract = second.controls.recovery_contract()
+        assert next_contract['plan'] == logical
+        assert (next_contract == contract) is (change == 'unchanged')
+        assert await second.controls.perform('context.recovery.status') == pending
+        assert await second.controls.perform('context.recovery.request', command) == pending
+        assert journal_path.read_bytes() == retained_journal
+        assert (len(wire.counts), len(wire.compactions), len(wire.completions)) == before
+        if change == 'unchanged':
+            assert 'Usable continuation' in await second.session.execute('Fresh input after decision remount.')
+            assert wire.views[-1]['outcome'] == 'recovered'
+            assert_recovery_dispatch(wire, wire.views[-1])
+            status = await second.controls.perform('context.recovery.status')
+            assert status['state'] == 'committed' and status['attempts'] == 1
+            assert status['completedParts'] > 1
+            assert status['verification']['after'] < status['verification']['before']
+            assert len(wire.completions) == before[2] + 1
+        else:
+            with pytest.raises(RuntimeError, match=r'Execution failed: ContextRecoveryError:.*recovery_contract_changed'):
+                await second.session.execute('Changed decision choices must refuse before provider work.')
+            status = await second.controls.perform('context.recovery.status')
+            assert status['state'] == 'failed' and status['code'] == 'recovery_contract_changed'
+            assert not second.adapter.loaded and second.context.summary is None
+            assert (second.adapter.path.read_bytes() if second.adapter.path.exists() else None) == saved
+            assert (len(wire.counts), len(wire.compactions), len(wire.completions)) == before
+            with pytest.raises(RuntimeError, match=r'Execution failed: ContextRecoveryError:.*recovery_unreconciled'):
+                await second.session.execute('A fresh input cannot replay the refused recovery.')
+            assert (len(wire.counts), len(wire.compactions), len(wire.completions)) == before
+        after = (len(wire.counts), len(wire.compactions), len(wire.completions))
+        assert await second.controls.perform('context.recovery.request', command) == status
+        assert (len(wire.counts), len(wire.compactions), len(wire.completions)) == after
+        assert (await second.context.get_messages())[:len(source)] == source
+        assert wire.effects == 1 and wire.unknown_invocations == 0
+        assert wire.unknown == RECOVERY_UNKNOWN
+        assert second.context.config['max_tokens'] == RECOVERY_BUDGET
+        for secret in secrets:
+            assert secret not in journal_path.read_text() + json.dumps(status)
+        assert 'binding_id' not in journal_path.read_text()
+
+
+@pytest.mark.parametrize('phase', ['arming', 'preparation'])
+async def test_decision_account_recovery_guard_detects_change_during_stop_check(
+        tmp_path, monkeypatch, project_recovery_accounts, phase):
+    from amplifier_web.context_continuity import ContextRecoveryError
+    monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(tmp_path / 'home'))
+    wire = RecoveryWire()
+    source = [{'role': 'user', 'content': 'Keep the original task.'}]
+    async with ordinary_recovery_case(tmp_path / 'session', wire, source) as case:
+        rows = recovery_decision_accounts()
+        project_recovery_accounts(case, rows)
+        if phase == 'preparation':
+            pending = await case.controls.perform('context.recovery.request', recovery_command(wire))
+            assert pending['state'] == 'pending'
+        coordinator = case.session.coordinator
+        bridge = coordinator.get_capability('web.app_access.bridge')
+
+        async def change_during_stop_check(*args):
+            response = await bridge(*args)
+            rows[0]['config']['api_key'] = 'ACTIVE-RUN-CHANGED-SECRET'
+            project_recovery_accounts(case, rows)
+            return response
+
+        coordinator.register_capability('web.app_access.bridge', change_during_stop_check)
+        if phase == 'arming':
+            with pytest.raises(ContextRecoveryError, match='recovery_contract_changed'):
+                await case.controls.perform('context.recovery.request', recovery_command(wire))
+            assert not case.adapter.recovery_path.exists()
+        else:
+            with pytest.raises(RuntimeError, match=r'Execution failed: ContextRecoveryError:.*recovery_contract_changed'):
+                await case.session.execute('Fresh input cannot bypass an in-flight configuration change.')
+            status = await case.controls.perform('context.recovery.status')
+            assert status['state'] == 'failed' and status['code'] == 'recovery_contract_changed'
+            assert not case.adapter.loaded and case.context.summary is None
+            assert 'ACTIVE-RUN-CHANGED-SECRET' not in case.adapter.recovery_path.read_text() + json.dumps(status)
+        assert not case.adapter.path.exists()
+        assert wire.counts == wire.compactions == wire.completions == []
+        assert wire.effects == wire.unknown_invocations == 0
+        assert (await case.context.get_messages())[:len(source)] == source
+
+
+async def test_decision_account_recovery_rejects_unvalidated_projection(
+        tmp_path, monkeypatch, project_recovery_accounts):
+    monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(tmp_path / 'home'))
+    wire = RecoveryWire()
+    source = [{'role': 'user', 'content': 'Keep the original task.'}]
+    async with ordinary_recovery_case(tmp_path / 'session', wire, source) as case:
+        project_recovery_accounts(case, recovery_decision_accounts())
+        hook = case.session.coordinator.config['hooks'][0]
+        hook['config']['api_key'] = 'FORGED-HOOK-SECRET'
+        with pytest.raises(ValueError, match='does not match its logical account/source'):
+            await case.controls.perform('context.recovery.request', recovery_command(wire))
+        assert not case.adapter.recovery_path.exists()
+        assert not case.adapter.path.exists()
+        assert wire.counts == wire.compactions == wire.completions == []
+        assert wire.effects == wire.unknown_invocations == 0
+        assert await case.context.get_messages() == source
 
 
 def bind_continuity_recovery_guards(coordinator, adapter, contract):
