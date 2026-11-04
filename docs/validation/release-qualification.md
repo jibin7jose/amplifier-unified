@@ -66,6 +66,10 @@ spacing and ASCII escaping do not discard otherwise valid saved notes.
 
 ## Preparing a version change
 
+Measure the five-minute routine release target from the start of version, notes
+and build preparation through publication and the installed-package smoke,
+including required CI and runner queues.
+
 Build and package routine version-only changes in an already-owned prepared
 release DTU, or in a qualified author DTU through its owner. Keep candidate source
 and package checks isolated, but do not provision and finalize a fresh test
