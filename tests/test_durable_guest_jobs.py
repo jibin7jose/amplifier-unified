@@ -29,10 +29,16 @@ def owned(monkeypatch):
         work.mkdir(mode=0o777)
         work.chmod(0o777)
         control = root / 'control'
+        temporary = root / 'tmp'
+        temporary.mkdir(mode=0o777)
+        temporary.chmod(0o777)
+        scratch = temporary / 'unified-test'
         source = Path(guest.__file__).read_text().replace("CONTROL = Path('/var/lib/unified-jobs')", 'CONTROL = Path('+repr(str(control))+')')
         source = source.replace("WORKSPACE = '/workspace'", 'WORKSPACE = '+repr(str(work)))
+        source = source.replace("SCRATCH = Path('/tmp/unified-test')", 'SCRATCH = Path('+repr(str(scratch))+')')
         monkeypatch.setattr(guest, 'CONTROL', control)
         monkeypatch.setattr(guest, 'WORKSPACE', str(work))
+        monkeypatch.setattr(guest, 'SCRATCH', scratch)
         monkeypatch.setattr(guest, 'SCRIPT', source, raising=False)
         yield work, control
         for path in control.glob('*/state.json'):
@@ -76,6 +82,32 @@ def test_lost_response_repeated_identity_and_fresh_observer_do_not_replay(owned)
     assert (work / 'executions').read_text() == 'once\n'
     assert guest.start(value)['job']['terminal']
     assert (work / 'executions').read_text() == 'once\n'
+
+
+def test_real_worker_keeps_cache_outside_saved_results_and_recreates_it(owned):
+    import shutil
+    work, _ = owned
+    code = """import json, os
+from pathlib import Path
+for key in ('HOME', 'XDG_CACHE_HOME'):
+    path = Path(os.environ[key]) / 'generated-cache'
+    path.write_text('disposable')
+    assert path.stat().st_uid == 65534
+Path('report.xml').write_text('<testsuite/>')
+print(json.dumps({'uid': os.getuid(), 'home': os.environ['HOME'], 'cache': os.environ['XDG_CACHE_HOME']}))
+"""
+    for index in range(2):
+        value = payload(python(code), identity='cache-'+str(index))
+        guest.start(value)
+        result = terminal(value)
+        assert result['job']['state'] == 'passed', result
+        observed = json.loads(result['result']['stdout'])
+        assert observed['uid'] == 65534
+        assert observed['home'] == str(guest.SCRATCH / 'home')
+        assert observed['cache'] == str(guest.SCRATCH / 'cache')
+        assert sorted(path.name for path in work.iterdir()) == ['report.xml']
+        shutil.rmtree(guest.SCRATCH)
+        assert (work / 'report.xml').read_text() == '<testsuite/>'
 
 
 def test_cancel_is_prompt_and_terminal_requires_actual_exit(owned):

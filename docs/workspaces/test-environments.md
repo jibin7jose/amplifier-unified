@@ -121,6 +121,17 @@ then run offline for twenty minutes by default (thirty maximum). Preparation
 does not receive host credentials or source mounts. Remote browser preview
 routing and general multi-service deployment remain unqualified.
 
+Test commands default to a private disposable `HOME` and `XDG_CACHE_HOME` under
+`/tmp/unified-test`, created as the unprivileged workload user. They are outside
+the retained source/results roots and can be recreated after a guest restart.
+Docker's existing profile temporary-space limit applies; Incus uses its guest
+temporary filesystem. Explicit command environment overrides remain available.
+Keep useful reports, final patches and chosen build outputs in `/artifacts`
+(`AMPLIFIER_TEST_ARTIFACTS`); keep package/browser caches, installed harnesses and
+pytest temporary fixture trees outside it. Removing an environment still exports
+the complete `/workspace` and `/artifacts`; no file filtering or report deletion
+is introduced by these defaults.
+
 Stop retains containers and volumes. Remove requires observed stopped work and
 successful bounded exports of both `/workspace` and `/artifacts`; failed export
 blocks destruction. Archives are retained without extraction on the host. Local
@@ -362,3 +373,9 @@ are byte-verified, never extracted on the host, and ownership/stopped state is
 rechecked before deletion. Insufficient disk space, invalid archives or an
 uncertain removal retain the environment. Older receipts retain their original
 policy and existing `finishCleanup` recovery path.
+
+Routine queued checks may explicitly inherit the global Storage temporary-workspace
+policy at submission. Their full local workspace export can expire only after
+confirmed removal and the captured duration; initial source, results and receipts
+stay. Manual environments, legacy records, `keepWorkspace` checks and uncertain
+cleanup remain protected. See [temporary workspace retention](../STORAGE.md#temporary-queued-test-workspace-copies).

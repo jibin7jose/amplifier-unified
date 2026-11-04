@@ -355,3 +355,16 @@ async def test_retention_reason_survives_policy_receipt_without_exception_text(a
     assert cleanup.read(app)['lastCleanup']['retentionReasons'] == expected
     assert 'Private source' not in json.dumps(result)
     assert result['effects'] == []
+
+
+async def test_workspace_retention_is_opt_in_validated_and_preserved_by_old_clients(app):
+    assert cleanup.policy(app)['workspaceArchiveKeepDays'] is None
+    base = {'expectedRevision': 0, 'enabled': True, 'keepDays': 7, 'maxUnusedBytes': 0}
+    for value in (0, -1, True, 3651, '7'):
+        with pytest.raises(AppError):
+            await cleanup.dispatch(app, 'storage.cleanup.save', {**base, 'workspaceArchiveKeepDays': value}, 'ui', 'bad-'+str(value))
+    await cleanup.dispatch(app, 'storage.cleanup.save', {**base, 'workspaceArchiveKeepDays': 7}, 'ui', 'opt-in')
+    await cleanup.dispatch(app, 'storage.cleanup.save', {**base, 'expectedRevision': 1}, 'ui', 'old-client')
+    assert cleanup.policy(app)['workspaceArchiveKeepDays'] == 7
+    await cleanup.dispatch(app, 'storage.cleanup.save', {**base, 'expectedRevision': 2, 'workspaceArchiveKeepDays': None}, 'ui', 'disable')
+    assert cleanup.policy(app)['workspaceArchiveKeepDays'] is None

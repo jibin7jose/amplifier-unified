@@ -190,10 +190,11 @@ def public(home, row):
         'executionContract': row.get('preparedDependencies', {}).get('executionContract'),
         'reason': row.get('reason'), 'observation': row.get('observation'),
         'recovery': row.get('recovery', {'available': False, 'reason': 'Refresh to inspect the retained recovery backend.'}),
-        'retention': {'path': str(storage.directory(home, row)), 'preserved': True,
+        'retention': {'path': str(storage.directory(home, row)), 'preserved': not bool(row.get('workspaceArchiveExpiry')),
+                      'workspacePolicy': row.get('workspaceArchivePolicy'), 'workspaceExpiry': row.get('workspaceArchiveExpiry'),
                       'fullAvailable': row.get('backendType') == 'incus',
                       **({'mode': row['retentionMode']} if row.get('retentionMode') is not None else {}),
-                      'policy': 'Stop retains container data. Remove exports source and artifacts before deleting owned containers and volumes. Retained host files are never deleted here.',
+                      'policy': 'Stop retains container data. Remove exports source and artifacts before deleting owned containers and volumes. Storage may later expire explicitly temporary workspace copies; source, results and receipts stay.',
                       **({'accounting': row['retainedFiles']} if row.get('retainedFiles') is not None else {})},
     }.items() if value is not None}
 
@@ -243,7 +244,7 @@ def remove_installation(home, identity, folder, *, ignore_errors=False, cleanup_
         shutil.rmtree(folder, ignore_errors=ignore_errors)
 
 
-def prepare(home, sid, workspace, actor, source, backend_key, request_id, installation=None, backend_config=None, profile_id=PROFILE, resource_request=None, timing_request=None, *, _qualification=False):
+def prepare(home, sid, workspace, actor, source, backend_key, request_id, installation=None, backend_config=None, profile_id=PROFILE, resource_request=None, timing_request=None, workspace_archive_policy=None, *, _qualification=False):
     profile = profiles.resources(profile_id, resource_request)
     resource_request = resource_request or profiles.freeze(profile_id)
     timing_request = timing_request or profiles.freeze_timing(profile_id)
@@ -258,7 +259,8 @@ def prepare(home, sid, workspace, actor, source, backend_key, request_id, instal
             # Only the same unadmitted intent can recover the allocation-before-link gap.
             if (not row.get('backendAdmitted') and row['owner'] == actor and row['source'] == source
                     and row.get('profileId', PROFILE) == profile_id
-                    and row['backendKey'] == backend_key and row['workspaceId'] == workspace):
+                    and row['backendKey'] == backend_key and row['workspaceId'] == workspace
+                    and row.get('workspaceArchivePolicy') == workspace_archive_policy):
                 return row
             raise ValueError('This environment request already has a different or admitted owner. Inspect its exact receipt.')
         limits = execution_settings.concurrency(home)
@@ -270,6 +272,7 @@ def prepare(home, sid, workspace, actor, source, backend_key, request_id, instal
             raise ValueError('The resource owner capacity has been reached. Inspect retained owners or adjust Advanced execution limits in Settings.')
         row = {'id': str(uuid.uuid4()), 'kind': KIND, 'workspaceId': workspace, 'sessionId': sid,
                'owner': actor, 'source': source, 'profileId': profile_id, 'backendKey': backend_key,
+               'workspaceArchivePolicy': workspace_archive_policy,
                'resourceRequest': resource_request, 'timingRequest': timing_request, 'preparationRequired': profile['preparationRequired'],
                'backendInstallation': installation,
                'backendConfigRetained': backend_config is not None,
@@ -552,6 +555,8 @@ def project_result(home, row, request):
     environment_state = ('running' if result.get('ok') else 'unknown') if action == 'execute' else result.get('status', 'unknown')
     if action in {'remove', 'finishCleanup'} and result.get('ok') and environment_state == 'removed':
         changes['status'] = 'retired'
+        if row.get('workspaceArchivePolicy'):
+            changes['workspaceArchiveRetiredAt'] = row.get('workspaceArchiveRetiredAt', time.time())
         if isinstance(result.get('retention'), dict) and result['retention'].get('verified') is True:
             changes['retainedFiles'] = result['retention']
     if action == 'execute' and isinstance(result.get('job'), dict):

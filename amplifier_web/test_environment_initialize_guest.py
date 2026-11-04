@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 
-def initialize(prefix=Path('/opt/unified-prepared'), workspace=Path('/workspace'), artifacts=Path('/artifacts')):
+def initialize(prefix=Path('/opt/unified-prepared'), workspace=Path('/workspace')):
     plan = json.loads((prefix / 'plan.json').read_text())
     if 'executionContract' in plan:
         contract = json.loads((prefix / 'execution-contract.json').read_text())
@@ -27,8 +27,6 @@ def initialize(prefix=Path('/opt/unified-prepared'), workspace=Path('/workspace'
         if target.exists() or target.is_symlink():
             raise ValueError('The source snapshot already supplies project dependency files.')
         shutil.copytree(prefix / 'node' / plan['nodeKey'], target, symlinks=True)
-    artifacts.joinpath('home').mkdir(parents=True, exist_ok=True)
-    artifacts.joinpath('cache').mkdir(parents=True, exist_ok=True)
     marker.write_text(json.dumps({'preparationId': plan['preparationId']}))
 
 

@@ -89,7 +89,7 @@ def test_initializer_refuses_missing_or_mismatched_contract_before_marker(tmp_pa
         (prefix / 'venv/bin/python').unlink()
     (prefix / 'execution-contract.json').write_text(json.dumps(actual))
     with pytest.raises(ValueError, match='execution contract'):
-        initializer.initialize(prefix, workspace, artifacts)
+        initializer.initialize(prefix, workspace)
     assert not (workspace / '.unified-prepared-dependencies.json').exists()
 
 

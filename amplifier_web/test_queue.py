@@ -44,12 +44,13 @@ def binding(source):
 def definitions(schema, string):
     scope = {'workspaceId': string(100), 'sessionId': string(200)}
     return {
-        ACTION: ('Queue one isolated check. The host waits for capacity, snapshots the working folder when admitted, runs the command once, stops its environment, exports source and artifacts and removes the owned environment. Evidence is retained. Continue independent work while waiting. Unknown effects never replay. A guarded completion notification can resume this chat.', schema({
+        ACTION: ('Queue one isolated check. The host waits for capacity, snapshots the working folder when admitted, runs the command once, stops its environment, exports source and artifacts and removes the owned environment. Source and results are retained; the full temporary workspace follows Storage retention unless keepWorkspace is true. Save useful generated changes to /artifacts. Continue independent work while waiting. Unknown effects never replay. A guarded completion notification can resume this chat.', schema({
             **scope, 'requestId': {**string(200), 'minLength': 1}, 'profileId': {'enum': [row['id'] for row in profiles.catalog()]},
             'command': {**string(16384), 'minLength': 1},
             'timeoutSeconds': {'type': 'integer', 'minimum': 1, 'maximum': profiles.MAX_SECONDS},
             'waitSeconds': {'type': 'integer', 'minimum': 0, 'maximum': profiles.MAX_SECONDS},
             'independent': {'type': 'boolean', 'description': 'Allow this check to overlap other independent checks in this chat within the global environment limit. Use only when no earlier check result is required. Default false preserves ordered execution.'},
+            'keepWorkspace': {'type': 'boolean', 'description': 'Keep the full final test workspace. Otherwise new checks follow the saved temporary-workspace policy; export useful generated changes and evidence to /artifacts before the check ends.'},
             'notify': {'type': 'boolean'}}, [*scope, 'requestId', 'profileId', 'command'])),
         'workspace.tests.read': ('Read queued checks and retained outcomes. Full-access roots and their current delegated reviewers can inspect another registered chat in the same workspace, or explicitly use scope=all for another workspace. Use the producer’s sessionId and workspaceId. A recoveredOutcome separately reports exact later cleanup and the verified check result; the original status remains retained. Does not execute or replay a check.', schema({**scope, 'scope': owned_history.SCOPE,
             'offset': {'type': 'integer', 'minimum': 0}, 'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20}}, list(scope))),
@@ -205,7 +206,7 @@ class TestQueue:
     def public(self, receipt):
         job = receipt['job']
         value = {key: copy.deepcopy(job[key]) for key in ('id', 'status', 'createdAt', 'updatedAt', 'expiresAt',
-            'resourceId', 'independent', 'capacity', 'testMachine', 'detail', 'cancelRequested', 'source', 'timeoutSeconds', 'profileId', 'resourceRequest', 'timingRequest', 'guestJob') if key in job}
+            'resourceId', 'independent', 'workspaceArchivePolicy', 'capacity', 'testMachine', 'detail', 'cancelRequested', 'source', 'timeoutSeconds', 'profileId', 'resourceRequest', 'timingRequest', 'guestJob') if key in job}
         # Full output lives in the existing exact operation receipt. Queue lists
         # cannot multiply a 32 KiB command result by the page size.
         for phase in ('launch', 'check', 'cleanup', 'removal'):
@@ -419,6 +420,8 @@ class TestQueue:
                     'timeoutSeconds': seconds, 'profileId': args['profileId'], 'resourceRequest': resource_request, 'timingRequest': timing_request, 'durableVersion': 1,
                     'actor': {'sessionId': source['id'],
                         'principal': source.get('runtimeSessionId') or source.get('nativeIdentity') or source['id']}}}
+            from . import storage_cleanup, workspace_archive_retention
+            receipt['job']['workspaceArchivePolicy'] = workspace_archive_retention.capture(storage_cleanup.policy(self.app), args.get('keepWorkspace', False))
             receipt['job']['runnerCandidates'] = registered_runners.retain_candidates(self.app, config, args['profileId'])
             owner.insert(identity, digest, receipt)
             self.app.db.commit()
@@ -652,7 +655,7 @@ class TestQueue:
                     workspace = next(w['id'] for w in self.app.state['workspaces'] if w['path'] == receipt['workspace'])
                 row = await asyncio.to_thread(environments.prepare, self.app.data_dir,
                     receipt['senderSessionId'], workspace,
-                    job['actor'], job['source'], job['backendKey'], identity+':start:'+str(job.get('attempt', 0)), config.get('installationId'), config, job.get('profileId', environments.PROFILE), job.get('resourceRequest'), job.get('timingRequest'))
+                    job['actor'], job['source'], job['backendKey'], identity+':start:'+str(job.get('attempt', 0)), config.get('installationId'), config, job.get('profileId', environments.PROFILE), job.get('resourceRequest'), job.get('timingRequest'), job.get('workspaceArchivePolicy'))
                 async with self.app.lock:
                     # Cancellation may arrive while local allocation is persisted.
                     # Never overwrite the newer cancellation/subscription record.

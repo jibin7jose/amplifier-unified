@@ -12,7 +12,7 @@ PAGE = 32
 LIMIT = 2**53 - 1
 NOTE = ('Sizes were recorded when tests saved their evidence. They are not a current disk '
         'measurement or an estimate of space cleanup would free. Original source, final '
-        'workspace and test results serve different purposes; all remain protected. '
+        'workspace and test results serve different purposes. Temporary workspace availability is reported separately; source and results stay protected. '
         'Each test counts one evidence set, not every local and remote copy.')
 
 
@@ -48,7 +48,8 @@ def projection():
     return object_fields({**{key: scalar(key) for key in ('id', 'sessionId', 'status', 'profileId', 'universeId')},
         'createdAt': "CASE WHEN json_type(body,'$.createdAt') IN ('integer','real') THEN json_extract(body,'$.createdAt') END",
         'sourceHash': scalar('snapshot.archive_sha256'), 'remote': "json_type(body,'$.testMachine')='object'",
-        'lastOperation': request})
+        'lastOperation': request, 'workspaceArchiveExpiry': object_fields({key: scalar('workspaceArchiveExpiry.' + key) for key in ('status', 'requestId', 'sha256')}),
+        'removalRequestId': scalar('lastOperation.requestId')})
 
 
 def number(value):
@@ -115,6 +116,11 @@ def project(position, identity, root, status, encoded):
         total = source + sum(roles.values())
         if number(total) is None or number(retained.get('archiveBytes')) != sum(roles.values()) or number(retained.get('totalBytes')) != total:
             raise ValueError('Inconsistent accounting')
+        expiry = row.get('workspaceArchiveExpiry') or {}
+        if (expiry.get('status') == 'expired' and isinstance(row.get('removalRequestId'), str)
+                and expiry.get('requestId') == row['removalRequestId']
+                and expiry.get('sha256') == original.get('/workspace', (None, None))[1]):
+            result['workspaceAvailability'] = 'expired'
         result.update(sourceBytes=source, workspaceBytes=roles.get('/workspace'),
                       resultBytes=roles.get('/artifacts'), otherArchiveBytes=roles.get('/', 0), totalBytes=total,
                       combinedArchive=policy == 'full',
