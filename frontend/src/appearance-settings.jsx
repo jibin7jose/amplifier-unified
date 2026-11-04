@@ -1,29 +1,24 @@
-import React,{useContext,useEffect,useRef,useState} from 'react';
+import React,{useContext,useEffect,useRef,useState,useSyncExternalStore} from 'react';
 import {Check,Download,Upload,Palette,Sun,Moon,Monitor,FolderOpen,RefreshCw} from 'lucide-react';
 import {SettingsLayoutContext} from './settings-layout';
 import {FileDrop} from './settings-ui';
 import {WorkingLabel} from './working-label';
-import {ThemeDecorationControl} from './theme-presentation';
+import {ThemeDecorationControl,useThemeScheme} from './theme-presentation';
 import {clearAppearancePreview,previewAppearance} from './appearance-preview';
 import {appearanceImportFileArgs,appearanceMutationTarget} from './appearance-library';
+import {appearanceCatalogFor} from './appearance-catalog';
+import {AppearanceThumbnail} from './appearance-thumbnail';
 import './appearance-settings.css';
 import {ObservabilityPreferences} from './execution-observability.jsx';
 
 const operationLabels={choose:'Loading appearance…',save:'Saving appearance…',update:'Updating saved appearance…',delete:'Deleting saved appearance…',preview:'Preparing preview…',apply:'Applying appearance…',revert:'Reverting appearance…',import:'Importing appearance…',export:'Exporting appearance…',reset:'Restoring original appearance…',change:'Saving appearance preferences…'};
 
-const fallback={bg:'#e9ecf5',surface:'#ffffff',ink:'#23304d',accent:'#6353c7',line:'#d7ddec'};
-function Swatch({item}){
- const p={...fallback,...item.palette};
- return <div className="a-appearance-swatch" aria-hidden="true" style={{'--sw-bg':p.bg,'--sw-surface':p.surface,'--sw-ink':p.ink,'--sw-accent':p.accent,'--sw-line':p.line,'--sw-radius':item.radius||'12px',backgroundImage:item.background||'none',fontFamily:item.heading||'inherit',backgroundSize:item.id==='builtin:graphite'?'16px 16px':'cover'}}>
-  <div className="a-swatch-header"><span>◉ Amplifier</span><span>•••</span></div>
-  <div className="a-swatch-body"><div className="a-swatch-nav"><i/><i/><i/></div><div className="a-swatch-chat"><strong>Room for ideas.</strong><span className="a-swatch-line"/><span className="a-swatch-line short"/><div className="a-swatch-prompt"><span>Ask anything…</span><b>↑</b></div></div></div>
- </div>;
-}
-
 export function AppearanceSettings({state,shell,act,editor:editorState,preview,previewSnapshot,setPreview,defaultSkin,simple=false,advancedOnly=false,onAdvanced}){
  const {active}=useContext(SettingsLayoutContext);
- const [libraryError,setLibraryError]=useState('');
- const [library,setLibrary]=useState({items:[],errors:[],directory:''}),[selected,setSelected]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ const catalog=appearanceCatalogFor(state.client?.hostInstanceId);
+ const cached=useSyncExternalStore(catalog.subscribe,catalog.getSnapshot,catalog.getSnapshot);
+ const library=cached.library||{items:[],errors:[],directory:''},libraryError=cached.error;
+ const [selected,setSelected]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const [operation,setOperation]=useState(null),submitting=useRef(false),feedbackOwner=useRef(null);
  // The app's tab-private owner survives Settings unmounts. The mutable editor
  // and the exact host-validated preview snapshot deliberately remain separate.
@@ -33,8 +28,9 @@ export function AppearanceSettings({state,shell,act,editor:editorState,preview,p
  const [deleteTarget,setDeleteTarget]=useState(null),editor=useRef(null);
  const api=useRef(act),alive=useRef(true),generation=useRef(0),previewing=useRef(preview);api.current=act;previewing.current=preview;
  const presentation=shell.composition.presentation,scheme=presentation.scheme||state.view?.scheme||'system';
- async function refresh(){const current=generation.current,receipt=await api.current('theme.list',{});if(!Array.isArray(receipt.result?.items))throw Error('The appearance library is unavailable. Try reopening Settings.');if(alive.current&&current===generation.current){setLibrary(receipt.result);setLibraryError('')}}
- useEffect(()=>{if(!active){alive.current=false;return}alive.current=true;submitting.current=false;setBusy(false);setOperation(null);refresh().catch(e=>{if(alive.current)setLibraryError(e.message)});const timer=setInterval(()=>refresh().catch(()=>{}),5000);return()=>{alive.current=false;generation.current++;clearInterval(timer);previewing.current=false;clearAppearancePreview(setPreview,api.current).catch(()=>{})}},[active]);
+ const thumbnailMode=useThemeScheme(scheme);
+ const refresh=(force=true)=>catalog.refresh(api.current,{force});
+ useEffect(()=>{if(!active){alive.current=false;return}alive.current=true;submitting.current=false;setBusy(false);setOperation(null);refresh(false).catch(()=>{});const timer=setInterval(()=>refresh().catch(()=>{}),30000);return()=>{alive.current=false;generation.current++;clearInterval(timer);previewing.current=false;clearAppearancePreview(setPreview,api.current).catch(()=>{})}},[active,catalog]);
  async function run(fn,key='change'){
   if(submitting.current)return;
   const current=generation.current,token={},isCurrent=()=>alive.current&&current===generation.current;
@@ -69,6 +65,7 @@ export function AppearanceSettings({state,shell,act,editor:editorState,preview,p
   const args={name,css,description,...(update?appearanceMutationTarget(editing):{})};
   const receipt=await api.current(update?'theme.update':'theme.save',args);
   if(receipt?.accepted!==true||!receipt.result?.id)throw Error(receipt?.error||'Saving this appearance was not confirmed. Check the library before trying again.');
+  catalog.invalidate();
   const adopted=compareAndSetDraft(draft,{...draft,entry:receipt.result,dirty:false});
   // A confirmed library mutation still stands if the editor has moved on.
   // Only the unchanged draft may adopt its target; old UI instances stay silent.
@@ -80,6 +77,7 @@ export function AppearanceSettings({state,shell,act,editor:editorState,preview,p
  async function remove(){await run(async isCurrent=>{
   const target=appearanceMutationTarget(deleteTarget),receipt=await api.current('theme.delete',target);
   if(receipt?.accepted!==true)throw Error(receipt?.error||'Deleting this appearance was not confirmed. Check the library before trying again.');
+  catalog.invalidate();
   const adopted=draft.entry?.id===target.id&&draft.entry?.fingerprint===target.expectedFingerprint&&compareAndSetDraft(draft,{...draft,entry:null,dirty:true});
   if(!isCurrent())return;
   if(adopted){setSelected(null);setDeleteTarget(null)}
@@ -91,6 +89,7 @@ export function AppearanceSettings({state,shell,act,editor:editorState,preview,p
   if(!file)return;return run(async isCurrent=>{
    const receipt=await api.current('theme.import',await appearanceImportFileArgs(file));
    if(receipt?.accepted!==true||!receipt.result?.id||typeof receipt.result.name!=='string')throw Error(receipt?.error||'Importing this appearance was not confirmed. Check the library before trying again.');
+   catalog.invalidate();
    if(!isCurrent())return receipt.result;
    await refresh();
    if(isCurrent())setNotice(receipt.result.name+' added to your library. Select it to preview.');
@@ -105,7 +104,7 @@ export function AppearanceSettings({state,shell,act,editor:editorState,preview,p
   {advancedOnly&&<h3>Included & saved appearances</h3>}
   <div className="a-appearance-gallery" aria-label="Appearance library">
    {library.items.map(item=><button type="button" key={item.id} className="a-appearance-card" aria-label={(simple?'Use ':'Preview ')+item.name} aria-pressed={chosenId===item.id} disabled={busy} data-action={simple?"theme.apply":"theme.preview"} onClick={()=>choose(item)}>
-    <Swatch item={item}/><div className="a-appearance-card-caption"><div><strong>{item.name}</strong>{!simple&&<small>{item.tag}</small>}</div>{chosenId===item.id?<Check/>:<Palette/>}</div>{!simple&&<p>{item.description}</p>}
+    <AppearanceThumbnail item={item} mode={thumbnailMode} catalog={catalog} act={act}/><div className="a-appearance-card-caption"><div><strong>{item.name}</strong>{!simple&&<small>{item.tag}</small>}</div>{chosenId===item.id?<Check/>:<Palette/>}</div>{!simple&&<p>{item.description}</p>}
    </button>)}
    {!library.items.length&&!libraryError&&<p role="status">Loading appearances…</p>}
   </div>

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'vite';
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {newestMessageIds,completedTurnEnds,MessageEntry,ForkTurn}=await server.ssrLoadModule('/src/message-actions.jsx');
+const {PeerPresentation}=await server.ssrLoadModule('/src/peer-message.jsx');
 test.after(()=>server.close());
 test('fork controls follow the last assistant entry in each completed user turn',()=>{
  const messages=[{id:'u1',role:'user',inputId:'1'},{id:'a1',role:'assistant'},{id:'a2',role:'assistant'},{id:'u2',role:'user',inputId:'2'},{id:'a3',role:'assistant'}];
@@ -76,6 +77,34 @@ test('trusted peer caption is always visible outside hover actions with a matchi
  assert.doesNotMatch(unknown,/a-message-attribution/);
  const human=render({id:'human',role:'user',text:caption});
  assert.match(human,/aria-label="Your message"/);assert.doesNotMatch(human,/a-message-attribution/);
+});
+
+test('expanded peer and ordinary user messages share exact Markdown body rendering',()=>{
+ const text='First **paragraph**.\n\nSecond paragraph with a soft\nline break.\n\n- First item\n- Second item\n\n```js\nconst exact = "<tag>";\n```\n\n| Name | Value |\n|---|---|\n| α | one |\n';
+ const render=message=>renderToStaticMarkup(React.createElement(PeerPresentation.Provider,{value:{open:{'chat:sample':true},setOpen:()=>{}}},
+  React.createElement(MessageEntry,{message,session:{id:'chat'},state:{view:{}},act:()=>{},working:false})));
+ const user=render({id:'sample',role:'user',text}),peer=render({id:'sample',role:'user',text,via:'peer'});
+ const structure=html=>[...html.matchAll(/<(p|h[1-6]|ul|ol|li|table|tr|td|th|pre|code|strong)\b[^>]*>/g)].map(row=>row[1]);
+ assert.deepEqual(structure(peer),structure(user));
+ for(const html of [peer,user]){
+  // Canonical quote-source spans preserve source offsets inside text leaves.
+  // Compare paragraph semantics without treating those annotations as content.
+  const paragraphs=[...html.matchAll(/<p>[\s\S]*?<\/p>/g)]
+   .map(([paragraph])=>paragraph.replace(/<\/?span\b[^>]*>/g,''));
+  assert.deepEqual(paragraphs,[
+   '<p>First <strong>paragraph</strong>.</p>',
+   '<p>Second paragraph with a soft\nline break.</p>',
+  ]);
+  assert.match(html,/<ul>/);assert.match(html,/<table>/);assert.match(html,/language-js/);
+ }
+ assert.doesNotMatch(peer,/a-delegate-markdown|a-execution-payload/);
+});
+
+test('peer rendering does not invent paragraphs or interpret literal backslash-n as line breaks',()=>{
+ const text='One dense paragraph. Still the same paragraph. Literal \\n notation.';
+ const html=renderToStaticMarkup(React.createElement(PeerPresentation.Provider,{value:{open:{'chat:sample':true},setOpen:()=>{}}},
+  React.createElement(MessageEntry,{message:{id:'sample',role:'user',via:'peer',text},session:{id:'chat'},state:{view:{}},act:()=>{},working:false})));
+ assert.equal((html.match(/<p>/g)||[]).length,1);assert.ok(html.includes(text));
 });
 
 

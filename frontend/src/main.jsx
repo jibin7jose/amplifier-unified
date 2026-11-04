@@ -33,6 +33,7 @@ import './window-controls-overlay.css';
 import {AppReloadContext,AppReloadNotice,useAppReload} from './app-reload.jsx';
 import {AppearanceSettings} from './appearance-settings';
 import {useAppearanceEditor} from './appearance-editor';
+import {appearanceCatalogFor,clearAppearanceCatalogs} from './appearance-catalog';
 import {homePatch} from './adaptive-work.js';
 import {SettingsExperience} from './settings-experience';
 import {useGuardedSettingsPanel,useGuardedSettingsSession} from './settings-drafts';
@@ -70,7 +71,7 @@ import {createRoot} from 'react-dom/client';
 import {Phone,MessageCircle,Bell,ArrowUp,X,GitBranch,Download,ChevronRight,AudioLines} from 'lucide-react';
 import {request,download,visibleView} from './api';
 import {createPendingView} from './pending-view';
-import {createSettingsActionQueue,settingsDraftKey,isProviderCatalogRead,isDraftDefaultsRead,isConversationChoiceRead} from './settings-action-queue';
+import {createSettingsActionQueue,settingsDraftKey,isProviderCatalogRead,isDraftDefaultsRead,isConversationChoiceRead,isAppearanceRead} from './settings-action-queue';
 import {applyStateDelta,onlyStateRevisionChanged} from './state-transport';
 import {createViewReporter} from './view-reporter';
 import {createConversationNavigation,isNavigationAction,usesNavigationQueue} from './conversation-navigation';
@@ -129,7 +130,7 @@ function App(){
  const [streamClient,setStreamClient]=useState(null);
  const [destinationTrail,setDestinationTrail]=useState(null),destinationHistory=useRef(null);
  if(!destinationHistory.current)destinationHistory.current=createDestinationHistory({changed:setDestinationTrail});
- useEffect(()=>onAuthenticationChange(scope=>{destinationHistory.current.invalidate(scope);setBootAttempt(value=>value+1)}),[]);
+ useEffect(()=>onAuthenticationChange(scope=>{destinationHistory.current.invalidate(scope);clearAppearanceCatalogs();setBootAttempt(value=>value+1)}),[]);
  const [state,setState]=useState(null),[catalog,setCatalog]=useState([]),[error,setError]=useState(''),[connected,setConnected]=useState(false),[busy,setBusy]=useState(false),[bootAttempt,setBootAttempt]=useState(0),[draft,setDraft]=useState(''),[workerDraft,setWorkerDraft]=useState(''),[themeDraft,setThemeDraft]=useState(defaultSkin),[themeName,setThemeName]=useState('Amplifier Unified'),[preview,setPreview]=useState(false),[agentAction,setAgentAction]=useState('view.update'),[agentArgs,setAgentArgs]=useState('{"patch":{"mode":"chat"}}'),[voice,setVoice]=useState({status:'idle'}),[uploading,setUploading]=useState(false);
  const appearanceEditor=useAppearanceEditor(state?.theme,defaultSkin);
  const visualClient=useRef(null),computerClient=useRef(null);const [visual,setVisual]=useState({status:'idle'}),[computerVisual,setComputerVisual]=useState({status:'idle'});
@@ -389,15 +390,16 @@ function App(){
   // Reviewing exact item fingerprints is independent of send admission and view changes.
   const exactReview=action==='attention.read'&&Array.isArray(args.ids)&&args.ids.length>0&&args.ids.every(id=>typeof args.fingerprints?.[id]==='string');
   const defaultsRead=isDraftDefaultsRead(action,meta),choiceRead=isConversationChoiceRead(action,args,meta),catalogRead=isProviderCatalogRead(action,meta)||defaultsRead||choiceRead;
+  const appearanceRead=isAppearanceRead(action,meta);
   // Optional plan summaries have their own exact read result; they must not
   // hold up browsing or ordered mutations while canonical files are read.
   const planRead=action==='session.plans';
   // Reveal joins document ordering AND visibility ordering without merging their
   // queues globally. Capture the prior visibility tail before publishing this one.
-  const after=permissionHistory?canvasVisibilityQueue.current:catalogRead&&!choiceRead?commandQueue.current:null;
+  const after=permissionHistory?canvasVisibilityQueue.current:(catalogRead&&!choiceRead||appearanceRead)?commandQueue.current:null;
   // A read-only Canvas reveal must not hold a pending card's guarded read or
   // decision. Keep those individual calls ordered, independent of Canvas work.
-  const queue=capabilityCard?capabilityCardQueue:usesNavigationQueue(action,args)?navigationQueue:action==='call.mute'?voiceControlQueue:localVoiceControl||action.startsWith('coordination.')||meta.presentation||defaultsRead||choiceRead||planRead?{current:Promise.resolve()}:action==='canvas.visibility'?canvasVisibilityQueue:exactReview?reviewQueue:['conversation.send','message.edit','question.answer'].includes(action)?sendQueue:catalogRead?providerReadQueue:commandQueue;
+  const queue=capabilityCard?capabilityCardQueue:usesNavigationQueue(action,args)?navigationQueue:action==='call.mute'?voiceControlQueue:localVoiceControl||action.startsWith('coordination.')||meta.presentation||defaultsRead||choiceRead||planRead||appearanceRead?{current:Promise.resolve()}:action==='canvas.visibility'?canvasVisibilityQueue:exactReview?reviewQueue:['conversation.send','message.edit','question.answer'].includes(action)?sendQueue:catalogRead?providerReadQueue:commandQueue;
   const queuedAt=performance.now();
   const timedExecute=()=>{const startedAt=performance.now();return Promise.resolve().then(execute).finally(()=>recordActionTiming(action,queuedAt,startedAt))};
   const promise=enqueueSettings.current(queue,timedExecute,settingsDraftKey(action,args,meta),after).then(result=>{
@@ -443,6 +445,12 @@ function App(){
  const shell=useShell(serverState.current,dispatch,clientId,state,{onError:reportError,onRecovered:()=>setConnectionFailure(afterReconnect)});
  useEffect(()=>root.current?actionFeedback.current.attach(root.current):undefined,[!!state,shell.ready]);
  const act=useCallback((name,args={},meta={})=>dispatch(name,args,meta).catch(e=>{if(meta.propagateError)throw e;return reportError(e)}),[dispatch,reportError]);
+ // Warm only the small catalog after attachment, without blocking chat startup
+ // or reading full appearance CSS. Settings observes this same page-local owner.
+ useEffect(()=>{
+  const host=state?.client?.hostInstanceId;
+  if(host)appearanceCatalogFor(host).refresh(dispatch).catch(()=>{});
+ },[state?.client?.hostInstanceId,dispatch]);
  const peerPreview=usePeerPreview(state,dispatch),[peerOpen,setPeerOpen]=useState({});
  const peerPresentation=useMemo(()=>({open:peerOpen,setOpen:setPeerOpen,preview:peerPreview.open}),[peerOpen,peerPreview.open]);
  useEffect(()=>{

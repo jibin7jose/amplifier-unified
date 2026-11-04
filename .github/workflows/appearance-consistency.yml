@@ -1,0 +1,83 @@
+name: Focused appearance consistency
+# Affected development smoke check; not a required publication gate/full suite.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'frontend/src/appearance-*.js'
+      - 'frontend/src/appearance-*.jsx'
+      - 'frontend/src/appearance-*.css'
+      - 'frontend/src/message-text.jsx'
+      - 'frontend/src/message-actions.jsx'
+      - 'frontend/src/peer-message.*'
+      - 'frontend/src/execution-content.css'
+      - 'frontend/src/main.jsx'
+      - 'frontend/src/settings-action-queue.js'
+      - 'frontend/tests/appearance-*.mjs'
+      - 'frontend/tests/message-actions.test.mjs'
+      - 'frontend/tests/settings-action-queue.test.mjs'
+      - 'frontend/tests/peer-attribution-browser.mjs'
+      - 'frontend/tests/delegate-work-stream-browser.mjs'
+      - '.github/workflows/appearance-consistency.yml'
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      - run: uv sync --locked --group dev --group artifacts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - name: Focused text, catalog and deterministic-document units
+        working-directory: frontend
+        run: node --test tests/markdown.test.mjs tests/message-actions.test.mjs tests/appearance-settings.test.mjs tests/appearance-catalog.test.mjs tests/appearance-thumbnail-document.test.mjs tests/settings-action-queue.test.mjs
+      - run: npm run build --prefix frontend
+      - name: Prepare Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Run maintained focused browser paths through the canonical owner
+        run: |
+          uv run --no-sync python - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          from scripts.browser_check_runner import run_scenarios
+          root = Path.cwd()
+          output = root / "output/appearance-consistency"
+          env = {"AMPLIFIER_TEST_PYTHON": sys.executable}
+          rows = [
+              {"id": "appearance-read-queue", "command": ["node", "tests/appearance-reads-browser.mjs"],
+               "env": {**env, "AMPLIFIER_TEST_ARTIFACTS": str(output / "read-queue")}},
+              {"id": "catalog-thumbnails", "command": ["node", "tests/appearance-library-browser.mjs", "--catalog-thumbnails-only"],
+               "env": {**env, "AMPLIFIER_TEST_ARTIFACTS": str(output / "gallery")}},
+              {"id": "peer-markdown", "command": ["node", "tests/peer-attribution-browser.mjs"],
+               "env": {**env, "AMPLIFIER_TEST_BUILT_STATIC": "1", "AMPLIFIER_PROOF_DIR": str(output / "peer")}},
+              {"id": "delegate-alignment", "command": ["node", "tests/delegate-work-stream-browser.mjs", "--appearance-scope-only"],
+               "env": {**env, "AMPLIFIER_TEST_OUTPUT_DIR": str(output / "delegate")}},
+          ]
+          output.mkdir(parents=True, exist_ok=True)
+          plan = {"schemaVersion": 1, "scenarios": rows}
+          (output / "plan.json").write_text(json.dumps(plan, indent=2))
+          provenance = {"revision": os.environ["GITHUB_SHA"], "runId": os.environ["GITHUB_RUN_ID"],
+                        "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"]}
+          raise SystemExit(run_scenarios(root, plan, output / "runner", budget=300, case_timeout=120, provenance=provenance))
+          PY
+      - name: Retain source-bound qualification and exact rendered screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: appearance-consistency-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            output/appearance-consistency/
+            amplifier_web/static/build.json
+          include-hidden-files: true
+          if-no-files-found: error

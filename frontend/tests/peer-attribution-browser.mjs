@@ -7,6 +7,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium,expect} from '@playwright/test';
 import assert from 'node:assert/strict';
+import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
 // ROOT may set this only with the installed candidate interpreter. The fixture
 // refuses a checkout import and this path never serves Vite source as a wheel.
 const installedStatic=process.env.AMPLIFIER_TEST_INSTALLED_STATIC==='1';
@@ -14,7 +15,8 @@ const builtStatic=process.env.AMPLIFIER_TEST_BUILT_STATIC==='1',staticClient=ins
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||fileURLToPath(new URL('../../.venv/bin/python',import.meta.url)),[
  fileURLToPath(new URL('../../tests/fixtures/peer_attribution_ui_server.py',import.meta.url)),fileURLToPath(new URL('../../',import.meta.url))
 ],{stdio:['ignore','pipe','inherit']});
-let browser,vite,page;
+const stopFixture=ownFixture(fixture,{label:'Peer attribution fixture'});
+let browser,vite,page,failure;
 const retainBoundary=facts=>{
  const evidence=Object.fromEntries(['starts','sends','nativeSubmits','probeAttempts','expectedBoundary','boundaryCalls','notificationReceipt'].map(key=>[key,facts[key]]));
  console.log('PEER_BOUNDARY_EVIDENCE '+JSON.stringify(evidence));
@@ -101,11 +103,33 @@ try{
  assert.equal(detailReads.length,0,'Collapsed peer must not fetch its full payload');
  await summary.press('Enter');await expect(summary).toHaveAttribute('aria-expanded','true');
  await expect(summary).toBeFocused();
- await expect(peer.locator('.a-delegate-markdown')).toContainText('Exact α 🐈');
+   await expect(peer.locator('.a-message-body .a-markdown')).toContainText('Exact α 🐈');
  assert.equal(detailReads.length,0,'Expanding a preview does not eagerly fetch long text');
  await peer.getByRole('button',{name:'Show full text',exact:true}).click();
  await expect(peer.getByRole('button',{name:'Show full text',exact:true})).toHaveCount(0);
  assert.equal(detailReads.length,1);
+ const typography=async region=>region.locator('.a-markdown').evaluate(el=>{
+  const paragraphs=[...el.querySelectorAll(':scope > p')];
+  return {font:getComputedStyle(el).fontSize,
+   paragraphs:paragraphs.slice(0,2).map(p=>({text:p.textContent,font:getComputedStyle(p).fontSize,
+    lineHeight:getComputedStyle(p).lineHeight,margin:getComputedStyle(p).marginBottom,
+    whiteSpace:getComputedStyle(p).whiteSpace})),
+   list:el.querySelectorAll('ul > li').length,code:el.querySelector('pre code')?.textContent};
+ });
+ const peerType=await typography(peer),userType=await typography(article(facts.ordinaryMarkdown));
+ assert.deepEqual(peerType.paragraphs,userType.paragraphs,'Peer paragraphs use ordinary user typography and source line breaks');
+ assert.equal(peerType.font,userType.font);assert.equal(peerType.list,2);
+ assert.match(peerType.code,/unchanged  \n/);
+ for(const id of [facts.ordinaryMarkdown,facts.assistantMarkdown]){
+  const type=await typography(article(id));assert.equal(type.paragraphs.length,2);assert.equal(type.list,2);
+  assert.ok(parseFloat(type.paragraphs[0].margin)>0,'Real paragraph spacing remains visible');
+ }
+ if(process.env.AMPLIFIER_PROOF_DIR){
+  writeFileSync(join(process.env.AMPLIFIER_PROOF_DIR,'peer-markdown-parity.json'),JSON.stringify({peer:peerType,user:userType},null,2));
+  const firstParagraph=peer.locator('.a-markdown > p').first();
+  await firstParagraph.scrollIntoViewIfNeeded();await expect(firstParagraph).toBeInViewport();
+  await page.screenshot({path:join(process.env.AMPLIFIER_PROOF_DIR,'peer-markdown-parity.png')});
+ }
  await peer.getByRole('button',{name:'Copy peer message as Markdown'}).click();
  await expect(peer.getByText('Copied Markdown',{exact:true})).toBeVisible();
  const clipboard=await page.evaluate(()=>navigator.clipboard.readText());
@@ -204,6 +228,7 @@ try{
  const finalFacts=await readFacts();retainBoundary(finalFacts);assertBoundary(finalFacts);assert.deepEqual(errors,[]);
  console.log(`${installedStatic?'Installed-static':builtStatic?'Built-source':'Vite-source'} peer collapse, actor-owned reactions, and peer attribution receiving fixture: visible caption, actor distinction, forgeries, reload, older/focused pages, committed 320/390px light/dark 200% zoom, draft/selection preserved; zero model/provider starts; ${finalFacts.queryWorkers} isolated shell query helpers.`);
 }catch(error){
+ failure=error;
  if(page)try{retainBoundary(await readFacts())}catch(diagnosticError){console.error('Peer boundary evidence unavailable:',diagnosticError.message)}
  throw error;
-}finally{await browser?.close();await vite?.close();fixture.kill()}
+}finally{await finishFixture({label:'Peer attribution fixture',close:[['Peer browser',()=>browser?.close()],['Peer Vite server',()=>vite?.close()]],stop:stopFixture,originalError:failure})}
