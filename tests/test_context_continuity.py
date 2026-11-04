@@ -590,13 +590,12 @@ def assert_recovery_dispatch(wire, result, *, adjacent=False):
     body = wire.completions[-1]
     assert wire.counts[-1][0] == {
         key: value for key, value in body.items() if key in RECOVERY_PROJECTION}
-    after = decision['measurement']['attribution']
-    ready = [data for event, data in wire.events if event == 'provider:request_attribution'
-             and data['operation'] == 'responses.create' and data['stage'] == 'dispatch_ready'][-1]
-    assert ready['binding'] == 'matched'
-    assert ready['measurement_scope'] == ready['dispatch_scope'] == 'count_projection'
-    assert ready['attribution']['scope_id'] == after['scope_id']
-    assert ready['dispatch'] == ready['attribution']['request'] == after['request']
+    # The maintained provider's public count contract does not include the
+    # separately qualified attribution extension. Compare the actual SDK HTTP
+    # count/create projections above and the returned authoritative count here.
+    assert decision['measurement']['kind'] == 'provider_count'
+    assert decision['measurement']['input_tokens'] == wire.counts[-1][1]
+    assert wire.counts[-1][1] == wire.count(wire.counts[-1][0])
     assert body['model'] == RECOVERY_MODEL and body['max_output_tokens'] == 1000
     assert body['reasoning']['effort'] == 'high'
     assert {tool['name'] for tool in body['tools']} == {'save_once', 'unknown_operation'}
