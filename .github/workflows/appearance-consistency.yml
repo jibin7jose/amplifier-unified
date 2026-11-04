@@ -11,8 +11,11 @@ on:
       - 'frontend/src/message-actions.jsx'
       - 'frontend/src/peer-message.*'
       - 'frontend/src/execution-content.css'
+      - 'frontend/src/main.jsx'
+      - 'frontend/src/settings-action-queue.js'
       - 'frontend/tests/appearance-*.mjs'
       - 'frontend/tests/message-actions.test.mjs'
+      - 'frontend/tests/settings-action-queue.test.mjs'
       - 'frontend/tests/peer-attribution-browser.mjs'
       - 'frontend/tests/delegate-work-stream-browser.mjs'
       - '.github/workflows/appearance-consistency.yml'
@@ -37,7 +40,7 @@ jobs:
       - run: npm ci --prefix frontend
       - name: Focused text, catalog and deterministic-document units
         working-directory: frontend
-        run: node --test tests/markdown.test.mjs tests/message-actions.test.mjs tests/appearance-settings.test.mjs tests/appearance-catalog.test.mjs tests/appearance-thumbnail-document.test.mjs
+        run: node --test tests/markdown.test.mjs tests/message-actions.test.mjs tests/appearance-settings.test.mjs tests/appearance-catalog.test.mjs tests/appearance-thumbnail-document.test.mjs tests/settings-action-queue.test.mjs
       - run: npm run build --prefix frontend
       - name: Prepare Chromium
         working-directory: frontend
@@ -52,6 +55,8 @@ jobs:
           output = root / "output/appearance-consistency"
           env = {"AMPLIFIER_TEST_PYTHON": sys.executable}
           rows = [
+              {"id": "appearance-read-queue", "command": ["node", "tests/appearance-reads-browser.mjs"],
+               "env": {**env, "AMPLIFIER_TEST_ARTIFACTS": str(output / "read-queue")}},
               {"id": "catalog-thumbnails", "command": ["node", "tests/appearance-library-browser.mjs", "--catalog-thumbnails-only"],
                "env": {**env, "AMPLIFIER_TEST_ARTIFACTS": str(output / "gallery")}},
               {"id": "peer-markdown", "command": ["node", "tests/peer-attribution-browser.mjs"],

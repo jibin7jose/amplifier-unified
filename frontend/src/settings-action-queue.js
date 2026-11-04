@@ -6,6 +6,9 @@ const editors=new Set(['aiConnectionEditor','imageSettingsEditor','providerEdito
 // or a retry for another draft. They still observe preceding writes.
 export const isDraftDefaultsRead=(action,meta={})=>action==='configuration.defaults'&&meta.expectedRevision===undefined;
 export const isProviderCatalogRead=(action,meta={})=>meta.expectedRevision===undefined&&['providers.list','providers.models','providers.schema'].includes(action);
+// Appearance metadata/CSS reads observe earlier writes without joining their
+// tail. One optional read must not delay another read, Stop, or an ordered write.
+export const isAppearanceRead=(action,meta={})=>meta.expectedRevision===undefined&&['theme.list','theme.read'].includes(action);
 // These host-owned reads resolve choices without loading a conversation worker.
 // Other runtime controls (and all configuration writes) retain ordered dispatch.
 export const isConversationChoiceRead=(action,args={},meta={})=>meta.expectedRevision===undefined&&(

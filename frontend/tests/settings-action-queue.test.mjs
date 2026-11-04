@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSettingsActionQueue,settingsDraftKey,isProviderCatalogRead,isDraftDefaultsRead} from '../src/settings-action-queue.js';
+import {createSettingsActionQueue,settingsDraftKey,isProviderCatalogRead,isDraftDefaultsRead,isAppearanceRead} from '../src/settings-action-queue.js';
 
 const gate=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}};
 const draft=model=>({patch:{providerEditor:{id:'provider',model}}});
@@ -67,4 +67,28 @@ test('draft defaults are independent reads but retain revision-conditional order
  assert.equal(isDraftDefaultsRead('configuration.defaults'),true);
  assert.equal(isDraftDefaultsRead('configuration.defaults',{expectedRevision:0}),false);
  assert.equal(isDraftDefaultsRead('session.create'),false);
+});
+test('only unconditional appearance list/read bypass the command tail',()=>{
+ for(const action of ['theme.list','theme.read']){
+  assert.equal(isAppearanceRead(action),true);
+  assert.equal(isAppearanceRead(action,{expectedRevision:0}),false);
+ }
+ for(const action of ['theme.apply','theme.preview','theme.save','theme.update','theme.delete','theme.import','theme.reset','theme.export','theme.revert'])
+  assert.equal(isAppearanceRead(action),false,action+' retains its original lane');
+});
+test('independent appearance reads observe preceding writes but do not block Stop, approval, writes or each other',async()=>{
+ const enqueue=createSettingsActionQueue(),commands={current:Promise.resolve()},writing=gate(),reading=gate(),calls=[];
+ const prior=enqueue(commands,async()=>{calls.push('write-before');await writing.promise});
+ const read=enqueue({current:Promise.resolve()},async()=>{calls.push('theme.list');await reading.promise},null,commands.current);
+ const sibling=enqueue({current:Promise.resolve()},async()=>calls.push('theme.read'),null,commands.current);
+ const stop=enqueue(commands,async()=>calls.push('conversation.stop'));
+ const approval=enqueue(commands,async()=>calls.push('approval.respond'));
+ const later=enqueue(commands,async()=>calls.push('write-after'));
+ await Promise.resolve();assert.deepEqual(calls,['write-before']);
+ writing.resolve();await Promise.all([prior,sibling,stop,approval,later]);
+ assert.ok(calls.indexOf('theme.list')>calls.indexOf('write-before'));
+ assert.ok(calls.indexOf('theme.read')>calls.indexOf('write-before'));
+ assert.deepEqual(calls.filter(value=>!value.startsWith('theme.')),
+  ['write-before','conversation.stop','approval.respond','write-after']);
+ reading.resolve();await read;assert.equal(calls.filter(value=>value==='theme.list').length,1);
 });
