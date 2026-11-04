@@ -36,24 +36,29 @@ REQUIRED_MODULES = (
 
 
 def integration_dev_dependencies(dependencies: list[str]) -> list[str]:
-    """Keep the native lane's current filesystem source, not a fixture pin.
+    """Keep the native lane's current module sources, not host fixture pins.
 
-    The host's installed-skills tests deliberately pin this module. That separate
-    graph remains unchanged; this owner tests the current filesystem/search pair.
+    Host skills and recovery tests deliberately pin filesystem/context-managed.
+    That separate graph remains unchanged; this owner tests current sources.
     Refuse an unexpected source rather than silently discard its policy.
     """
+    fixture_sources = {
+        "amplifier-module-tool-filesystem": ("filesystem", r"amplifier-module-tool-filesystem@(?:main|[0-9a-f]{40})"),
+        "amplifier-module-context-managed": ("context-managed", r"amplifier-bundle-context-managed@(?:main|[0-9a-f]{40})#subdirectory=modules/context-managed"),
+    }
     result = []
     for value in dependencies:
         # This bootstrap runs before third-party packages are installed. Identify
         # only the distribution token; uv still validates all retained inputs.
         name = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", value)
-        if not name or re.sub(r"[-_.]+", "-", name[1]).lower() != "amplifier-module-tool-filesystem":
+        fixture = fixture_sources.get(re.sub(r"[-_.]+", "-", name[1]).lower()) if name else None
+        if fixture is None:
             result.append(value)
             continue
         if not re.fullmatch(
-                r"\s*@\s*git\+https://github\.com/microsoft/amplifier-module-tool-filesystem@(?:main|[0-9a-f]{40})\s*",
+                r"\s*@\s*git\+https://github\.com/microsoft/" + fixture[1] + r"\s*",
                 value[name.end():]):
-            raise ValueError("Review the host filesystem fixture source before native integration")
+            raise ValueError(f"Review the host {fixture[0]} fixture source before native integration")
     return result
 
 

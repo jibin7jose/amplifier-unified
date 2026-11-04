@@ -21,14 +21,19 @@ def test_integration_project_preserves_declared_runtime_and_host_test_inputs():
     assert set(runtime["project"]["dependencies"]) <= set(prepared["project"]["dependencies"])
     dev = host["dependency-groups"]["dev"]
     fixture = [item for item in dev if canonicalize_name(Requirement(item).name)
-               == "amplifier-module-tool-filesystem"]
-    assert len(fixture) == 1 and "@663f26a878ae71e136f439fa73ded52b2eb24174" in fixture[0]
+               in {"amplifier-module-tool-filesystem", "amplifier-module-context-managed"}]
+    assert len(fixture) == 2
+    assert any("@663f26a878ae71e136f439fa73ded52b2eb24174" in item for item in fixture)
     assert set(dev) - set(fixture) <= set(prepared["project"]["dependencies"])
     filesystem = [item for item in prepared["project"]["dependencies"]
                   if canonicalize_name(Requirement(item).name) == "amplifier-module-tool-filesystem"]
     assert filesystem == [
         "amplifier-module-tool-filesystem @ git+https://github.com/microsoft/amplifier-module-tool-filesystem@main"]
-    assert fixture[0] not in prepared["project"]["dependencies"]
+    context = [item for item in prepared["project"]["dependencies"]
+               if canonicalize_name(Requirement(item).name) == "amplifier-module-context-managed"]
+    assert context == [
+        "amplifier-module-context-managed @ git+https://github.com/microsoft/amplifier-bundle-context-managed@main#subdirectory=modules/context-managed"]
+    assert not set(fixture) & set(prepared["project"]["dependencies"])
     for name, source in runtime["tool"]["uv"]["sources"].items():
         assert prepared["tool"]["uv"]["sources"][name] == source
     assert prepared["tool"]["uv"]["no-build-package"] == runtime["tool"]["uv"]["no-build-package"]
@@ -61,6 +66,31 @@ def test_native_filesystem_projection_is_narrow_and_does_not_mutate_host_inputs(
 ])
 def test_native_filesystem_projection_refuses_unexpected_fixture_policy(requirement):
     with pytest.raises(ValueError, match="Review the host filesystem fixture source"):
+        integration_dev_dependencies([requirement])
+
+
+@pytest.mark.parametrize("revision", ["main", "a" * 40])
+@pytest.mark.parametrize("name", ["amplifier-module-context-managed", "Amplifier_Module_Context_Managed"])
+def test_native_context_projection_retains_current_lane_without_mutating_fixture(revision, name):
+    dependencies = ["pytest>=8", name + " @ git+https://github.com/microsoft/"
+                    "amplifier-bundle-context-managed@" + revision + "#subdirectory=modules/context-managed",
+                    "other-tool @ git+https://example.invalid/other-tool@main"]
+    original = dependencies.copy()
+    assert integration_dev_dependencies(dependencies) == [dependencies[0], dependencies[2]]
+    assert dependencies == original
+
+
+@pytest.mark.parametrize("requirement", [
+    "amplifier-module-context-managed @ git+https://example.invalid/other-owner@main#subdirectory=modules/context-managed",
+    "amplifier-module-context-managed>=1",
+    "amplifier-module-context-managed @ file:///unreviewed",
+    "amplifier-module-context-managed[extra] @ git+https://github.com/microsoft/amplifier-bundle-context-managed@main#subdirectory=modules/context-managed",
+    "amplifier-module-context-managed @ git+https://github.com/microsoft/amplifier-bundle-context-managed@main#subdirectory=modules/context-managed ; python_version >= '3.13'",
+    "amplifier-module-context-managed @ git+https://github.com/microsoft/amplifier-bundle-context-managed@unreviewed-branch#subdirectory=modules/context-managed",
+    "amplifier-module-context-managed @ git+https://github.com/microsoft/amplifier-bundle-context-managed@main#subdirectory=modules/other",
+])
+def test_native_context_projection_refuses_unexpected_fixture_policy(requirement):
+    with pytest.raises(ValueError, match="Review the host context-managed fixture source"):
         integration_dev_dependencies([requirement])
 
 
