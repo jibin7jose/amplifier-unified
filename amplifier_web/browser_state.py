@@ -214,6 +214,8 @@ def snapshot(state, derived, *, session_id=None, index=None, copies=None, client
     directory = directory or index.directory
     result = dict(state)
     result.update(derived)
+    from .appearance_activity import snapshot as appearance_activity
+    result['appActivity'] = appearance_activity(state, index)
     if 'browserResources' in derived:
         # The bundled shell owns navigation pages. Do not accidentally retain a
         # prior full-state projection when constructing a selected-chat frame.
