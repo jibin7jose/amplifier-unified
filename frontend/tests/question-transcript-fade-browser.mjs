@@ -583,7 +583,11 @@ try{
  await composer.click();
  await expect(composer).toBeFocused();await settled();
  const blurred=await record('question-editor-blurred-to-composer',pane,created.id);
- assert.ok(Math.abs(blurred.geometry.scrollTop-scrollBeforeBlur)<=1,'Blurring to the composer does not move the transcript');
+ assert.equal(blurred.geometry.scrollHeight,editing.geometry.scrollHeight,'Blurring preserves transcript content height');
+ // Removing Latest messages can enlarge the pane and clamp its old bottom.
+ // Keep the reading position unless the browser's new scroll limit requires it.
+ const scrollAfterClamp=Math.min(scrollBeforeBlur,blurred.geometry.maxScrollTop);
+ assert.ok(Math.abs(blurred.geometry.scrollTop-scrollAfterClamp)<=1,'Blurring preserves the transcript position within its scroll range');
  assert.equal(blurred.focus.activeInsidePane,false);
  assertMasked(blurred,'Focus outside the transcript restores the overflow fade');
 

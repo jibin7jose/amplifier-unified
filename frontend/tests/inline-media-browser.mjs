@@ -1343,7 +1343,7 @@ try{
    };
    try{
     await initializeCommands();
-    await inline.scrollIntoViewIfNeeded();
+    await readyFigure(page,saved.id);
     await expect(inline).toHaveAttribute('data-media-state','ready');
     for(const figure of await page.locator('[data-message-id] [data-media-id]').all()){
      if(await figure.locator('canvas').count())await expect(figure).toHaveAttribute('data-media-state','ready');
