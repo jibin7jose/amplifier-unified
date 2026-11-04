@@ -190,6 +190,9 @@ async function checkAsideAppearanceScope(page,work,viewport,setWorkerPhase) {
           border:[style.borderLeftWidth,style.borderRightWidth],width:box.width,scrollWidth:el.scrollWidth,
           height:box.height,clientWidth:el.clientWidth,textInset:text.left-box.left,children,
           wrapped:control.top>=text.bottom,
+          captionTopMargin:style.marginTop,
+          labelMargin:getComputedStyle(first).marginTop,
+          sameLineCenterDelta:Math.abs((text.top+text.bottom)/2-(control.top+control.bottom)/2),
           control:{width:control.width,height:control.height,outline:focus.outlineStyle,
             outlineWidth:parseFloat(focus.outlineWidth)}};
       });
@@ -203,6 +206,8 @@ async function checkAsideAppearanceScope(page,work,viewport,setWorkerPhase) {
       assert.match(measured.background,/rgba\(0, 0, 0, 0\)|transparent/,'Status keeps its native unboxed surface');
       assert.equal(measured.radius,'0px');assert.deepEqual(measured.border,['0px','0px']);
       assert.ok(measured.width>0&&measured.textInset>=0);
+      assert.equal(measured.labelMargin,'0px','Native inline captions must not inherit block-caption top spacing');
+      if(!measured.wrapped)assert.ok(measured.sameLineCenterDelta<=3,'Unwrapped label and Details control align vertically');
       assert.ok(measured.scrollWidth<=measured.clientWidth+1,'Worker controls wrap without horizontal overflow');
       assert.ok(measured.children.every(child=>child.left>=-1&&child.right<=measured.width+1&&
         child.top>=-1&&child.bottom<=measured.height+1),'Native status children stay inside their surface');

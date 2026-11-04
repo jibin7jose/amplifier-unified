@@ -1,6 +1,7 @@
 import React,{createContext,useContext,useEffect,useId,useState} from 'react';
 import {ChevronRight,GitBranch,Copy,Check} from 'lucide-react';
-import {DetailText,readDetail} from './conversation-detail';
+import {readDetail} from './conversation-detail';
+import {MessageText} from './message-text';
 import {QuoteCard,MessageInteractions} from './message-interactions';
 import {AttachmentStrip} from './chat-controls';
 import {peerAttention} from './peer-groups.js';
@@ -54,10 +55,12 @@ export function PeerMessage({message,session,state,act,dispatch,date,label,attri
   </div>
   {attribution&&<p className="a-message-attribution">{attribution}</p>}
   {peerAttention([message]).length>0&&<p className="a-peer-attention">{peerAttention([message]).join(' · ')}</p>}
-  {open&&<div id={bodyId} className="a-execution-payload a-delegate-message a-peer-content">
+  {open&&<div id={bodyId} className="a-peer-content">
+   <div className="a-message-body">
    <QuoteCard quote={message.replyTo} sessionId={session.id} dispatch={dispatch}/>
    <AttachmentStrip items={message.attachments} act={act} sessionId={session.id}/>
-   <div className="a-delegate-markdown"><DetailText text={message.text||''} reference={message.textDetail} markdown userContent/></div>
+   <MessageText text={message.text||''} reference={message.textDetail} role="user" sessionId={session.id} messageId={message.id} workspace={session.workspace} act={act} displayOnly={message.displayOnly}/>
+   </div>
    <div className="a-message-actions"><button type="button" className="a-icon" aria-label="Copy peer message as Markdown" title="Copy original message" disabled={copying} onClick={copy}>{copied||copyResult?.status==='ready'?<Check/>:<Copy/>}</button>{!message.displayOnly&&<MessageInteractions message={message} sessionId={session.id} dispatch={dispatch}/>}</div>
    {(copied||copyResult?.status==='ready')&&<p role="status" className="a-caption">Copied Markdown</p>}
   </div>}
