@@ -9,7 +9,7 @@ import pytest
 from amplifier_web import test_dependency_layers as layers
 from amplifier_web import test_environment_preparation as preparation
 from amplifier_web import test_environment_prepare_guest as guest
-from test_dependency_layers import prepared, settle
+from test_dependency_layers import LOCK, PROJECT, prepared, settle
 from test_environment_preparation import archive
 
 
@@ -52,6 +52,21 @@ def test_browser_reuses_manifest_only_seed_and_finalizes_each_source(prepared, t
     assert layers.inspect(tmp_path)['candidates'] == []
     settle(second)
     assert len(layers.inspect(tmp_path)['candidates']) == 1
+
+
+def test_browser_release_version_uses_existing_node_and_python_dependencies(prepared):
+    run, calls, _ = prepared
+    first, before = run('first-release', profile='browser-test', extra=manifests())
+    project = PROJECT.replace('version="1"', 'version="2"')
+    lock = LOCK.replace('version="1"', 'version="2"', 1)
+    second, after = run('next-release', profile='browser-test', extra=manifests(), project=project, lock=lock)
+    assert [call['mode'] for call in calls] == ['layer', 'finalize', 'finalize']
+    assert calls[1]['base'] == calls[2]['base']
+    assert calls[2]['contents']['pyproject.toml'] == project
+    assert calls[2]['contents']['uv.lock'] == lock
+    assert before['lockfiles'] != after['lockfiles']
+    assert layers.read(second / 'preparation/dependency-reuse.json')['hit'] is True
+    assert layers.read(first / 'preparation/receipt.json') == before
 
 
 @pytest.mark.parametrize('change', ['local', 'workspace', 'link', 'credentials', 'unhashed', 'lock-type', 'manifest-type', 'escape', 'extra-source'])

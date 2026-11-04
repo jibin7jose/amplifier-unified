@@ -94,21 +94,65 @@ def test_changed_source_reuses_only_dependencies_and_finalizes_current_source(pr
     assert len(layers.inspect(tmp_path)['candidates']) == 1
 
 
+@pytest.mark.parametrize('root_source', ['editable', 'virtual'])
+def test_root_version_change_reuses_dependencies_but_finalizes_exact_current_manifests(prepared, tmp_path, root_source):
+    run, calls, _ = prepared
+    locked = LOCK.replace('editable=', root_source + '=')
+    first, before = run('first', lock=locked)
+    project = PROJECT.replace('version="1"', 'version="2"')
+    changed_lock = locked.replace('version="1"', 'version="2"', 1)
+    second, after = run('second', 'release source', project=project, lock=changed_lock)
+    assert [call['mode'] for call in calls] == ['layer', 'finalize', 'finalize']
+    assert calls[2]['contents']['pyproject.toml'] == project
+    assert calls[2]['contents']['uv.lock'] == changed_lock
+    assert calls[2]['contents']['fixture.py'] == 'release source'
+    assert calls[1]['base'] == calls[2]['base']
+    assert before['lockfiles'] != after['lockfiles']
+    assert before['sourceSha256'] != after['sourceSha256']
+    assert before['image'] != after['image']
+    assert layers.read(second / 'preparation/dependency-reuse.json')['hit'] is True
+    entry = layers.store(tmp_path) / layers.read(first / 'preparation/dependency-reuse.json')['entry']
+    assert layers.receipt(entry)['intent']['lockfiles'] == before['lockfiles']
+    assert layers.read(first / 'preparation/receipt.json') == before
+    settle(first)
+    settle(second)
+    assert len(layers.inspect(tmp_path)['candidates']) == 1
+
+
+@pytest.mark.parametrize('project,lock', [
+    (PROJECT.replace('third-party==1', 'third-party==2'), LOCK),
+    (PROJECT + 'requires-python=">=3.12"\n', LOCK),
+    (PROJECT + '[dependency-groups]\ndev=["pytest"]\n', LOCK),
+    (PROJECT + '[tool.uv]\nno-build=true\n', LOCK),
+    (PROJECT + '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n', LOCK),
+    (PROJECT, LOCK.replace('name="third-party"\nversion="1"', 'name="third-party"\nversion="2"')),
+    (PROJECT, LOCK.replace('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64)),
+    (PROJECT, LOCK.replace('source={editable="."}', 'source={editable="."}\ndependencies=[{name="third-party"}]')),
+])
+def test_non_version_dependency_inputs_still_build_new_seed(prepared, project, lock):
+    run, calls, _ = prepared
+    run('first')
+    second, _ = run('changed', project=project, lock=lock)
+    assert [call['mode'] for call in calls] == ['layer', 'finalize', 'layer', 'finalize']
+    assert layers.read(second / 'preparation/dependency-reuse.json')['hit'] is False
+
+
 @pytest.mark.parametrize('change', ['lock', 'manifest', 'base', 'daemon', 'recipe'])
 def test_each_qualified_dependency_input_changes_key(tmp_path, change):
     snapshot = source(tmp_path / 'source')
     value = preparation.plan(tmp_path / 'source/source.tar', snapshot, 'python-project')
+    material = layers.inputs(tmp_path / 'source/source.tar', value)
     value.update(backendIdentity={'backend': 'docker', 'daemon': 'first'}, baseImage='one')
-    original = layers.key_for(value)
+    original = layers.key_for(value, material)
     if change in {'lock', 'manifest'}:
-        value['lockfiles'][0 if change == 'manifest' else 1]['sha256'] = 'b' * 64
+        material['lockfiles'][0 if change == 'manifest' else 1]['sha256'] = 'b' * 64
     elif change == 'base':
         value['baseImage'] = 'two'
     elif change == 'daemon':
         value['backendIdentity']['daemon'] = 'second'
     else:
         value['recipeSha256'] = 'c' * 64
-    assert layers.key_for(value) != original
+    assert layers.key_for(value, material) != original
 
 
 def test_procps_recipe_change_invalidates_preparation_and_reusable_layer(prepared, tmp_path, monkeypatch):
@@ -136,7 +180,8 @@ def test_procps_recipe_change_invalidates_preparation_and_reusable_layer(prepare
     assert before['lockfiles'] == after['lockfiles']
     assert before['recipeSha256'] != after['recipeSha256']
     assert before['intent']['preparationId'] != after['intent']['preparationId']
-    assert layers.key_for(before['intent']) != layers.key_for(after['intent'])
+    assert layers.key_for(before['intent'], layers.inputs(first / 'source.tar', before['intent'])) != layers.key_for(
+        after['intent'], layers.inputs(second / 'source.tar', after['intent']))
     assert [call['mode'] for call in calls] == ['layer', 'finalize', 'layer', 'finalize']
     assert layers.read(second / 'preparation/dependency-reuse.json')['hit'] is False
     third, same = run('same-procps')
@@ -173,11 +218,11 @@ def test_resolved_git_commit_eligible_and_source_policy_not_rewritten(tmp_path):
     assert material['files']['uv.lock'] == locked.encode()
     assert '?branch=main#' + commit in material['files']['uv.lock'].decode()
     expected.update(backendIdentity={'backend': 'docker', 'daemon': 'one'}, baseImage='base')
-    before = layers.key_for(expected)
+    before = layers.key_for(expected, material)
     snapshot = source(tmp_path / 'source', lock=locked.replace(commit, 'd' * 40))
     changed = preparation.plan(tmp_path / 'source/source.tar', snapshot, 'python-project')
     changed.update(backendIdentity=expected['backendIdentity'], baseImage='base')
-    assert layers.key_for(changed) != before
+    assert layers.key_for(changed, layers.inputs(tmp_path / 'source/source.tar', changed)) != before
 
 
 def test_changed_frozen_archive_refused(tmp_path):

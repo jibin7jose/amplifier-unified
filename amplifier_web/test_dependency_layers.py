@@ -214,21 +214,34 @@ def inputs(archive, expected):
                     return None
                 if row.get('git') and not public_url(row['git']):
                     return None
+        # The editable/virtual root is deliberately absent from the dependency
+        # image. Its version belongs to each task's exact-source finalizer, not
+        # the reusable dependency identity. Preserve every other parsed input.
+        metadata.pop('version')
+        for package in lock['package']:
+            if package['source'] in ({'editable': '.'}, {'virtual': '.'}):
+                package.pop('version', None)
+        dependency_files = dict(files)
+        for path, value in (('pyproject.toml', project), ('uv.lock', lock)):
+            dependency_files[path] = json.dumps(value, sort_keys=True).encode()
     except (KeyError, TypeError, ValueError, UnicodeError):
         return None
-    return {'project': name, 'files': files}
+    return {'project': name, 'files': files,
+            'lockfiles': [{'path': path, 'sha256': hashlib.sha256(body).hexdigest()}
+                          for path, body in sorted(dependency_files.items())]}
 
 
-def key_inputs(expected):
+def key_inputs(expected, material):
     # The daemon/project prevents cross-machine reuse; immutable base identity
     # and recipe bind its platform, Python ABI, uv and validation implementation.
-    value = {field: expected[field] for field in ('backendIdentity', 'baseImage', 'profileId', 'lockfiles', 'recipeSha256')}
+    value = {field: expected[field] for field in ('backendIdentity', 'baseImage', 'profileId', 'recipeSha256')}
+    value['lockfiles'] = material['lockfiles']
     value.update(version=VERSION, ownerSha256=preparation.digest(__file__))
     return value
 
 
-def key_for(expected):
-    return hashlib.sha256(json.dumps(key_inputs(expected), sort_keys=True).encode()).hexdigest()
+def key_for(expected, material):
+    return hashlib.sha256(json.dumps(key_inputs(expected, material), sort_keys=True).encode()).hexdigest()
 
 
 def native(config, folder, receipt, *, unused=False, deadline=None):
@@ -295,7 +308,8 @@ def receipt(entry):
     preparation.validate_receipt(value, {'archive_sha256': value['intent']['sourceSha256']}, profile)
     intent = value['intent']
     inventory = read(entry / 'preparation/inventory.json')
-    if (any(intent.get(field) != owner['inputs'][field] for field in ('backendIdentity', 'baseImage', 'profileId', 'lockfiles', 'recipeSha256'))
+    if (any(intent.get(field) != owner['inputs'][field] for field in ('backendIdentity', 'baseImage', 'profileId', 'recipeSha256'))
+            or intent.get('lockfiles') != owner.get('sourceLockfiles', owner['inputs']['lockfiles'])
             or intent.get('preparationId') != owner['key'] or intent.get('dependencyKey') != owner['key']
             or intent.get('resourceName') != 'au-deps-' + entry.name[-32:]
             or inventory.get('dependencyKey') != owner['key'] or inventory.get('sourceSha256') != intent['sourceSha256']
@@ -329,7 +343,8 @@ def seed(directory, key, config, expected, material, deadline, task):
     folder = private(entry / 'preparation')
     context = private(folder / 'context')
     origin = {'task': str(task), 'requestId': expected['requestId'], 'resourceName': expected['resourceName']}
-    preparation.write(entry / 'owner.json', {'version': VERSION, 'key': key, 'inputs': key_inputs(expected), 'config': config, 'origin': origin,
+    preparation.write(entry / 'owner.json', {'version': VERSION, 'key': key, 'inputs': key_inputs(expected, material),
+                                           'sourceLockfiles': expected['lockfiles'], 'config': config, 'origin': origin,
                                            'lastUsedAt': time.time()})
     with tarfile.open(context / 'source.tar', 'w') as archive:
         for name, body in sorted(material['files'].items()):
@@ -418,7 +433,7 @@ def acquire(directory, config, task, expected, archive, deadline):
     if material is None:
         return None
     directory = Path(directory)
-    key = key_for(expected)
+    key = key_for(expected, material)
     with locked(directory, key, task=task, deadline=deadline):
         pointer = directory / (key + '.json')
         value = None

@@ -372,6 +372,12 @@ Docker measurements exclude the exact immutable base image; shared blocks may
 still remain after removal. Other dependency stores retain their existing
 ownership and preservation rules.
 
+Reuse identity excludes only the static application's own version in its Python
+project and root lock entry; dependencies, source pins, build configuration,
+toolchain and browser manifests still distinguish images. The root application
+is absent from the reusable image. Every task installs its current source and
+retains exact original manifest hashes and its own package qualification.
+
 ### Saved test evidence
 
 Settings → Storage → **Saved test evidence** reads recorded sizes only when the

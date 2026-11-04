@@ -66,6 +66,17 @@ spacing and ASCII escaping do not discard otherwise valid saved notes.
 
 ## Preparing a version change
 
+Build and package routine version-only changes in an already-owned prepared
+release DTU, or in a qualified author DTU through its owner. Keep candidate source
+and package checks isolated, but do not provision and finalize a fresh test
+environment for each release when the existing dependencies and toolchain match.
+The publication workflow owns the fresh exact-candidate installed-package proof;
+a version change alone does not require rebuilding the local environment.
+The in-app `workspace.tests.submit` path still freezes each new source; its
+existing manual execute action does not refresh that source for a later
+candidate. Queued callers reuse dependency layers until their owner provides a
+supported prepared-source update path; do not invent a raw-host workaround.
+
 Browser fixture launchers honor `AMPLIFIER_TEST_PYTHON` as one executable path.
 Use the prepared environment's Python path when source and dependencies live
 separately; a checkout-local `.venv` is not required. Pass the path as an environment
@@ -88,11 +99,23 @@ edit still changes generated bundle hashes.
 
 Reuse focused behavior evidence for unchanged tested inputs. Do not add a local
 full frontend suite or a second manual build solely for a version change.
+Reuse independent review of the exact accepted feature source; the release
+owner reviews the new integration/version/notes/assets delta rather than reading
+every unchanged feature file and artifact again. Keep downloaded releases,
+source archives and earlier test evidence outside the release source checkout:
+snapshots correctly include untracked, nonignored files, so old output packets
+otherwise become inputs to every later preparation. Preserve genuine untracked
+source edits; use a clean task-owned release checkout when necessary.
 **Fast release checks** still tests, builds and compares committed assets for the
 candidate. The publisher reuses only its verified exact-source PR proof, or runs
 the frontend checks itself when that proof is unavailable; an earlier version's
 proof does not qualify the new version. Package/native qualification and candidate
 receipts remain fresh under the existing publication workflow.
+
+Routine release verification ends after the hosted published-package smoke.
+Absent a concrete failure, do not repeat its exact-candidate wheel, source or
+asset checks manually after publication. Record the workflow result and finish
+owned cleanup; live adoption remains a separate authorized operation.
 
 The installed-wheel probe also loads worker-owned app packages in a fresh
 `-I -S` child outside the checkout. A successful host import is not worker
