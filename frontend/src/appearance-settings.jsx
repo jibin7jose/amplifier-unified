@@ -65,6 +65,7 @@ export function AppearanceSettings({state,shell,act,editor:editorState,preview,p
   const args={name,css,description,...(update?appearanceMutationTarget(editing):{})};
   const receipt=await api.current(update?'theme.update':'theme.save',args);
   if(receipt?.accepted!==true||!receipt.result?.id)throw Error(receipt?.error||'Saving this appearance was not confirmed. Check the library before trying again.');
+  catalog.invalidate();
   const adopted=compareAndSetDraft(draft,{...draft,entry:receipt.result,dirty:false});
   // A confirmed library mutation still stands if the editor has moved on.
   // Only the unchanged draft may adopt its target; old UI instances stay silent.
@@ -76,6 +77,7 @@ export function AppearanceSettings({state,shell,act,editor:editorState,preview,p
  async function remove(){await run(async isCurrent=>{
   const target=appearanceMutationTarget(deleteTarget),receipt=await api.current('theme.delete',target);
   if(receipt?.accepted!==true)throw Error(receipt?.error||'Deleting this appearance was not confirmed. Check the library before trying again.');
+  catalog.invalidate();
   const adopted=draft.entry?.id===target.id&&draft.entry?.fingerprint===target.expectedFingerprint&&compareAndSetDraft(draft,{...draft,entry:null,dirty:true});
   if(!isCurrent())return;
   if(adopted){setSelected(null);setDeleteTarget(null)}
@@ -87,6 +89,7 @@ export function AppearanceSettings({state,shell,act,editor:editorState,preview,p
   if(!file)return;return run(async isCurrent=>{
    const receipt=await api.current('theme.import',await appearanceImportFileArgs(file));
    if(receipt?.accepted!==true||!receipt.result?.id||typeof receipt.result.name!=='string')throw Error(receipt?.error||'Importing this appearance was not confirmed. Check the library before trying again.');
+   catalog.invalidate();
    if(!isCurrent())return receipt.result;
    await refresh();
    if(isCurrent())setNotice(receipt.result.name+' added to your library. Select it to preview.');

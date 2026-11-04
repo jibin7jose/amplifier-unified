@@ -5,6 +5,7 @@ export function createAppearanceCatalog({now=Date.now,freshMs=30000,maxBodies=24
  const listeners=new Set(),bodies=new Map();
  const publish=patch=>{snapshot={...snapshot,...patch};for(const fn of listeners)fn()};
  const getSnapshot=()=>snapshot,subscribe=fn=>{listeners.add(fn);return()=>listeners.delete(fn)};
+ function invalidate(){epoch++;pending=null;loadedAt=-Infinity;publish({loading:false})}
  function clear(){epoch++;identity++;pending=null;loadedAt=-Infinity;bodies.clear();publish({library:null,error:'',loading:false})}
  function refresh(act,{force=false}={}){
   if(pending&&!force)return pending;
@@ -37,7 +38,7 @@ export function createAppearanceCatalog({now=Date.now,freshMs=30000,maxBodies=24
   while(bodies.size>maxBodies)bodies.delete(bodies.keys().next().value);
   return task;
  }
- return {getSnapshot,subscribe,refresh,read,clear};
+ return {getSnapshot,subscribe,refresh,read,invalidate,clear};
 }
 const catalogs=new Map();
 export function appearanceCatalogFor(scope){

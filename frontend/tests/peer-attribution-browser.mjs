@@ -126,7 +126,9 @@ try{
  }
  if(process.env.AMPLIFIER_PROOF_DIR){
   writeFileSync(join(process.env.AMPLIFIER_PROOF_DIR,'peer-markdown-parity.json'),JSON.stringify({peer:peerType,user:userType},null,2));
-  await peer.scrollIntoViewIfNeeded();await page.screenshot({path:join(process.env.AMPLIFIER_PROOF_DIR,'peer-markdown-parity.png')});
+  const firstParagraph=peer.locator('.a-markdown > p').first();
+  await firstParagraph.scrollIntoViewIfNeeded();await expect(firstParagraph).toBeInViewport();
+  await page.screenshot({path:join(process.env.AMPLIFIER_PROOF_DIR,'peer-markdown-parity.png')});
  }
  await peer.getByRole('button',{name:'Copy peer message as Markdown'}).click();
  await expect(peer.getByText('Copied Markdown',{exact:true})).toBeVisible();

@@ -33,6 +33,16 @@ test('authentication clear fences late reads and removes all cached CSS',async()
  assert.equal(catalog.getSnapshot().library,null);
  assert.equal((await catalog.read(item,()=>receipt({css:'new',fingerprint:'a'}))).css,'new');
 });
+test('a confirmed hidden mutation invalidates metadata without blanking cards or accepting an older listing',async()=>{
+ const catalog=createAppearanceCatalog(),d=deferred();
+ await catalog.refresh(()=>receipt(library('Cached')));
+ const old=catalog.refresh(()=>d.promise,{force:true});
+ catalog.invalidate();
+ assert.equal(catalog.getSnapshot().library.items[0].name,'Cached');
+ await catalog.refresh(()=>receipt(library('Changed')));
+ d.resolve(receipt(library('Old')));await old;
+ assert.equal(catalog.getSnapshot().library.items[0].name,'Changed');
+});
 test('body reads deduplicate by exact fingerprint, invalidate changed versions and retry errors',async()=>{
  const catalog=createAppearanceCatalog(),item={id:'saved:x',fingerprint:'a'};let calls=0;
  const act=()=>{calls++;return receipt({css:'body',fingerprint:'a'})};
