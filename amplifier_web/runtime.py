@@ -6,7 +6,7 @@ app-owned Foundation lifecycle and standalone Amplifier configuration.
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 import json
 import os
 from pathlib import Path
@@ -18,6 +18,7 @@ import uuid
 from typing import Any, Awaitable, Callable
 
 from .runtime_protocol import MAX_MESSAGE_BYTES, encode_message
+from .performance_diagnostics import measure, measured
 
 _CURRENT_GENERATION = object()
 
@@ -1043,21 +1044,23 @@ class RuntimeManager:
             return await self._request_unlocked(sid, op, **args)
         # The admission portion holds the same lock as retirement. Waiting for
         # replies does not: a tool control may itself await an approval/bridge.
-        async with self._admission(sid):
-            if guard is not None: guard()
-            if sid not in self.workers and sid in self._retired and op in {"send", "retry", "control", "resume"} and not (op == "control" and (args.get("operation", "").startswith(("operations.", "kernels.")))):
-                session, emit = self._retired[sid]
-                # Retirement can occur after preservation-aware preparation but
-                # before this control. Keep its original host guard and startup
-                # preservation; the native attempt still checks the old PID.
-                placement = op == 'control' and args.get('operation') == 'configuration.patchPlacement.bind'
-                await self._start_locked(session, emit, **({'guard': guard} if guard is not None else {}),
-                    **({'preserve_configuration': True} if placement else {}))
-            # No suspension between this authority check and _admit's transport
-            # write. The callback is host-only and is never serialized.
-            if guard is not None: guard()
-            pending = await self._admit(sid, op, args)
-        return await self._reply(*pending, op=op, args=args)
+        with measure(self, 'input.runtime.admit', session_id=sid) if op in {'send', 'retry'} else nullcontext():
+            async with self._admission(sid):
+                if guard is not None: guard()
+                if sid not in self.workers and sid in self._retired and op in {"send", "retry", "control", "resume"} and not (op == "control" and (args.get("operation", "").startswith(("operations.", "kernels.")))):
+                    session, emit = self._retired[sid]
+                    # Retirement can occur after preservation-aware preparation but
+                    # before this control. Keep its original host guard and startup
+                    # preservation; the native attempt still checks the old PID.
+                    placement = op == 'control' and args.get('operation') == 'configuration.patchPlacement.bind'
+                    await self._start_locked(session, emit, **({'guard': guard} if guard is not None else {}),
+                        **({'preserve_configuration': True} if placement else {}))
+                # No suspension between this authority check and _admit's transport
+                # write. The callback is host-only and is never serialized.
+                if guard is not None: guard()
+                pending = await self._admit(sid, op, args)
+        with measure(self, 'input.runtime.ack', session_id=sid) if op in {'send', 'retry'} else nullcontext():
+            return await self._reply(*pending, op=op, args=args)
 
     async def _request_unlocked(self, sid, op, **args):
         return await self._reply(*await self._admit(sid, op, args), op=op, args=args)
@@ -1260,6 +1263,7 @@ class RuntimeManager:
         return await self._request_unlocked(session_id, "coordination.approval", prompt=prompt,
             **({"approval_id": approval_id} if approval_id else {}))
 
+    @measured('input.runtime.prepare', session=True)
     async def _start_for_input(self, session, emit, *, admission_check=None):
         try:
             guard = None

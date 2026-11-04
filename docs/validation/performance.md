@@ -295,6 +295,39 @@ across resume, compaction, authorized retrieval and pending tool pairs before
 adoption. See the [provider audit](provider-cache-audit-20261031.md) for the current
 source checks and remaining limitations; it is not a runtime capability registry.
 
+## Locating input acknowledgement delays
+
+The existing bounded host performance snapshot records six fixed input phases:
+
+- `input.history`: the send/retry dispatch's history-loading check, including a
+  cold load or a warm no-op.
+- `input.configuration`: that dispatch's configuration refresh.
+- `input.runtime.prepare`: next-message configuration, worker readiness and any
+  pending model selection. A mounted worker may make this a warm no-op.
+- `input.runtime.admit`: waiting for the worker admission lock, any intervening
+  retirement/restart, authority checks and the transport write for send/retry.
+- `input.runtime.ack`: waiting for the native send/retry reply after admission.
+- `input.delivery.publish`: successful delivery settlement, including the host
+  state-lock wait, draft settlement, persistence and publication.
+
+These use `operations` and the existing bounded `slowOperations` ring; they do not
+require `AMPLIFIER_RUNTIME_TIMING`. The only correlation metadata is the existing
+bounded conversation ID. They retain no input IDs, bodies, settings or exceptions.
+Each completed phase is measured on error/cancellation too; a recorded duration
+is not proof of success, delivery or replay safety. The final publication phase
+is reached only after a successful native reply. Deferred input, steering and
+passive delivery checks do not acquire new native send/retry phases.
+
+Durations are inclusive wall time, including event-loop scheduling. In particular,
+ACK time is not native CPU time, and publication includes lock waiting. History,
+configuration, preparation and admission can contain other diagnostic operations;
+do not add their totals to nested history/save/serialize/publication measurements.
+These phases do not cover every dispatch step, concurrent inputs are not individually
+correlated, and operation totals aggregate since startup. Use recent bounded samples
+alongside the HTTP timing and current session state; an absent sample can mean a
+phase was not reached or fell below the slow-sample threshold. This instrumentation
+locates delays; it neither fixes them nor establishes a live latency guarantee.
+
 ## Maintained client smoke
 
 `frontend/tests/client-traffic-browser.mjs` uses the real server and built client
