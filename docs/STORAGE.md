@@ -277,15 +277,21 @@ rollback versions, live generation leases, configurations, observed process
 references, local source edits/untracked files/unpublished commits, and uncertain
 operations protect a copy. Conventional untracked Python import caches in
 `__pycache__` are disposable when their regular tracked source is unchanged:
-the verified installed graph or the cache's recorded, remotely retained Git
-commit must prove the complete tracked tree. This includes on-disk content that
+the verified installed graph or the cache's recorded Git commit must prove the
+complete tracked tree. An uninstalled cache also needs a remote-containing ref
+or the exact commit-and-source `FETCH_HEAD` receipt left by the updater's normal
+detached SHA download. This includes on-disk content that
 Git index flags could otherwise hide. Supported CPython 3.12–3.14 cache names
 must match their header, have a nonempty payload, and remain regular files beside
 the tracked module; symbolic links are never accepted. A cache payload can be
 stale, damaged or hand-edited and is still disposable under this rule. Inspection
 never imports source, starts its interpreter, or deserializes cached code.
-Unknown names/producers, files outside this convention, packaging metadata and
-nested environments remain protected. Owners repeat their checks at removal admission;
+Regular files in `build/lib` are also disposable when byte-identical to a proven
+tracked source file at the repository root or under `src`; their conventional
+import caches follow the same header checks. Unique or edited build output,
+unknown names/producers, files outside these conventions, packaging metadata and
+nested environments remain protected. Names alone never establish that a file
+is disposable. Owners repeat their checks at removal admission;
 links are not followed as cleanup targets. Ecosystem qualification is bound to
 a bounded inventory captured before its source checks; a changed inventory or
 runtime-sharing decision defers that candidate. The same inventory follows the
@@ -296,7 +302,11 @@ receipts remain visible and are not permission to repeat an uncertain effect.
 read performs no scan and starts no worker. Each pass inspects at most four
 ecosystem candidates, eight purpose-installed runner candidates and eight
 qualified dependency layers, with time
-limits and a retained cursor. Incomplete inspection is labeled; uninspected
+limits and a retained cursor. The cleanup policy saves that cursor in its durable
+receipt and restores it after restart; a scan position is never deletion authority.
+Protected copies include bounded reasons distinguishing unverified source,
+unverified extra files, local edits, and a changed or incomplete final check.
+Incomplete inspection is labeled; uninspected
 copies stay put. File-content measurements are not physical disk-allocation
 promises: hard links, shared runtimes and copy-on-write blocks can retain storage.
 The size target uses the existing observation ledger's latest measured sizes

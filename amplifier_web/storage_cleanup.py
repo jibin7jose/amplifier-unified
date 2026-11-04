@@ -169,6 +169,12 @@ async def preview(app):
     from . import update_retention, managed_runner_updates, test_dependency_layers
     manager = app.update_manager
     settings = policy(app)
+    # Restore only scan position, never a prior eligibility decision. Preview
+    # remains read-only; the policy run persists its next cursor in its receipt.
+    saved = record(app, LATEST, {}) or {}
+    for key, attribute in (('generationCursor', '_retention_cursor'), ('retiredCursor', '_retired_cursor')):
+        if not hasattr(manager, attribute) and isinstance(saved.get(key), str):
+            setattr(manager, attribute, saved[key])
     generations = await update_retention.reclaim(manager, inspect_only=True)
     runner_inspection = {'protectedIds': [], 'complete': True}
     try:
@@ -201,8 +207,17 @@ async def preview(app):
     # This is metadata enumeration, not a scan of workspaces or chat history.
     for folder in folders:
         if ('ecosystem', folder.name) not in eligible:
+            code = generations.get('retentionReasons', {}).get(folder.name)
+            reasons = {
+                'unverified_generation': 'The installed component generation could not be verified',
+                'unverified_source': 'The recorded source download or tracked files could not be verified',
+                'local_source_changes': 'Local source edits or unpublished commits are kept',
+                'unverified_generated_files': 'Extra files could not be proved disposable installation output',
+                'changed_during_inspection': 'References or files changed, or their final check could not finish',
+            }
             protected.append({'kind': 'ecosystem', 'id': folder.name, 'label': 'Component version kept',
-                              'reason': 'Current, rollback, referenced, changed, or not fully verified'})
+                              'reason': reasons.get(code, 'Current, rollback, referenced, changed, or not fully verified'),
+                              **({'reasonCode': code} if code in reasons else {})})
     for item in app.smart_tools.state.get('installations', []):
         if item.get('runnerCandidate') and ('runner', item['id']) not in eligible:
             protected.append({'kind': 'runner', 'id': item['id'], 'label': 'Test runner version kept',
@@ -239,6 +254,8 @@ async def preview(app):
             protected_complete = False
     complete = generations.get('complete', False) and runner_complete and dependencies['complete']
     return {'policy': settings, 'rows': [{k: v for k, v in row.items() if k not in {'paths', 'stamp'}} for row in rows],
+            **{key: generations[key] for key in ('generationCursor', 'retiredCursor') if key in generations},
+            **({'retentionReasons': generations['retentionReasons']} if generations.get('retentionReasons') else {}),
             'protected': protected[:128], 'protectedCount': len(protected),
             'observedProtected': observed_protected,
             '_observations': seen,
@@ -277,6 +294,7 @@ async def run(app, identity, *, expected_revision=None, automatic=False, authori
                                 protected=report.get('observedProtected', []))
         store(app, OBSERVATION, seen)
         result = {'id': identity, 'expectedRevision': expected_revision, 'status': 'running', 'startedAt': now, 'policy': settings,
+                  **{key: report[key] for key in ('generationCursor', 'retiredCursor', 'retentionReasons') if key in report},
                   'selectedFileBytes': report['selectedFileBytes'], 'removedFileBytes': 0,
                   'effects': [], 'completeInspection': report['complete']}
         if authority is not None:

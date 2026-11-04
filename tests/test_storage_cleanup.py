@@ -272,10 +272,8 @@ async def test_size_target_accumulates_across_real_bounded_passes(app, monkeypat
         assert result['removedFileBytes'] == 0
     saved = cleanup.record(app, cleanup.OBSERVATION)
     assert len(saved) == 2
-    # A host restart keeps the same observations but may reset the owner cursor.
+    # The policy receipt resumes the bounded inspection after a host restart.
     del app.update_manager._retention_cursor
-    await cleanup.run(app, 'restart-first', automatic=True)
-    await cleanup.run(app, 'restart-second', automatic=True)
     result = await cleanup.run(app, 'over-target', automatic=True)
     assert result['removedFileBytes'] == size
     assert [row['id'] for row in result['effects']] == [extras[1]]
@@ -342,3 +340,18 @@ async def test_uncertain_receipt_stops_contributing_pressure_and_stays_held(app)
     assert result['removedFileBytes'] == 0
     assert (app.update_manager.directory/'releases'/app.names[3]).exists()
     assert cleanup.record(app, 'storage-cleanup-run:uncertain')['status'] == 'needs-inspection'
+
+
+async def test_retention_reason_survives_policy_receipt_without_exception_text(app, monkeypatch):
+    async def unavailable(*args, **kwargs):
+        raise ValueError('Private source details must never escape in the receipt')
+    monkeypatch.setattr(retention, 'verify_generation', unavailable)
+    preview = await cleanup.preview(app)
+    expected = {app.names[3]: 'unverified_generation'}
+    assert preview['retentionReasons'] == expected
+    assert next(row for row in preview['protected'] if row.get('id') == app.names[3])['reasonCode'] == 'unverified_generation'
+    result = await cleanup.run(app, 'unverified', automatic=True)
+    assert result['retentionReasons'] == expected
+    assert cleanup.read(app)['lastCleanup']['retentionReasons'] == expected
+    assert 'Private source' not in json.dumps(result)
+    assert result['effects'] == []

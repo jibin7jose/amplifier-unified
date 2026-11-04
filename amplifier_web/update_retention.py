@@ -219,11 +219,24 @@ def _recorded_cache(source, tracked):
         return subprocess.check_output(['git', '--no-optional-locks', *args],
                                        cwd=source, stderr=subprocess.DEVNULL)
     try:
-        commit = json.loads((source / '.amplifier_cache_meta.json').read_text()).get('commit', '')
+        metadata = json.loads((source / '.amplifier_cache_meta.json').read_text())
+        commit = metadata.get('commit', '')
         if (not re.fullmatch(r'(?:[a-f0-9]{40}|[a-f0-9]{64})', commit)
-                or git('rev-parse', 'HEAD').decode().strip() != commit
-                or not git('for-each-ref', '--format=%(refname)', '--contains', commit, 'refs/remotes')):
+                or git('rev-parse', 'HEAD').decode().strip() != commit):
             return False
+        if not git('for-each-ref', '--format=%(refname)', '--contains', commit, 'refs/remotes'):
+            # The updater fetches URL + immutable SHA then checks out detached;
+            # Git records that download in FETCH_HEAD without a remote ref.
+            fetch = source / '.git/FETCH_HEAD'
+            url = metadata.get('git_url')
+            if (not isinstance(url, str) or not url or any(c in url for c in '\t\r\n')
+                    or not (source / '.git').is_dir() or (source / '.git').is_symlink()
+                    or not fetch.is_file() or fetch.is_symlink() or fetch.stat().st_size > 16384):
+                return False
+            # Git's fetch receipt removes these suffixes from its display URL.
+            fetched_url = url.rstrip('/').removesuffix('.git')
+            if f"{commit}\t\t'{commit}' of {fetched_url}" not in fetch.read_text().splitlines():
+                return False
         tree = {}
         for entry in git('ls-tree', '-rz', '--full-tree', commit).split(b'\0'):
             if not entry:
@@ -270,6 +283,30 @@ def _recorded_cache(source, tracked):
         return False
 
 
+def _build_source(source, name, tracked):
+    """A build/lib file is disposable only as an exact tracked-source copy."""
+    relative = Path(name)
+    if relative.is_absolute() or '..' in relative.parts or relative.parts[:2] != ('build', 'lib'):
+        return False
+    suffix = Path(*relative.parts[2:])
+    for candidate in (suffix, Path('src') / suffix):
+        if candidate.as_posix() not in tracked:
+            continue
+        paths = (source / relative, source / candidate)
+        if not all(path.is_file() and not any(part.is_symlink() for part in (path, *path.parents)
+                                             if part != source and source in part.parents) for path in paths):
+            continue
+        if paths[0].stat().st_size != paths[1].stat().st_size:
+            continue
+        with paths[0].open('rb') as copy, paths[1].open('rb') as original:
+            while chunk := copy.read(1024 * 1024):
+                if chunk != original.read(len(chunk)):
+                    break
+            else:
+                return True
+    return False
+
+
 def _generated_bytecode(source, name, tracked):
     """Classify disposable import caches, never load or execute their payload.
 
@@ -287,7 +324,8 @@ def _generated_bytecode(source, name, tracked):
     cached = source / relative
     original = cached.parent.parent / (match[1] + '.py')
     try:
-        if original.relative_to(source).as_posix() not in tracked:
+        original_name = original.relative_to(source).as_posix()
+        if original_name not in tracked and not _build_source(source, original_name, tracked):
             return False
         for file in (cached, original):
             if not file.is_file():
@@ -385,6 +423,7 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
     removed, retained, checked = 0, 0, 0
     candidates = []
     inspected_protected = set()
+    retention_reasons = {}
     complete = True
     deadline = time.monotonic() + PASS_SECONDS
     def remaining(limit):
@@ -397,6 +436,7 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
             ('generationCursor', '_retention_cursor'), ('retiredCursor', '_retired_cursor'))
             if getattr(manager, attribute, None)}
         return {'removed': removed, 'retained': retained, **cursors,
+                **({'retentionReasons': retention_reasons} if retention_reasons else {}),
                 **({'candidates': candidates, 'protectedIds': sorted(inspected_protected), 'complete': complete and not reason} if inspect_only else {}),
                 **({'reason': reason} if reason else {})}
     prior = manager.service.state['updates'].get('storage', {})
@@ -437,7 +477,8 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
             return result('Storage maintenance deferred while an update is pending.')
         if checked >= MAX_CANDIDATES or time.monotonic() >= deadline:
             return result('Storage maintenance reached its batch limit; remaining storage was kept.')
-        manager._retention_cursor = folder.name
+        if selected is None:
+            manager._retention_cursor = folder.name
         if selected is not None and folder.name not in selected:
             continue
         marker = folder / "validated.json"
@@ -449,6 +490,7 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
             retained += 1
             inspected_protected.add(folder.name)
             continue
+        reason_code = 'unverified_generation'
         try:
             marker_text = marker.read_text()
             data = json.loads(marker_text)
@@ -472,6 +514,7 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
             measured = await _probe('measure', {'paths': paths}, timeout=remaining(INSPECTION_SECONDS))
             await verify_generation(project, folder, timeout=remaining(INSPECTION_SECONDS))
             verified_graph = json.loads(graph_text)
+            reason_code = 'unverified_source'
             caches = []
             for meta in (folder / "foundation/cache").rglob(
                 ".amplifier_cache_meta.json"
@@ -500,6 +543,7 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
                 extra_names = [os.fsdecode(name) for name in extras.split(b'\0')
                                if name and name != b'.amplifier_cache_meta.json']
                 if local_commits or changes:
+                    reason_code = 'local_source_changes'
                     raise ValueError("Local changes retained")
                 if extra_names:
                     tracked_paths = await process('git', 'ls-files', '-z', cwd=source,
@@ -508,9 +552,13 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
                     caches.append({'source': str(source), 'names': extra_names, 'tracked': tracked,
                                    'installed': _verified_cache(source, verified_graph)})
             if caches:
-                if not await _probe('bytecode', {'caches': caches},
-                                    timeout=remaining(INSPECTION_SECONDS)):
+                proof = await _probe('bytecode', {'caches': caches}, timeout=remaining(INSPECTION_SECONDS))
+                if proof is not True:
+                    reason_code = (proof.get('reasonCode') if isinstance(proof, dict) else None)
+                    if reason_code not in {'unverified_source', 'unverified_generated_files'}:
+                        reason_code = 'unverified_generated_files'
                     raise ValueError("Unknown generated files retained")
+            reason_code = 'changed_during_inspection'
             # Activation may have won while inspection yielded. No cleanup
             # lock is held during qualification, Git inspection or hashing.
             if maintenance_blocked(manager):
@@ -576,6 +624,7 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
         ):
             retained += 1
             inspected_protected.add(folder.name)
+            retention_reasons[folder.name] = reason_code
     return result()
 
 
@@ -591,11 +640,17 @@ if __name__ == '__main__':
         verify_recorded(Path(values['project']), Path(values['folder']))
         print('null')
     elif sys.argv[1] == 'bytecode':
-        caches = values['caches']
-        print(json.dumps(all(
-            (row['installed'] or _recorded_cache(Path(row['source']), set(row['tracked'])))
-            and all(_generated_bytecode(Path(row['source']), name, set(row['tracked'])) for name in row['names'])
-            for row in caches)))
+        result = True
+        for row in values['caches']:
+            source, tracked = Path(row['source']), set(row['tracked'])
+            if not (row['installed'] or _recorded_cache(source, tracked)):
+                result = {'reasonCode': 'unverified_source'}
+                break
+            if not all(_generated_bytecode(source, name, tracked) or _build_source(source, name, tracked)
+                       for name in row['names']):
+                result = {'reasonCode': 'unverified_generated_files'}
+                break
+        print(json.dumps(result))
     elif sys.argv[1] == 'runner':
         from .managed_runner_updates import runtime_identity
         if runtime_identity(values['installation']) != values['runtime']:
