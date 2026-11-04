@@ -1,8 +1,9 @@
 import {messageTime} from './message-time';
 import {MessageInteractions,QuoteCard,QuotedDocument,AssistantReactions} from './message-interactions';
 import {MessageDelivery} from './message-delivery';
-import {DetailText,readDetail} from './conversation-detail';
-import React,{memo,useEffect,useMemo,useRef,useState} from 'react';
+import {readDetail} from './conversation-detail';
+import React,{useEffect,useRef,useState} from 'react';
+import {MessageText} from './message-text';
 import {Copy,Check,Pencil,GitBranch,ArrowUp,AlertCircle,RotateCcw,LoaderCircle} from 'lucide-react';
 import {AttachmentStrip} from './chat-controls';
 import {usePendingMessageEdit} from './pending-message-edits';
@@ -34,14 +35,6 @@ export function completedTurnEnds(session){
  }
  return ends;
 }
-
-// Controls still observe every current permission, edit and delivery state.
-// Only text rendering is isolated, with all of its inputs explicit.
-const MessageText=memo(function MessageText({text,reference,role,sessionId,messageId,workspace,act,displayOnly}){
- const writingContext=useMemo(()=>role==='assistant'&&!displayOnly?{sessionId,messageId,act}:undefined,[role,sessionId,messageId,act,displayOnly]);
- const fileContext=useMemo(()=>role==='assistant'?{sessionId,workspace,act}:undefined,[role,sessionId,workspace,act]);
- return <DetailText text={text} reference={reference} markdown userContent={role==='user'} automatic={role==='assistant'} writingContext={writingContext} fileContext={fileContext}/>;
-});
 
 export function StreamingMessage({session,state,embedded=false}){
  if(!session?.streaming)return null;

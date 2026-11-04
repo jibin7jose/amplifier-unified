@@ -96,6 +96,7 @@
 #amp-one .a-delegate-missing{padding:10px 12px;border:1px solid var(--a-line);border-radius:7px}
 #amp-one .a-delegate-missing>header{font-size:var(--a-text-sm,13px);color:var(--a-muted)}
 #amp-one .a-work-delegate-status{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:8px 0}
+#amp-one .a-work-delegate-status>.a-caption{margin:0}
 #amp-one .a-work-delegate-status>.a-delegate-details{flex-basis:100%}
 @media(max-width:600px){
  /* The narrow operation header is a grid (chat-presentation.css). Give the

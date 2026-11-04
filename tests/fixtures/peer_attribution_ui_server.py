@@ -191,7 +191,9 @@ async def main():
         # Synthetic host transport evidence, not a model start or caller-forged
         # generation. Notify retains an input without admitting a runtime turn.
         await generation(service, sender, "fixture-source-generation", ["fixture-source-input"])
-        peer_text = "Exact **α** 🐈\n\n```text\nunchanged  \n```\n" + "\nLong peer detail retained exactly. " * 150
+        specimen = ("Exact **α** 🐈\n\nSecond paragraph with a source\nsoft line break.\n\n"
+                    "- First item\n- Second item\n\n```text\nunchanged  \n```\n")
+        peer_text = specimen + "\nLong peer detail retained exactly. " * 150
         async def send(identity, origin):
             args = {
                 "sessionId": recipient["id"], "senderSessionId": sender["id"],
@@ -205,6 +207,8 @@ async def main():
         agent = await send("visible-peer", "agent")
         human = await send("human-forward", "ui")
         quoted = service._message(recipient, "user", "Sent by Amplifier from another chat", inputId="literal-quote")
+        ordinary = service._message(recipient, "user", specimen, inputId="markdown-parity-user")
+        assistant = service._message(recipient, "assistant", specimen)
         forged = service._message(recipient, "user", "Unverified peer", "peer", inputId="forged",
                                   peerEnvelope={"senderSessionId": sender["id"]},
                                   attribution={"caption": "Sent by Amplifier from another chat"})
@@ -236,6 +240,7 @@ async def main():
                 "peerTextDigest": hashlib.sha256(peer_text.encode()).hexdigest(), "peerTextLength": len(peer_text.encode()),
                 "agent": agent["messageId"], "human": human["messageId"], "older": older["messageId"],
                 "quote": quoted["id"], "forged": forged["id"], "notification": notification['messageId'],
+                "ordinaryMarkdown": ordinary["id"], "assistantMarkdown": assistant["id"],
                 "installedStatic": INSTALLED, "backendFile": str(Path(server.__file__).resolve())})
         app.router.add_get("/api/fixture/peerFacts", facts)
         async def react(request):
