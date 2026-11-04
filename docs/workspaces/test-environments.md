@@ -180,10 +180,16 @@ browser tests and real Docker qualification remain separate evidence.
 not a retry of the test. It takes the resource identity and revision, a new stable
 request identity, and `previousRequestId` naming this owner's confirmed failure
 before teardown. The prior receipt must explicitly record no removal effect,
-and either the preservation or verification phase with a safe failure code, or
+and either the preservation or verification phase with a safe failure code
+(including `preserving` / `retention_storage` when retention space was unavailable), or
 the `preparing` phase and `cleanup_helper_not_started` code proving that no
 cleanup helper started. Once `Popen` returns, a lost response or helper process
 failure remains uncertain; it is not covered by this preflight exception.
+A local refusal before the new cleanup helper is invoked stays a failed request;
+retained dependency preparation from an earlier start does not make it an unknown
+removal. Known local refusal boundaries have bounded reason codes; arbitrary
+exception details are not published. This does not settle any earlier UNKNOWN
+receipt or change its ownership.
 This adds no automatic replay or new automatic continuation.
 Stopped inventory alone does not qualify. An unresolved removal or cleanup
 executor, including an unbound journal entry, blocks a new destructive identity.

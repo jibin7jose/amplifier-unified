@@ -89,6 +89,7 @@ async def test_real_failed_helper_launch_can_continue_without_rewriting_request(
 @pytest.mark.parametrize('phase,code', [
     ('preparing', 'cleanup_helper_not_started'),
     ('preserving', 'preservation_failed'),
+    ('preserving', 'retention_storage'),
     ('verifying', 'archive_verification_failed'),
 ])
 @pytest.mark.parametrize('boundary', ['journal', 'projection'])
@@ -122,3 +123,68 @@ async def test_host_persistence_failure_preserves_returned_predispatch_receipt(
     assert failed['request']['result'] == refusal
     assert failed['resource']['status'] == 'stopped'
     assert 'private' not in json.dumps(failed['request'])
+
+
+@pytest.mark.parametrize('phase,effect', [('verifying', False), ('removing', False),
+                                          ('preserving', True), ('preserving', None)])
+async def test_storage_failure_needs_exact_predispatch_proof(app, backend, monkeypatch, phase, effect):
+    row = (await start(app))['resource']
+    row = (await act(app, 'stop', row, 'storage-stop'))['resource']
+    monkeypatch.setattr(owner, 'invoke', lambda *a: {
+        'ok': False, 'status': 'stopped', 'phase': phase,
+        'code': 'retention_storage', 'effectAdmitted': effect})
+    failed = await act(app, 'remove', row, 'unproven-storage')
+    original = failed['request']
+    before = owner.get(app.data_dir, row['sessionId'], row['id'])
+    monkeypatch.setattr(owner, 'invoke', lambda *a: pytest.fail('unproven cleanup invoked'))
+    if effect is not False:
+        from amplifier_web.service import AppError
+        with pytest.raises(AppError, match='original removal remains unresolved'):
+            await act(app, 'finishCleanup', failed['resource'], 'refused-storage',
+                      previousRequestId='unproven-storage')
+    else:
+        refused = await act(app, 'finishCleanup', failed['resource'], 'refused-storage',
+                            previousRequestId='unproven-storage')
+        assert refused['request']['state'] == 'failed'
+    assert app.operations.requests.read(row['sessionId'], 'unproven-storage') == original
+    assert owner.get(app.data_dir, row['sessionId'], row['id']) == before
+
+
+async def test_cleanup_helper_loss_with_retained_preparation_remains_unknown(app, backend, monkeypatch):
+    row = (await start(app))['resource']
+    row = (await act(app, 'stop', row, 'unknown-stop'))['resource']
+    row = owner.save(app.data_dir, owner.get(app.data_dir, row['sessionId'], row['id']),
+                     preparationPending=True)
+    calls = []
+    def lost(*args):
+        calls.append('remove')
+        raise TimeoutError('helper outcome is unavailable')
+    monkeypatch.setattr(owner, 'invoke', lost)
+    unknown = await act(app, 'remove', row, 'lost-helper')
+    assert calls == ['remove']
+    assert unknown['request']['state'] == 'outcome_unknown'
+    assert unknown['request']['result'].get('effectAdmitted') is not False
+    assert owner.get(app.data_dir, row['sessionId'], row['id'])['preparationPending'] is True
+
+
+@pytest.mark.parametrize('message,code', [
+    ('The local cleanup executor changed during inspection. No removal was started.', 'cleanup_executor_changed'),
+    ('The fresh cleanup inspection changed before admission.', 'cleanup_qualification_changed'),
+    ('The original removal remains unresolved. Inspect its retained evidence; a new request cannot repeat it.', 'original_cleanup_unresolved'),
+    ('The original removal admission cannot be rebound or replayed.', 'cleanup_admission_changed'),
+    ('The approved backend changed. Restore its exact configuration before managing this environment.', 'backend_configuration_changed'),
+    ('The retained environment directory changed; no external action was attempted.', 'environment_directory_changed'),
+    ('private /source/path or credential-like detail', 'cleanup_admission_refused'),
+])
+async def test_unstarted_cleanup_has_bounded_refusal_reason(app, backend, monkeypatch, message, code):
+    row = (await start(app))['resource']
+    row = (await act(app, 'stop', row, 'reason-stop'))['resource']
+    def refuse(*args):
+        raise ValueError(message)
+    monkeypatch.setattr(owner.recovery, 'bind_configuration', refuse)
+    result = await act(app, 'remove', row, 'local-refusal')
+    assert result['request']['state'] == 'failed'
+    assert result['request']['result']['effectAdmitted'] is False
+    assert result['request']['result']['code'] == code
+    assert message not in json.dumps(result['request'])
+    assert [name for name, _ in backend] == ['prepare', 'start', 'stop']

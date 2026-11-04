@@ -1457,3 +1457,21 @@ print(json.dumps({'uid': os.getuid(), 'gid': os.getgid(), 'groups': os.getgroups
         assert observed['job']['state'] == 'passed', observed
         assert json.loads(observed['result']['stdout']) == proof
         assert sum(shlex.split(command)[4] == 'job_start' for command in dispatched) == 1
+
+
+@pytest.mark.parametrize('action', ['remove', 'finishCleanup'])
+def test_retention_storage_refusal_precedes_exports_and_removal(library, tmp_path, monkeypatch, action):
+    _, calls = library
+    value = payload(tmp_path, action)
+    if action == 'remove':
+        retain_prepared_archive_contract(value)
+    monkeypatch.setattr(worker.shutil, 'disk_usage', lambda root: SimpleNamespace(free=0))
+    monkeypatch.setattr(worker, 'docker_reconcile', lambda *a: {
+        'status': 'stopped', 'observation': {'ownership': 'matched'}})
+    result = removal_main(monkeypatch, value)
+    assert result['code'] == 'retention_storage' and result['phase'] == 'preserving'
+    assert result['effectAdmitted'] is False and result['status'] == 'stopped'
+    assert result['removal']['destroyEffect'] == 'not_dispatched'
+    assert result['removal']['phase'] == 'prepare-retention'
+    assert not worker.removal_directory(value).exists()
+    assert not any(name in {'export', 'destroy'} for name, *_ in calls)

@@ -121,15 +121,23 @@ async def test_fresh_cleanup_refuses_foreign_current_owner(app, backend, library
     assert app.operations.requests.read(raw['sessionId'], original['requestId']) == original
 
 
-async def test_fresh_cleanup_rechecks_executor_at_effect_boundary(app, backend, library, monkeypatch):
+@pytest.mark.parametrize('preparation_pending', [False, True])
+async def test_fresh_cleanup_rechecks_executor_at_effect_boundary(
+        app, backend, library, monkeypatch, preparation_pending):
     raw, original = await interrupted_cleanup(app, monkeypatch)
     local_machine(monkeypatch)
     invoked, calls = backend_cleanup(monkeypatch, library, app)
+    if preparation_pending:
+        raw = owner.save(app.data_dir, raw, preparationPending=True)
+    before = owner.get(app.data_dir, raw['sessionId'], raw['id'])
     checks = iter([True, True, False])
     monkeypatch.setattr(fresh, 'local_executor_quiescent', lambda *a: next(checks))
     failed = await act(app, 'finishCleanup', owner.public(app.data_dir, raw), 'executor-changed',
                        previousRequestId=original['requestId'])
     assert failed['request']['state'] == 'failed'
+    assert failed['request']['result']['code'] == 'previous_cleanup_active'
+    assert failed['request']['result']['effectAdmitted'] is False
+    assert owner.get(app.data_dir, raw['sessionId'], raw['id']) == before
     assert invoked == ['reconcile'] and calls == []
     assert app.operations.requests.read(raw['sessionId'], original['requestId']) == original
 

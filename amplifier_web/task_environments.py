@@ -292,6 +292,27 @@ def cleanup_not_started(row):
             'message': 'Cleanup could not start. The stopped environment and its files are unchanged. Inspect the test machine configuration, then continue cleanup with a new request.'}
 
 
+def cleanup_refusal_code(exc):
+    """Expose known admission boundaries without publishing arbitrary diagnostics."""
+    return {
+        'The environment changed. Inspect its current revision.': 'resource_revision_changed',
+        'The previous local cleanup process may still be active. Keep its original receipt and inspect again after it finishes.': 'previous_cleanup_active',
+        'Fresh cleanup requires the exact original stopped environment. No removal was started.': 'stopped_owner_unverified',
+        'The fresh cleanup container identities are unavailable. No removal was started.': 'container_identity_unavailable',
+        'The local cleanup executor changed during inspection. No removal was started.': 'cleanup_executor_changed',
+        'The fresh cleanup inspection changed before admission.': 'cleanup_qualification_changed',
+        'The original cleanup owner or receipt changed.': 'original_cleanup_changed',
+        'The original removal remains unresolved. Inspect its retained evidence; a new request cannot repeat it.': 'original_cleanup_unresolved',
+        'The original removal admission cannot be rebound or replayed.': 'cleanup_admission_changed',
+        'Choose this environment’s confirmed pre-removal failure.': 'prior_cleanup_unverified',
+        'The previous cleanup does not establish a safe pre-removal failure.': 'prior_cleanup_unverified',
+        'The task moved or stopped before environment admission.': 'task_authority_changed',
+        'The approved test environment configuration changed.': 'backend_configuration_changed',
+        'The approved backend changed. Restore its exact configuration before managing this environment.': 'backend_configuration_changed',
+        'The retained environment directory changed; no external action was attempted.': 'environment_directory_changed',
+    }.get(str(exc), 'cleanup_admission_refused')
+
+
 def invoke(config, home, row, action, args, *, _qualification=False):
     """Bound helper output and lifetime; killing a helper is not command cancellation."""
     try:
@@ -712,6 +733,7 @@ def effect(app, row, action, args, config, request, admit, policy_admit=None):
             known_refusal = isinstance(failure, dict) and (
                 failure.get('phase') in {'preserving', 'verifying'}
                 and failure.get('code') in {'preservation_failed', 'archive_verification_failed'}
+                or failure.get('phase') == 'preserving' and failure.get('code') == 'retention_storage'
                 or failure.get('phase') == 'preparing' and failure.get('code') == 'cleanup_helper_not_started')
             if not legacy and not fresh_cleanup and (not known_refusal or failure.get('effectAdmitted') is not False):
                 raise ValueError('The previous cleanup does not establish a safe pre-removal failure.')
@@ -879,9 +901,15 @@ def effect(app, row, action, args, config, request, admit, policy_admit=None):
             result.get('ok') is True and result.get('status') == 'removed'
             or isinstance(result.get('removal'), dict) and result['removal'].get('destroyEffect') == 'confirmed'
             or result.get('code') == 'receipt_unavailable' and result.get('destroyEffect') == 'confirmed'))
-        request = app.operations.requests.finish(request, 'outcome_unknown' if admitted or row.get('preparationPending') else 'failed', resourceId=row['id'],
+        # Retained preparation belongs to the environment's earlier start. It
+        # cannot make a new, locally refused cleanup an unknown removal. Once
+        # a helper or guest-result cleanup begins, preserve existing uncertainty.
+        cleanup_not_started = action in {'remove', 'finishCleanup'} and not admitted and result is None
+        uncertain = admitted or (row.get('preparationPending') and not cleanup_not_started)
+        request = app.operations.requests.finish(request, 'outcome_unknown' if uncertain else 'failed', resourceId=row['id'],
             result={'ok': False, 'status': 'not-started' if not admitted else 'unknown',
                     'preparationCleanup': preparation_cleanup,
+                    **({'effectAdmitted': False, 'code': cleanup_refusal_code(exc)} if cleanup_not_started else {}),
                     **({'removal': {'version': 1, 'phase': 'host-persistence',
                                     'code': 'metadata_unconfirmed', 'destroyEffect': 'confirmed'}} if confirmation else {}),
                     'message': 'Removal did not complete; inspect the original retained evidence.' if action in {'remove', 'finishCleanup'} else str(exc)[:500]},
