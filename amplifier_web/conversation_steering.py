@@ -7,6 +7,38 @@ from .message_delivery import find_message
 from .update_drain import UpdateDeferred
 
 
+def recover_failed_generation(service, session, boundary):
+    """Settle lost routing authority only while holding the native writer lease.
+
+    Called for a new human message, under the service lock. Failure/idle state
+    alone is not absence evidence, and no old input or native job is replayed.
+    The caller holds ``boundary`` through its durable command publication.
+    """
+    from .service import AppError, settle_stream
+    from .execution import interrupt_owned_workers, interrupt_unfinished
+    active = session.get('collaborationGeneration') or {}
+    if (session.get('status') != 'error' or not session.get('failure')
+            or not active.get('id') or active.get('terminal')):
+        return None
+    prove = getattr(service.runtime, 'stopped_boundary', None)
+    if not callable(prove):
+        raise AppError('The failed run has not been confirmed stopped. Inspect its recovery before sending new work.', 409)
+    try:
+        proof = boundary.enter_context(prove(session))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise AppError(f'Could not confirm that the failed run has stopped. {exc}', 409) from None
+    settle_stream(session)
+    interrupt_unfinished(session)
+    # Only lifecycle rows bound by this root's native pipe carry this identity.
+    # Independent chats and legacy unbound rows retain their own authority.
+    for owner in {worker['runtimeOwnerId'] for worker in session.get('workers', [])
+                  if worker.get('runtimeOwnerId')}:
+        interrupt_owned_workers(session, owner)
+    active.update(terminal=True, completed=False,
+                  detail='Native writer absence confirmed before a new human message. Prior outcomes remain unconfirmed.')
+    return {**proof, 'generationId': active['id']}
+
+
 def target(session, expected=None, allow_next_turn=False):
     from .service import AppError
     active = session.get('collaborationGeneration') or {}

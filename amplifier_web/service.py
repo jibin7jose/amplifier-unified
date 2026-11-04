@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 import hashlib
 import json
 import logging
@@ -2549,7 +2549,7 @@ class AppService:
             except (ValueError, OSError) as exc:
                 raise AppError(str(exc), 409) from None
         pending = []
-        async with self.lock:
+        async with self.lock, AsyncExitStack() as recovery_boundary:
             if action == 'session.select' and 'peerPreview' in args:
                 self.peer_preview.select(args, origin)
                 self.canvas_views.guard_transition(action, args)
@@ -3330,11 +3330,10 @@ class AppService:
                 if ('expectedConfigurationRevision' in args
                         and args['expectedConfigurationRevision'] != session.get('nextMessageRevision', 0)):
                     raise AppError('Next message settings changed. Review them before sending.', 409)
-                from .conversation_steering import target as steering_target
+                from .conversation_steering import target as steering_target, recover_failed_generation
                 # A run ending before delivery must not turn this correction
                 # into new work under a policy that is awaiting replacement.
                 allow_next_turn = args.get('allowNextTurn') is True and not session.get('fileAccessPending')
-                target_generation = None if update_message else steering_target(session, args.get('expectedGenerationId'), allow_next_turn)
                 # Whitespace can carry Markdown meaning; validate blank input
                 # separately without changing the saved or delivered message.
                 text = args["text"]
@@ -3356,6 +3355,9 @@ class AppService:
                     text = 'Please review the attached files.'
                 if not self.runtime:
                     raise AppError("The Amplifier runtime is unavailable.")
+                stopped_generation = (recover_failed_generation(self, session, recovery_boundary)
+                    if origin == 'ui' and not update_message and args.get('expectedGenerationId') is None else None)
+                target_generation = None if update_message else steering_target(session, args.get('expectedGenerationId'), allow_next_turn)
                 input_id = command_id or str(uuid.uuid4())
                 from .chat_navigation import recent_activity, prepare_human_post, promote_human_post
                 # Origin is chosen by the host adapter, never role/via/action args.
@@ -3875,6 +3877,8 @@ class AppService:
                 receipt['actor'] = self.handoffs.actor(handoff)
             if action == 'conversation.send':
                 receipt.update(delivery=message['delivery']['status'], sessionId=session['id'], inputId=input_id)
+                if stopped_generation is not None:
+                    receipt['stoppedGenerationRecovery'] = stopped_generation
                 if message.get('navigationPost'):
                     receipt['navigationPost'] = copy.deepcopy(message['navigationPost'])
             if action == 'conversation.retry':receipt['result']={'delivery':'sending', 'message':'The saved message is being checked and sent. No additional resend was started.'}

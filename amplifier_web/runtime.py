@@ -1014,6 +1014,12 @@ class RuntimeManager:
                     **({'phase': 'worker_startup'} if not row['ready'].done() else {})})
             if not row["ready"].done():
                 row["ready"].set_exception(RuntimeError(error))
+            # A reader/publication failure can skip the normal EOF path even
+            # after the exact process has exited. Settle its routing authority
+            # through the same owner-bound event; an exception alone is not
+            # process-death evidence and must never terminate surviving work.
+            if row['process'].returncode is not None:
+                await self._execution_ended(sid, row, 'stopped' if row['closing'] else 'interrupted')
         finally:
             try:
                 await finish_owned(lines.close())

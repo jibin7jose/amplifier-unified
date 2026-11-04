@@ -56,6 +56,22 @@ until a new generation or terminal outcome replaces it.
 
 ## Evidence still needed for the original disconnect
 
+When a reader failure coincides with confirmed exit of its exact process, the
+existing `runtime.ended` event settles that process's routing and execution
+ownership. A reader error alone never establishes exit. Reader-side settlement
+requires successful error publication and an already
+known process exit; a disk-full publication failure can still leave stale routing
+for the explicit, lease-protected recovery below. For an older failed root
+whose process row is already absent, a new human message without an explicit
+generation target may settle stale generation routing only after acquiring the
+existing native writer lease. The service holds that lease through the command's
+durable publication. Busy/preparing workers, unresolved placement or remote
+ownership refuse recovery. Earlier errors, job effects and UNKNOWN deliveries
+remain unchanged; only the new message is sent. Explicit generation-bound
+corrections never become new work. `tests/test_failed_generation_send.py` covers
+both the real process-exit boundary and the row-absent service recovery, including
+lease exclusion, refusal and duplicate-command cases.
+
 The public report shows an open browser event stream and a stopped chat runtime.
 Those are capture-time facts; its older failure does not establish browser
 connectivity at the time of failure or explain the latest input. The runtime
