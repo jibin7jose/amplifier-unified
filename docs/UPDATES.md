@@ -92,6 +92,14 @@ installation. Explicit pins and local selections are not permission to refresh
 their sources. Final installed-source verification remains mandatory; a failed
 comparison reports bounded checked and observed commit IDs when available.
 
+The Foundation package batch uses `uv pip install --no-sources` without
+`--group`. Its source comparison therefore excludes contributor dependency
+groups (including default/included groups and legacy uv dev dependencies) before
+interpreting their pins, markers or extras. Project dependencies, optional
+dependencies and explicit source restrictions still participate; no manifest or
+checked selection is rewritten. Generic project sync/freeze policy keeps its
+existing group rules.
+
 Application activation also verifies that the running host and the executable on PATH belong to the same uv tool installation. A development checkout or a different launcher cannot replace another installed tool. Candidate and installed-package probes use isolated Python imports, reject packages outside that environment, and cannot accidentally validate a checkout from the launch directory or PYTHONPATH. The installed package is checked again after replacement; a failed check leaves the running host up for recovery. The restart helper uses the separate validated environment, and new work remains blocked until restart. It preserves the effective bind addresses, public origins, TLS certificate/key, session lifetime, port, workspace and data directory without writing CLI overrides into saved server settings. The replacement host acknowledges the pending restart only after an authenticated HTTP request to its live listener confirms the expected version, exact installed Git revision, data directory identity, and a different process instance. Package probes and application construction alone cannot acknowledge a restart. Smart Tool servers are reported disconnected after restart and can be reconnected explicitly. The recovery record stores the actual prior installation source when available, rather than assuming an older release tag exists. Repeated installation requests reuse a pending validated generation. Cache symlinks remain symlinks while staging; external workspace trees are not copied into the update.
 
 ## Optional app features

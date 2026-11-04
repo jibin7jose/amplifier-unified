@@ -33,7 +33,7 @@ def carried_origin(policy, previous=None):
                   **({key: old[key] for key in ('manifestSha256', 'originalRef', 'resolution') if key in old} if valid else {}))
 
 
-def _declaration_evidence(content, *, prepared_local_sources=()):
+def _declaration_evidence(content, *, prepared_local_sources=(), runtime_batch=False):
     """Parse source identity once; selection and restrictions are distinct."""
     from .runtime_environment import package_name
     data = tomllib.loads(content.decode())
@@ -90,14 +90,18 @@ def _declaration_evidence(content, *, prepared_local_sources=()):
     for group in data.get('project', {}).get('optional-dependencies', {}).values():
         for value in group:
             requirement(value)
-    # The app's sync path uses defaults, without --all-groups/--extra. Explicit
-    # default groups prove selection; no marker environment or extras are guessed.
-    defaults = uv.get('default-groups', [])
-    defaults = set(defaults) if isinstance(defaults, list) and all(isinstance(name, str) for name in defaults) else set()
-    for name, group in data.get('dependency-groups', {}).items():
-        for value in group:
-            requirement(value, selected=name in defaults)
+    # Foundation installs this explicit package batch with uv pip install, not
+    # uv sync or --group. Contributor groups cannot select or constrain it,
+    # including through their markers/extras. Generic sync policy stays intact.
+    if not runtime_batch:
+        defaults = uv.get('default-groups', [])
+        defaults = set(defaults) if isinstance(defaults, list) and all(isinstance(name, str) for name in defaults) else set()
+        for name, group in data.get('dependency-groups', {}).items():
+            for value in group:
+                requirement(value, selected=name in defaults)
     for collection in ('override-dependencies', 'constraint-dependencies', 'build-constraint-dependencies', 'dev-dependencies'):
+        if runtime_batch and collection == 'dev-dependencies':
+            continue
         for value in uv.get(collection, []):
             requirement(value)  # Overrides constrain resolution; they do not select a package.
     for name, source in uv.get('sources', {}).items():
@@ -130,20 +134,23 @@ def _declaration_evidence(content, *, prepared_local_sources=()):
     return found, eligible, restrictions
 
 
-def declarations(content):
+def declarations(content, *, runtime_batch=False):
     """Recover only unconditional selected policy, never optional-source authority."""
-    found, eligible, _ = _declaration_evidence(content)
+    found, eligible, _ = _declaration_evidence(content, runtime_batch=runtime_batch)
     return {name: value for name, value in found.items() if value is not None and name in eligible}
 
 
-def constraint_declarations(content, *, prepared_local_sources=()):
+def constraint_declarations(content, *, prepared_local_sources=(), runtime_batch=False):
     """All source restrictions, including unselected optional/dev declarations.
 
     An optional compatible declaration does not select a package, nor does its
     lack of selection make its identity unknown. Keep every alternative so a
     later matching declaration cannot erase a pin, fork or unknown restriction.
+    runtime_batch matches Foundation's explicit pip-install batch, which never
+    installs contributor dependency groups; it is not generic sync policy.
     """
-    return _declaration_evidence(content, prepared_local_sources=prepared_local_sources)[2]
+    return _declaration_evidence(content, prepared_local_sources=prepared_local_sources,
+                                 runtime_batch=runtime_batch)[2]
 
 
 def owned_cache_path(home, cache_root, installed, subdirectory):
