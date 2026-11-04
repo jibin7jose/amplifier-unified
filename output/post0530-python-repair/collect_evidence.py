@@ -1,11 +1,16 @@
-"""Assemble exact retained synthetic check evidence; never rerun a check.
+"""Assemble public projections of retained evidence; never rerun a check.
 
-Usage: python collect_evidence.py ORIGINAL_TRIAGE RESOURCE_ROOT
+Usage: python collect_evidence.py ORIGINAL_TRIAGE RESOURCE_ROOT PRIVATE_RUN_BINDINGS
+The private JSON maps baseline/candidate/final to resourceId/requestId/operationId.
+Keep that map and unmodified receipts outside Git. Public labels are not locators.
+Raw hashes identify original bytes; sanitized file hashes identify public copies.
 Refuses overwriting any generated file. Archives and original evidence are read-only.
 """
+import copy
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -16,9 +21,16 @@ SOURCE_COMMIT = '6e20192d6fd07127ac5478897e1b68abcbc28f7d'
 SOURCE_TREE = 'a48e1b2f975189ba28e311187e1bfd7bf9fcde0e'
 ORIGINAL_SHA = '9708bb72ebfb6721f935b0c3b9da697229d6f06ebe11c23c6ca6c14632196abb'
 RUNS = {
-    'baseline': ('de84bea4-0cc7-4724-813d-806d75b3f35c', 'post0530-python-baseline-v1', '33234049-73db-5b7c-955d-7e3d5d55ca22', 'failed'),
-    'candidate': ('94abaeee-83ba-4467-a8bb-dfaf9cf9a9a7', 'post0530-python-candidate-v1', '03407ece-aba1-5d24-8411-e54fb3581a0f', 'passed'),
-    'final': ('f985fdae-c45d-4571-a965-ae071a1d62e7', 'post0530-python-final-v1', 'a7a3d5c8-280f-54d9-8c70-a033c8d92919', 'passed'),
+    'baseline': 'failed',
+    'candidate': 'passed',
+    'final': 'passed',
+}
+PUBLIC_EVIDENCE = {
+    'projection': 'Private host paths, operational mappings and guest hostnames replaced by neutral labels.',
+    'labelsAreLocators': False,
+    'originals': 'Unmodified receipts and published files retained privately outside Git.',
+    'hashes': 'Archive, inventory and cleanup hashes refer to private originals. retainedFiles hashes refer to public copies; originalSha256 records any changed raw file.',
+    'history': 'The earlier public commit remains in Git history; current-tree sanitation does not remove it.',
 }
 BASE_TESTS = 'tests/test_uv_diagnostic_forms.py tests/test_directory_live_materialization.py tests/test_observation_input.py tests/test_peer_inbox_policy.py tests/test_peer_qualification.py tests/test_provider_recording.py tests/test_provider_removal_composition.py tests/test_recovery_edges.py tests/test_retained_failure_recovery.py tests/test_runtime_import_isolation.py::test_apply_settings_does_not_require_server_dependencies tests/test_runtime_progress_backpressure.py tests/test_shared_runtime_config.py tests/test_shared_settings.py tests/test_test_queue_notifications.py'
 FINAL_TESTS = 'tests/test_uv_diagnostic_forms.py tests/test_uv_diagnostic_fixture_cleanup.py tests/test_directory_live_materialization.py tests/test_history_directory_navigation.py::test_workspace_counts_archive_and_restore_without_decoding_history tests/test_observation_input.py tests/test_peer_inbox_policy.py tests/test_peer_qualification.py tests/test_provider_recording.py tests/test_provider_removal_composition.py tests/test_host_provider_sources.py tests/test_decision_accounts.py tests/test_recovery_edges.py tests/test_retained_failure_recovery.py tests/test_assignment_recovery.py tests/test_peer_resume.py tests/test_runtime_import_isolation.py::test_apply_settings_does_not_require_server_dependencies tests/test_runtime_progress_backpressure.py tests/test_shared_runtime_config.py tests/test_shared_settings.py tests/test_test_queue_notifications.py'
@@ -46,6 +58,10 @@ def digest(data):
 
 
 def save(name, data):
+    # The reviewed logs contain only synthetic fixture IDs and generic guest
+    # paths. Refuse new host-path material instead of exporting it silently.
+    if re.search(rb'/(?:home|Users)/|[A-Za-z]:[\\/]+Users[\\/]|workspace-resources|managed-worktrees', data):
+        raise ValueError('Private host location in public evidence')
     path = OUT / name
     with path.open('xb') as stream:
         stream.write(data)
@@ -69,12 +85,63 @@ def cases(raw):
     return rows, [suite.attrib for suite in root.iter('testsuite')]
 
 
-def collect(triage_path, resource_root):
+def public_junit(raw, label):
+    """Change only host metadata, preserving every result and assertion byte."""
+    return re.sub(rb'\bhostname="[^"]*"', f'hostname="{label}-guest"'.encode(), raw)
+
+
+def public_check(label, value):
+    # Allowlist receipt fields so future private metadata is not published.
+    result = {key: copy.deepcopy(value[key]) for key in
+              ('outcome', 'profile', 'command', 'timeoutSeconds', 'retainedFiles', 'cleanupReceiptSha256')}
+    result['source'] = public_source(label, value['source'])
+    result['artifactsArchive'] = {
+        **{key: value['artifactsArchive'][key] for key in
+           ('bytes', 'logicalBytes', 'sha256', 'source', 'verified')},
+        'destination': f'private-artifacts/{label}/artifacts.tar', 'id': f'{label}-guest'}
+    cleanup = value['cleanup']
+    binding = cleanup['binding']
+    result['cleanup'] = {
+        **{key: cleanup[key] for key in ('intentSha256', 'phase', 'version')},
+        'binding': {
+            **{key: binding[key] for key in ('admissionRevision', 'resourceRevision')},
+            'backendIdentity': {'backend': binding['backendIdentity']['backend'], 'daemon': 'test-daemon'},
+            'backendKey': 'test-backend', 'operationId': f'{label}-cleanup',
+            'requestId': f'{label}-remove', 'resourceId': f'{label}-resource',
+            'rootOwner': 'repair-owner', 'universeId': f'{label}-guest',
+            'snapshot': public_source(label, binding['snapshot'])}}
+    result.update(operationId=f'{label}-check', requestId=f'{label}-request',
+                  resourceId=f'{label}-resource')
+    result['junitSuites'] = [{
+        **{key: suite[key] for key in
+           ('errors', 'failures', 'name', 'skipped', 'tests', 'time', 'timestamp')},
+        'hostname': f'{label}-guest'} for suite in value['junitSuites']]
+    return result
+
+
+def public_source(label, source):
+    return {**{key: source[key] for key in
+               ('archive_bytes', 'archive_sha256', 'files', 'shallow_source',
+                'snapshot_commit', 'snapshot_tree', 'source_branch', 'source_head')},
+            'path': f'private-artifacts/{label}/source.tar'}
+
+
+def public_preparation(label, inventory, raw):
+    return {'resourceId': f'{label}-resource',
+            'inventoryPath': f'private-artifacts/{label}/preparation/inventory.json',
+            'inventorySha256': digest(raw),
+            **{key: inventory[key] for key in
+               ('python', 'lockfiles', 'pythonPackages', 'executionContract') if key in inventory}}
+
+
+def collect(triage_path, resource_root, run_bindings):
     original_bytes = triage_path.read_bytes()
     assert digest(original_bytes) == ORIGINAL_SHA
     original = json.loads(original_bytes)
-    runs, node_maps = {}, {}
-    for label, (resource_id, request, operation, outcome) in RUNS.items():
+    runs, node_maps, preparation = {}, {}, {}
+    for label, outcome in RUNS.items():
+        resource_id, request, operation = (
+            run_bindings[label][key] for key in ('resourceId', 'requestId', 'operationId'))
         resource = resource_root / resource_id
         snapshot = json.loads((resource / 'snapshot.json').read_text())
         assert digest((resource / 'source.tar').read_bytes()) == snapshot['archive_sha256']
@@ -92,7 +159,10 @@ def collect(triage_path, resource_root):
         with tarfile.open(archive) as tar:
             for suffix in ('log', 'xml'):
                 payload = tar.extractfile(f'artifacts/{label}.{suffix}').read()
-                retained.append(save(f'{label}.{suffix}', payload))
+                public = public_junit(payload, label) if suffix == 'xml' else payload
+                retained.append({**save(f'{label}.{suffix}', public),
+                                 **({'originalBytes': len(payload), 'originalSha256': digest(payload)}
+                                    if public != payload else {})})
                 if suffix == 'xml':
                     node_maps[label], counts = cases(payload)
         cleanup_path = manifests[0].parent / 'destroy-confirmed.json'
@@ -101,11 +171,13 @@ def collect(triage_path, resource_root):
         prefix = 'mkdir -p /artifacts && ' if label == 'baseline' else ''
         command = prefix + '/opt/unified-prepared/venv/bin/python -m pytest -q --tb=short ' + test_args
         command += f' --junitxml=/artifacts/{label}.xml > /artifacts/{label}.log 2>&1; result=$?; tail -100 /artifacts/{label}.log; exit "$result"'
-        runs[label] = {'requestId': request, 'operationId': operation, 'resourceId': resource_id,
+        runs[label] = public_check(label, {'requestId': request, 'operationId': operation, 'resourceId': resource_id,
                        'outcome': outcome, 'profile': 'python-project', 'command': command,
                        'timeoutSeconds': 300, 'source': snapshot, 'artifactsArchive': selected,
                        'retainedFiles': retained, 'junitSuites': counts, 'cleanup': cleanup,
-                       'cleanupReceiptSha256': digest(cleanup_path.read_bytes())}
+                       'cleanupReceiptSha256': digest(cleanup_path.read_bytes())})
+        inventory_raw = (resource / 'preparation/inventory.json').read_bytes()
+        preparation[label] = public_preparation(label, json.loads(inventory_raw), inventory_raw)
     dispositions = []
     for group in original['python']['failureGroups']:
         cause, kind, rationale, refs = CAUSES[Path(group['file']).name]
@@ -121,8 +193,10 @@ def collect(triage_path, resource_root):
     assert len(dispositions) == 77
     assert all(value == 'passed' for value in node_maps['final'].values())
     changed = subprocess.check_output(['git', 'diff', '--name-only', original['commit'], SOURCE_COMMIT], text=True).splitlines()
+    for name in changed:
+        assert Path(name).read_bytes() == subprocess.check_output(['git', 'show', f'{SOURCE_COMMIT}:{name}'])
     report = {
-        'schemaVersion': 1, 'issue': original['existingIssue'],
+        'schemaVersion': 1, 'publicEvidence': PUBLIC_EVIDENCE, 'issue': original['existingIssue'],
         'originalRun': {'id': original['runId'], 'url': original['url'], 'commit': original['commit'],
                         'tree': runs['baseline']['source']['snapshot_tree'], 'outcome': 'failure',
                         'counts': original['python']['logReportedCounts'], 'triageSha256': ORIGINAL_SHA,
@@ -141,10 +215,11 @@ def collect(triage_path, resource_root):
                                 'No assertion of recurrence linkage to issues 1554/1555/1560 without exact matching evidence.']},
     }
     save_json('case-disposition.json', report)
+    save_json('preparation.json', preparation)
     print(json.dumps({'cases': len(dispositions), 'finalPassed': len(node_maps['final']),
-                      'sourceTree': SOURCE_TREE, 'report': str(OUT / 'case-disposition.json')}))
+                      'sourceTree': SOURCE_TREE, 'report': 'case-disposition.json'}))
 
 
 if __name__ == '__main__':
-    assert len(sys.argv) == 3
-    collect(Path(sys.argv[1]), Path(sys.argv[2]))
+    assert len(sys.argv) == 4
+    collect(Path(sys.argv[1]), Path(sys.argv[2]), json.loads(Path(sys.argv[3]).read_text()))

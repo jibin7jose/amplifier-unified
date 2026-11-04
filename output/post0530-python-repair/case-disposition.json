@@ -1332,8 +1332,8 @@
     "baseline": {
       "artifactsArchive": {
         "bytes": 285184,
-        "destination": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/de84bea4-0cc7-4724-813d-806d75b3f35c/retained-397851951b4dc49c5f2e4ba8eb703d77b7d0b218d5e6c05fe90a4627cc3e5f8d/artifacts.tar",
-        "id": "dtu-op-9cec2629803c64a71020517d0fd85d3d",
+        "destination": "private-artifacts/baseline/artifacts.tar",
+        "id": "baseline-guest",
         "logicalBytes": 281912,
         "sha256": "e2f846b3f04c5c64817517122567c5e2f4a7a1f7b97f13744767631b94732867",
         "source": "/artifacts",
@@ -1344,26 +1344,26 @@
           "admissionRevision": 17,
           "backendIdentity": {
             "backend": "docker",
-            "daemon": "182d808c-bbb9-42b2-9f12-c73871f53a7f"
+            "daemon": "test-daemon"
           },
-          "backendKey": "9a2f000f3f6c011f165c09dbb54d718768cd3da50056dfc2df7364d77e7f4120",
-          "operationId": "5967a509-fdfb-474e-b67c-d359f2dfccf2",
-          "requestId": "33234049-73db-5b7c-955d-7e3d5d55ca22:remove",
-          "resourceId": "de84bea4-0cc7-4724-813d-806d75b3f35c",
+          "backendKey": "test-backend",
+          "operationId": "baseline-cleanup",
+          "requestId": "baseline-remove",
+          "resourceId": "baseline-resource",
           "resourceRevision": 18,
-          "rootOwner": "3c2e4fe2-a9c2-5d0e-a353-c401eb7b3842",
+          "rootOwner": "repair-owner",
           "snapshot": {
             "archive_bytes": 69877760,
             "archive_sha256": "36b87ce31a94ee1d2e224450bebed1d0cf73fc634a9426111b5db85893f67dbb",
             "files": 3372,
-            "path": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/de84bea4-0cc7-4724-813d-806d75b3f35c/source.tar",
+            "path": "private-artifacts/baseline/source.tar",
             "shallow_source": false,
             "snapshot_commit": "303b1d5325a5cc28537cbfb3bcb3396cc8cf1ee1",
             "snapshot_tree": "c9451a0eb4405b16a79a504e8a883ccfa72624fc",
             "source_branch": "fix/post0530-python-fixture-compat",
             "source_head": "c6e04df481ef06a01b9e2015a15285d0c5ed6211"
           },
-          "universeId": "dtu-op-9cec2629803c64a71020517d0fd85d3d"
+          "universeId": "baseline-guest"
         },
         "intentSha256": "8a77a8e6c6b20e2301a542a1b000ff7522002bb901d7d7a3ccf9e659aaf24f54",
         "phase": "destroy-confirmed",
@@ -1375,7 +1375,7 @@
         {
           "errors": "35",
           "failures": "42",
-          "hostname": "6782180f5395",
+          "hostname": "baseline-guest",
           "name": "pytest",
           "skipped": "0",
           "tests": "194",
@@ -1383,11 +1383,11 @@
           "timestamp": "2026-11-04T20:48:53.621423+00:00"
         }
       ],
-      "operationId": "33234049-73db-5b7c-955d-7e3d5d55ca22",
+      "operationId": "baseline-check",
       "outcome": "failed",
       "profile": "python-project",
-      "requestId": "post0530-python-baseline-v1",
-      "resourceId": "de84bea4-0cc7-4724-813d-806d75b3f35c",
+      "requestId": "baseline-request",
+      "resourceId": "baseline-resource",
       "retainedFiles": [
         {
           "bytes": 129556,
@@ -1395,16 +1395,18 @@
           "sha256": "f6b778961700b3fc435c3ca02cb7af98111c37d1ee73bcc914530739dbd2a446"
         },
         {
-          "bytes": 152356,
+          "bytes": 152358,
+          "originalBytes": 152356,
+          "originalSha256": "2d98c69bcfd2b8f9a08c36f35c5ddb484bef29a4bfc904c89b3479c61fffed4a",
           "path": "baseline.xml",
-          "sha256": "2d98c69bcfd2b8f9a08c36f35c5ddb484bef29a4bfc904c89b3479c61fffed4a"
+          "sha256": "b3b25cb036aaea25feee4affdd81fc43a6ff7d7924d7f75df693e95dbb580b14"
         }
       ],
       "source": {
         "archive_bytes": 69877760,
         "archive_sha256": "36b87ce31a94ee1d2e224450bebed1d0cf73fc634a9426111b5db85893f67dbb",
         "files": 3372,
-        "path": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/de84bea4-0cc7-4724-813d-806d75b3f35c/source.tar",
+        "path": "private-artifacts/baseline/source.tar",
         "shallow_source": false,
         "snapshot_commit": "303b1d5325a5cc28537cbfb3bcb3396cc8cf1ee1",
         "snapshot_tree": "c9451a0eb4405b16a79a504e8a883ccfa72624fc",
@@ -1416,8 +1418,8 @@
     "candidate": {
       "artifactsArchive": {
         "bytes": 47616,
-        "destination": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/94abaeee-83ba-4467-a8bb-dfaf9cf9a9a7/retained-b4a8c381d7ef0a69cfb546809ef5b721414418c55f75e94a85720a87970d6677/artifacts.tar",
-        "id": "dtu-op-b001f6842462ccd140a1a963cbb939a6",
+        "destination": "private-artifacts/candidate/artifacts.tar",
+        "id": "candidate-guest",
         "logicalBytes": 44639,
         "sha256": "486e5a2bbb7bd622705edd4c5a728a94ce7a2ddbaa236b5722145e04ce7b8649",
         "source": "/artifacts",
@@ -1428,26 +1430,26 @@
           "admissionRevision": 17,
           "backendIdentity": {
             "backend": "docker",
-            "daemon": "182d808c-bbb9-42b2-9f12-c73871f53a7f"
+            "daemon": "test-daemon"
           },
-          "backendKey": "9a2f000f3f6c011f165c09dbb54d718768cd3da50056dfc2df7364d77e7f4120",
-          "operationId": "6e18ccd5-5272-4a08-8914-8cc8a225aeda",
-          "requestId": "03407ece-aba1-5d24-8411-e54fb3581a0f:remove",
-          "resourceId": "94abaeee-83ba-4467-a8bb-dfaf9cf9a9a7",
+          "backendKey": "test-backend",
+          "operationId": "candidate-cleanup",
+          "requestId": "candidate-remove",
+          "resourceId": "candidate-resource",
           "resourceRevision": 18,
-          "rootOwner": "3c2e4fe2-a9c2-5d0e-a353-c401eb7b3842",
+          "rootOwner": "repair-owner",
           "snapshot": {
             "archive_bytes": 69888000,
             "archive_sha256": "f94fdb00fcad06ceb37c8c66a500b3df9b999830dc7ed1dba1afa1fa03bc5a49",
             "files": 3372,
-            "path": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/94abaeee-83ba-4467-a8bb-dfaf9cf9a9a7/source.tar",
+            "path": "private-artifacts/candidate/source.tar",
             "shallow_source": false,
             "snapshot_commit": "c05803a41a5f2042e24f3c9fa7a3658f849b3aa2",
             "snapshot_tree": "8f94595b7d26879cde56951e1cb00e29ac4a8184",
             "source_branch": "fix/post0530-python-fixture-compat",
             "source_head": "c6e04df481ef06a01b9e2015a15285d0c5ed6211"
           },
-          "universeId": "dtu-op-b001f6842462ccd140a1a963cbb939a6"
+          "universeId": "candidate-guest"
         },
         "intentSha256": "dbf04164b2ee3aa0556fffd4d7ec3daa88fd9c7009914247c277a778b0b6045f",
         "phase": "destroy-confirmed",
@@ -1459,7 +1461,7 @@
         {
           "errors": "0",
           "failures": "0",
-          "hostname": "c7d0f9627e4d",
+          "hostname": "candidate-guest",
           "name": "pytest",
           "skipped": "0",
           "tests": "297",
@@ -1467,11 +1469,11 @@
           "timestamp": "2026-11-04T20:54:36.460974+00:00"
         }
       ],
-      "operationId": "03407ece-aba1-5d24-8411-e54fb3581a0f",
+      "operationId": "candidate-check",
       "outcome": "passed",
       "profile": "python-project",
-      "requestId": "post0530-python-candidate-v1",
-      "resourceId": "94abaeee-83ba-4467-a8bb-dfaf9cf9a9a7",
+      "requestId": "candidate-request",
+      "resourceId": "candidate-resource",
       "retainedFiles": [
         {
           "bytes": 435,
@@ -1479,16 +1481,18 @@
           "sha256": "dff0d4cade3cd92721fa90a7527b14cf619c01c2ccf30f2265ab01c7a5aa7ce1"
         },
         {
-          "bytes": 44204,
+          "bytes": 44207,
+          "originalBytes": 44204,
+          "originalSha256": "46b592583d4797c89f60305f8c43580b744d4f74e7a34a51b444b946d33c7a7a",
           "path": "candidate.xml",
-          "sha256": "46b592583d4797c89f60305f8c43580b744d4f74e7a34a51b444b946d33c7a7a"
+          "sha256": "7f7897fabee152ff96f45aab39c6a19b869972aa9b11b27080016d125f72a976"
         }
       ],
       "source": {
         "archive_bytes": 69888000,
         "archive_sha256": "f94fdb00fcad06ceb37c8c66a500b3df9b999830dc7ed1dba1afa1fa03bc5a49",
         "files": 3372,
-        "path": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/94abaeee-83ba-4467-a8bb-dfaf9cf9a9a7/source.tar",
+        "path": "private-artifacts/candidate/source.tar",
         "shallow_source": false,
         "snapshot_commit": "c05803a41a5f2042e24f3c9fa7a3658f849b3aa2",
         "snapshot_tree": "8f94595b7d26879cde56951e1cb00e29ac4a8184",
@@ -1500,8 +1504,8 @@
     "final": {
       "artifactsArchive": {
         "bytes": 48128,
-        "destination": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/f985fdae-c45d-4571-a965-ae071a1d62e7/retained-b3575c0da2ba92420735c6a28150275ddff1d243bbc0e58f14e60ab60bfd7281/artifacts.tar",
-        "id": "dtu-op-462e4c968237a62e6454f823f94222c6",
+        "destination": "private-artifacts/final/artifacts.tar",
+        "id": "final-guest",
         "logicalBytes": 45339,
         "sha256": "252533771c72cd430347df2f54ba98714cd7debb13ebcb9a316c05532d8ade39",
         "source": "/artifacts",
@@ -1512,26 +1516,26 @@
           "admissionRevision": 17,
           "backendIdentity": {
             "backend": "docker",
-            "daemon": "182d808c-bbb9-42b2-9f12-c73871f53a7f"
+            "daemon": "test-daemon"
           },
-          "backendKey": "9a2f000f3f6c011f165c09dbb54d718768cd3da50056dfc2df7364d77e7f4120",
-          "operationId": "a459d32d-670c-4ce3-b41a-6160eccb36a2",
-          "requestId": "a7a3d5c8-280f-54d9-8c70-a033c8d92919:remove",
-          "resourceId": "f985fdae-c45d-4571-a965-ae071a1d62e7",
+          "backendKey": "test-backend",
+          "operationId": "final-cleanup",
+          "requestId": "final-remove",
+          "resourceId": "final-resource",
           "resourceRevision": 18,
-          "rootOwner": "3c2e4fe2-a9c2-5d0e-a353-c401eb7b3842",
+          "rootOwner": "repair-owner",
           "snapshot": {
             "archive_bytes": 69888000,
             "archive_sha256": "6d6d11b9e747bbeeaa3527d3d91a7a31d7004e3d30dbc37aa4f9947323f623f4",
             "files": 3372,
-            "path": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/f985fdae-c45d-4571-a965-ae071a1d62e7/source.tar",
+            "path": "private-artifacts/final/source.tar",
             "shallow_source": false,
             "snapshot_commit": "45ec78fd4d506cf71eaf1e2152776dc59be3315a",
             "snapshot_tree": "a48e1b2f975189ba28e311187e1bfd7bf9fcde0e",
             "source_branch": "fix/post0530-python-fixture-compat",
             "source_head": "c6e04df481ef06a01b9e2015a15285d0c5ed6211"
           },
-          "universeId": "dtu-op-462e4c968237a62e6454f823f94222c6"
+          "universeId": "final-guest"
         },
         "intentSha256": "0b18bbd097cde509299916a6cdadae57f6946e1b5f64da841b8ee8197d976648",
         "phase": "destroy-confirmed",
@@ -1543,7 +1547,7 @@
         {
           "errors": "0",
           "failures": "0",
-          "hostname": "32307ef13fd3",
+          "hostname": "final-guest",
           "name": "pytest",
           "skipped": "0",
           "tests": "301",
@@ -1551,11 +1555,11 @@
           "timestamp": "2026-11-04T20:57:30.512507+00:00"
         }
       ],
-      "operationId": "a7a3d5c8-280f-54d9-8c70-a033c8d92919",
+      "operationId": "final-check",
       "outcome": "passed",
       "profile": "python-project",
-      "requestId": "post0530-python-final-v1",
-      "resourceId": "f985fdae-c45d-4571-a965-ae071a1d62e7",
+      "requestId": "final-request",
+      "resourceId": "final-resource",
       "retainedFiles": [
         {
           "bytes": 435,
@@ -1563,16 +1567,18 @@
           "sha256": "531bfe46111fcc78ffb72ce65287ee5fc20ae40d073e8801c40964d466d2c267"
         },
         {
-          "bytes": 44904,
+          "bytes": 44903,
+          "originalBytes": 44904,
+          "originalSha256": "8a896134a85fca57eaf89d2fcd98595eb4896ad8b748ae48e565569d954640aa",
           "path": "final.xml",
-          "sha256": "8a896134a85fca57eaf89d2fcd98595eb4896ad8b748ae48e565569d954640aa"
+          "sha256": "f878a197a230881c4253230c0fdf852627c54016345e0a92da9550e0276f2fa2"
         }
       ],
       "source": {
         "archive_bytes": 69888000,
         "archive_sha256": "6d6d11b9e747bbeeaa3527d3d91a7a31d7004e3d30dbc37aa4f9947323f623f4",
         "files": 3372,
-        "path": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/f985fdae-c45d-4571-a965-ae071a1d62e7/source.tar",
+        "path": "private-artifacts/final/source.tar",
         "shallow_source": false,
         "snapshot_commit": "45ec78fd4d506cf71eaf1e2152776dc59be3315a",
         "snapshot_tree": "a48e1b2f975189ba28e311187e1bfd7bf9fcde0e",
@@ -1615,6 +1621,13 @@
     "tree": "c9451a0eb4405b16a79a504e8a883ccfa72624fc",
     "triageSha256": "9708bb72ebfb6721f935b0c3b9da697229d6f06ebe11c23c6ca6c14632196abb",
     "url": "https://github.com/microsoft/amplifier-unified/actions/runs/41894810222"
+  },
+  "publicEvidence": {
+    "hashes": "Archive, inventory and cleanup hashes refer to private originals. retainedFiles hashes refer to public copies; originalSha256 records any changed raw file.",
+    "history": "The earlier public commit remains in Git history; current-tree sanitation does not remove it.",
+    "labelsAreLocators": false,
+    "originals": "Unmodified receipts and published files retained privately outside Git.",
+    "projection": "Private host paths, operational mappings and guest hostnames replaced by neutral labels."
   },
   "qualifiedSource": {
     "changedFiles": [

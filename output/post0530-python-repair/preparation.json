@@ -25,7 +25,7 @@
       "version": 1,
       "workspace": "/workspace"
     },
-    "inventoryPath": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/de84bea4-0cc7-4724-813d-806d75b3f35c/preparation/inventory.json",
+    "inventoryPath": "private-artifacts/baseline/preparation/inventory.json",
     "inventorySha256": "92cd3d0626b72c7680a7d48bdb750b22ca2409200a85a8bb6b077861b9958dfa",
     "lockfiles": [
       {
@@ -125,7 +125,7 @@
       "webencodings==0.6.1",
       "yarl==1.25.1"
     ],
-    "resourceId": "de84bea4-0cc7-4724-813d-806d75b3f35c"
+    "resourceId": "baseline-resource"
   },
   "candidate": {
     "executionContract": {
@@ -153,7 +153,7 @@
       "version": 1,
       "workspace": "/workspace"
     },
-    "inventoryPath": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/94abaeee-83ba-4467-a8bb-dfaf9cf9a9a7/preparation/inventory.json",
+    "inventoryPath": "private-artifacts/candidate/preparation/inventory.json",
     "inventorySha256": "979df53bc5f19dc6acaa133c362d4a26f0ea7f319df4f5f32a36892d114f32bf",
     "lockfiles": [
       {
@@ -253,7 +253,7 @@
       "webencodings==0.6.1",
       "yarl==1.25.1"
     ],
-    "resourceId": "94abaeee-83ba-4467-a8bb-dfaf9cf9a9a7"
+    "resourceId": "candidate-resource"
   },
   "final": {
     "executionContract": {
@@ -281,7 +281,7 @@
       "version": 1,
       "workspace": "/workspace"
     },
-    "inventoryPath": "/home/bkrabach/.amplifier-unified/workspace-resources/owned/013b04e2c5eaa16996630941b406feaf818776c8818d189c81cdd0f1f9f6d7f1/f985fdae-c45d-4571-a965-ae071a1d62e7/preparation/inventory.json",
+    "inventoryPath": "private-artifacts/final/preparation/inventory.json",
     "inventorySha256": "bd75a5ff5532e886a1f771c542a38615a57150dd659a9606b91754b4c1b5932b",
     "lockfiles": [
       {
@@ -381,6 +381,6 @@
       "webencodings==0.6.1",
       "yarl==1.25.1"
     ],
-    "resourceId": "f985fdae-c45d-4571-a965-ae071a1d62e7"
+    "resourceId": "final-resource"
   }
 }
