@@ -333,7 +333,8 @@ def isolated_account_catalog(root):
                {'module': 'amplifier_web.decision_account_catalog', 'origin': helper, 'error': str(exc)})
         raise
     # Run the actual __main__ path, including its stricter no-network audit hook.
-    # No source/provider paths or test environment variables enter sys.path/env.
+    # No invocation-added fixture/provider paths or test environment variables
+    # enter sys.path/env. Installed site/.pth paths remain valid under -I.
     sys.argv = [helper]
     install_guard(root, account_catalog=True)
     runpy.run_path(helper, run_name='__main__')

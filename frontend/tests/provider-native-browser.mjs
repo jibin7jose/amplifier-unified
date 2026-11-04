@@ -1,5 +1,5 @@
 // Ordinary native preparation + real rendered controls; only providers are synthetic.
-import {spawn} from 'node:child_process';
+import {spawn,execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {mkdir,readFile,writeFile,appendFile,realpath,readdir} from 'node:fs/promises';
 import {isAbsolute,relative,resolve} from 'node:path';
@@ -34,6 +34,18 @@ const fixturePath=await realpath(process.env.PROVIDER_NATIVE_FIXTURE||fileURLToP
 if(installed)assert.ok(!under(checkout,fixturePath),'Installed fixture must be outside the checkout');
 const fixtureEnv={...process.env,PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'};
 delete fixtureEnv.PYTHONPATH;
+// -I excludes invocation paths, not the interpreter's installed site/.pth paths.
+// Observe that installation independently, before any fixture bootstrap runs.
+const catalogEnvironment=['PATH','SYSTEMROOT','WINDIR','LANG','LC_ALL','TZ','TMPDIR','TEMP','TMP'];
+const isolatedEnvironment=Object.fromEntries(Object.entries(process.env).filter(([name])=>catalogEnvironment.includes(name)));
+const isolatedCommand=['-I','-c','import json,sys; print(json.dumps({"python":sys.executable,"isolated":bool(sys.flags.isolated),"pythonPath":sys.path}))'];
+const isolatedBaseline=JSON.parse(execFileSync(process.env.AMPLIFIER_TEST_PYTHON,isolatedCommand,
+ {cwd:evidence,env:isolatedEnvironment,encoding:'utf8',timeout:15000,maxBuffer:65536}));
+assert.equal(isolatedBaseline.isolated,true);
+assert.equal(isolatedBaseline.python,process.env.AMPLIFIER_TEST_PYTHON);
+assert.ok(isolatedBaseline.pythonPath.every(path=>!under(evidence,resolve(path))),'Installed baseline must exclude fixture artifacts');
+await save('isolated-python-baseline.json',{...isolatedBaseline,command:[process.env.AMPLIFIER_TEST_PYTHON,...isolatedCommand],
+ environmentNames:Object.keys(isolatedEnvironment).sort()});
 await save('launch.json',{mode:installed?'installed':'source',fixturePath,python:process.env.AMPLIFIER_TEST_PYTHON,
  cwd:evidence,pythonPathUnset:true,fixtureSha256:createHash('sha256').update(await readFile(fixturePath)).digest('hex'),
  installedIdentity:process.env.AMPLIFIER_TEST_INSTALLED_IDENTITY||null});
@@ -542,8 +554,9 @@ try{
     const guard=JSON.parse(await readFile(`${evidence}/fixture/guard-ready-${row.pid}.json`,'utf8'));
     assert.equal(guard.isolated,true);assert.deepEqual(guard.allowedCommands,[]);
     assert.deepEqual(guard.bootstrap,origin.fixture);
-    assert.ok(guard.environmentNames.every(name=>['PATH','SYSTEMROOT','WINDIR','LANG','LC_ALL','TZ','TMPDIR','TEMP','TMP','LC_CTYPE'].includes(name)));
-    assert.ok(guard.pythonPath.every(path=>!within(checkout,path)&&!within(evidence,path)),'Isolated helper must not inherit source/provider/bootstrap paths');
+    assert.ok(guard.environmentNames.every(name=>[...catalogEnvironment,'LC_CTYPE'].includes(name)));
+    assert.deepEqual(guard.pythonPath,isolatedBaseline.pythonPath,'Isolated helper must retain only the independently observed installed paths');
+    assert.ok(guard.pythonPath.every(path=>!within(evidence,path)&&!within(origin.providerRoot,path)),'Isolated helper must not inherit fixture/provider/bootstrap paths');
    }
    for(const row of cleanup.processes){
     const loaded=row.loadedSources;assert.ok(loaded&&!loaded.error);assert.deepEqual(loaded.violations,[]);

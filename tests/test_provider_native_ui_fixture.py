@@ -139,6 +139,36 @@ def test_real_catalog_keeps_isolation_metadata_and_reaping(isolated_catalog, bac
     assert loaded['violations'] == [] and not loaded.get('error')
 
 
+def test_isolated_catalog_matches_installed_editable_baseline(isolated_catalog):
+    run, root, module = isolated_catalog
+    site = module.parent
+    editable = root.parent / 'installed-editable'
+    editable.mkdir()
+    module.rename(editable / module.name)
+    metadata = site / 'catalog_fixture-1.0.dist-info'
+    metadata.rename(editable / metadata.name)
+    (site / 'catalog_fixture.pth').write_text(str(editable) + '\n')
+    python = root.parent / 'venv/bin/python'
+    # Independently observe the installation with the same isolated interpreter.
+    # Neither the hostile cwd module nor PYTHONPATH may become an import root.
+    baseline = subprocess.run([str(python), '-I', '-c',
+                               'import json,sys; print(json.dumps(sys.path))'],
+                              cwd=root.parent, env={'PYTHONPATH': str(root.parent)},
+                              capture_output=True, text=True, check=True, timeout=10)
+    paths = json.loads(baseline.stdout)
+    assert str(editable) in paths and str(site) in paths
+    assert str(root.parent) not in paths and str(root) not in paths
+    result = run()
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {'provider-catalog-fixture': 'hooks-catalog-fixture'}
+    guards = [json.loads(path.read_text()) for path in root.glob('guard-ready-*.json')]
+    catalogs = [guard for guard in guards if guard.get('bootstrap')]
+    assert len(catalogs) == 1
+    assert catalogs[0]['isolated'] and catalogs[0]['pythonPath'] == paths
+    assert 'PYTHONPATH' not in catalogs[0]['environmentNames']
+    assert 'OPENAI_API_KEY' not in catalogs[0]['environmentNames']
+
+
 @pytest.mark.parametrize('operation', ['credentials', 'pythonpath', 'extra-argument', 'other-program', 'direct-bootstrap', 'direct-posix-bootstrap'])
 def test_catalog_exception_does_not_admit_other_launches(isolated_catalog, operation):
     run, root, _ = isolated_catalog
