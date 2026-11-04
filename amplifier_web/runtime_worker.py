@@ -671,6 +671,8 @@ class Worker:
                         run_id=coordinator.get_capability("web.worker_run"))
             return
         coordinator.register_capability("web.activity", True)
+        from amplifier_web.performance_diagnostics import install_preparation_timing
+        install_preparation_timing(coordinator)
         if self.session is not None and coordinator is self.session.coordinator:
             async def response_block(event, data):
                 from amplifier_web.execution_events import CALL_PURPOSE

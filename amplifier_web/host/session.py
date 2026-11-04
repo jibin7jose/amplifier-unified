@@ -1205,26 +1205,32 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             "application_host": application_host, "config": redact(logical_plan(session.config))}
         continuity = None
         published_anchors = None
-        async def checkpoint(status="in_progress"):
+        async def checkpoint(status="in_progress", *, timing=None):
             nonlocal published_anchors
             if write_guard:
                 write_guard()
             persist_controls = coordinator.get_capability("web.controls.persist")
             if persist_controls:
                 persist_controls()
+            if timing:timing.mark('context.start')
             transcript = await coordinator.get("context").get_messages()
+            if timing:timing.mark('context.end')
             held = shared_handle_getter() if shared_handle_getter else shared_handle
             native_guard.check()
             if held is not None:
                 # Cross-host ownership remains Foundation's responsibility;
                 # native transcript/metadata are the only newly written history.
                 held.check()
+            if timing:timing.mark('store.start')
             canonical = store.save(runtime.session_id, transcript, {**metadata, "status": status,
                 "last_updated": datetime.now(UTC).isoformat(),
                 "turn_count": sum(row.get("role") == "user" for row in transcript)})
+            if timing:timing.mark('store.end')
             native_guard.saved()
             if continuity:
+                if timing:timing.mark('continuity.start')
                 continuity.save()
+                if timing:timing.mark('continuity.end')
             from ..collaboration_input import checkpoint_anchors
             anchors = checkpoint_anchors(canonical, runtime)
             if anchors and anchors != published_anchors:
@@ -1250,7 +1256,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
                 if timing:
                     timing.mark('checkpoint.start')
                 try:
-                    await checkpoint()
+                    await checkpoint(timing=timing)
                 except BaseException as exc:
                     outcome = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'
                     raise

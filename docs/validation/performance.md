@@ -113,6 +113,18 @@ it can change the conclusion. Keep diagnostic collection bounded and sensitive
 receipts private. Public evidence uses synthetic data, counts and hashes rather
 than transcript bodies, credentials or private environment details.
 
+`AMPLIFIER_RUNTIME_TIMING=1` is a startup-only, explicit opt-in for content-free
+worker preparation and checkpoint phases in the existing bounded timing ring.
+It records context view/factory, surface preparation, provider budget/refit and
+checkpoint read/save boundaries. Native provider-hook start/end observations are
+separate: correlate only a proven single request window with matching session,
+generation and iteration; a short-circuit need not reach the end observer.
+Worker phase marks and host receipt marks separate execution from event delivery
+only when their `clockDomain` and `hostClockDomain` match. Never subtract wall
+clocks or add nested spans. This observes existing behavior, does not change
+timeouts or enable request-body recording, and cannot explain earlier unrecorded
+work. Activation and any required live worker remount remain an adoption decision.
+
 For disposable query workers, measure delivery as well as worker calculation.
 Separate executor handoffs for tiny cleanup operations can repeatedly incur a busy
 event loop's scheduling delay. Keep one owned result-consumption/cleanup handoff;

@@ -186,8 +186,11 @@ async def test_final_tool_wrapper_runs_after_real_engine_approval_and_rechecks(a
     assert witness['toolCallId'] == witnesses[0]['toolCallId'] == 'final-call'
     assert witness['origin']['admittedCallId'] in adapter.admissions
     assert c._tool_dispatch_contexts == {}
-    assert len(timings) == 1
-    timing = timings[0]
+    # The same diagnostic sink also observes the preceding provider preparation.
+    # This assertion owns the one dispatched tool's timing, not every phase.
+    tool_timings = [row for row in timings if row.get('kind') == 'tool']
+    assert len(tool_timings) == 1
+    timing = tool_timings[0]
     assert timing['toolCallId'] == 'final-call'
     assert timing['generationId'] == adapter.scope['generationId']
     marks = timing['marks']
