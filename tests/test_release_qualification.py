@@ -1684,7 +1684,7 @@ def test_permissions_history_selection_comes_from_actual_source(permissions_chec
     node = module.node_selection(ROOT)
     assert set(node) == set(module.NODE_TESTS)
     assert {name: len(names) for name, names in node.items()} == {
-        'tests/approval-card.test.mjs': 27, 'tests/settings-action-queue.test.mjs': 7,
+        'tests/approval-card.test.mjs': 27, 'tests/settings-action-queue.test.mjs': 9,
         'tests/pending-view.test.mjs': 9, 'tests/conversation-navigation.test.mjs': 16,
         'tests/fixture-lifecycle.test.mjs': 5}
     approval = node['tests/approval-card.test.mjs']
