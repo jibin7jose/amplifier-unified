@@ -93,6 +93,11 @@ The installed-wheel probe also loads worker-owned app packages in a fresh
 qualification: sibling app packages must be exposed by the explicit bootstrap
 without adding host site-packages or distribution metadata to the runtime.
 
+When adding or changing optional runtime packages, refresh their entries in the
+committed lock against accepted public sources and run the installed probe with
+the affected extras. A default-host lock check does not qualify optional imports;
+keep locked-install evidence distinct from fresh public-source resolution.
+
 ### Recovering a successful frontend build after asset parity fails
 
 Fast release checks retains `frontend-build-output-<attempt>` immediately after
