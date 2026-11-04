@@ -12,6 +12,164 @@ class Runtime:
     async def stop(self,*args,reason="stopped"):pass
     async def close(self):pass
 
+
+@pytest.mark.parametrize('forged', [False, True])
+async def test_explicit_recovery_forwards_trusted_command_not_request_identity(app, monkeypatch, forged):
+    from unittest.mock import AsyncMock
+    session = app._session()
+    session.update(status='idle', interruptionRevision=7)
+    app.management.ensure_runtime = AsyncMock()
+    app.runtime.control = AsyncMock(return_value={'status': 'armed'})
+    args = {'sessionId': session['id'], 'operation': 'context.recovery.request',
+            'args': {'targetBytes': 5000}}
+    source = {'recovery': app.management.recovery_admission_binding(session)}
+    if forged:
+        args['args']['_recoveryCommand'] = {'id': 'forged', 'interruptionRevision': 0}
+        with pytest.raises(ValueError, match='cannot supply host identity'):
+            await app.management.perform('runtime.control', args, command_id='real-command', source=source)
+        app.runtime.control.assert_not_called()
+    else:
+        await app.management.perform('runtime.control', args, command_id='real-command', source=source)
+        assert app.runtime.control.await_args.args == (session['id'], 'context.recovery.request', {
+            'targetBytes': 5000, '_recoveryCommand': {'id': 'real-command', 'interruptionRevision': 7}})
+        assert callable(app.runtime.control.await_args.kwargs['guard'])
+        assert app.state['runtimeControl'][session['id']]['context.recovery.request']['status'] == 'armed'
+        assert session.get('generation') is None
+
+
+@pytest.mark.parametrize('route', ['dispatch', 'bridge'])
+async def test_explicit_recovery_cannot_target_another_conversation(app, route):
+    source = app._session()['id']
+    await app.dispatch('session.create', {'bundle': 'anchors-amp-dev'})
+    target = app._session()['id']
+    args = {'sessionId': target, 'operation': 'context.recovery.request'}
+    with pytest.raises(AppError, match='calling conversation'):
+        if route == 'dispatch':
+            await app.dispatch('runtime.control', args, origin='agent', caller_session_id=source)
+        else:
+            await app.app_bridge('dispatch', {'action': 'runtime.control', 'args': args}, source)
+
+
+async def test_explicit_recovery_child_cannot_arm_parent(app):
+    source = app._session()['id']
+    with pytest.raises(AppError, match='child cannot borrow'):
+        await app.app_bridge('dispatch', {
+            'action': 'runtime.control',
+            'args': {'sessionId': source, 'operation': 'context.recovery.request'},
+            '_runtimeSessionId': 'separate-child'}, source)
+
+
+@pytest.mark.parametrize('change', ['stop', 'configuration', 'placement'])
+@pytest.mark.parametrize('when', ['queue', 'preparation', 'native-admission'])
+async def test_explicit_recovery_keeps_original_admission_across_waits(app, change, when):
+    import asyncio
+    from unittest.mock import AsyncMock
+    session = app._session()
+    session.update(status='idle', interruptionRevision=7)
+    prepared, release, armed = asyncio.Event(), asyncio.Event(), []
+    original = app.management.command
+    entered = asyncio.Event()
+    pending = []
+
+    async def observe_command(*args):
+        entered.set()
+        pending.append(asyncio.current_task())
+        return await original(*args)
+
+    async def prepare(*args, **kwargs):
+        if when == 'preparation':
+            prepared.set()
+            await release.wait()
+        kwargs['restart_guard']()
+
+    async def control(sid, operation, arguments, *, guard):
+        if when == 'native-admission':
+            prepared.set()
+            await release.wait()
+        guard()
+        armed.append(arguments)
+        return {'state': 'pending'}
+
+    app.management.command = observe_command
+    app.management.ensure_runtime = AsyncMock(side_effect=prepare)
+    app.runtime.control = AsyncMock(side_effect=control)
+    if when == 'queue':
+        await app.management.lock.acquire()
+    try:
+        await app.dispatch('runtime.control', {
+            'sessionId': session['id'], 'operation': 'context.recovery.request'},
+            command_id='original-recovery')
+        await asyncio.wait_for(entered.wait(), 2)
+        if when != 'queue':
+            await asyncio.wait_for(prepared.wait(), 2)
+        if change == 'stop':
+            await app.dispatch('conversation.stop', {'sessionId': session['id']})
+            assert session['interruptionRevision'] > 7
+        elif change == 'configuration':
+            app.state['configurationRevision'] = app.state.get('configurationRevision', 0) + 1
+        else:
+            session['executionRevision'] = session.get('executionRevision', 0) + 1
+    finally:
+        if when == 'queue':
+            app.management.lock.release()
+        release.set()
+    await asyncio.wait_for(pending[0], 2)
+    assert armed == []
+    if when == 'queue':
+        app.management.ensure_runtime.assert_not_called()
+    receipt = app.state['managementResults']['original-recovery']
+    assert receipt['phase'] == 'error'
+    assert 'after admission' in receipt['error']
+
+
+@pytest.mark.parametrize('uncertain_mutation', [False, True])
+async def test_explicit_recovery_refuses_changed_budget_even_when_readback_fails(app, uncertain_mutation):
+    import asyncio
+    from unittest.mock import AsyncMock
+    session = app._session()
+    session.update(status='idle', interruptionRevision=7)
+    entered, release, queued = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    native_calls, pending = [], []
+    original_command = app.management.command
+
+    async def command(*args):
+        if args[1].get('operation') == 'context.recovery.request':
+            pending.append(asyncio.current_task())
+            queued.set()
+        return await original_command(*args)
+
+    async def control(sid, operation, arguments, **kwargs):
+        native_calls.append(operation)
+        if operation == 'budget.set':
+            assert arguments == {'maxOutputTokens': 2000}
+            entered.set()
+            await release.wait()
+            if uncertain_mutation:
+                raise ConnectionError('Synthetic lost mutation receipt')
+            return {'maxOutputTokens': 2000}
+        if operation == 'budget.get':
+            raise ConnectionError('Synthetic lost readback')
+        raise AssertionError('Stale recovery reached native arming')
+
+    app.management.command = command
+    app.management.ensure_runtime = AsyncMock()
+    app.runtime.control = AsyncMock(side_effect=control)
+    changing = asyncio.create_task(app.management.command('runtime.control', {
+        'sessionId': session['id'], 'operation': 'budget.set', 'args': {'maxOutputTokens': 2000}}, 'budget-change'))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await app.dispatch('runtime.control', {
+            'sessionId': session['id'], 'operation': 'context.recovery.request'}, command_id='queued-recovery')
+        await asyncio.wait_for(queued.wait(), 2)
+    finally:
+        release.set()
+    await asyncio.wait_for(changing, 2)
+    await asyncio.wait_for(pending[0], 2)
+    assert native_calls == (['budget.set'] if uncertain_mutation else ['budget.set', 'budget.get'])
+    receipt = app.state['managementResults']['queued-recovery']
+    assert receipt['phase'] == 'error' and 'after admission' in receipt['error']
+
+
 @pytest.fixture
 async def app(tmp_path):
     service=AppService(tmp_path/'app',Runtime(),workspace=tmp_path)

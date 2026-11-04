@@ -1205,6 +1205,17 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             "application_host": application_host, "config": redact(logical_plan(session.config))}
         continuity = None
         published_anchors = None
+        def recovery_write_guard():
+            # A recovery write uses the same native ownership checks, without
+            # saving active state over a separately verified candidate.
+            if write_guard:
+                write_guard()
+            held = shared_handle_getter() if shared_handle_getter else shared_handle
+            if shared_handle_getter and held is None:
+                raise RuntimeError("Native writer ownership is unavailable")
+            native_guard.check()
+            if held is not None:
+                held.check()
         async def checkpoint(status="in_progress", *, timing=None):
             nonlocal published_anchors
             if write_guard:
@@ -1243,7 +1254,8 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             return canonical
         coordinator.register_capability("live.checkpoint", checkpoint)
         from ..context_continuity import install as install_continuity
-        continuity = install_continuity(coordinator, runtime.session_id, edited_path.parent, checkpoint)
+        continuity = install_continuity(coordinator, runtime.session_id, edited_path.parent,
+                                       checkpoint, writer_guard=recovery_write_guard)
         async def checkpoint_hook(event, data):
             if data.get("session_id", runtime.session_id) == runtime.session_id:
                 from ..performance_diagnostics import PhaseTiming, TIMING_ENABLED

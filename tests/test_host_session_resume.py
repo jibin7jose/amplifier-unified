@@ -142,6 +142,36 @@ async def test_checkpoints_persist_tools_without_republishing_unchanged_message_
     assert h.runtime.emit.await_count == 4
 
 
+async def test_checkpoint_hook_timing_retains_recovery_writer_guard(mounted_host, monkeypatch):
+    from amplifier_web import performance_diagnostics
+    h = mounted_host
+    writer = Mock()
+    emit = Mock()
+    h.runtime.generation = {'id': 'timed-generation'}
+    monkeypatch.setattr(performance_diagnostics, 'TIMING_ENABLED', True)
+    h.capabilities['web.performance.emit'] = emit
+    await h.prepare(write_guard=writer)
+    adapter = h.capabilities['web.continuity.recovery']
+    writer.reset_mock()
+    h.held.check.reset_mock()
+    adapter._check_writer()
+    writer.assert_called_once_with()
+    h.held.check.assert_called_once_with()
+    hook = next(call.args[1] for call in h.session.coordinator.hooks.register.call_args_list
+                if call.args[0] == 'tool:post'
+                and call.kwargs.get('name') == 'unified-checkpoint-tool:post')
+    h.context.messages.append({'role': 'tool', 'tool_call_id': 'timed-tool',
+                               'content': 'Completed once; preserve this result.'})
+    await hook('tool:post', {'session_id': h.runtime.session_id, 'tool_call_id': 'timed-tool'})
+    emit.assert_called_once()
+    assert 'Completed once; preserve this result.' in h.path.read_text()
+    saved = h.path.read_bytes()
+    writer.side_effect = RuntimeError('Writer released')
+    with pytest.raises(RuntimeError, match='Writer released'):
+        adapter._check_writer()
+    assert h.path.read_bytes() == saved
+
+
 @pytest.mark.parametrize('failure', [RuntimeError('pipe failed'), asyncio.CancelledError()])
 async def test_failed_anchor_notification_is_retried_on_next_checkpoint(mounted_host, failure):
     h = mounted_host

@@ -156,6 +156,7 @@ class RuntimeControls:
         self.model_catalog=ProviderCatalog()
         self.catalog_revision=str(uuid.uuid4())
         self.coordinator.register_capability("web.controls.persist", self.persist)
+        self.coordinator.register_capability("web.context_recovery.contract", self.recovery_contract)
         from .task_continuity import TaskController
         self.tasks = TaskController(self)
         from .capacity import CapacityController
@@ -261,6 +262,22 @@ class RuntimeControls:
         children = self.coordinator.get_capability("live.children")
         if children and any(row.get("status") in {"starting", "running", "working", "idle"} for row in children.rows.values()):
             raise ValueError("Finish or stop the active workers before changing session configuration")
+
+    def recovery_contract(self):
+        """Exact durable choices; only their digest is stored by recovery."""
+        from .decision_accounts import logical_plan
+        loop, context = self.coordinator.get("orchestrator"), self.coordinator.get("context")
+        return copy.deepcopy({
+            # Decision-account projection binds a fresh UUID on every mount.
+            # Validate and recover the logical declaration, retaining its exact
+            # account, source, credentials and settings, not a redacted view.
+            "plan": logical_plan(self.coordinator.config),
+            "selection": self.selection,
+            "maxOutputTokens": self.max_output_tokens,
+            "context": getattr(context, "config", {}),
+            "loop": getattr(loop, "config", {}),
+            "mode": self.coordinator.session_state.get("active_mode"),
+        })
 
     def configuration(self):
         from .decision_accounts import logical_plan
@@ -381,6 +398,22 @@ class RuntimeControls:
         write_private(override_path(self.session.session_id), json.dumps(plan, indent=2))
 
     async def _perform(self, operation, args):
+        if operation in {"context.recovery.request", "context.recovery.status"}:
+            continuity = self.coordinator.get_capability("web.continuity.recovery")
+            if continuity is None:
+                raise ValueError("Explicit context recovery is unavailable in this runtime")
+            if operation == "context.recovery.status":
+                return continuity.recovery_status()
+            self.require_idle()
+            trusted = args.get("_recoveryCommand")
+            if (not isinstance(trusted, dict) or not isinstance(trusted.get("id"), str)
+                    or not trusted["id"] or type(trusted.get("interruptionRevision")) is not int):
+                raise ValueError("Recovery requires the original host command and Stop binding")
+            if set(args) - {"_recoveryCommand", "targetBytes"}:
+                raise ValueError("Unsupported recovery arguments")
+            return await continuity.request_recovery(
+                trusted["id"], trusted["interruptionRevision"],
+                target_bytes=args.get("targetBytes", 1_500_000))
         if operation == 'memory.consolidate':
             from .memory_consolidation import generate
             return await generate(self, args)
