@@ -29,6 +29,7 @@ try{
   // Retained metadata must remain visible when a later refresh cannot finish.
   const original=(await state()).theme,selected=(await state()).selectedSessionId;
   await page.getByRole('button',{name:/^Close (panel|settings)$/}).click();
+  await expect(page.locator('.a-settings-experience')).toBeHidden();
   await page.route('**/api/actions',async route=>{
    const request=route.request(),body=request.method()==='POST'?request.postDataJSON():null;
    if(body?.action==='theme.list')await route.abort('failed');else await route.continue();
@@ -75,6 +76,7 @@ try{
   await expect(page.getByRole('button',{name:'Cancel preview',exact:true})).toHaveCount(0);
   assert.equal((await state()).selectedSessionId,selected);
   await page.getByRole('button',{name:/^Close (panel|settings)$/}).click();
+  await expect(page.locator('.a-settings-experience')).toBeHidden();
   await expect(page.getByRole('textbox',{name:'Message Amplifier'})).toHaveDraft('Keep my unfinished ideas.');
   assert.deepEqual(errors,[]);
   await (await import('node:fs/promises')).writeFile(`${out}/catalog-thumbnail-measurements.json`,JSON.stringify(measurements,null,2));
