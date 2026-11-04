@@ -7,6 +7,7 @@ import {ImageActions} from './image-actions';
 import {CanvasControlsHost} from './canvas-controls';
 import {imageGalleryEntries,imageJobLabel} from './image-generation';
 import {hasLocalCanvasEdits} from './canvas-reload-guard';
+import {ArtifactFileDetails} from './artifact-file-details';
 import './inline-artifacts.css';
 
 const supported=new Set(['markdown','text','code','json','jsonl','image','html','babylon','mermaid','dot']);
@@ -139,6 +140,7 @@ function ImageGallery({entries,...props}){
 
 export function DocumentOutput({item,state,dispatch,messageId,questionBinding,onExpandedChange,imageFrame=false}){
  const {row,version}=item,bodyId=useId(),card=useRef(),toggle=useRef(),inFlight=useRef(false),restoreFocus=useRef(null);
+ const owner=state.sessions?.find(session=>session.id===row.sessionId),placement=JSON.stringify([owner?.workingDirectory,owner?.workspace]);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[reset,setReset]=useState(null);
  useEffect(()=>{
   const supersede=event=>{if(restoreFocus.current&&!card.current?.contains(event.target))restoreFocus.current.superseded=true};
@@ -180,11 +182,12 @@ export function DocumentOutput({item,state,dispatch,messageId,questionBinding,on
   event.preventDefault();change('saved');
  }}><CompactArtifactCard title={titleOf(item)} kind={row.kind} version={version} expanded={!!expanded} busy={busy}
   onPreview={()=>change(expanded?'saved':'inline')} onOpen={()=>change('canvas')} previewId={bodyId} toggleRef={toggle} previewAvailable={supported.has(row.kind)}
-  notice={notice||(primaryOwns&&primary.open?`Shown in Canvas · exact v${version}`:'')}>{preview}</CompactArtifactCard></div>;
+  notice={notice||(primaryOwns&&primary.open?`Shown in Canvas · exact v${version}`:'')}><ArtifactFileDetails target={{id:row.id,version,sessionId:row.sessionId}} placement={placement} dispatch={dispatch}/>{preview}</CompactArtifactCard></div>;
  const Icon=row.kind==='image'?ImageIcon:row.kind==='browser'?Globe:FileText;
  return <section ref={card} className="a-document-output a-inline-artifact" data-image-frame={imageFrame||undefined} aria-label={titleOf(item)} data-artifact-id={row.id} data-artifact-version={version}>
   <button type="button" className="a-document-output-open" data-action="canvas.select" disabled={busy} aria-label={`Open ${titleOf(item)} in canvas`} onClick={()=>change('canvas')}><Icon aria-hidden="true"/><span><strong>{titleOf(item)}</strong><small>{labels[row.kind]||row.kind} · Version {version}</small></span><Maximize2 aria-hidden="true"/></button>
   {supported.has(row.kind)&&<button ref={toggle} type="button" className="a-link a-document-preview-toggle" disabled={busy} aria-expanded={expanded} aria-controls={bodyId} onClick={()=>change(expanded?'saved':'inline')}>{expanded?'Hide preview':'Preview in chat'}</button>}
+  <ArtifactFileDetails target={{id:row.id,version,sessionId:row.sessionId}} placement={placement} dispatch={dispatch}/>
   {notice&&<div role="status" className="a-inline-artifact-notice">{notice}</div>}
   <div id={bodyId}>{preview}</div>
  </section>;

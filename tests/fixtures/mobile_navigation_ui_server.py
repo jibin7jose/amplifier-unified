@@ -1,6 +1,7 @@
 """Isolated responsive navigation fixture, provider-free and dynamic-port safe."""
 import asyncio
 import os
+import signal
 from pathlib import Path
 import tempfile
 from aiohttp import web
@@ -53,10 +54,18 @@ async def main():
         port = site._server.sockets[0].getsockname()[1]
         app['allowed_origins'] = app['allowed_origins'] | {f'http://127.0.0.1:{port}'}
         print(f'http://127.0.0.1:{port}', flush=True)
+        stopped = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stopped.set)
         try:
-            await asyncio.Event().wait()
+            await stopped.wait()
         finally:
-            await runner.cleanup()
+            try:
+                await runner.cleanup()
+            finally:
+                for sig in (signal.SIGTERM, signal.SIGINT):
+                    loop.remove_signal_handler(sig)
 
 
 if __name__ == '__main__':

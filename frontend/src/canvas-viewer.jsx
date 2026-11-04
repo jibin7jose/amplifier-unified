@@ -4,12 +4,13 @@ import {ImageActions} from './image-actions';
 import {clientUrl} from './api';
 import React,{lazy,Suspense,useEffect,useId,useMemo,useRef,useState} from 'react';
 import DOMPurify from 'dompurify';
-import {Code,Eye,Copy,Download,ZoomIn,ZoomOut,Maximize,Check,AlertCircle} from 'lucide-react';
+import {Code,Eye,Copy,ZoomIn,ZoomOut,Maximize,Check,AlertCircle} from 'lucide-react';
 import {Markdown} from './markdown';
 import {FormattedCopy} from './formatted-copy';
 import {BlockCopy,CopyControl} from './block-copy.js';
 import {MediaFigure,validateMediaMetadata} from './inline-media';
 import {useDiagramNavigation} from './diagram-navigation';
+import {SavedFileDownload} from './artifact-file-details';
 
 const PdfPreview=lazy(()=>import('./pdf-preview'));
 const viewAction=(canvas,act,patch)=>act('canvas.view',{id:canvas.id,patch});
@@ -131,7 +132,7 @@ export function CanvasViewer({canvas,act,dispatch}){
   </div></CanvasControl>
   <CanvasPrimaryAction><div className="a-canvas-common-actions">
    {!['image','pdf'].includes(canvas.kind)&&(primary||!inlineSourceCopy&&!(view.source&&canvas.contentResource))&&<button type="button" className="a-icon" aria-label="Copy canvas source" data-action="canvas.copy" onClick={()=>act('canvas.copy',{id:canvas.id})}><Copy/><span>Copy</span></button>}
-   {!['image','pdf'].includes(canvas.kind)&&<button type="button" className="a-icon" aria-label="Download canvas source" data-action="canvas.download" onClick={()=>act('canvas.download',{id:canvas.id})}><Download/><span>Download</span></button>}
+   {!['image','pdf'].includes(canvas.kind)&&dispatch&&<SavedFileDownload target={{id:canvas.id,version:canvas.selectedVersion??canvas.revision??canvas.latestVersion,sessionId:canvas.sessionId}} dispatch={dispatch} label="Download canvas source" compact/>}
   </div></CanvasPrimaryAction>
   {canvas.kind==='image'&&dispatch&&<ImageActions canvas={canvas} dispatch={dispatch}/>}
   {referenceable&&<div className="a-canvas-reference" ref={quoteControl}><button type="button" className="a-soft" data-action="canvas.reference" disabled={quoting||!selection?.excerpt} onMouseDown={event=>event.preventDefault()} onClick={referenceText}>{quoting?'Adding reference…':'Reference in chat'}</button><span role="status" className="a-caption">{quoteNotice||selection?.error||(selection?.excerpt?`${[...selection.excerpt].length} characters selected`:'Select document text to quote in your draft.')}</span></div>}

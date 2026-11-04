@@ -147,7 +147,7 @@ def assert_clean(service, identity):
 def definitions(schema, string):
     identity = {'id': string(100), 'sessionId': string(200), 'clientId': string(100)}
     return {
-        'canvas.versions.inspect': ('Inspect saved artifact definitions and exact revision links without selecting or executing them.',
+        'canvas.versions.inspect': ('Inspect saved artifact definitions, file paths and exact-version download links without selecting or executing them.',
             schema({**identity, 'includeSource': {'type': 'boolean'}, 'version': {'type': 'integer', 'minimum': 1}}, ['id'])),
         'canvas.versions.revise': ('Save a new document definition in the same tab. Inspect first and supply its expectedRevision; never rewrites earlier versions. Use canvas.apps.revise for interactive surfaces.',
             schema({**identity, 'expectedRevision': {'type': 'integer', 'minimum': 1}, 'content': string(7000000), 'surface': {'type': 'object'}, 'title': string(200)}, ['id', 'expectedRevision'])),
@@ -166,9 +166,18 @@ def command(service, action, args, origin):
     if row is None:
         raise AppError('This artifact is unavailable in the calling conversation.', 404)
     if action == 'canvas.versions.inspect':
-        selected = definition(row, args.get('version'), service.db)
-        result = {'id': row['id'], 'title': selected['title'], 'revision': latest(row), 'reference': reference(row, args.get('version')),
+        from .canvas_paths import paths
+        from .canvas_downloads import filename
+        version = args.get('version') or latest(row)
+        # Inspect metadata without loading document bodies or historical app
+        # state. includeSource remains the explicit body-read opt-in below.
+        selected = definition(row, args.get('version'))
+        result = {'id': row['id'], 'title': selected['title'], 'revision': latest(row), 'version': version,
+                  'reference': reference(row, version), 'filePaths': paths(state, selected),
                   'versions': [{k: v.get(k) for k in ('version', 'title', 'createdAt', 'messageId')} for v in entries(row)]}
+        if selected.get('kind') in {'text', 'markdown', 'code', 'html', 'mermaid', 'dot', 'json', 'jsonl', 'babylon'} and not selected.get('app'):
+            result['download'] = {'url': '/api/canvas/' + row['id'] + '/download?version=' + str(version),
+                                  'filename': filename(selected)}
         if args.get('includeSource'):
             result['source'] = resource(service.db, selected['body']['$resource'])
         return result

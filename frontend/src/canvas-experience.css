@@ -70,6 +70,9 @@
 #amp-one .a-canvas-inspector .a-resource-view-controls>strong{display:block;flex-basis:100%;white-space:normal;overflow-wrap:anywhere;font-size:14px}
 #amp-one .a-canvas-inspector :is(button,select,input){min-height:44px;min-width:0;max-width:100%;box-sizing:border-box}
 #amp-one .a-canvas-inspector button{min-width:44px;white-space:normal;overflow-wrap:anywhere}
+/* File details is portalled under view-tools; its native buttons must override
+   that owner's compact .a-soft height without resizing unrelated controls. */
+#amp-one.a-approachable-shell .a-canvas-inspector .a-canvas-file-path button{min-height:44px}
 #amp-one .a-canvas-inspector .a-icon{width:44px;min-width:44px;height:44px}
 #amp-one .a-canvas-inspector :is(.a-canvas-location,.a-canvas-toolbar,.a-resource-view-controls,.a-canvas-file-actions){flex-wrap:wrap}
 #amp-one .a-canvas-inspector .a-canvas-location>button:last-child{margin-left:0}

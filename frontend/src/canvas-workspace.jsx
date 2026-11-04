@@ -9,6 +9,7 @@ import {A2UISurface} from './a2ui';
 import './canvas-workspace.css';
 import {useCanvasReloadGuard} from './canvas-reload-guard.jsx';
 import {hasLocalCanvasEdits} from './canvas-reload-guard.js';
+import {ArtifactFileDetails} from './artifact-file-details';
 
 const Surface=({canvas,act})=><A2UISurface surface={canvas.surface} act={act}/>;
 // Every built-in format and every contributed renderer enters the same host.
@@ -124,7 +125,9 @@ function ResourceView({view,state,dispatch,recovery}){
     {!view.available&&<option value={view.renderer}>Unavailable renderer</option>}
     {view.choices.map(choice=><option key={choice.id} value={choice.id}>{choice.label}</option>)}
    </select></label>
-   {view.filePaths?.absolute&&<details className="a-canvas-file-path"><summary>File path</summary><div><p>On {view.fileReveal?.host?.label||'the app server'}</p><code>{view.filePaths.absolute}</code>{view.fileReveal&&<><p>{view.fileReveal.detail}</p>{view.fileReveal.available?<button type="button" onClick={()=>run('canvas.views.reveal',{...targetOf(view),hostId:view.fileReveal.host.id,instanceId:view.fileReveal.instanceId})}>{view.fileReveal.label} on {view.fileReveal.host.label}</button>:<p>No supported desktop file manager is available on this host.</p>}</>}<button type="button" className="a-soft" data-action="canvas.copyPath" onClick={()=>run('canvas.views.command',{...targetOf(view),action:'canvas.copyPath',args:{format:'absolute'}})}>Copy absolute path</button>{view.filePaths.relative&&<button type="button" className="a-soft" data-action="canvas.copyPath" onClick={()=>run('canvas.views.command',{...targetOf(view),action:'canvas.copyPath',args:{format:'relative'}})}>Copy relative path</button>}</div></details>}
+   <ArtifactFileDetails target={{id:view.resourceId,version:view.runningVersion??view.selectedVersion??view.latestVersion,sessionId:canvas?.sessionId}} placement={JSON.stringify([view.filePaths?.base,view.filePaths?.workspace])} dispatch={dispatch}>
+    {view.fileReveal&&<><p>On {view.fileReveal.host.label}</p><p>{view.fileReveal.detail}</p>{view.fileReveal.available?<button type="button" onClick={()=>run('canvas.views.reveal',{...targetOf(view),hostId:view.fileReveal.host.id,instanceId:view.fileReveal.instanceId})}>{view.fileReveal.label} on {view.fileReveal.host.label}</button>:<p>No supported desktop file manager is available on this host.</p>}</>}
+   </ArtifactFileDetails>
   </div></CanvasControl>
   {view.selectedVersion!=null&&<p role="status" className="a-renderer-notice">{canvas?.kind==='browser'?'Saved address · Website is live':'Saved version · Read only'}{canvas?.kind==='mcp-app'&&<button type="button" className="a-link" onClick={()=>run('canvas.select',{id:view.resourceId})}>Open live view</button>}</p>}
   {error&&<p role="alert" className="a-renderer-notice">{error}</p>}
