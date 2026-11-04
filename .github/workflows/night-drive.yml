@@ -34,7 +34,7 @@ jobs:
       - run: npm ci --prefix frontend
       - name: Focused lifecycle and root-state checks
         run: |
-          uv run --no-sync pytest -q tests/test_appearance_activity.py tests/test_browser_state.py
+          uv run --no-sync pytest -q tests/test_appearance_activity.py tests/test_browser_state.py::test_large_catalog_bounded_receipts_publications_and_complete_agent_access tests/test_browser_state.py::test_offpage_error_and_approval_still_produce_attention tests/test_browser_state.py::test_stream_publications_coalesce_but_final_response_flushes
           node --test frontend/tests/app-appearance-state.test.mjs frontend/tests/window-controls-overlay.test.mjs
       - run: npm run build --prefix frontend
       - name: Prepare Chromium
