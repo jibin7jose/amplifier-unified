@@ -162,22 +162,39 @@ def unresolved(app):
     held = set()
     for value, in app.db.execute("SELECT receipt FROM commands WHERE id LIKE 'storage-cleanup-run:%' AND json_extract(receipt,'$.result.status') IN ('running','interrupted','needs-inspection')"):
         for effect in json.loads(value)["result"].get("effects", []):
-            if effect.get("status") == "attempting":
+            if effect.get("status") == "attempting" and effect.get('recovery', {}).get('disposition') not in {'removed', 'not-detached'}:
                 held.add((effect["kind"], effect["id"]))
     return held
 
 
+def runtime_recovery(app, item):
+    """Append exact detached-payload resolution; preserve the failed command."""
+    resolution = {key: item[key] for key in ('retirementId', 'disposition')}
+    resolution['resolvedAt'] = time.time()
+    for key, raw in app.db.execute("SELECT id,receipt FROM commands WHERE id LIKE 'storage-cleanup-run:%' AND json_extract(receipt,'$.result.status') IN ('running','interrupted','needs-inspection')").fetchall():
+        saved = json.loads(raw)['result']
+        matched = False
+        for effect in saved.get('effects', []):
+            if (effect.get('status') == 'attempting' and effect.get('kind') == 'runtime-environment'
+                    and effect.get('id') == item.get('project') and effect.get('stamp') == item.get('stamp')):
+                effect['recovery'] = resolution
+                matched = True
+        if matched:
+            store(app, key, saved)
+
+
 async def preview(app):
-    from . import update_retention, managed_runner_updates, test_dependency_layers, workspace_archive_retention
+    from . import update_retention, managed_runner_updates, test_dependency_layers, workspace_archive_retention, runtime_environment_retention
     manager = app.update_manager
     settings = policy(app)
     # Restore only scan position, never a prior eligibility decision. Preview
     # remains read-only; the policy run persists its next cursor in its receipt.
     saved = record(app, LATEST, {}) or {}
-    for key, attribute in (('generationCursor', '_retention_cursor'), ('retiredCursor', '_retired_cursor')):
+    for key, attribute in (('generationCursor', '_retention_cursor'), ('retiredCursor', '_retired_cursor'), ('runtimeCursor', '_runtime_environment_retention_cursor')):
         if not hasattr(manager, attribute) and isinstance(saved.get(key), str):
             setattr(manager, attribute, saved[key])
     generations = await update_retention.reclaim(manager, inspect_only=True)
+    runtimes = await runtime_environment_retention.reclaim(manager, inspect_only=True)
     runner_inspection = {'protectedIds': [], 'complete': True}
     try:
         runners = await asyncio.wait_for(managed_runner_updates.retire(app, inspect_only=True, inspection=runner_inspection), 15)
@@ -193,15 +210,18 @@ async def preview(app):
     except (TimeoutError, ValueError, OSError, sqlite3.Error):
         archives = {'candidates': [], 'complete': False, 'workspaceArchiveCursor': saved.get('workspaceArchiveCursor', 0)}
     held = unresolved(app)
-    candidates = [row for row in generations.get('candidates', []) + (runners or []) + dependencies['candidates'] if (row['kind'], row['id']) not in held]
+    candidates = [row for row in generations.get('candidates', []) + runtimes['candidates'] + (runners or []) + dependencies['candidates'] if (row['kind'], row['id']) not in held]
     now = time.time()
     observed_protected = (['ecosystem:' + key for key in generations.get('protectedIds', [])]
+        + [runtime_environment_retention.KIND + ':' + key for key in runtimes['protectedIds']]
         + ['runner:' + key for key in runner_inspection['protectedIds']]
         + ['test-dependencies:' + key for key in dependencies['protectedIds']]
         + [kind + ':' + identity for kind, identity in held])
     folders = update_retention._folders(manager)
     present = {'ecosystem': {'ecosystem:' + row.name for row in folders},
                'runner': {'runner:' + row['id'] for row in app.smart_tools.state.get('installations', [])}}
+    if 'presentIds' in runtimes:
+        present[runtime_environment_retention.KIND] = {runtime_environment_retention.KIND + ':' + key for key in runtimes['presentIds']}
     if dependencies['complete']:
         present['test-dependencies'] = {'test-dependencies:' + row['id'] for row in dependencies['candidates']} | {
             'test-dependencies:' + key for key in dependencies['protectedIds']}
@@ -233,6 +253,9 @@ async def preview(app):
     for identity in dependencies['protectedIds']:
         protected.append({'kind': 'test-dependencies', 'id': identity, 'label': 'Reusable test dependencies kept',
                           'reason': 'Referenced, changed, or not fully verified'})
+    for identity in runtimes['protectedIds']:
+        protected.append({'kind': runtime_environment_retention.KIND, 'id': identity, 'label': 'Worker dependencies kept',
+                          'reason': 'Referenced, modified, or not fully verified'})
     # Preserve all test artifacts and engine roots. A terminal chat is not
     # proof that a native launch cannot still finish, nor an archive grant.
     for row in protected:
@@ -245,7 +268,7 @@ async def preview(app):
     measured_paths = {path for row in candidates for path in row.get('paths', [])}
     from .runtime_environment import project_path
     for index, row in enumerate(protected):
-        if not row.get('id') or index >= 4 or row['kind'] == 'test-dependencies':
+        if not row.get('id') or index >= 4 or row['kind'] in {'test-dependencies', runtime_environment_retention.KIND}:
             row['fileBytes'] = None
             protected_complete = False
             continue
@@ -260,9 +283,10 @@ async def preview(app):
         except (ValueError, OSError, TimeoutError):
             row['fileBytes'] = None
             protected_complete = False
-    complete = generations.get('complete', False) and runner_complete and dependencies['complete'] and archives['complete']
+    complete = generations.get('complete', False) and runtimes['complete'] and runner_complete and dependencies['complete'] and archives['complete']
     return {'policy': settings, 'workspaceArchiveCursor': archives['workspaceArchiveCursor'], 'rows': [{k: v for k, v in row.items() if k not in {'paths', 'stamp'}} for row in rows],
             **{key: generations[key] for key in ('generationCursor', 'retiredCursor') if key in generations},
+            **({'runtimeCursor': runtimes['runtimeCursor']} if 'runtimeCursor' in runtimes else {}),
             **({'retentionReasons': generations['retentionReasons']} if generations.get('retentionReasons') else {}),
             'protected': protected[:128], 'protectedCount': len(protected),
             'observedProtected': observed_protected,
@@ -279,7 +303,7 @@ async def preview(app):
 
 
 async def run(app, identity, *, expected_revision=None, automatic=False, authority=None):
-    from . import update_retention, managed_runner_updates, test_dependency_layers, workspace_archive_retention
+    from . import update_retention, managed_runner_updates, test_dependency_layers, workspace_archive_retention, runtime_environment_retention
     async with lock(app):
         key = 'storage-cleanup-run:' + identity
         previous = retained_run(app, identity, expected_revision, (authority or {}).get('sessionId'))
@@ -302,7 +326,7 @@ async def run(app, identity, *, expected_revision=None, automatic=False, authori
                                 protected=report.get('observedProtected', []))
         store(app, OBSERVATION, seen)
         result = {'id': identity, 'expectedRevision': expected_revision, 'status': 'running', 'startedAt': now, 'policy': settings,
-                  **{key: report[key] for key in ('generationCursor', 'retiredCursor', 'retentionReasons', 'workspaceArchiveCursor') if key in report},
+                  **{key: report[key] for key in ('generationCursor', 'retiredCursor', 'runtimeCursor', 'retentionReasons', 'workspaceArchiveCursor') if key in report},
                   'selectedFileBytes': report['selectedFileBytes'], 'removedFileBytes': 0,
                   'effects': [], 'completeInspection': report['complete']}
         if authority is not None:
@@ -311,6 +335,12 @@ async def run(app, identity, *, expected_revision=None, automatic=False, authori
         store(app, LATEST, result)
         chosen = {(row['kind'], row['id']): row for row in report['rows'] if row['selected']}
         def evidence(status, item):
+            if status == 'reconciled':
+                runtime_recovery(app, item)
+                result.setdefault('recoveries', []).append({key: item[key] for key in ('kind', 'project', 'retirementId', 'disposition')})
+                store(app, key, result)
+                store(app, LATEST, result)
+                return
             if status == 'attempting':
                 try:
                     check(app, authority)
@@ -333,6 +363,9 @@ async def run(app, identity, *, expected_revision=None, automatic=False, authori
         try:
             await update_retention.reclaim(app.update_manager,
                 selected={identity for kind, identity in chosen if kind == 'ecosystem'}, evidence=evidence)
+            if result['status'] == 'running' and policy(app) == settings:
+                await runtime_environment_retention.reclaim(app.update_manager,
+                    selected={identity for kind, identity in chosen if kind == runtime_environment_retention.KIND}, evidence=evidence)
             if result['status'] == 'running' and policy(app) == settings:
                 await managed_runner_updates.retire(app,
                     selected={identity for kind, identity in chosen if kind == 'runner'}, evidence=evidence)

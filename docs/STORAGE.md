@@ -338,6 +338,25 @@ after a lost save/cleanup acknowledgment, real owner removal, saved evidence
 preservation, and desktop/narrow draft protection. It makes no claim that a
 production installation or a remote runner has been cleaned.
 
+### Orphaned generated worker environments
+
+The same policy also discovers generated runtime `.venv` directories that no
+longer have a release or baseline reference. Its bounded inspection retains
+current/rollback/leased generations, all surviving release aliases, saved module
+source references, installer locks, running processes and changed or unknown
+installed files. Only an unused generated environment is detached for removal;
+its project source, manifest, lock, qualification and failed-attempt records stay.
+The normal age/size policy applies, and a final reference/identity check occurs
+at the existing runtime lifecycle boundary. Interrupted removal keeps the same
+retirement receipt. A later policy pass can settle that exact detached payload
+after matching its saved identity, or settle an empty pre-rename attempt without
+replaying the rename. Changed or missing evidence stays held. Original failed
+outcomes remain recorded with any subsequent resolution; a new live environment
+is never a continuation target. Configuration discovery and content inventories
+run outside runtime admission; only their final metadata witnesses are checked
+inside it. Ordinary event/history writes do not invalidate source settings.
+This is part of existing maintenance, not a new background scanner or scheduler.
+
 ### Reusable isolated-test dependencies
 
 The same global automatic cleanup policy also owns qualified source-free Python
