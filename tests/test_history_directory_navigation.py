@@ -102,6 +102,45 @@ def test_directory_workspace_and_mixed_pins_match(tmp_path):
     assert pinned_navigation(directory,working,workspaces)==expected_pins
 
 
+@pytest.mark.parametrize('workspace_archive', ['active', 'archived', 'all'])
+def test_workspace_counts_archive_and_restore_without_decoding_history(tmp_path, workspace_archive):
+    complete, directory = directory_fixture(tmp_path, 20)
+    complete['workspaces'][0]['archived'] = workspace_archive == 'archived'
+    complete['view'].update(navWorkspaceMode='recent', navWorkspaceArchive=workspace_archive,
+                            navArchive='all')
+    complete['conversationOrganization']['archived'] = {'s4': 1}
+    working = {**complete, 'sessions': []}
+    directory.decode = lambda row: pytest.fail('Workspace aggregates must not decode chat history')
+    first = workspace_counts(directory, working, archive=workspace_archive)['/projects/alpha']
+    assert first['chatCount'] == 12
+    assert first['unread'] == 0
+    assert workspace_navigation._index(working, aggregates=workspace_counts(
+        directory, working, archive=workspace_archive)) == workspace_navigation._index(complete)
+    complete['conversationOrganization']['archived'].clear()
+    restored = workspace_counts(directory, working, archive=workspace_archive)['/projects/alpha']
+    assert restored['chatCount'] == 13 and restored['unread'] == 1
+    assert working['sessions'] == []
+
+
+def test_warm_workspace_projection_observes_archive_and_restore(tmp_path):
+    from amplifier_web.state_projections import StateProjections
+    complete, directory = directory_fixture(tmp_path, 20)
+    complete['view']['navWorkspaceMode'] = 'recent'
+    working = {**complete, 'sessions': []}
+    directory.service._state = working
+    projections = StateProjections(service=SimpleNamespace(directory=directory))
+    directory.decode = lambda row: pytest.fail('Workspace count must not hydrate a chat')
+    first = projections.workspaces(working)
+    preserved = deepcopy(first)
+    count = lambda page: next(row['chatCount'] for row in page['rows'] if row['workspaceId'] == 'a')
+    for archive, expected in [({'s5': 1, 's6': 1, 's1': 1}, 11), ({'s5': 1, 's6': 1}, 12)]:
+        working['conversationOrganization']['archived'] = archive
+        current = projections.workspaces(working)
+        assert count(current) == expected
+        assert current is projections.workspaces(working)
+        assert first == preserved and count(first) == 12
+
+
 def test_large_directory_does_not_decode_outside_page(tmp_path):
     complete,directory=directory_fixture(tmp_path,27000)
     working={**complete,'sessions':[]}

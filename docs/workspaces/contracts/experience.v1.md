@@ -40,6 +40,10 @@ Workspace details → Files · Chats · Directions · Settings
    recent folders, folder browsing, and chat drill-in. Pins remain excluded from
    global Recent and present in their workspace's full list. Helpers stay with their parent chat. Additional
    Browse filters use disclosure; collapse state persists independently.
+   Workspace chat counts and activity summaries include only unarchived root
+   chats, and refresh when a chat is archived or restored. Workspace archive
+   filters select workspaces; they do not change this chat-count meaning. Archived
+   chats remain available through the chat archive filter.
 
 3. **Details preserve conversation state.** The existing Canvas hosts inspection
    while retaining its tabs. Opening a source, output, helper, or preview leaves

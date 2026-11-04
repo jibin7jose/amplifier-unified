@@ -114,7 +114,7 @@ async def test_mixed_native_catalog_with_large_registry_uses_bounded_lookup_work
         app.db.set_progress_handler(None,0)
     assert page['total'] == 27000
     assert page['items'][0]['id'] == 'saved-00500' and page['items'][0]['pinned']
-    assert counts[workspace['path']]['chatCount'] == 27000
+    assert counts[workspace['path']]['chatCount'] == 26500
     assert len(decoded) == len(page['items']) <= 100
     assert len(app._state['sessions']) == 6
     assert not app.runtime.started and not app.runtime.sent

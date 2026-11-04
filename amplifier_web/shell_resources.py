@@ -238,7 +238,7 @@ class ShellResources:
         globals_key = self._epochs(CHAT_GLOBALS)
         if name in {'workspaceExplorer', 'workspaceShortcuts'}:
             navigation_revision = (workspace_revision, None)
-            globals_key = self._epochs({'workspaces', 'pinnedWorkspaceIds'})
+            globals_key = self._epochs({'workspaces', 'pinnedWorkspaceIds', 'conversationOrganization'})
         elif name != 'workspaceOverview':
             navigation_revision = ((root_navigation_revision, workspace_revision)
                 if name in {'pinnedNavigation', 'sidebarPinned'} else root_navigation_revision, None)

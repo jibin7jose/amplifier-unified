@@ -204,7 +204,7 @@ def chats(directory, state, *, section=None):
 
 def workspace_counts(directory, state, archive='active'):
     sql, params, _ = _base(directory, state, archive=archive)
-    sql += " SELECT resolved_workspace,COUNT(*),SUM(unread),MAX(recent),activity_kind,activity_label FROM navigation_rows WHERE session_kind='root' AND resolved_workspace_id IS NOT NULL GROUP BY resolved_workspace,activity_kind,activity_label"
+    sql += " SELECT resolved_workspace,COUNT(*),SUM(unread),MAX(recent),activity_kind,activity_label FROM navigation_rows WHERE session_kind='root' AND NOT archived AND resolved_workspace_id IS NOT NULL GROUP BY resolved_workspace,activity_kind,activity_label"
     result = {}
     for path, count, unread, recent, kind, label in directory.db.execute(sql, params):
         entry = result.setdefault(path, {'chatCount':0,'unread':0,'recentActivityAt':0,

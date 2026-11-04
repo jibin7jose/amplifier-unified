@@ -92,6 +92,26 @@ def test_legacy_paths_forks_and_unread_counts_are_scoped_to_top_level_chats_once
     assert nested['chatCount'] == 1 and nested['unread'] == 1
 
 
+@pytest.mark.parametrize('workspace_archive', ['active', 'archived', 'all'])
+def test_workspace_summary_excludes_archived_chats_until_restored(workspace_archive):
+    value = state([workspace('app', '/work/app', archived=workspace_archive == 'archived')],
+                  [chat('visible', 'app', recentActivityAt=10),
+                   chat('archived', 'app', status='working', recentActivityAt=20)], 'app')
+    value['view'].update(navWorkspaceMode='recent', navWorkspaceArchive=workspace_archive,
+                         navArchive='all')
+    value['conversationOrganization'] = {'archived': {'archived': 1}}
+    value['attention'] = {'sessions': {'archived': 1}}
+    row = snapshot(value)['rows'][0]
+    assert row['chatCount'] == 1
+    assert row['activityCounts'] == {'attention': 0, 'working': 0, 'unread': 0, 'idle': 1}
+    assert row['unread'] == 0 and row['recentActivityAt'] == 10
+    assert value['sessions'][1]['status'] == 'working'
+    value['conversationOrganization']['archived'].clear()
+    row = snapshot(value)['rows'][0]
+    assert row['chatCount'] == 2 and row['activityCounts']['working'] == 1
+    assert row['unread'] == 1 and row['recentActivityAt'] == 20
+
+
 def test_search_uses_full_paths_aliases_and_fnmatch_for_duplicate_folder_names():
     value = state([
         workspace('one', '/work/team-one/app', name='Design kit'),
