@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {chromium,expect} from '@playwright/test';
 import assert from 'node:assert/strict';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
+import {createSelectionEvidence,observeOptional,OPTIONAL_OBSERVATION_MS} from './selection-failure-evidence.mjs';
 const reservation=createServer();await new Promise(r=>reservation.listen(0,'127.0.0.1',r));const port=reservation.address().port;await new Promise(r=>reservation.close(r));
 const url=`http://127.0.0.1:${port}`,proof=process.env.AMPLIFIER_PROOF_DIR;
 if(proof)mkdirSync(proof,{recursive:true});
@@ -20,6 +21,58 @@ const references=doc=>doc.segments.filter(s=>s.type==='quote');
 const observe=async()=>{const response=await context.request.get(url+'/fixture/message-source');assert.equal(response.status(),200);return response.json();};
 const checkpoints=[],compactGeometry=[];
 const cardObservations=[];
+const selectionEvidence=createSelectionEvidence();
+const {observations:selectionObservations,binding:selectionBinding,
+ retain:retainSelectionObservation,observeFailure:observeSelectionFailure}=selectionEvidence;
+// Installed on each document, including reloads. One current probe retains the
+// actual selected node; rebinding or closing the page releases the old closure.
+// Geometry reads may flush layout. No timing-equivalence claim follows.
+function installSelectionObserver(){
+ window.multiQuoteBindSelection=(node,binding,text,textMatchBasis)=>{
+  // Capture source identity once. Later DOM removal must not turn a source-C
+  // observation into an unidentified node or a newly resolved source-A locator.
+  let source;
+  const inspect=()=>{
+   try{
+    const identity=element=>{
+     const value=element?.closest('[data-message-id]')?.getAttribute('data-message-id');
+     return typeof value==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(value)?value:null;
+    };
+    source??={root:node.closest('.a-detail-text')||node,article:node.closest('[data-message-id]'),
+     pane:node.closest('.a-messages'),messageId:identity(node)};
+    const {root,article,pane,messageId}=source;
+    const current=window.getSelection(),selected=current?.rangeCount?current.getRangeAt(0):null;
+    const toolbar=document.querySelector('.a-quote-selection'),active=document.activeElement;
+    const coordinate=value=>Number.isFinite(value)&&Math.abs(value)<=1e7?value:null;
+    const rect=target=>{
+     if(!target)return null;
+     const value=target.getBoundingClientRect();
+     return Object.fromEntries(['x','y','width','height','top','bottom','left','right'].map(key=>[key,coordinate(value[key])]));
+    };
+    const rangeStart=selected?.startContainer,rangeEnd=selected?.endContainer;
+    const element=target=>target?.nodeType===1?target:target?.parentElement;
+    const activeCategory=!active?'none':active===document.body?'body':root.contains(active)?'source':
+     active.closest('.a-composer')?'composer':active.matches('input,textarea,[contenteditable=true]')?'editor':
+     active.matches('button')?'button':'other';
+    return {...binding,available:true,sourceKind:'rendered-message',messageId,
+     rangeStartMessageId:identity(element(rangeStart)),rangeEndMessageId:identity(element(rangeEnd)),
+     nodeConnected:node.isConnected,rootConnected:root.isConnected,rangeCount:current?.rangeCount??0,collapsed:current?.isCollapsed??null,
+     anchorConnected:current?.anchorNode?.isConnected??false,focusConnected:current?.focusNode?.isConnected??false,
+     rangeStartConnected:rangeStart?.isConnected??false,rangeEndConnected:rangeEnd?.isConnected??false,
+     rangeInsideSource:!!selected&&root.contains(rangeStart)&&root.contains(rangeEnd),
+     rangeInsideNode:!!selected&&node.contains(rangeStart)&&node.contains(rangeEnd),
+     exactTextMatch:!!current&&current.toString()===text,textMatchBasis,activeCategory,
+     viewport:{width:coordinate(innerWidth),height:coordinate(innerHeight)},
+     rects:{selection:rect(selected),node:rect(node),source:rect(root),pane:rect(pane),toolbar:rect(toolbar)},
+     toolbarPresent:!!toolbar,quoteButtonPresent:!!toolbar?.querySelector('button'),
+     errorStatusPresent:!!toolbar?.querySelector('.a-quote-selection-error,[role=status]'),
+     sourceErrorPresent:!!article?.querySelector('.a-message-interaction-error[role=alert]')};
+   }catch{return {...binding,available:false,reason:'observation_unavailable'}}
+  };
+  window.multiQuoteSelectionProbe=inspect;
+  return inspect();
+ };
+}
 async function observeCards(stage){
  const rendered=await page.getByRole('textbox',{name:'Message Amplifier'}).evaluate(editor=>{
   const bounds=node=>{const r=node.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height};};
@@ -86,10 +139,12 @@ const canonicalDraft=async()=>{
  assert.equal(response.status(),200);return response.json();
 };
 async function quoteRendered(page,article,text){
+ const binding=selectionBinding(page,'quoteRendered','rendered-passage','.a-detail-text');
+ try{
  const body=article.locator('.a-detail-text');
  await body.scrollIntoViewIfNeeded();
  await body.dispatchEvent('pointerdown');
- await body.evaluate((root,text)=>{
+ const installed=await body.evaluate((root,{text,binding})=>{
   document.activeElement?.blur();
   const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes=[];let node,rendered='';
   while((node=walker.nextNode())){nodes.push({node,start:rendered.length});rendered+=node.textContent;}
@@ -99,9 +154,15 @@ async function quoteRendered(page,article,text){
   const range=document.createRange();range.setStart(first.node,start-first.start);range.setEnd(last.node,end-last.start);
   const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);
   document.dispatchEvent(new Event('selectionchange'));
- },text);
- await page.getByRole('button',{name:'Quote selection',exact:true}).click();
- await expect(page.locator('.a-quote-selection')).toHaveCount(0);
+  return window.multiQuoteBindSelection?.(root,binding,text,'fixture-excerpt')??{...binding,available:false,reason:'probe_unavailable'};
+ },{text,binding});
+ retainSelectionObservation('range-installed',installed);
+  await page.getByRole('button',{name:'Quote selection',exact:true}).click();
+  await expect(page.locator('.a-quote-selection')).toHaveCount(0);
+ }catch(error){
+  await observeSelectionFailure(page,error);
+  throw error;
+ }
 }
 async function noPassageEditor(page){
  await expect(page.getByRole('button',{name:'Choose passage',exact:true,includeHidden:true})).toHaveCount(0);
@@ -186,11 +247,15 @@ async function expectCompact(stage){
  return geometry;
 }
 try{
+ await page.addInitScript(installSelectionObserver);
  for(let i=0;i<100;i++){try{if((await fetch(url+'/api/health')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
  let comparisonError=null;
  if(process.env.AMPLIFIER_QUOTE_REFERENCE&&proof){
   try{await compareReference();}
-  catch(error){comparisonError=error;writeFileSync(join(proof,'comparison-failure.json'),JSON.stringify({message:error.message},null,2));}
+  catch(error){
+   comparisonError=error;
+   try{writeFileSync(join(proof,'comparison-failure.json'),JSON.stringify({message:error.message},null,2))}catch{}
+  }
  }
  await page.goto(url);await page.waitForSelector('#amp-one');await showFixtureConversation(page);
  await noPassageEditor(page);
@@ -432,31 +497,37 @@ try{
  assert.ok((await editor.boundingBox()).height<=181,'Removing every quote restores the ordinary draft height cap');
  await editor.fill('');
  // Native transcript selection also works in an empty draft.
+ const nativeBinding=selectionBinding(page,'direct-range','native-empty-draft','.a-detail-text');
  await page.setViewportSize({width:1280,height:900});
  await a.locator('.a-detail-text').scrollIntoViewIfNeeded();
- await a.locator('.a-detail-text').evaluate(node=>{
+ const nativeSelection=await a.locator('.a-detail-text').evaluate((node,binding)=>{
   const walker=document.createTreeWalker(node,NodeFilter.SHOW_TEXT);let text;
   while((text=walker.nextNode())){const start=text.textContent.indexOf('second line');if(start<0)continue;
    const range=document.createRange();range.setStart(text,start);range.setEnd(text,start+'second line'.length);
-   const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);document.dispatchEvent(new Event('selectionchange'));return;
+   const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);document.dispatchEvent(new Event('selectionchange'));
+   return window.multiQuoteBindSelection?.(node,binding,'second line','fixture-excerpt')??{...binding,available:false,reason:'probe_unavailable'};
   }throw Error('Native selection fixture text is missing');
- });
+ },nativeBinding);
+ retainSelectionObservation('range-installed',nativeSelection);
  await page.getByRole('button',{name:'Quote selection',exact:true}).click();await expect(quotes).toHaveCount(1);
  assert.equal(references(await documentValue())[0].quote.excerpt,'second line');
  await observeCards('direct rendered selection');
  await quotes.first().getByRole('button',{name:'Remove quote',exact:true}).click();await expect(quotes).toHaveCount(0);
  const c=page.locator('.a-message').filter({hasText:'Quote fixture source C'}).first();
- const selectContents=async(selector)=>{
+ const selectContents=async(selector,stage='rendered-contents',binding=selectionBinding(page,'selectContents',stage,selector))=>{
   const node=c.locator('.a-detail-text '+selector);
   await node.scrollIntoViewIfNeeded();
-  await node.evaluate(node=>{
+  const installed=await node.evaluate((node,binding)=>{
    // A real selection gesture in the transcript leaves the editor's focus.
    // Merely installing a Range while ProseMirror still owns focus lets its next
    // transaction replace the browser selection, an impossible mouse fixture.
    document.activeElement?.blur();
    const range=document.createRange();range.selectNodeContents(node);
    const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);document.dispatchEvent(new Event('selectionchange'));
-  });
+   // This match is against the installed Range, not an independent quote oracle.
+   return window.multiQuoteBindSelection?.(node,binding,range.toString(),'installed-range')??{...binding,available:false,reason:'probe_unavailable'};
+  },binding);
+  retainSelectionObservation('range-installed',installed);
  };
  for(const [selector,text] of [['p:nth-of-type(2)','A bold inside and label end.'],['ul','first\nsecond'],['p:nth-of-type(3)','Third paragraph café 😀 e\u0301 東京.'],['p:nth-of-type(4)','inline code'],['pre code','  code\tvalue\n'],['p:nth-of-type(5)','Repeated same same.']]){
   await selectContents(selector);
@@ -476,14 +547,17 @@ try{
  }
  // A selected separator at either edge cannot be silently discarded.
  for(const edge of ['trailing','leading']){
+  const boundaryBinding=selectionBinding(page,'direct-range','boundary-'+edge,'[data-message-quote-source]');
   await c.locator('.a-detail-text p').first().scrollIntoViewIfNeeded();
-  await c.locator('[data-message-quote-source]').evaluate((root,edge)=>{
+  const boundarySelection=await c.locator('[data-message-quote-source]').evaluate((root,{edge,binding})=>{
    document.activeElement?.blur();
    const first=root.querySelector('p'),gap=first.nextSibling,next=gap.nextSibling,range=document.createRange();
    if(edge==='trailing'){range.setStartBefore(first);range.setEndAfter(gap);}
    else{range.setStartBefore(gap);range.setEndAfter(next);}
    const selected=window.getSelection();selected.removeAllRanges();selected.addRange(range);document.dispatchEvent(new Event('selectionchange'));
-  },edge);
+   return window.multiQuoteBindSelection?.(root,binding,range.toString(),'installed-range')??{...binding,available:false,reason:'probe_unavailable'};
+  },{edge,binding:boundaryBinding});
+  retainSelectionObservation('range-installed',boundarySelection);
   await expect(page.locator('.a-quote-selection [role=status]')).toHaveText('This boundary whitespace cannot be quoted exactly. Nothing was added.');
   await expect(page.locator('.a-quote-selection button')).toHaveCount(0);
   await noPassageEditor(page);
@@ -491,13 +565,16 @@ try{
  }
  // Second occurrence, across formatting, with Unicode nearby: no text search
  // may accidentally quote the earlier identical phrase.
+ const repeatedBinding=selectionBinding(page,'direct-range','repeated-occurrence','p:nth-of-type(5)');
  const sourceC=(await observe()).sessions.flatMap(s=>s.messages).find(m=>m.text.startsWith('Quote fixture source C')).text;
  const repeated=c.locator('.a-detail-text p:nth-of-type(5)');await repeated.scrollIntoViewIfNeeded();
- await repeated.evaluate(node=>{
+ const repeatedSelection=await repeated.evaluate((node,binding)=>{
   const text=node.querySelector('strong').firstChild.firstChild,after=node.lastChild.firstChild;
   const range=document.createRange();range.setStart(text,0);range.setEnd(after,after.length);
   const selected=window.getSelection();selected.removeAllRanges();selected.addRange(range);document.dispatchEvent(new Event('selectionchange'));
- });
+  return window.multiQuoteBindSelection?.(node,binding,'same.','fixture-excerpt')??{...binding,available:false,reason:'probe_unavailable'};
+ },repeatedBinding);
+ retainSelectionObservation('range-installed',repeatedSelection);
  const repeatedButton=page.getByRole('button',{name:'Quote selection',exact:true});
  await repeatedButton.focus();await page.keyboard.press('Enter');await expect(quotes).toHaveCount(1);
  const repeatQuote=references(await documentValue())[0].quote,repeatAt=sourceC.lastIndexOf('same');
@@ -508,8 +585,8 @@ try{
  let selectionRelease,selectionStarted;
  const selectionHeld=new Promise(resolve=>selectionRelease=resolve),selectionWaiting=new Promise(resolve=>selectionStarted=resolve);
  await page.route('**/api/actions',async route=>{if(route.request().postDataJSON()?.action==='message.reply'){const response=await route.fetch();selectionStarted();await selectionHeld;await route.fulfill({response});}else await route.continue();});
- await selectContents('p:nth-of-type(2)');await page.getByRole('button',{name:'Quote selection',exact:true}).click();await selectionWaiting;
- await selectContents('p:nth-of-type(3)');
+ await selectContents('p:nth-of-type(2)','delayed-A-held');await page.getByRole('button',{name:'Quote selection',exact:true}).click();await selectionWaiting;
+ await selectContents('p:nth-of-type(3)','delayed-B-before-release');
  const selectionState=()=>page.evaluate(()=>({
   text:window.getSelection()?.toString(),active:document.activeElement?.outerHTML.slice(0,300),
   action:document.querySelector('.a-quote-selection')?.textContent,
@@ -527,7 +604,7 @@ try{
  await editor.fill(Array.from({length:30},(_,i)=>'Plain after removal '+i).join('\n'));
  assert.ok((await editor.boundingBox()).height<=181,'Removing the last quote without remounting restores ordinary draft height');
  await editor.fill('');
- await selectContents('p:nth-of-type(2)');
+ await selectContents('p:nth-of-type(2)','dismissed-selection');
  const dismissedText=await page.evaluate(()=>window.getSelection().toString());
  await page.keyboard.press('Escape');await expect(page.locator('.a-quote-selection')).toHaveCount(0);
  await page.keyboard.press('Escape');
@@ -536,8 +613,9 @@ try{
  await page.locator('.a-messages').evaluate(node=>node.dispatchEvent(new Event('scroll')));
  await expect(page.locator('.a-quote-selection')).toHaveCount(0);
  // A fresh source gesture may quote the same range again.
+ const hiddenBinding=selectionBinding(page,'selectContents','hidden-pending-selection','p:nth-of-type(2)');
  await c.locator('.a-detail-text p:nth-of-type(2)').dispatchEvent('pointerdown');
- await selectContents('p:nth-of-type(2)');
+ await selectContents('p:nth-of-type(2)','hidden-pending-selection',hiddenBinding);
  let hiddenRelease,hiddenStarted,hiddenSettled;
  const hiddenHold=new Promise(resolve=>hiddenRelease=resolve),hiddenWait=new Promise(resolve=>hiddenStarted=resolve),hiddenDone=new Promise(resolve=>hiddenSettled=resolve);
  await page.route('**/api/actions',async route=>{if(route.request().postDataJSON()?.action==='message.reply'){const response=await route.fetch();hiddenStarted();await hiddenHold;await route.fulfill({response});hiddenSettled();}else await route.continue();});
@@ -550,14 +628,16 @@ try{
  await expect(page.locator('.a-quote-selection')).toHaveCount(0);
  await quotes.first().getByRole('button',{name:'Remove quote',exact:true}).click();
  // A newer gesture can select the identical source interval while A is pending.
+ const sameABinding=selectionBinding(page,'selectContents','same-interval-A','p:nth-of-type(2)');
  await c.locator('.a-detail-text p:nth-of-type(2)').dispatchEvent('pointerdown');
- await selectContents('p:nth-of-type(2)');
+ await selectContents('p:nth-of-type(2)','same-interval-A',sameABinding);
  let sameRelease,sameStarted,sameSettled;
  const sameHold=new Promise(resolve=>sameRelease=resolve),sameWait=new Promise(resolve=>sameStarted=resolve),sameDone=new Promise(resolve=>sameSettled=resolve);
  await page.route('**/api/actions',async route=>{if(route.request().postDataJSON()?.action==='message.reply'){const response=await route.fetch();sameStarted();await sameHold;await route.fulfill({response});sameSettled();}else await route.continue();});
  await page.getByRole('button',{name:'Quote selection',exact:true}).click();await sameWait;
  await page.keyboard.press('Escape');await expect(page.locator('.a-quote-selection')).toHaveCount(0);
- await c.locator('.a-detail-text p:nth-of-type(2)').dispatchEvent('pointerdown');await selectContents('p:nth-of-type(2)');
+ const sameBBinding=selectionBinding(page,'selectContents','same-interval-B','p:nth-of-type(2)');
+ await c.locator('.a-detail-text p:nth-of-type(2)').dispatchEvent('pointerdown');await selectContents('p:nth-of-type(2)','same-interval-B',sameBBinding);
  await expect(page.getByRole('button',{name:'Quote selection',exact:true})).toBeVisible();
  sameRelease();await sameDone;await expect(quotes).toHaveCount(1);await page.unroute('**/api/actions');
  await page.evaluate(()=>window.dispatchEvent(new Event('resize')));
@@ -568,7 +648,7 @@ try{
  for(let i=0;i<2;i++)await quotes.first().getByRole('button',{name:'Remove quote',exact:true}).click();
  // Keep keyboard activation, but do not leave the action over unrelated text
  // after scrolling the selected source away.
- await selectContents('p:nth-of-type(2)');await page.getByRole('button',{name:'Quote selection',exact:true}).focus();
+ await selectContents('p:nth-of-type(2)','keyboard-offscreen');await page.getByRole('button',{name:'Quote selection',exact:true}).focus();
  await page.locator('.a-messages').evaluate(node=>{node.scrollTop=0;node.dispatchEvent(new Event('scroll'));});
  await expect(page.locator('.a-quote-selection')).toHaveCount(0);
  // Unmappable text refuses in place, without a fallback editor, quote request
@@ -585,11 +665,12 @@ try{
  const countReply=request=>{if(request.url().endsWith('/api/actions')&&request.postDataJSON()?.action==='message.reply')refusedRequests++;};
  page.on('request',countReply);
  for(const width of [1280,320]){
+  const refusalBinding=selectionBinding(page,'selectContents','unmappable-selection-'+width,'p:last-child');
   await page.setViewportSize({width,height:844});
   // Escape deliberately keeps the old selection dismissed through resize.
   // The next viewport case needs a new source gesture, not a replayed Range.
   await c.locator('.a-detail-text p:last-child').dispatchEvent('pointerdown');
-  await selectContents('p:last-child');
+  await selectContents('p:last-child','unmappable-selection-'+width,refusalBinding);
   const explanation=page.locator('.a-quote-selection [role=status]');
   await expect(explanation).toHaveText('This selection includes controls or unmapped text. Nothing was added.');
   await expect(explanation).toBeInViewport();await expect(page.locator('.a-quote-selection button')).toHaveCount(0);
@@ -618,8 +699,9 @@ try{
  // Source revision changes before snapshot admission reject the captured digest.
  // This is a fresh source gesture after editor/quote removal, not a synthetic
  // selectionchange replay while the transcript's prior gesture is dismissed.
+ const revisionBinding=selectionBinding(page,'selectContents','source-revision-before-admission','p:nth-of-type(2)');
  await c.locator('.a-detail-text p:nth-of-type(2)').dispatchEvent('pointerdown');
- await selectContents('p:nth-of-type(2)');
+ await selectContents('p:nth-of-type(2)','source-revision-before-admission',revisionBinding);
  await page.route('**/api/actions',async route=>{
   if(route.request().postDataJSON()?.action==='message.reply'){
    await context.request.post(url+'/fixture/quote-source-change',{data:{id:await c.getAttribute('data-message-id'),text:sourceC+'\nRevised source.'}});
@@ -706,11 +788,20 @@ try{
  async function compareReference(){
   // Optional private design comparison. The supplied HTML is data in an opaque
   // script-only sandbox, never product source or a privileged page.
+  let comparisonPage,comparisonStage='context-setup';
+  try{
   const comparisonContext=await browser.newContext({viewport:{width:1280,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
   comparisonContext.setDefaultTimeout(10000);
   const page=await comparisonContext.newPage();
+  comparisonPage=page;
+  selectionBinding(page,'comparison','before-selection',null);
+  await page.addInitScript(installSelectionObserver);
   const comparisonStages=[];
-  const stage=name=>{comparisonStages.push(name);writeFileSync(join(proof,'comparison-stages.json'),JSON.stringify(comparisonStages));};
+  const stage=name=>{
+   comparisonStage=['app navigation','sandbox document','reference sample','sandbox connection guard','sample sources',
+    'insert text','insert quote','capture 1280','capture 390','capture 320'].includes(name)?name:'comparison-other';
+   comparisonStages.push(name);writeFileSync(join(proof,'comparison-stages.json'),JSON.stringify(comparisonStages));
+  };
   stage('app navigation');
   await page.goto(url);await page.waitForSelector('#amp-one');await showFixtureConversation(page);
   const editor=page.getByRole('textbox',{name:'Message Amplifier'});
@@ -782,11 +873,26 @@ try{
   }
   writeFileSync(join(proof,'comparison-specimen.json'),JSON.stringify({specimen,actual:await documentValue(),scope:'Matching source/excerpts and commentary; prototype-only lab and simulation controls excluded from acceptance'},null,2));
   await referenceContext.close();await comparisonContext.close();
+  }catch(error){
+   // Capture here for failures outside quoteRendered too (scroll, Range,
+   // quote-count, capture, or setup), while this exact page is still in scope.
+   await observeSelectionFailure(comparisonPage,error,comparisonStage);
+   throw error;
+  }
  }
  if(comparisonError)throw comparisonError;
- if(proof)writeFileSync(join(proof,'observed-document.json'),JSON.stringify({sourceA,sourceB,first,second,expected,submitted,sent,initialScroll:beforeScroll},null,2));
+ if(proof)writeFileSync(join(proof,'observed-document.json'),JSON.stringify({sourceA,sourceB,first,second,expected,submitted,sent,initialScroll:beforeScroll,selectionObservations,omittedSelectionObservations:selectionEvidence.omitted},null,2));
  console.log('PASS exact Unicode/multiline passages + whole message, interleaved commentary, attachment, reload, keyboard reorder, removal, captured delayed target, narrow rendering, sent projection and adjacent cycle.');
 }catch(error){
- if(proof){writeFileSync(join(proof,'failure.json'),JSON.stringify({message:error.message,errors},null,2));await page.screenshot({path:join(proof,'failure.png')}).catch(()=>{});}
+ await observeSelectionFailure(page,error);
+ if(proof){
+  const record={message:error.message,errors,selectionObservations,omittedSelectionObservations:selectionEvidence.omitted};
+  try{writeFileSync(join(proof,'failure.json'),JSON.stringify(record,null,2))}catch{}
+  const screenshot=await observeOptional(()=>page.screenshot({path:join(proof,'failure.png'),timeout:OPTIONAL_OBSERVATION_MS}));
+  // Expiry is not cancellation or proof of a complete PNG. Preserve the original
+  // failure even if screenshot settlement or this optional report write fails.
+  record.failureScreenshot={status:screenshot.status,budgetMs:OPTIONAL_OBSERVATION_MS};
+  try{writeFileSync(join(proof,'failure.json'),JSON.stringify(record,null,2))}catch{}
+ }
  throw error;
 }finally{await browser.close();fixture.kill();await new Promise(resolve=>fixture.exitCode!==null?resolve():fixture.once('exit',resolve));}

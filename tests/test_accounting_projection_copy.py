@@ -1,6 +1,6 @@
 import copy
 
-from amplifier_web.session_projection import accounting_projection
+from amplifier_web.session_projection import accounting_projection, stored_execution
 
 
 class MutableString(str):
@@ -116,3 +116,55 @@ def test_assignment_reservations_remain_detached_and_prior_receipt_wins():
     projected = accounting_projection({'retiredUsageNodes': [prior]})[0]
     nested['tokens'].append(200)
     assert projected['assignmentReservation'] == {'tokens': [100]}
+
+
+def test_saved_observations_do_not_recursively_recopy_plain_historical_receipts(monkeypatch):
+    """Growing old live placements must not add generic recursive copy work."""
+    counts = []
+    original = copy.deepcopy
+    for size in (1, 200):
+        rows = [{'id': f'call-{i}', 'kind': 'llm', 'sessionId': 'root',
+                 'rootSessionId': 'root', 'turnId': 'turn', 'producerId': 'producer',
+                 'revision': 2, 'phase': 'completed', 'liveObservation': True,
+                 'model': 'synthetic', 'usage': {'inputTokens': i, 'costUsd': .1},
+                 'assignmentReservation': {'tokens': 100, 'state': 'settled'}}
+                for i in range(size)]
+        tree = {'nodes': rows, 'turns': [{'id': 'turn'}]}
+        recursive = []
+        def observe(value, *args, **kwargs):
+            recursive.append(type(value))
+            return original(value, *args, **kwargs)
+        with monkeypatch.context() as patch:
+            patch.setattr(copy, 'deepcopy', observe)
+            saved = stored_execution(tree)
+        counts.append(len(recursive))
+        assert len(saved['nodes']) == len(saved['retiredUsageNodes']) == size
+        for live, node, receipt in zip(rows, saved['nodes'], saved['retiredUsageNodes']):
+            assert node['usage'] == receipt['usage'] == live['usage']
+            assert node['assignmentReservation'] == receipt['assignmentReservation']
+            live['usage']['inputTokens'] = -1
+            node['assignmentReservation']['tokens'] = -1
+            receipt['usage']['costUsd'] = -1
+            assert node['usage']['costUsd'] == .1
+            assert receipt['assignmentReservation']['tokens'] == 100
+            assert node['usage']['inputTokens'] >= 0
+    assert counts == [0, 0]
+
+
+def test_observation_receipt_copy_keeps_aliases_and_custom_deepcopy_behavior():
+    # These are already detached accounting receipts at the placement boundary.
+    from amplifier_web.session_projection import _observed_work
+    row = {'id': 'call', 'kind': 'llm', 'sessionId': 'root', 'rootSessionId': 'root',
+           'turnId': 'turn', 'liveObservation': True}
+    for child in ({'tokens': 100}, {'nested': [100]}, CustomUsage(inputTokens=4)):
+        receipt = {'id': 'call', 'producerId': 'producer',
+                   'lifecycle': child, 'assignmentReservation': child}
+        expected = copy.deepcopy(receipt)
+        node = _observed_work(row, {'turn'}, {('root', 'call'): receipt})
+        assert node['lifecycle'] == expected['lifecycle']
+        assert node['lifecycle'] is node['assignmentReservation']
+        assert node['lifecycle'] is not child
+    receipt = {'producerId': 'producer', CopiedName('model'): CopiedScalar('model')}
+    node = _observed_work(row, {'turn'}, {('root', 'call'): receipt})
+    key = next(key for key in node if isinstance(key, CopiedName))
+    assert key.copies == 1 and type(node[key]) is str

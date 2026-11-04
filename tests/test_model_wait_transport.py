@@ -1,6 +1,7 @@
 """Worker/host protocol cancellation keeps the live worker and exact call identity."""
 import asyncio
 import json
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -28,10 +29,18 @@ async def transport(app, monkeypatch):
         gate = asyncio.Event()
         if not hold_reply: gate.set()
         reached = asyncio.Event()
-        manager = RuntimeManager(app_bridge=app.app_bridge)
+        owner_id = str(uuid.uuid4())
+        bridge_owners = []
+        async def host_bridge(operation, args, sid):
+            if operation == 'capacity.admit':
+                assert sid == session['id']
+                assert args['_runtimeOwnerId'] == row['runtimeOwnerId'] == owner_id
+                bridge_owners.append(args['_runtimeOwnerId'])
+            return await app.app_bridge(operation, args, sid)
+        manager = RuntimeManager(app_bridge=host_bridge)
         ready = asyncio.get_running_loop().create_future(); ready.set_result({})
         row = {'process': SimpleNamespace(stdout=stream, returncode=None), 'emit': app.on_runtime_event,
-               'closing': False, 'ready': ready, 'runtime_id': session['id'],
+               'closing': False, 'ready': ready, 'runtime_id': session['id'], 'runtimeOwnerId': owner_id,
                'inputId': session['collaborationGeneration']['inputIds'][-1],
                'pending': {}, 'inflight': set(), 'bridge_tasks': set()}
         manager.workers[session['id']] = row
@@ -45,7 +54,7 @@ async def transport(app, monkeypatch):
         reader = asyncio.create_task(manager._read(session['id'], row))
         managers.append((row, reader, gate))
         return SimpleNamespace(worker=worker, row=row, stream=stream, gate=gate,
-            reached=reached, messages=messages, manager=manager)
+            reached=reached, messages=messages, manager=manager, reader=reader, bridge_owners=bridge_owners)
     yield connect
     app.runtime = prior
     for row, reader, gate in managers:
@@ -63,17 +72,29 @@ def via_worker(provider, link, session):
         '_generationId': session['collaborationGeneration']['id']})
 
 
+async def until_pending(predicate, *tasks):
+    """Use the existing bounded wait, but surface failed producers immediately."""
+    def observed():
+        for task in tasks:
+            if task.done():
+                task.result()  # Preserve the actual failure/cancellation, not a later timeout.
+                pytest.fail('Transport producer completed before its pending boundary')
+        return predicate()
+    await until(observed)
+
+
 async def waiting(app, providers, transport, *, hold_reply=False):
     source = app.state['sessions'][0]
     target, _ = await child(app, source)
     await limits(app, source, maxConcurrentCalls=1)
     first, second = providers(source), providers(target)
     a = first.start('already-running')
-    await until(lambda: first.called)
+    await until_pending(lambda: first.called, a)
     link = transport(target, hold_reply=hold_reply)
     via_worker(second, link, target)
     b = second.start('should-not-run')
-    await until(lambda: bool(getattr(app, '_model_admission_waiters', [])))
+    await until_pending(lambda: bool(getattr(app, '_model_admission_waiters', [])), b, link.reader)
+    assert link.bridge_owners == [link.row['runtimeOwnerId']]
     return source, target, first, second, a, b, link
 
 
@@ -93,7 +114,7 @@ async def test_individual_worker_cancellation_removes_host_wait_without_stopping
 async def test_cancel_after_host_admission_retains_unknown_reservation(app, providers, transport):
     source, target, first, second, a, b, link = await waiting(app, providers, transport, hold_reply=True)
     first.release.set(); await a
-    await link.reached.wait()
+    await until_pending(link.reached.is_set, b, link.reader)
     assert link.messages[-1]['result']['allowed']
     assert app.assignments.usage(app.assignments.current(source))['calls'] == 2
     b.cancel()
@@ -112,7 +133,7 @@ async def test_unknown_cancel_id_cannot_cancel_the_real_wait(app, providers, tra
     await asyncio.sleep(.05)
     assert not b.done() and len(app._model_admission_waiters) == 1
     first.release.set(); await a
-    await until(lambda: second.called)
+    await until_pending(lambda: second.called, b, link.reader)
     second.release.set(); await b
     await until(lambda: not link.row.get('capacity_bridges'))
     assert second.called == ['should-not-run']
@@ -122,9 +143,10 @@ async def test_cancel_from_another_worker_row_cannot_address_this_wait(app, prov
     source, target, first, second, a, b, link = await waiting(app, providers, transport)
     identity = next(iter(link.worker.bridges))
     stream = asyncio.StreamReader()
-    foreign = {**link.row, 'runtime_id': 'foreign-worker',
+    foreign = {**link.row, 'runtime_id': 'foreign-worker', 'runtimeOwnerId': str(uuid.uuid4()),
         'process': SimpleNamespace(stdout=stream, returncode=None),
         'pending': {}, 'bridge_tasks': set(), 'capacity_bridges': {}}
+    assert foreign['runtimeOwnerId'] != link.row['runtimeOwnerId']
     link.manager.workers['foreign-worker'] = foreign
     reader = asyncio.create_task(link.manager._read('foreign-worker', foreign))
     try:
@@ -132,7 +154,7 @@ async def test_cancel_from_another_worker_row_cannot_address_this_wait(app, prov
         await asyncio.sleep(.05)
         assert not b.done() and len(app._model_admission_waiters) == 1
         first.release.set(); await a
-        await until(lambda: second.called)
+        await until_pending(lambda: second.called, b, link.reader)
         second.release.set(); await b
         assert second.called == ['should-not-run']
     finally:
@@ -144,7 +166,7 @@ async def test_late_cancel_after_consumption_cannot_change_running_or_completed_
     source, target, first, second, a, b, link = await waiting(app, providers, transport)
     identity = next(iter(link.worker.bridges))
     first.release.set(); await a
-    await until(lambda: second.called)
+    await until_pending(lambda: second.called, b, link.reader)
     await until(lambda: not link.row.get('capacity_bridges'))
     for completed in (False, True):
         if completed:
@@ -162,13 +184,38 @@ async def test_unrelated_bridge_cancellation_does_not_cancel_its_host_effect(app
     entered, finish = asyncio.Event(), asyncio.Event()
     done = []
     async def dispatch(operation, args, sid):
+        assert sid == target['id'] and args['_runtimeOwnerId'] == link.row['runtimeOwnerId']
         entered.set(); await finish.wait(); done.append(operation); return {'saved':True}
     link.manager.app_bridge = dispatch
+    request = asyncio.create_task(link.worker.bridge('dispatch', {
+        'action':'fixture.mutation', '_runtimeOwnerId':'not-the-host-owner'}))
+    try:
+        await until_pending(entered.is_set, request, link.reader)
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError): await request
+        assert link.row['bridge_tasks'] and not link.row.get('capacity_bridges')
+        finish.set()
+        await until(lambda: done)
+        assert done == ['dispatch']
+    finally:
+        finish.set()
+        if not request.done(): request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+
+
+async def test_missing_runtime_owner_fails_before_dispatch_instead_of_hanging(app, transport):
+    link = transport(app.state['sessions'][0])
+    del link.row['runtimeOwnerId']  # Preserve the old malformed fixture as a negative.
+    entered = asyncio.Event()
+    async def dispatch(*args):
+        entered.set()
+        pytest.fail('Missing host owner must not reach dispatch')
+    link.manager.app_bridge = dispatch
     request = asyncio.create_task(link.worker.bridge('dispatch', {'action':'fixture.mutation'}))
-    await entered.wait()
-    request.cancel()
-    with pytest.raises(asyncio.CancelledError): await request
-    assert link.row['bridge_tasks'] and not link.row.get('capacity_bridges')
-    finish.set()
-    await until(lambda: done)
-    assert done == ['dispatch']
+    try:
+        with pytest.raises(RuntimeError, match='runtimeOwnerId'):
+            await until_pending(entered.is_set, request, link.reader)
+        assert not entered.is_set() and not link.worker.bridges
+    finally:
+        if not request.done(): request.cancel()
+        await asyncio.gather(request, return_exceptions=True)

@@ -17,9 +17,9 @@ def test_metadata_write_during_read_is_retried_once(tmp_path, monkeypatch, persi
     original = history._read_metadata
     calls = 0
 
-    def racing_read(path):
+    def racing_read(path, **kwargs):
         nonlocal calls
-        result = original(path)
+        result = original(path, **kwargs)
         calls += 1
         if persistent or calls == 1:
             path.write_text(json.dumps({**result, 'status': f'updated-{calls}'}))
@@ -45,9 +45,9 @@ def test_changing_transcript_is_not_retried(tmp_path, monkeypatch):
     original = history._read_messages
     calls = 0
 
-    def racing_read(path):
+    def racing_read(path, **kwargs):
         nonlocal calls
-        rows = original(path)
+        rows = original(path, **kwargs)
         calls += 1
         path.write_text(json.dumps({'role': 'user', 'content': 'Newer work'}) + '\n')
         return rows
@@ -70,6 +70,18 @@ def test_checkpoint_roundtrip_keeps_transcript_and_removes_credentials(tmp_path)
     assert (tmp_path / "sessions/child-123/transcript.jsonl").stat().st_mode & 0o777 == 0o600
     assert not (tmp_path / "sessions/child-123/checkpoint.json").exists()
     assert not any("do-not-save" in p.read_text() for p in (tmp_path / "sessions/child-123").iterdir())
+
+
+def test_checkpoint_preserves_credential_binding_marker_but_never_a_literal_or_embedded_secret(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    marker = {"$hostProviderCredential": True}
+    store.save("bound-child", [], {"mount_plan": {"providers": [
+        {"module": "provider-test", "source": "fixture://exact", "config": {
+            "api_key": marker, "access_token": "private-token", "secret": {**marker, "value": "private-value"}}}]}})
+    config = store.load("bound-child")[1]["mount_plan"]["providers"][0]["config"]
+    assert config == {"api_key": marker}
+    serialized = (store.directory("bound-child") / "metadata.json").read_text()
+    assert "private-token" not in serialized and "private-value" not in serialized
 
 
 @pytest.mark.parametrize("preserve", [False, True])

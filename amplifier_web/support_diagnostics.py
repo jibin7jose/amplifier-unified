@@ -32,13 +32,18 @@ def exception_chain(error):
         frames = [{'file': Path(frame.filename).name[:160],
                    'line': frame.lineno, 'function': frame.name[:160]}
                   for frame in traceback.extract_tb(error.__traceback__)[-12:]]
-        chain.append({'errorType': type(error).__name__, 'frames': frames})
+        item = {'errorType': type(error).__name__, 'frames': frames}
+        from .request_refit import RequestFitChanged
+        if isinstance(error, RequestFitChanged) and error.local_refusal:
+            item['requestFit'] = {'reason': error.reason, 'components': list(error.components),
+                                  **({'cause': error.cause} if error.cause else {})}
+        chain.append(item)
         error = error.__cause__ or error.__context__
     return chain
 
 
 def public_exception_chain(value):
-    """Revalidate the existing frame-only format; never accept text or locals."""
+    """Revalidate bounded frames/refusal enums; never accept text or locals."""
     if not isinstance(value, list):
         return []
     result = []
@@ -58,7 +63,13 @@ def public_exception_chain(value):
                     and isinstance(function, str) and re.fullmatch(r'[A-Za-z0-9_.<>]{1,160}', function)
                     and type(line) is int and 0 < line <= 10_000_000):
                 safe.append({'file': file, 'function': function, 'line': line})
-        result.append({'errorType': kind, 'frames': safe})
+        row = {'errorType': kind, 'frames': safe}
+        if kind == 'RequestFitChanged':
+            from .request_refit import public_refusal
+            refusal = public_refusal(item.get('requestFit'))
+            if refusal:
+                row['requestFit'] = refusal
+        result.append(row)
     return result
 
 
@@ -72,13 +83,27 @@ def terminal_exception_capture(value):
     generation = value.get('generationId')
     kind = value.get('errorType')
     chain = public_exception_chain(value.get('exceptionChain'))
+    # loop-live reports this known ValueError subclass as its base type. Keep
+    # that original terminal type; only the adapter-certified local subtype
+    # can explain it without parsing a flattened exception message.
+    local_refit = kind == 'ValueError' and terminal_request_refusal(chain)
     if (not identity(generation) or not isinstance(inputs, list) or not 1 <= len(inputs) <= 128
             or not all(identity(item) for item in inputs)
             or not isinstance(kind, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_.]{0,99}', kind)
-            or not chain or not any(item['errorType'] == kind for item in chain)):
+            or not chain or not (local_refit or any(item['errorType'] == kind for item in chain))):
         return None
     return {'generationId': generation, 'inputIds': list(inputs),
             'errorType': kind, 'exceptionChain': chain}
+
+
+def terminal_request_refusal(chain):
+    """Do not promote an earlier handled refusal over the actual failure."""
+    if not chain:
+        return None
+    index = 1 if chain[0]['errorType'] == 'ManagerTurnError' else 0
+    if len(chain) > index and chain[index]['errorType'] == 'RequestFitChanged':
+        return chain[index].get('requestFit')
+    return None
 
 
 def event_detail(row):
@@ -120,9 +145,5 @@ def execution_detail(row):
     if isinstance(failure, dict):
         result['failure'] = {key: failure[key] for key in
             ('category', 'errorType', 'stage', 'code', 'retryable') if key in failure}
-        result['failure']['exceptionChain'] = [
-            {'errorType': item.get('errorType'), 'frames': [
-                {key: frame[key] for key in ('file', 'line', 'function') if key in frame}
-                for frame in item.get('frames', [])[-12:] if isinstance(frame, dict)]}
-            for item in failure.get('exceptionChain', [])[:5] if isinstance(item, dict)]
+        result['failure']['exceptionChain'] = public_exception_chain(failure.get('exceptionChain', []))
     return result

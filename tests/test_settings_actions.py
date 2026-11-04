@@ -90,6 +90,27 @@ async def test_select_queues_exact_read_only_owner_and_replays_once(settings_app
     assert draft['id'] == identity
 
 
+async def test_installed_decision_service_uses_scoped_editor_without_chat_routing(settings_app, monkeypatch):
+    from amplifier_web import decision_settings
+    monkeypatch.setattr(decision_settings, 'catalogs', lambda: {
+        'provider-jev': ({'label': 'Jev', 'decision_only': True,
+                          'connection': {'auth': 'key'}}, lambda value: value)})
+    app = settings_app
+    app.state['setup'] = {'configurationTarget': {'kind': 'global'},
+                          'providersLoadedAt': 'now', 'providers': []}
+    listed = await agent(app, 'settings.connection.services')
+    assert any(row['module'] == 'provider-jev' and row['decisionOnly']
+               for row in listed['result']['services'])
+    selected = await agent(app, 'settings.connection.select', {'module': 'provider-jev'}, 'select-jev')
+    await asyncio.wait_for(app.settings_test_arrived.wait(), 2)
+    assert selected['result']['saved'] is False
+    draft = caller_view(app)['aiConnectionEditor']
+    assert draft['module'] == 'provider-jev' and draft['initializeRouting'] is False
+    assert app.settings_test_checks == [('providers.credentials', {
+        'module': 'provider-jev', 'scope': 'global', 'configurationTarget': {'kind': 'global'}},
+        'select-jev:credentials', None)]
+
+
 @pytest.mark.parametrize('extra', [
     {'module': 'provider-unlisted'},
     {'configurationTarget': {'kind': 'workspace', 'workspaceId': 'missing'}},

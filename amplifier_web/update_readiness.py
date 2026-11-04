@@ -212,6 +212,18 @@ async def confirm_readiness(manager, health, expected=None, command_id=None, *, 
                     return False
             except (AttributeError, ValueError, OSError, RuntimeError, metadata.PackageNotFoundError):
                 return False
+        extras = (target.get('qualification') or {}).get('extras')
+        if not successor and not target.get('legacy') and manager.diagnostics.browser_failures(extras):
+            # The outgoing version may predate browser recovery tracking. Prove
+            # the running browser works before retiring its old failure; a
+            # healthy HTTP listener alone is not browser acceptance.
+            from .app_updates import qualify_browser
+            manager.diagnostics.begin('application', target['revision'], target['attemptId'], application_extras=extras)
+            manager.diagnostics.state['batch']['verifiedBrowserFailures'] = {}
+            try:
+                await qualify_browser(manager, sys.executable)
+            except (ValueError, OSError, RuntimeError, TimeoutError):
+                pass  # Preserve browser attention; app health has its own receipt.
         async with manager.service.lock:
             state = manager.service.state['updates']
             # The isolated import check awaited another process. A changed
@@ -231,7 +243,8 @@ async def confirm_readiness(manager, health, expected=None, command_id=None, *, 
                         return False
                 except (AttributeError, ValueError, OSError, metadata.PackageNotFoundError):
                     return False
-            manager.diagnostics.begin('application', target['revision'], target['attemptId'])
+            manager.diagnostics.begin('application', target['revision'], target['attemptId'],
+                application_extras=(target.get('qualification') or {}).get('extras'))
             if successor:
                 state['reconciliation'] = {'attemptId': target['attemptId'],
                     **{key: identity[key] for key in ('version', 'revision')}}
@@ -322,7 +335,8 @@ async def wait_for_readiness(manager, token, *, timeout=60, interval=.25):
     # This task starts during aiohttp startup, but acknowledges only after an
     # actual request succeeds. on_startup itself precedes listener readiness.
     diagnostics = manager.diagnostics
-    diagnostics.begin('application', target['revision'], target['attemptId'])
+    diagnostics.begin('application', target['revision'], target['attemptId'],
+        application_extras=(target.get('qualification') or {}).get('extras'))
     historical_failure = diagnostics.state.get('lastFailure') if target.get('legacy') else None
     command_id = uuid.uuid4().hex
     diagnostics.record('restart-readiness', 'started', commandId=command_id,

@@ -20,8 +20,7 @@ try{
  if(!await page.getByRole('button',{name:/^Activity(?: \d+ unread items)?$/}).isVisible())await page.getByRole('button',{name:'Open navigation',exact:true}).click();
  await page.getByRole('button',{name:/^Activity(?: \d+ unread items)?$/}).click();
  const inbox=page.getByRole('region',{name:'Activity to review',exact:true});await expect(inbox).toBeVisible();
- // A fresh install can have release notices. Review those through the real UI
- // before seeding the scenario's completion/question/approval counts.
+ // Release news is quiet history; it needs no mark-read maintenance.
  const initialReview=inbox.getByRole('button',{name:'Mark all reviewed',exact:true});
  if(await initialReview.isEnabled())await initialReview.click();
  await expect(inbox.getByText('All caught up.',{exact:true})).toBeVisible();
@@ -53,10 +52,10 @@ try{
  await expect(inbox.getByRole('region',{name:'Finished responses',exact:true})).toHaveCount(0);
  await expect(inbox.getByRole('region',{name:'To review',exact:true}).locator('.a-attention-item')).toHaveCount(3);
  const peer=await context.newPage();await peer.goto(vite.resolvedUrls.local[0]);
- await peer.waitForFunction(()=>window.amplifier?.getState()?.attention?.unread===3);
+ await peer.waitForFunction(()=>window.amplifier?.getState()?.attention?.badgeUnread===3);
  await inbox.getByRole('button',{name:'Mark all reviewed',exact:true}).click();
  await expect(inbox.getByText('All caught up.',{exact:true})).toBeVisible();
- await peer.waitForFunction(()=>window.amplifier.getState().attention.unread===0);
+ await peer.waitForFunction(()=>window.amplifier.getState().attention.badgeUnread===0);
  await page.reload();await expect(inbox.getByText('All caught up.',{exact:true})).toBeVisible();
  await inbox.getByRole('button',{name:'Show reviewed items',exact:true}).click();
  await expect(inbox.getByRole('region',{name:'Reviewed items',exact:true})).toBeVisible();

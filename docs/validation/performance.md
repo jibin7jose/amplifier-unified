@@ -52,6 +52,15 @@ message before committing. The output tests guard against unrelated history
 traversal and exercise changes during that read; do not replace these fences with
 a full conversation snapshot.
 
+A selected saved-image set shares one off-thread body/hash/PNG conversion pass
+(two for chunk-manifest lookup), not a separate event-loop resume for every
+image and conversion. Keep SQLite access on its owner thread and recheck the
+entire set's current reader relationships after the read, including pretransport
+validation. `test_output_image_preparation.py` measures these work bounds and
+injects loaded-loop resume delay under the existing image deadline. Temporary
+context unavailability suppresses image delivery but does not manufacture a new
+input identity or silently discard the selection; a verified input change does.
+
 ## Keep a meaningful regression check
 
 Choose a small case and a representative larger case for the affected operation.
@@ -104,6 +113,27 @@ it can change the conclusion. Keep diagnostic collection bounded and sensitive
 receipts private. Public evidence uses synthetic data, counts and hashes rather
 than transcript bodies, credentials or private environment details.
 
+`AMPLIFIER_RUNTIME_TIMING=1` is a startup-only, explicit opt-in for content-free
+worker preparation and checkpoint phases in the existing bounded timing ring.
+It records context view/factory, surface preparation, provider budget/refit and
+checkpoint read/save boundaries. Native provider-hook start/end observations are
+separate: correlate only a proven single request window with matching session,
+generation and iteration; a short-circuit need not reach the end observer.
+Worker phase marks and host receipt marks separate execution from event delivery
+only when their `clockDomain` and `hostClockDomain` match. Never subtract wall
+clocks or add nested spans. This observes existing behavior, does not change
+timeouts or enable request-body recording, and cannot explain earlier unrecorded
+work. Activation and any required live worker remount remain an adoption decision.
+
+For disposable query workers, measure delivery as well as worker calculation.
+Separate executor handoffs for tiny cleanup operations can repeatedly incur a busy
+event loop's scheduling delay. Keep one owned result-consumption/cleanup handoff;
+the real-process transport checks bound warm-read handoffs and ensure cancellation
+settles file work before releasing spool ownership. Shell query diagnostics retain
+fixed failure/disposition categories and `ownerWaitMs` after transport completes.
+That wait is included in `readMs`; do not add the two or interpret either as worker
+CPU time. These checks do not establish a bound on unrelated host persistence work.
+
 ## Keep qualification proportional to risk
 
 Follow the [fast publication policy](release-qualification.md#local-first-fast-publication-policy-updated-october-14-2026).
@@ -140,6 +170,17 @@ without starting execution. Run it inside an owned DTU, with that checkout's nor
 dependencies, using `python tests/fixtures/session_history_scaling.py --output DIR`.
 It is a diagnostic fixture, not a passing latency gate or live-host forecast.
 
+Include retained live placements as well as retired accounting: their turn IDs
+must resolve and tool observations must use valid canonical identities. Assert
+that the expected rows survive durable readback. Otherwise a fixture can silently
+filter out its historical tools/model calls and measure a much cheaper save.
+The observation case changes a receipt before each of its four timed saves. The
+following profiled save leaves execution unchanged; label that profile separately
+from the changed-receipt timings. Unchanged-history reuse is
+not evidence for that path. `test_accounting_projection_copy.py` also grows plain
+historical receipts while checking independent copies and bounded generic
+recursive-copy work; custom and nested receipts keep their existing copy behavior.
+
 Use the measured dominant work to choose a change. Current caches may make moderate
 unchanged histories cheap while larger bodies fall back to full preparation; measure
 both sides rather than increasing cache limits as the default fix. For each implemented
@@ -149,6 +190,30 @@ Hold active work fixed while growing *that same owner's* completed history. Also
 current subscribers and concurrent owners independently when validating publication.
 Passing a recent-message window test does not establish bounded saves, admission,
 agent reads or model context. Measure those boundaries separately.
+
+`tests/fixtures/execution_publication_scaling.py` keeps three large owners active
+in one actual service. It distinguishes cold saves, scalar/token saves, nested
+execution changes, current-placement changes with unchanged retired accounting,
+and worker-report updates, checks exact durable readback and
+records wall/CPU time plus the existing preparation budgets. Run it inside an
+owned DTU with `python tests/fixtures/execution_publication_scaling.py --output DIR`;
+`--source PATH` selects a frozen comparison checkout. A single-owner cache hit
+cannot qualify concurrent-owner behavior or hide eviction churn.
+Use `--reservation-bytes 512` to exceed a single accounting witness's size with
+synthetic retained assignment details, and vary `--owners 1` through `--owners 3`
+separately. This is a stress shape, not a measured live receipt schema. Keep the
+same total preparation budgets in both runs: a larger history becoming cacheable
+can still make concurrent owners slower through eviction and repeated bookkeeping.
+Measure cold misses, current-placement changes and nested accounting changes;
+unchanged whole-execution reuse alone would hide those costs. Retain rejected
+comparisons when a proposed cache change improves one owner but regresses several.
+
+Unchanged execution may reuse its existing committed projection only after the
+original content, owner and resource evidence match; input digests and pending
+flags promote with the same successful pointer commit. The content comparison
+still visits the retained execution bytes. This short-term reduction in repeated
+conversion is not proof of history-independent work under WS5. Keep measuring
+that remaining cost; do not increase retention limits to make a benchmark pass.
 
 ## Agent preparation and tool reads
 
@@ -184,7 +249,12 @@ retention policy.
 explicit partial coverage, isolated concurrent requests and cancellation. The
 existing surface/reaction/coordination/memory owners still construct their own
 sections; unavailable data retains each consumer's existing behavior. The snapshot
-expires after fitting and does not replace memory or Work revalidation at send.
+is retained only with its bounded request record for the one unsent refit; a new
+model request obtains a fresh snapshot. It does not replace memory or Work
+revalidation at send. `tests/test_pretransport_refit_native.py` exercises the
+real installed loop and selected-provider path with a timed-out image read:
+the refit must not collect all context again, and changed/unavailable authority,
+Stop and changed inputs must still prevent transport, including under Full access.
 The native surface/awareness probes check selective images, fresh per-request
 observations and clean durable history through the real runtime.
 

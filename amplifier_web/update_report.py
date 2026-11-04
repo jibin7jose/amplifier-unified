@@ -50,6 +50,10 @@ def source(row):
 
 def event(row):
     result = {}
+    from .update_diagnostics import sanitized_application_extras
+    extras = sanitized_application_extras(row.get('applicationExtras'))
+    if extras is not None:
+        result['applicationExtras'] = extras
     for key in ('id', 'attemptId', 'revision', 'commandId', 'expectedRevision', 'observedRevision'):
         if scalar(row.get(key), r'[a-f0-9]{32,64}'):
             result[key] = row[key]
@@ -78,6 +82,20 @@ def event(row):
     if isinstance(row.get('probe'), dict):
         result['probe'] = probe_record(PROBE_PREFIX + json.dumps(row['probe']))
     return result
+
+
+def disposition(row):
+    """Only fixed disposition facts and sanitized originals leave the owner."""
+    if row.get('status') != 'acknowledged-uncertainty':
+        return {}
+    return {**event(row), 'phase': 'failure-disposition',
+            'status': 'acknowledged-uncertainty', 'recoveryVerified': False,
+            'target': scalar(row.get('target'), r'updates:failure(?:-overflow|:application:[a-f0-9]{64})'),
+            'occurrence': scalar(row.get('occurrence'), r'[a-f0-9]{64}'),
+            'occurrences': row.get('occurrences') if type(row.get('occurrences')) is int else None,
+            'firstFailureAvailable': row.get('firstFailureAvailable') is True,
+            'firstFailure': event(row.get('firstFailure', {})),
+            'latestFailure': event(row.get('latestFailure', {}))}
 
 
 def runtime_report(home):
@@ -130,6 +148,7 @@ async def collect(manager):
               'privacy': 'Excludes credentials, settings values, environment, local paths, host/account names and conversation content.',
               'events': [event(row) for row in diagnostics.get('events', [])[-50:]],
               'lastFailure': event(diagnostics.get('lastFailure', {})),
+              'failureDispositions': [disposition(row) for row in diagnostics.get('failureDispositions', [])[-20:]],
               'pending': {key: bool(state.get(key)) for key in ('pendingApp', 'pendingRelease', 'pendingRestart', 'pendingSmartTools')},
               'busy': manager.lock.locked()}
     # "busy" above is the updater lock, not the activation gate. Use the same

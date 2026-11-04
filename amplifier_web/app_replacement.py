@@ -40,7 +40,8 @@ async def verify_running(manager, target):
     from .update_diagnostics import probe_record
     if not matches_running(manager, target):
         return False
-    manager.diagnostics.begin('application', target['revision'], target['attemptId'])
+    manager.diagnostics.begin('application', target['revision'], target['attemptId'],
+                              application_extras=target['qualification']['extras'])
     output = await manager.diagnostics.run('replacement-recovery-probe', app_updates.process,
         sys.executable, '-I', '-c', app_updates.PROBE, *target['qualification']['extras'], timeout=30)
     report = probe_record(output)

@@ -120,6 +120,11 @@ vision through the shared desktop contract. The Mac companion preview is release
 the integrated workspace and Windows implementation remain future work. This
 consumer record does not change the AHP/ACP destination or claim current parity.
 
+The optional [device connection PoC contract](../../contracts/device-connections.v1.md)
+applies these boundaries to enrollment and local capability providers in the
+current host. It does not require the future AHP/ACP replacement, Tempo or
+new CLI onboarding. The bundled web client supplies one setup experience.
+
 ## Changelog
 
 | Date | Change | Basis |

@@ -1,0 +1,105 @@
+name: Omitted-ref worker qualification
+# Fixed manual repair check, not a pull-request or publication gate.
+on:
+  workflow_call:
+    inputs:
+      offline_lock_preflight:
+        type: boolean
+        default: false
+    secrets:
+      LOOP_LIVE_CI_READ_KEY:
+        required: true
+permissions:
+  contents: read
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Record exact candidate and declared private dependency pin
+        id: pin
+        run: |
+          mkdir -p "$RUNNER_TEMP/omitted-ref-evidence"
+          python - <<'PY'
+          import json, os, re, subprocess, tomllib
+          from pathlib import Path
+          lock = tomllib.loads(Path('uv.lock').read_text())
+          rows = [p for p in lock['package'] if p['name'] == 'amplifier-module-loop-live']
+          assert len(rows) == 1
+          source = rows[0]['source']['git']
+          assert source.startswith('https://github.com/microsoft/amplifier-module-loop-live?')
+          pin = source.rsplit('#', 1)[1]
+          assert re.fullmatch('[a-f0-9]{40}', pin)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('revision=' + pin + '\n')
+          git = lambda *a: subprocess.check_output(['git', *a], text=True).strip()
+          Path(os.environ['RUNNER_TEMP'], 'omitted-ref-evidence', 'candidate.json').write_text(json.dumps({
+              'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'),
+              'loopPin': pin, 'runId': os.environ['GITHUB_RUN_ID'], 'runAttempt': os.environ['GITHUB_RUN_ATTEMPT']}))
+          PY
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        if: ${{ !inputs.offline_lock_preflight }}
+        with:
+          version: '0.13.6'
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        if: ${{ inputs.offline_lock_preflight }}
+        with:
+          version: '0.13.6'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: microsoft/amplifier-module-loop-live
+          ref: ${{ steps.pin.outputs.revision }}
+          fetch-depth: 0
+          path: .ci/omitted-ref-loop
+          ssh-key: ${{ secrets.LOOP_LIVE_CI_READ_KEY }}
+          persist-credentials: false
+      - name: Prepare locked host dependencies using only the approved private checkout
+        if: ${{ !inputs.offline_lock_preflight }}
+        run: |
+          set -euo pipefail
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="url.file://$GITHUB_WORKSPACE/.ci/omitted-ref-loop.insteadOf"
+          export GIT_CONFIG_VALUE_0="https://github.com/microsoft/amplifier-module-loop-live"
+          python - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          raw = Path(os.environ['RUNNER_TEMP']) / 'omitted-ref-host-private.log'
+          with raw.open('wb') as stream:
+              result = subprocess.run(['uv', 'sync', '--locked', '--group', 'dev', '--group', 'artifacts'],
+                                      stdout=stream, stderr=subprocess.STDOUT)
+          Path(os.environ['RUNNER_TEMP'], 'omitted-ref-evidence', 'host-setup.json').write_text(json.dumps({
+              'returncode': result.returncode, 'rawLogBytes': raw.stat().st_size,
+              'rawLogSha256': hashlib.sha256(raw.read_bytes()).hexdigest(), 'rawLogExported': False}))
+          raise SystemExit(result.returncode)
+          PY
+      - name: Prepare the independent worker graph and run the fixed no-account fixture
+        if: ${{ !inputs.offline_lock_preflight }}
+        run: |
+          set -euo pipefail
+          python scripts/qualify_omitted_ref.py \
+            --loop-source "$GITHUB_WORKSPACE/.ci/omitted-ref-loop" \
+            --work "$RUNNER_TEMP/omitted-ref-work" \
+            --output "$RUNNER_TEMP/omitted-ref-evidence" \
+            2>&1 | tee "$RUNNER_TEMP/omitted-ref-evidence/adapter.log"
+      - name: Resolve the expanded graph with the fixed offline lock preflight
+        if: ${{ inputs.offline_lock_preflight }}
+        run: |
+          set -euo pipefail
+          python scripts/qualify_omitted_ref.py --offline-lock-preflight \
+            --loop-source "$GITHUB_WORKSPACE/.ci/omitted-ref-loop" \
+            --work "$RUNNER_TEMP/omitted-ref-work" \
+            --output "$RUNNER_TEMP/omitted-ref-evidence" \
+            2>&1 | tee "$RUNNER_TEMP/omitted-ref-evidence/adapter.log"
+      - name: Retain bounded proof even after setup or qualification failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: omitted-ref-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/omitted-ref-evidence/
+          if-no-files-found: error

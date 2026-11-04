@@ -8,16 +8,22 @@ def paths(state, canvas):
     path = Path(canvas.get('path') or '')
     if not path.is_absolute():
         return {}
-    result = {'absolute': str(path)}
-    root = canvas.get('workspacePath')
-    if not root:
-        owner = next((row for row in state.get('sessions', []) if row['id'] == canvas.get('sessionId')), {})
-        root = owner.get('workspace') or next((row['path'] for row in state.get('workspaces', []) if row['id'] == canvas.get('workspaceId')), None)
+    result = {'absolute': canvas['path']}
+    owner = next((row for row in state.get('sessions', []) if row['id'] == canvas.get('sessionId')), None)
+    # A saved path is historical evidence, but a relative path is useful only
+    # against the conversation's current execution folder. Never rebase the
+    # absolute path or consult the filesystem to reconstruct it.
+    workspace = owner.get('workspace') if owner is not None else canvas.get('workspacePath')
+    root = (owner.get('workingDirectory') or workspace) if owner is not None else workspace
+    if workspace and Path(workspace).is_absolute():
+        result['workspace'] = workspace
     if root and Path(root).is_absolute():
-        try:
-            result['relative'] = str(path.relative_to(root))
-        except ValueError:
-            pass
+        result['base'] = root
+        if '..' not in path.parts and '..' not in Path(root).parts:
+            try:
+                result['relative'] = str(path.relative_to(root))
+            except ValueError:
+                pass
     return result
 
 

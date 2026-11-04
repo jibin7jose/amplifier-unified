@@ -16,7 +16,8 @@ export function diagnosticReceipt(diagnostics,reconciliation){
   return result;
  };
  const verified=reconciliation?Object.fromEntries(['attemptId','version','revision','verifiedAt'].filter(key=>reconciliation[key]!==undefined).map(key=>[key,reconciliation[key]])):undefined;
- return JSON.stringify({attemptId:diagnostics.attemptId,lastFailure:clean(diagnostics.lastFailure),reconciliation:verified,events:(diagnostics.events||[]).slice(-50).map(clean)},null,2);
+ const failureDispositions=(diagnostics.failureDispositions||[]).slice(-20).map(row=>({id:row.id,at:row.at,target:row.target,occurrence:row.occurrence,occurrences:row.occurrences,status:'acknowledged-uncertainty',recoveryVerified:false,firstFailure:clean(row.firstFailure),latestFailure:clean(row.latestFailure)}));
+ return JSON.stringify({attemptId:diagnostics.attemptId,lastFailure:clean(diagnostics.lastFailure),reconciliation:verified,events:(diagnostics.events||[]).slice(-50).map(clean),failureDispositions},null,2);
 }
 export function reconciledFailure(updates){
  const receipt=updates.reconciliation,failure=updates.diagnostics?.lastFailure;

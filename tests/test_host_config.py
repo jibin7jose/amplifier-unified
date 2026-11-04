@@ -1,4 +1,5 @@
 """Standalone settings migration and loop policy contracts."""
+import copy
 import json
 import os
 from pathlib import Path
@@ -130,7 +131,7 @@ class HostSettingsTests(unittest.TestCase):
             self.assertNotIn('local_setting',result.settings)
 
     def test_legacy_provider_ids_map_to_core_instances_without_collapsing(self):
-        bundle=SimpleNamespace(providers=[{'module':'p','instance_id':'one','config':{'model':'old'}}],tools=[],hooks=[],session={})
+        bundle=SimpleNamespace(providers=[{'module':'p','instance_id':'one','config':{'model':'old'}}],tools=[],hooks=[],session={},agents={})
         providers=[{'module':'p','id':'one','config':{'model':'new'}},{'module':'p','id':'two'}]
         config=SimpleNamespace(settings={'config':{'providers':providers}},providers=providers)
         result=_apply_settings(bundle,config)
@@ -150,7 +151,7 @@ class HostSettingsTests(unittest.TestCase):
                 expand_environment('${AMPLIFIER_TEST_ABSENT}')
 
     def test_apply_settings_defers_provider_config_but_expands_provider_source(self):
-        bundle=SimpleNamespace(providers=[],tools=[],hooks=[],session={})
+        bundle=SimpleNamespace(providers=[],tools=[],hooks=[],session={},agents={})
         providers=[{'module':'provider-test','id':'one','source':'${PROVIDER_SOURCE}','config':{'base_url':'${OPTIONAL_BASE_URL}'}}]
         config=SimpleNamespace(settings={'config':{'providers':providers}},providers=providers)
         with patch.dict(os.environ,{'PROVIDER_SOURCE':'source'},clear=False):
@@ -183,6 +184,33 @@ class HostSettingsTests(unittest.TestCase):
         self.assertTrue(config['archive_recovery'])
         self.assertTrue(config['durable_checkpoints'])
         self.assertNotIn('archive_recovery', original['session']['context']['config'])
+
+    def test_default_boundary_context_gets_host_checkpoint_policy(self):
+        for context in ('context-managed', {'module': 'context-managed'},
+                        {'module': 'context-managed', 'config': {}}):
+            with self.subTest(context=context):
+                original = {'session': {'orchestrator': 'loop-live', 'context': context},
+                    'agents': {'worker': {'session': {'orchestrator': 'loop-streaming',
+                        'context': context}}}}
+                before = copy.deepcopy(original)
+                adapted, _ = live_plan(original)
+                for session in (adapted['session'], adapted['agents']['worker']['session']):
+                    self.assertTrue(session['context']['config']['durable_checkpoints'])
+                    self.assertTrue(session['context']['config']['archive_recovery'])
+                    self.assertNotIn('engine', session['context']['config'])
+                self.assertEqual(original, before)
+
+    def test_boundary_policy_preserves_opt_out_and_invalid_engine(self):
+        for config in ({'durable_checkpoints': False, 'archive_recovery': False},
+                       {'engine': 'boundary', 'durable_checkpoints': False, 'archive_recovery': False}):
+            adapted, _ = live_plan({'session': {'orchestrator': 'loop-live',
+                'context': {'module': 'context-managed', 'config': config}}})
+            self.assertEqual(adapted['session']['context']['config'], config)
+        for engine in (None, False, '', 'legacy', 'unknown'):
+            original = {'session': {'orchestrator': 'loop-live',
+                'context': {'module': 'context-managed', 'config': {'engine': engine}}}}
+            adapted, _ = live_plan(original)
+            self.assertEqual(adapted['session']['context'], original['session']['context'])
 
     def test_imported_queued_receipt_is_history_not_replay(self):
         rows=[{'role':'tool','tool_call_id':'c','content':json.dumps({'status':'queued','call_id':'c','job_id':'j'})}]

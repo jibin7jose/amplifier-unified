@@ -439,3 +439,103 @@ async def test_mcp_open_rechecks_dirty_primary_after_resource_io(app, monkeypatc
         await task
     assert target(view(app)) == target(current)
     assert len(app.state['canvasArtifacts']) == 1
+
+
+@pytest.mark.parametrize('kind', ['html', 'babylon'])
+async def test_load_version_refuses_agent_stale_missing_and_dirty_before_replacement(app, kind):
+    current = await show(app, kind, '<input value="One">')
+    await command(app, 'canvas.versions.revise', {
+        'id': current['resourceId'], 'expectedRevision': 1, 'content': '<input value="Two">'})
+    args = {**target(current), 'version': 2}
+    saved = deepcopy(app.state['canvasArtifacts'])
+    original = deepcopy(app.clients.records['one']['canvas'])
+    with pytest.raises(AppError, match='explicit user control'):
+        await command(app, 'canvas.views.loadVersion', args, origin='agent')
+    for stale in ({'resourceId': 'other'}, {'resourceRevision': 'stale'}, {'generation': current['generation'] + 1}):
+        with pytest.raises(AppError, match='changed'):
+            await command(app, 'canvas.views.loadVersion', {**args, **stale})
+        assert app.clients.records['one']['canvas'] == original
+        assert target(view(app)) == target(current)
+    with pytest.raises(AppError, match='unavailable'):
+        await command(app, 'canvas.views.loadVersion', {**args, 'version': 999})
+    await command(app, 'canvas.views.dirty', {**target(current), 'dirty': True})
+    with pytest.raises(AppError, match='preview edit') as rejected:
+        await command(app, 'canvas.views.loadVersion', args)
+    assert rejected.value.code == 'canvas_view_dirty'
+    assert app.clients.records['one']['canvas'] == original
+    assert target(view(app)) == target(current)
+    assert app.state['canvasArtifacts'] == saved
+    assert view(app)['dirty'] is True
+    await command(app, 'canvas.views.dirty', {**target(current), 'dirty': False})
+    loaded = (await command(app, 'canvas.views.loadVersion', args))['result']
+    assert loaded['runningVersion'] == 2
+    with pytest.raises(AppError, match='changed'):
+        await command(app, 'canvas.views.loadVersion', args)
+
+
+@pytest.mark.parametrize('kind', ['html', 'babylon'])
+async def test_same_artifact_select_requires_ui_reset_for_different_executable_version(app, kind):
+    current = await show(app, kind, '<input value="One">')
+    await command(app, 'canvas.versions.revise', {
+        'id': current['resourceId'], 'expectedRevision': 1, 'content': '<input value="Two">'})
+    for selection in ({'id': current['resourceId']}, {'id': current['resourceId'], 'version': 2}):
+        original = deepcopy(app.clients.records['one']['canvas'])
+        with pytest.raises(AppError) as refused:
+            await command(app, 'canvas.select', selection)
+        assert refused.value.code == 'canvas_preview_reset_required'
+        with pytest.raises(AppError, match='explicit user control'):
+            await command(app, 'canvas.select', {**selection, 'resetPreview': True}, origin='agent')
+        assert app.clients.records['one']['canvas'] == original
+        assert target(view(app)) == target(current)
+    # Selecting the already-running definition intentionally pins it, without
+    # remounting or clearing its DOM evidence.
+    await command(app, 'canvas.views.command', {**target(current), 'action': 'canvas.snapshot',
+        'args': {'document': {'text': 'Running One', 'controls': []}}})
+    await command(app, 'canvas.select', {'id': current['resourceId'], 'version': 1})
+    assert view(app)['selectedVersion'] == 1
+    assert target(view(app)) == target(current)
+    assert view(app)['renderIdentity'] == current['renderIdentity']
+    assert app.clients.records['one']['canvas']['document']['text'] == 'Running One'
+    await command(app, 'canvas.select', {'id': current['resourceId'], 'version': 1})
+    assert target(view(app)) == target(current)
+    # Reset is never a bypass for a declared dirty edit.
+    await command(app, 'canvas.views.dirty', {**target(current), 'dirty': True})
+    with pytest.raises(AppError, match='viewer edit'):
+        await command(app, 'canvas.select', {'id': current['resourceId'], 'resetPreview': True})
+    await command(app, 'canvas.views.dirty', {**target(current), 'dirty': False})
+    await command(app, 'canvas.select', {'id': current['resourceId'], 'resetPreview': True})
+    latest = view(app)
+    assert latest['selectedVersion'] is None
+    assert latest['runningVersion'] == 2 and latest['previewRetained'] is False
+    assert latest['renderIdentity'] != current['renderIdentity']
+    # Reselecting Latest already running the newest body is also a no-op.
+    await command(app, 'canvas.select', {'id': current['resourceId']})
+    assert view(app)['renderIdentity'] == latest['renderIdentity']
+
+
+async def test_load_version_is_primary_executable_only_and_preserves_historical_intent(app):
+    passive = await show(app, 'text', 'Passive')
+    with pytest.raises(AppError, match='primary HTML or 3D'):
+        await command(app, 'canvas.views.loadVersion', {**target(passive), 'version': 1})
+    # Passive Latest still follows its new body normally.
+    await command(app, 'canvas.versions.revise', {
+        'id': passive['resourceId'], 'expectedRevision': 1, 'content': 'Passive new'})
+    assert view(app)['latestVersion'] == 2
+    assert view(app)['runningVersion'] is None and view(app)['previewRetained'] is False
+    assert app.clients.records['one']['canvas']['content'] == 'Passive new'
+    app._message(app._session(), 'user', 'Interactive preview')
+    current = await show(app, 'html', '<p>One</p>')
+    identity = current['resourceId']
+    await command(app, 'canvas.select', {'id': identity, 'version': 1})
+    await command(app, 'canvas.versions.revise', {'id': identity, 'expectedRevision': 1, 'content': '<p>Two</p>'})
+    loaded = (await command(app, 'canvas.views.loadVersion', {**target(view(app)), 'version': 2}))['result']
+    assert loaded['selectedVersion'] == loaded['runningVersion'] == 2
+    assert not loaded['previewRetained']
+    await command(app, 'canvas.versions.revise', {'id': identity, 'expectedRevision': 2, 'content': '<p>Three</p>'})
+    assert view(app)['selectedVersion'] == 2 and view(app)['latestVersion'] == 3
+    # Even a valid inline lease cannot use the primary-only replacement action.
+    message = app._session()['messages'][-1]['id']
+    inline = (await command(app, 'canvas.views.inline', {
+        'resourceId': identity, 'version': 1, 'messageId': message, 'previewId': 'preview-one'}))['result']
+    with pytest.raises(AppError, match='primary HTML or 3D'):
+        await command(app, 'canvas.views.loadVersion', {**target(inline), 'version': 2})

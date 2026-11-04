@@ -137,8 +137,8 @@ controls, reuse the owning entry or record the necessary semantic difference.
 | Control / owner | Variants, state and reuse boundary | Accessibility / focused evidence |
 | --- | --- | --- |
 | Document close and panel dismissal: `frontend/src/canvas-library.jsx` (`CanvasTabs.remove`), `shell-panels.jsx`, `canvas-experience.css` | The tab's visible close button and Open documents list share guarded `canvas.tabClose`; saved artifacts/versions remain. Labeled Close Canvas and the container-header toggle share `canvas.visibility`, retaining mounted viewers and open tabs. No new state owner or deletion action. | Named native buttons, 44px targets, keyboard focus and refused-close feedback; `canvas-close-browser.mjs`, `canvas-dirty-browser.mjs`, `canvas-overview.test.mjs`, `shell-panels.test.mjs`. |
-| Compact exact-version card and disclosure: `frontend/src/inline-artifacts.jsx` (`DocumentOutput`, `Preview`, `ArtifactLinks`) | HTML, documents, diagrams and images share title/type/version/open/disclosure; image gallery and specialized renderer bodies remain distinct. Client-local placement, pending/error and explicit HTML reset are not generic card state. | Native buttons; stable `aria-expanded`/`aria-controls`; titled open target; status errors; preserved focus. `tests/test_artifact_presentation.py`, `frontend/tests/artifact-one-surface-browser.mjs`, `frontend/tests/inline-artifacts-browser.mjs`. |
-| Viewer controls: `frontend/src/canvas-controls.jsx`, `canvas-viewer.jsx`, `canvas-workspace.jsx` | Existing renderer host, exact source binding, source/copy/download, portal placement and inline toolbar suppression. Do not add a competing inline toolbar or renderer registry. | Existing keyboard controls, labels and dirty/reload guards; `tests/test_canvas_views.py` and viewer browser tests. |
+| Compact exact-version card and disclosure: `frontend/src/inline-artifacts.jsx` (`DocumentOutput`, `Preview`, `ArtifactLinks`), shared `artifact-file-details.jsx` | HTML, documents, diagrams and images share title/type/version/open/disclosure; image gallery and specialized renderer bodies remain distinct. File details reads the exact saved definition without mounting a preview: Copy full path and Copy relative path copy plain provenance paths, relative to the conversation's current working folder with its base shown. Saved-only artifacts explicitly have no backing path; outside-base paths have no relative copy. Download fetches retained bytes with visible refusal/start feedback, never executes HTML. Client-local placement, pending/error and explicit HTML reset are not generic card state. | Native disclosure/buttons, 44px targets, shared clipboard completion/error feedback and exact-version download; `tests/test_canvas_paths.py`, `tests/test_canvas_downloads.py`, `frontend/tests/generated-file-controls-browser.mjs`, plus `tests/test_artifact_presentation.py` and `frontend/tests/artifact-one-surface-browser.mjs`. |
+| Viewer controls: `frontend/src/canvas-controls.jsx`, `canvas-viewer.jsx`, `canvas-workspace.jsx`, shared `artifact-file-details.jsx` | Existing renderer host, exact source binding, source/copy/download, portal placement and inline toolbar suppression. The primary Download action and File details reuse the same saved-version download owner as chat cards, bound to the running definition when an executable preview retains an older version; original-file reveal keeps its existing host/view guard. Refresh uses `canvas.views.inspect`; executable previews retain their running definition while discovering new versions. Explicit UI-only `canvas.views.loadVersion` binds both the outgoing view and exact incoming version, with visible reset/code consequences and dirty protection. Current/historical/retained, pending, failed and unconfirmed feedback stays visible. Live apps and websites retain their controls. No competing viewer/registry. | Native named Refresh/Load/Download buttons, live status, 44px targets and keyboard/dirty guards; `tests/test_canvas_views.py`, `tests/test_canvas_versions.py`, `generated-file-controls-browser.mjs`, `frontend/tests/canvas-refresh-browser.mjs`, `canvas-refresh-catchup-browser.mjs`. |
 | Canvas Details inspector: `frontend/src/shell-panels.jsx`, `canvas-experience.css` | The existing control portal stays mounted beside the reader at Canvas widths of 720px or more. Narrower panes use the same bounded right-hand sheet below the single navigation bar; only the covered reader is inert. The compact version/copy/download/Details row and format-specific viewers remain their existing owners. No new renderer or preference is introduced. | Named region, 44px controls, Escape/close focus restoration, retained header toggle and document navigation. `frontend/tests/shell-panels.test.mjs`, `canvas-chrome-browser.mjs` geometry/old-top-band negative and `canvas-dirty-browser.mjs` retained-editor checks. |
 | Saved output inspection: `frontend/src/outputs.jsx`, shared `image-actions.jsx` | Snapshot read/download/lineage and image follow-up; output HTML is **not** an executable preview. See [Outputs](OUTPUTS.md). | Exact-target download and draft-preserving follow-up; `tests/test_output_images.py` and inline-artifact browser tests. |
 
@@ -329,6 +329,41 @@ buttons record the version published during their turn. Saved surface versions
 include the inputs captured when that definition was created; older versions
 without recorded inputs are labelled explicitly. Live interaction is available
 only on Latest. Retained definitions are not evicted after twenty revisions.
+
+The document action row shows the open saved version and whether a newer saved
+version is available, even with Details closed. **Refresh** checks the existing
+saved-state owner and version list. Latest follows new passive document definitions;
+an exact version stays selected. Refresh is not a page/iframe reload, does not
+rerun document code, and does not import file edits or create a revision.
+Unfinished viewer input and the composer draft remain in place. A failed check
+retains the open document and shows an error beside Refresh; try Refresh again
+after the connection recovers. Use the existing version button to choose another
+saved version. Live apps and websites keep their separate lifecycle controls.
+
+For an already-open executable **HTML or Babylon** preview, Latest discovers new
+saved versions but retains the exact running definition and its unfinished input.
+The row distinguishes **Viewing v1 · v2 available · preview retained**. Only the
+explicit **Load v2 — resets preview and runs its code** control replaces that
+preview with the named saved definition. Changing executable versions through
+Details also offers **Keep current preview** before an explicit reset. Declared
+dirty edits still refuse replacement; agents cannot reset previews. Copy,
+Download, Source and renderer commands remain bound to the running version.
+Missed updates, Refresh and transport reconnect do not adopt a new executable
+definition. Newly opened previews behave normally; this does not serialize DOM
+or JavaScript state across a new browser page or a cold restart.
+
+An accepted **Load** and its following state read are separate outcomes. If Load
+is accepted but that read fails, the controls retain its exact receipt and say
+the named version was accepted but the displayed version needs confirmation.
+They do not claim the old preview was retained. A lost or unreadable mutation
+acknowledgement (including proxy HTML or malformed JSON) remains unconfirmed;
+a confirmed refusal remains a refusal. Use **Refresh** to read saved
+state before another Load; neither failure automatically retries the reset.
+
+This executable-preview exception was approved on October 28, 2026: “Preserve
+interactive previews; load new versions explicitly.” Passive documents retain
+automatic Latest following; saved histories and exact historical selections are
+unchanged.
 
 For MCP Apps, reopening the same completed operation reuses its tab. A tool may
 supply `_meta["amplifier/presentationId"]` in its result to identify one durable

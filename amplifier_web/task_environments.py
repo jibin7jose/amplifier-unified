@@ -66,7 +66,7 @@ def definitions(schema, string):
         'workspace.environments.execute': ('Run an approved command in this task’s environment, retaining bounded output. Use its executionContract for Python, offline build, artifact paths and source identities; the copied source has no Git metadata. Keep requestId stable. Timeout means the command may still be running, not cancelled.', schema({**owned, 'command': {**string(16384), 'minLength': 1}, 'timeoutSeconds': {'type': 'integer', 'minimum': 1, 'maximum': profiles.MAX_SECONDS}}, [*owned, 'command'])),
         'workspace.environments.stop': ('Stop this task’s containers at an exact revision and observe the result. Keeps source, artifacts, containers and volumes; never implies removal.', schema(owned)),
         'workspace.environments.remove': ('Remove an already stopped owned environment after preserving its source and artifacts. Optional full retention preserves the complete Incus environment; Docker supports files only. Unknown export or teardown never replays.', schema({**owned, 'retentionMode': {'enum': ['files', 'full']}}, list(owned))),
-        'workspace.environments.finishCleanup': ('Finish cleanup of an exact stopped owned environment after a failed or uncertain removal. Preserve complete bounded archives without following guest links, then verify removal and release ownership. The original request and test result stay unchanged. Requires its previousRequestId; keep the new requestId stable.', schema({**owned, 'previousRequestId': {**string(200), 'minLength': 1}})),
+        'workspace.environments.finishCleanup': ('Finish cleanup of an exact stopped owned environment after a failed or uncertain removal. Preserve complete bounded archives without following guest links, then verify removal and release ownership. The original request and test result stay unchanged. For interrupted local Docker cleanup, the host first verifies that the previous local executor is settled and the exact owner is stopped. This is a new cleanup attempt, not a replay or a claim about the old outcome. Requires its previousRequestId; keep the new requestId stable.', schema({**owned, 'previousRequestId': {**string(200), 'minLength': 1}})),
         'workspace.environments.reconcile': ('Inspect this exact owned environment and repair its metadata without starting, stopping, deleting or replaying backend work. Retire ownership only after the original backend proves physical absence; earlier uncertain operations stay uncertain.', schema(owned)),
         'workspace.environments.exportArtifacts': ('Recover a bounded, verified artifacts archive from this exact stopped owned environment. No workspace export, restart, command execution or deletion. Does not satisfy preservation required for removal. Unknown exports never replay.', schema(owned)),
     }
@@ -284,14 +284,50 @@ def prepare(home, sid, workspace, actor, source, backend_key, request_id, instal
     return row
 
 
+def cleanup_not_started(row):
+    """Host preflight failed before launching any cleanup helper."""
+    return {'ok': False, 'effectAdmitted': False, 'status': 'stopped',
+            'universeId': row.get('universeId'), 'phase': 'preparing',
+            'code': 'cleanup_helper_not_started',
+            'message': 'Cleanup could not start. The stopped environment and its files are unchanged. Inspect the test machine configuration, then continue cleanup with a new request.'}
+
+
+def cleanup_refusal_code(exc):
+    """Expose known admission boundaries without publishing arbitrary diagnostics."""
+    return {
+        'The environment changed. Inspect its current revision.': 'resource_revision_changed',
+        'The previous local cleanup process may still be active. Keep its original receipt and inspect again after it finishes.': 'previous_cleanup_active',
+        'Fresh cleanup requires the exact original stopped environment. No removal was started.': 'stopped_owner_unverified',
+        'The fresh cleanup container identities are unavailable. No removal was started.': 'container_identity_unavailable',
+        'The local cleanup executor changed during inspection. No removal was started.': 'cleanup_executor_changed',
+        'The fresh cleanup inspection changed before admission.': 'cleanup_qualification_changed',
+        'The original cleanup owner or receipt changed.': 'original_cleanup_changed',
+        'The original removal remains unresolved. Inspect its retained evidence; a new request cannot repeat it.': 'original_cleanup_unresolved',
+        'The original removal admission cannot be rebound or replayed.': 'cleanup_admission_changed',
+        'Choose this environment’s confirmed pre-removal failure.': 'prior_cleanup_unverified',
+        'The previous cleanup does not establish a safe pre-removal failure.': 'prior_cleanup_unverified',
+        'The task moved or stopped before environment admission.': 'task_authority_changed',
+        'The approved test environment configuration changed.': 'backend_configuration_changed',
+        'The approved backend changed. Restore its exact configuration before managing this environment.': 'backend_configuration_changed',
+        'The retained environment directory changed; no external action was attempted.': 'environment_directory_changed',
+    }.get(str(exc), 'cleanup_admission_refused')
+
+
 def invoke(config, home, row, action, args, *, _qualification=False):
     """Bound helper output and lifetime; killing a helper is not command cancellation."""
-    if not _qualification and action not in {'capacity', 'read', 'reconcile', 'job_read'}:
-        from .managed_runner_updates import validate_execution
-        if config.get('originSnapshotVersion') == 1:
-            registered_runners.qualify_retained(None, config)
-        else:
-            validate_execution(home, config)
+    try:
+        if not _qualification and action not in {'capacity', 'read', 'reconcile', 'job_read'}:
+            from .managed_runner_updates import validate_execution
+            if config.get('originSnapshotVersion') == 1:
+                registered_runners.qualify_retained(None, config)
+            else:
+                validate_execution(home, config)
+    except (OSError, ValueError, KeyError, TypeError):
+        # This is local validation, before either the local helper or remote
+        # runner is invoked. It cannot establish an unknown removal effect.
+        if action in {'remove', 'finishCleanup'}:
+            return cleanup_not_started(row)
+        raise
     if action == 'execute' and args.get('durableJob') is True:
         action = 'job_start'
     folder = (home / 'workspace-resources' / 'backend-probes' / config_key(config)
@@ -316,21 +352,28 @@ def invoke(config, home, row, action, args, *, _qualification=False):
                **{key: config[key] for key in ('maxRunning', 'maxInstances', 'minFreeBytes', 'admissionRoot') if key in config}}
     if config.get('remoteRunner'):
         return registered_runners.invoke(config, folder, payload)
-    helper = Path(__file__).with_name('test_environment_worker.py')
-    if config.get('backend') == 'incus':
-        helper = Path(__file__).with_name('incus_environment_worker.py')
-        payload['incus'] = config['incus']
-    if row.get('preparedDependencies'):
-        prepared = dependencies.validate_receipt(row['preparedDependencies'], row['snapshot'], row['profileId'])
-        if prepared['backend'] != config.get('backend', 'docker'):
-            raise ValueError('The prepared dependencies belong to a different backend.')
-        if prepared['backend'] == 'incus':
-            payload['incus'] = {**config['incus'], 'image': prepared['image']}
-        else:
-            payload['image'] = prepared['image']
-    environment = {'PATH': os.defpath, 'HOME': str(folder), 'LANG': 'C.UTF-8'}
-    process = subprocess.Popen([config['python'], '-I', '-B', str(helper)], stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=folder, env=environment, start_new_session=True)
+    try:
+        helper = Path(__file__).with_name('test_environment_worker.py')
+        if config.get('backend') == 'incus':
+            helper = Path(__file__).with_name('incus_environment_worker.py')
+            payload['incus'] = config['incus']
+        if row.get('preparedDependencies'):
+            prepared = dependencies.validate_receipt(row['preparedDependencies'], row['snapshot'], row['profileId'])
+            if prepared['backend'] != config.get('backend', 'docker'):
+                raise ValueError('The prepared dependencies belong to a different backend.')
+            if prepared['backend'] == 'incus':
+                payload['incus'] = {**config['incus'], 'image': prepared['image']}
+            else:
+                payload['image'] = prepared['image']
+        environment = {'PATH': os.defpath, 'HOME': str(folder), 'LANG': 'C.UTF-8'}
+        process = subprocess.Popen([config['python'], '-I', '-B', str(helper)], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=folder, env=environment, start_new_session=True)
+    except (OSError, ValueError, KeyError, TypeError):
+        # Popen raises only after its failed child was reaped; no helper ran.
+        # Once Popen returns, transport/process failures remain uncertain.
+        if action in {'remove', 'finishCleanup'}:
+            return cleanup_not_started(row)
+        raise
     output, errors = bytearray(), bytearray()
     drained = False
     deadline = time.monotonic() + (450 if action == 'exportArtifacts' else 650 if action == 'start' else 750 if action == 'finishCleanup' else 750 if action == 'remove' and row.get('preparedDependencies', {}).get('executionContract') else 650 if action == 'remove' and config.get('backend') == 'incus' else 300 if action == 'prepare' else 30 if action in {'read', 'capacity', 'reconcile', 'job_start', 'job_read', 'job_cancel'} else args.get('timeoutSeconds', 60) + 150)
@@ -410,7 +453,7 @@ def legacy_cleanup_qualification(app, row, action, args):
     return returned_preservation_failure(row, prior)
 
 
-def require_resolved_removal(app, row, exclude_request_id=None, legacy=None):
+def require_resolved_removal(app, row, exclude_request_id=None, legacy=None, fresh_cleanup=None):
     """A new identity cannot escape any retained unresolved removal.
 
     lastOperation can be a later stop/read; the bounded request-list page is not
@@ -429,6 +472,19 @@ def require_resolved_removal(app, row, exclude_request_id=None, legacy=None):
         if verified != legacy:
             raise ValueError('The retained preservation result changed.')
         qualified = legacy['originalRequestId']
+    if fresh_cleanup is not None:
+        # Current executor/owner proof admits a new desired-state cleanup even
+        # after multiple interrupted attempts. Their UNKNOWN receipts are not
+        # rewritten; unbound and still-admitting/running work remains held.
+        from .test_environment_fresh_cleanup import binding
+        prior = app.operations.requests.read(row['sessionId'], fresh_cleanup['originalRequestId'])
+        if binding(row, prior) != fresh_cleanup:
+            raise ValueError('The original cleanup owner or receipt changed.')
+        if row.get('guestRemoved'):
+            removal, _ = confirmed_guest_removal(app, row)
+            if removal.get('cleanupRecoveryQualification') != fresh_cleanup:
+                raise ValueError('The completed cleanup qualification changed.')
+        qualified = fresh_cleanup['originalRequestId']
     journal = app.operations.requests.journal
     with journal.lock:
         found = journal.db.execute(
@@ -439,14 +495,17 @@ def require_resolved_removal(app, row, exclude_request_id=None, legacy=None):
             "AND json_extract(value,'$.action') IN "
             "('workspace.environments.remove','workspace.environments.finishCleanup') "
             "AND COALESCE(json_extract(value,'$.state'),'outcome_unknown') NOT IN ('completed','failed') "
-            "AND (? IS NULL OR id!=?) AND (? IS NULL OR id!=?) ORDER BY rowid LIMIT 1",
+            "AND (? IS NULL OR id!=?) AND (? IS NULL OR id!=?) "
+            "AND NOT (?=1 AND COALESCE(json_extract(value,'$.state'),'')='outcome_unknown' "
+            "AND COALESCE(json_extract(value,'$.resourceId'),'')=? "
+            "AND COALESCE(json_extract(value,'$.sessionId'),'')=?) ORDER BY rowid LIMIT 1",
             (row['sessionId'], row['id'], exclude_request_id, exclude_request_id,
-             qualified, qualified)).fetchone()
+             qualified, qualified, int(fresh_cleanup is not None), row['id'], row['sessionId'])).fetchone()
     if found:
         raise ValueError('The original removal remains unresolved. Inspect its retained evidence; a new request cannot repeat it.')
 
 
-def begin_removal(app, row, action, args, actor, *, attribution=None):
+def begin_removal(app, row, action, args, actor, *, attribution=None, config=None):
     """Serialize fresh admission with the physical owner without awaiting."""
     lock = FileLock(str(app.data_dir / 'workspace-resources' / ('environment-' + row['id'] + '.lock')), timeout=0)
     try:
@@ -460,11 +519,17 @@ def begin_removal(app, row, action, args, actor, *, attribution=None):
         if current['revision'] != args['expectedRevision']:
             raise ValueError('The environment changed. Inspect its current revision.')
         legacy = legacy_cleanup_qualification(app, current, action.rsplit('.', 1)[-1], args)
-        require_resolved_removal(app, current, args['requestId'], legacy)
+        fresh_cleanup = None
+        if not legacy and action.endswith('.finishCleanup') and config is not None:
+            from .test_environment_fresh_cleanup import qualify
+            original = app.operations.requests.read(row['sessionId'], args['previousRequestId'])
+            fresh_cleanup = qualify(app, current, original, config, args)
+        require_resolved_removal(app, current, args['requestId'], legacy, fresh_cleanup)
         request, fresh = app.operations.requests.begin(row['sessionId'], action, args, actor, resource_id=row['id'], attribution=attribution)
         if fresh:
             request = app.operations.requests.finish(request, 'admitting', resourceId=row['id'],
-                **({'legacyCleanupQualification': legacy} if legacy else {}))
+                **({'legacyCleanupQualification': legacy} if legacy else {}),
+                **({'cleanupRecoveryQualification': fresh_cleanup} if fresh_cleanup else {}))
         return request, fresh
     finally:
         lock.release()
@@ -561,7 +626,8 @@ def resume_preparation_removal(app, row, config, *, expected_revision=None, admi
         request, result = confirmed_guest_removal(app, row)
         if previous_request_id is not None and previous_request_id != request['requestId']:
             raise ValueError('Choose the exact confirmed guest removal request.')
-        require_resolved_removal(app, row, request['requestId'], request.get('legacyCleanupQualification'))
+        require_resolved_removal(app, row, request['requestId'], request.get('legacyCleanupQualification'),
+                                 request.get('cleanupRecoveryQualification'))
         if admit:
             admit()
         # A successful cleanup save may precede a failed journal/projection
@@ -608,10 +674,17 @@ def effect(app, row, action, args, config, request, admit, policy_admit=None):
             # Also covers the queue's direct route, before projection/config
             # writes. Never let this refusal rewrite an already-retained UNKNOWN.
             legacy = legacy_cleanup_qualification(app, row, action, args)
+            fresh_cleanup = None
+            if action == 'finishCleanup' and not legacy:
+                from .test_environment_fresh_cleanup import qualify
+                original = app.operations.requests.read(sid, args['previousRequestId'])
+                fresh_cleanup = qualify(app, row, original, config, args)
+            if recorded.get('cleanupRecoveryQualification') != fresh_cleanup:
+                raise ValueError('The fresh cleanup inspection changed before admission.')
             if (recorded.get('legacyCleanupQualification') is not None
                     and recorded['legacyCleanupQualification'] != legacy):
                 raise ValueError('The retained legacy preservation result changed.')
-            require_resolved_removal(app, row, request['requestId'], legacy)
+            require_resolved_removal(app, row, request['requestId'], legacy, fresh_cleanup)
             binding_pending = True
             if recorded.get('resourceId') is None or legacy:
                 request = app.operations.requests.finish(recorded, 'admitting', resourceId=row['id'],
@@ -649,7 +722,7 @@ def effect(app, row, action, args, config, request, admit, policy_admit=None):
         if action == 'finishCleanup':
             prior = app.operations.requests.read(sid, args['previousRequestId'])
             failure = prior.get('result', {})
-            if legacy:
+            if legacy or fresh_cleanup:
                 # Qualification is separately committed on this continuation.
                 # Do not rewrite the old UNKNOWN receipt or fabricate phases.
                 pass
@@ -657,11 +730,16 @@ def effect(app, row, action, args, config, request, admit, policy_admit=None):
                     or prior.get('state') != 'failed'
                     or prior.get('resourceId') != row['id'] or prior.get('sessionId') != sid):
                 raise ValueError('Choose this environment’s confirmed pre-removal failure.')
-            if not legacy and (not isinstance(failure, dict) or failure.get('effectAdmitted') is not False
-                    or failure.get('phase') not in {'preserving', 'verifying'}
-                    or failure.get('code') not in {'preservation_failed', 'archive_verification_failed'}):
+            known_refusal = isinstance(failure, dict) and (
+                failure.get('phase') in {'preserving', 'verifying'}
+                and failure.get('code') in {'preservation_failed', 'archive_verification_failed'}
+                or failure.get('phase') == 'preserving' and failure.get('code') == 'retention_storage'
+                or failure.get('phase') == 'preparing' and failure.get('code') == 'cleanup_helper_not_started')
+            if not legacy and not fresh_cleanup and (not known_refusal or failure.get('effectAdmitted') is not False):
                 raise ValueError('The previous cleanup does not establish a safe pre-removal failure.')
             row = save(home, row, previousCleanup=row.get('previousCleanup') or prior)
+            if fresh_cleanup:
+                args = {**args, 'effectAction': fresh_cleanup['kind']}
         if row['status'] == 'retired':
             raise ValueError('This environment has already been removed.')
         admit()
@@ -799,6 +877,21 @@ def effect(app, row, action, args, config, request, admit, policy_admit=None):
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
             return {'resource': public(home, row), 'request': request}
+        if (locked and action in {'remove', 'finishCleanup'} and isinstance(result, dict)
+                and result.get('effectAdmitted') is False):
+            # A returned helper/preflight refusal establishes that removal was
+            # not dispatched. A later journal/projection fault must not erase
+            # that evidence and manufacture a permanent unknown-effect hold.
+            request = app.operations.requests.finish(request, 'failed', resourceId=row['id'],
+                result=result, message=result.get('message'))
+            try:
+                row = project_result(home, get(home, sid, row['id']), request)
+            except (OSError, ValueError, sqlite3.Error):
+                row = {**row, 'observation': {'status': 'unverified'},
+                       'reason': 'Cleanup did not start. Its saved result is available; inspect again to repair the environment metadata.'}
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            return {'resource': public(home, row), 'request': request}
         preparation_cleanup = None
         if locked and action == 'start' and not admitted:
             row = get(home, sid, row['id'])
@@ -808,9 +901,15 @@ def effect(app, row, action, args, config, request, admit, policy_admit=None):
             result.get('ok') is True and result.get('status') == 'removed'
             or isinstance(result.get('removal'), dict) and result['removal'].get('destroyEffect') == 'confirmed'
             or result.get('code') == 'receipt_unavailable' and result.get('destroyEffect') == 'confirmed'))
-        request = app.operations.requests.finish(request, 'outcome_unknown' if admitted or row.get('preparationPending') else 'failed', resourceId=row['id'],
+        # Retained preparation belongs to the environment's earlier start. It
+        # cannot make a new, locally refused cleanup an unknown removal. Once
+        # a helper or guest-result cleanup begins, preserve existing uncertainty.
+        cleanup_not_started = action in {'remove', 'finishCleanup'} and not admitted and result is None
+        uncertain = admitted or (row.get('preparationPending') and not cleanup_not_started)
+        request = app.operations.requests.finish(request, 'outcome_unknown' if uncertain else 'failed', resourceId=row['id'],
             result={'ok': False, 'status': 'not-started' if not admitted else 'unknown',
                     'preparationCleanup': preparation_cleanup,
+                    **({'effectAdmitted': False, 'code': cleanup_refusal_code(exc)} if cleanup_not_started else {}),
                     **({'removal': {'version': 1, 'phase': 'host-persistence',
                                     'code': 'metadata_unconfirmed', 'destroyEffect': 'confirmed'}} if confirmation else {}),
                     'message': 'Removal did not complete; inspect the original retained evidence.' if action in {'remove', 'finishCleanup'} else str(exc)[:500]},
@@ -1158,8 +1257,11 @@ async def dispatch(app, action, args, origin, caller, authority):
             app.operations.notify()
             return {'accepted': True, 'result': {'resource': public(app.data_dir, row),
                     'request': row['lastOperation'], 'preparationRecovery': True}}
-        request, fresh = (begin_removal(app, row, action, args, actor, attribution=attribution) if action.rsplit('.', 1)[-1] in {'remove', 'finishCleanup'}
-                          else app.operations.requests.begin(sid, action, args, actor, attribution=attribution))
+        if action.rsplit('.', 1)[-1] in {'remove', 'finishCleanup'}:
+            request, fresh = await app.worktrees.finish_thread(begin_removal, app, row, action, args,
+                actor, attribution=attribution, config=config)
+        else:
+            request, fresh = app.operations.requests.begin(sid, action, args, actor, attribution=attribution)
         if not fresh:
             return {'accepted': True, 'duplicate': True, 'result': {'request': request, 'resource': None}}
         try:

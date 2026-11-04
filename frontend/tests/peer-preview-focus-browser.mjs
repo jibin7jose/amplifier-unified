@@ -2,6 +2,8 @@
 // source fails on predecessor static with BODY focus; no fake revoke/unmount.
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 import {spawn} from 'node:child_process';
+import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
+import {combinedFailure} from './chat-reference-harness.mjs';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -14,7 +16,9 @@ async function exercise(width,dismiss){
  const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||fileURLToPath(new URL('../../.venv/bin/python',import.meta.url)),[
   fileURLToPath(new URL('../../tests/fixtures/peer_preview_ui_server.py',import.meta.url)),fileURLToPath(new URL('../../',import.meta.url))
  ],{stdio:['ignore','pipe','inherit']});
- let browser,page;
+ const stopFixture=ownFixture(fixture,{label:'Peer preview focus fixture'});
+ const cleanup={width,dismiss,browserClosed:false,fixtureExit:null};cleanupEvidence.push(cleanup);
+ let browser,page,failure;
  try{
   const target=await new Promise((resolve,reject)=>{let text='';const timer=setTimeout(()=>reject(Error('Fixture readiness timeout')),30000);fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exited '+code))});fixture.stdout.on('data',chunk=>{text+=chunk;for(const line of text.split('\n')){try{const row=JSON.parse(line);if(row.url){clearTimeout(timer);resolve(row.url)}}catch{}}})});
   browser=await chromium.launch({headless:true});
@@ -78,12 +82,19 @@ async function exercise(width,dismiss){
   assert.equal(commands.filter(n=>n==='session.select').length,width===390?1:0);
   assert.ok(!commands.some(n=>['conversation.send','worker.spawn','session.warm','approval.respond'].includes(n)));
   row.passed=true;row.parentContinuity=true;row.noExecution=true;
- }finally{
-  await browser?.close();if(fixture.exitCode===null){fixture.kill();await new Promise(done=>fixture.once('exit',done));}
+ }catch(error){failure=error}
+ finally{
+  try{
+   await finishFixture({label:'Peer preview focus fixture',close:[['Peer preview focus browser',async()=>{
+    if(browser){await browser.close();cleanup.browserClosed=!browser.isConnected();assert.equal(cleanup.browserClosed,true)}
+   }]],stop:async()=>{cleanup.fixtureExit=await stopFixture()}});
+  }catch(error){failure=combinedFailure(failure,[error])}
  }
+ if(failure)throw failure;
 }
+const cleanupEvidence=[];
 try{
  await exercise(390,'Escape');await exercise(320,'Close');
- writeFileSync(join(output,'focus-result.json'),JSON.stringify({passed:true,evidence},null,2));
+ writeFileSync(join(output,'focus-result.json'),JSON.stringify({passed:true,evidence,cleanup:cleanupEvidence},null,2));
  console.log('PEER_FOCUS_RETURN_PASSED');
-}catch(error){writeFileSync(join(output,'focus-result.json'),JSON.stringify({passed:false,error:String(error),evidence},null,2));throw error;}
+}catch(error){writeFileSync(join(output,'focus-result.json'),JSON.stringify({passed:false,error:String(error),evidence,cleanup:cleanupEvidence},null,2));throw error;}

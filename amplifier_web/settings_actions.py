@@ -14,7 +14,13 @@ NAVIGATION_ACTIONS = ACTIONS - {'settings.connection.services'}
 
 
 def services():
-    return json.loads(Path(__file__).with_name('ai_services.json').read_text())
+    from .decision_settings import describe
+    choices = json.loads(Path(__file__).with_name('ai_services.json').read_text())
+    known = {row['module'] for row in choices}
+    # Optional installed catalogs own their connection metadata. Discovering a
+    # service does not save an account or activate a decision model.
+    choices.extend(row for row in describe({})['services'] if row['module'] not in known)
+    return choices
 
 
 def definitions(schema, string):
@@ -107,7 +113,8 @@ def command(service, action, args, pending, command_id):
                 'saved': False, 'credentialMode': 'auto', 'initializeRouting': False}
             # A scoped provider list is required before suggesting initial routing.
             setup = state.get('setup', {})
-            if setup.get('configurationTarget') == target and setup.get('providersLoadedAt'):
+            if (not selected.get('decisionOnly') and setup.get('configurationTarget') == target
+                    and setup.get('providersLoadedAt')):
                 draft['initializeRouting'] = not any(p.get('enabled') is not False for p in setup.get('providers', []))
         drafts['aiConnectionEditor'] = draft
         result = {'configurationTarget': target, 'scope': scope, 'step': draft['step'],

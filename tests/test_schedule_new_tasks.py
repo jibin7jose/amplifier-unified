@@ -189,6 +189,93 @@ async def test_changes_winning_admission_leave_one_visible_destination_without_e
     finally: await app.close()
 
 
+@pytest.mark.parametrize('mutation', [
+    'configuration', 'configuration_without_parts', 'stop', 'stop_and_configuration',
+    'execution', 'busy', 'pending_access',
+])
+async def test_task_creation_guard_retains_only_actual_configuration_comparison(tmp_path, monkeypatch, mutation):
+    from amplifier_web.session_creation import template
+    app, runtime, now, sid = await fixture(tmp_path, monkeypatch)
+    record, _ = await create(app, sid, now[0])
+    original = app.dispatch
+    compared = {}
+    destination_reads = []
+    if mutation == 'configuration_without_parts':
+        transition = app.schedules.store.transition
+        def without_parts(*args, **kwargs):
+            if kwargs.get('creationConfirmed'):
+                kwargs['destinationConfigurationParts'] = {}
+            return transition(*args, **kwargs)
+        monkeypatch.setattr(app.schedules.store, 'transition', without_parts)
+
+    async def change(action, args=None, **kwargs):
+        if action == 'task.create' and kwargs.get('origin') == 'scheduler':
+            target = app._session(args['sessionId'])
+            compared['before'] = template(app, target)[1]
+            if 'configuration' in mutation:
+                target['selection']['model'] = 'private-changed-model'
+            if mutation.startswith('stop'):
+                target['interruptionRevision'] = 1
+            if mutation == 'execution':
+                target['executionRevision'] = 1
+            if mutation == 'busy':
+                target['configurationBusy'] = True
+            if mutation == 'pending_access':
+                target['fileAccessPending'] = True
+            compared['after'] = template(app, target)[1]
+            def observed_template(service, row):
+                destination_reads.append(row['id'])
+                return template(service, row)
+            monkeypatch.setattr('amplifier_web.scheduled_destinations.template', observed_template)
+        return await original(action, args, **kwargs)
+
+    app.dispatch = change
+    try:
+        now[0] += 61
+        await app.schedules.tick(); await app.schedules.tick()
+        run = app.schedules.store.runs(sid)[0]
+        assert run['phase'] == 'skipped' and run['creationConfirmed'], run
+        assert not run.get('taskId') and not runtime.inputs
+        assert app.schedules.store.get(sid, record['id'])['status'] == 'needs_review'
+        identities = {row['id'] for row in app.directory.select(limit=-1)}
+        assert len(identities) == 2
+        if mutation.startswith('configuration'):
+            assert destination_reads == [run['destinationSessionId']]
+            comparison = run['destinationConfigurationComparison']
+            assert comparison['before']['stage'] == 'destination_created'
+            assert comparison['after']['stage'] == 'task_creation_admission'
+            assert comparison['before']['configurationHash'] == compared['before']['configurationHash']
+            assert comparison['after']['configurationHash'] == compared['after']['configurationHash']
+            assert comparison['before']['configurationHash'] != comparison['after']['configurationHash']
+            assert comparison['changedCategories'] == (
+                [] if mutation == 'configuration_without_parts' else ['controls.selection', 'selection'])
+            for side in ('before', 'after'):
+                assert set(comparison[side]) == {'stage', 'configurationHash', 'configurationParts'}
+            encoded = json.dumps(comparison)
+            assert all(value not in encoded for value in (
+                'private-changed-model', 'synthetic-private-value', str(tmp_path), 'test-model'))
+            public = (await app.dispatch('schedule.read', {'sessionId': sid, 'id': record['id']}))['result']['runs'][0]
+            assert public['destinationConfigurationComparison'] == comparison
+        else:
+            assert destination_reads == []
+            assert 'destinationConfigurationComparison' not in run
+            assert 'destination changed or stopped' in run['detail']
+    finally:
+        await app.close()
+
+    restored_runtime = ConfiguredRuntime()
+    restored = AppService(tmp_path / 'app', restored_runtime, workspace=tmp_path)
+    attach(restored, restored_runtime, now)
+    try:
+        now[0] += 1000
+        await restored.schedules.tick(); await restored.schedules.tick()
+        assert restored.schedules.store.run(sid, run['id']) == run
+        assert {row['id'] for row in restored.directory.select(limit=-1)} == identities
+        assert not restored_runtime.inputs
+    finally:
+        await restored.close()
+
+
 async def test_creation_command_receipt_and_reserved_id_cannot_overwrite_existing(tmp_path, monkeypatch):
     app, runtime, now, sid = await fixture(tmp_path, monkeypatch)
     try:

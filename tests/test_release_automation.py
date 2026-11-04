@@ -210,6 +210,45 @@ def test_new_release_publishes_only_after_draft_assets_are_uploaded(repository,m
     assert not any('--force' in call for call in calls)
 
 
+@pytest.mark.parametrize('remote_tag', ['absent', 'matching', 'different'])
+def test_shallow_publication_preserves_remote_tag_identity(repository, monkeypatch, remote_tag):
+    earlier = git(repository, 'rev-parse', 'HEAD')
+    (repository / 'README.md').write_text('The already-qualified release commit')
+    git(repository, 'add', '.'); git(repository, 'commit', '-m', 'candidate')
+    revision = git(repository, 'rev-parse', 'HEAD')
+    if remote_tag != 'absent':
+        git(repository, 'tag', 'v1.2.3', revision if remote_tag == 'matching' else earlier)
+    remote = repository / 'remote.git'
+    git(repository, 'clone', '--bare', str(repository), str(remote))
+    shallow = repository / 'publisher'
+    git(repository, 'clone', '--depth=1', '--no-tags', remote.as_uri(), str(shallow))
+    git(shallow, 'checkout', '--detach', revision)
+    assert git(shallow, 'rev-parse', '--is-shallow-repository') == 'true'
+    assert git(shallow, 'rev-list', '--count', 'HEAD') == '1'
+    assert git(shallow, 'tag', '--list') == ''
+    calls = []
+    original_run = release.run
+
+    def run(*args, **kwargs):
+        if args[0] == 'gh':
+            calls.append(args)
+            return '[]' if args[:3] == ('gh', 'release', 'list') else ''
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(release, 'run', run)
+    dist = distributions(shallow)
+    if remote_tag == 'different':
+        with pytest.raises(ValueError, match='refusing to move an immutable tag'):
+            release.publish(shallow, 'example/app', 'v1.2.3', revision, dist)
+        assert git(remote, 'rev-parse', 'v1.2.3^{commit}') == earlier
+        assert not calls
+    else:
+        release.publish(shallow, 'example/app', 'v1.2.3', revision, dist)
+        assert git(remote, 'rev-parse', 'v1.2.3^{commit}') == revision
+        assert calls[-1][-2:] == ('--draft=false', '--latest=true')
+    assert git(shallow, 'rev-parse', 'HEAD') == revision
+
+
 def test_invalid_package_never_creates_a_tag_or_release(repository,monkeypatch):
     dist=distributions(repository);revision=git(repository,'rev-parse','HEAD');calls=[]
     (repository/'amplifier_web/static/assets/app.js').write_text('unvalidated bytes')

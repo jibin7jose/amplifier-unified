@@ -111,6 +111,10 @@ def project(result):
             'featureResults', 'adoption'))
         result['updates']['application'] = pick(updates.get('application', {}),
             ('id', 'label', 'kind', 'current', 'latest', 'status', 'canInstall'))
+        if panel == 'activity':
+            result['updates']['diagnostics'] = {'failureDispositions': [
+                pick(row, ('id', 'at', 'target', 'occurrences', 'status', 'recoveryVerified'))
+                for row in updates.get('diagnostics', {}).get('failureDispositions', [])[-20:]]}
     smart = result.get('smartTools', {})
     if page not in {'smart-tools', 'tool-connections'}:
         result['smartTools'] = {'servers': [pick(row, ('id', 'name', 'status', 'capabilities'))

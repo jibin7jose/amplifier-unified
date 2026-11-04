@@ -33,7 +33,11 @@ TIMING_MARKS = frozenset({
     'reply.end', 'lock.start', 'lock.end', 'checkpoint.start', 'checkpoint.end',
     'history.refresh.start', 'history.refresh.end', 'history.copy.start',
     'history.copy.end', 'history.read.start', 'history.read.end',
+    'context.start', 'context.end', 'store.start', 'store.end',
+    'continuity.start', 'continuity.end', 'host.observed',
 })
+PREPARATION_PHASES = frozenset({'provider.hooks', 'context.view', 'context.factory',
+                               'surface.prepare', 'provider.budget', 'provider.refit'})
 
 
 @lru_cache(maxsize=1)
@@ -67,8 +71,12 @@ def timing_metadata(value):
         item = timing_identity(value.get(key))
         if item is not None:
             result[key] = item
-    if type(value.get('kind')) is str and value['kind'] in {'tool', 'bridge', 'host.bridge', 'checkpoint'}:
+    if type(value.get('kind')) is str and value['kind'] in {'tool', 'bridge', 'host.bridge', 'checkpoint', 'preparation'}:
         result['kind'] = value['kind']
+    if result.get('kind') == 'preparation' and result.get('operation') not in PREPARATION_PHASES:
+        result.pop('operation', None)
+    if result.get('kind') == 'preparation' and type(value.get('iteration')) is int and 0 <= value['iteration'] < 2**31:
+        result['iteration'] = value['iteration']
     if type(value.get('outcome')) is str and value['outcome'] in {'completed', 'failed', 'cancelled', 'denied'}:
         result['outcome'] = value['outcome']
     domain = value.get('clockDomain')
@@ -159,6 +167,106 @@ def mark(timing, name):
         timing.mark(name)
 
 
+def preparation_timing(coordinator, operation):
+    """Existing opt-in transport, fixed phases only; never inspect request data."""
+    if not TIMING_ENABLED or operation not in PREPARATION_PHASES:
+        return None, None
+    emit = coordinator.get_capability('web.performance.emit')
+    if not callable(emit):
+        return None, None
+    timing = PhaseTiming(kind='preparation', operation=operation,
+                         runtimeSessionId=coordinator.session_id,
+                         invocationId=uuid.uuid4().hex)
+    scope = coordinator.get_capability('web.performance.scope')
+    try:
+        if callable(scope):
+            timing.facts.update({key: value for key, value in timing_metadata(scope()).items()
+                                 if key in {'runtimeSessionId', 'generationId'}})
+    except Exception:
+        pass
+    timing.mark('start')
+    return timing, emit
+
+
+def finish_preparation(timing, emit, outcome='completed'):
+    if timing is not None:
+        timing.mark('end')
+        try:
+            emit(timing.snapshot(outcome))
+        except Exception:
+            pass
+
+
+def time_preparation(coordinator, operation, method):
+    if not TIMING_ENABLED:
+        return method
+
+    @wraps(method)
+    async def observed(*args, **kwargs):
+        timing, emit = preparation_timing(coordinator, operation)
+        outcome = 'completed'
+        try:
+            return await method(*args, **kwargs)
+        except BaseException as exc:
+            outcome = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'
+            raise
+        finally:
+            finish_preparation(timing, emit, outcome)
+    return observed
+
+
+def install_preparation_timing(coordinator):
+    """Observe the existing Python context and native hook boundaries once.
+
+    Arbitrary context implementations remain supported: only ordinary Python
+    objects exposing the current request-view/factory boundary are wrapped.
+    Native hook callbacks may run in different Python task contexts. Emit
+    separate boundary observations, not an incorrectly paired elapsed span.
+    A short-circuit has no end observation. Correlation requires matching
+    session/generation/iteration and proof of one foreground request window.
+    """
+    if not TIMING_ENABLED or coordinator.get_capability('web.performance.preparation'):
+        return
+    coordinator.register_capability('web.performance.preparation', True)
+    context = coordinator.get('context')
+    if isinstance(getattr(context, '__dict__', None), dict):
+        method = getattr(context, 'get_messages_for_request', None)
+        if inspect.iscoroutinefunction(method):
+            try:
+                context.get_messages_for_request = time_preparation(coordinator, 'context.view', method)
+            except (AttributeError, TypeError):
+                pass  # A read-only/native context does not expose this probe.
+        factory = vars(context).get('_system_prompt_factory')
+        if inspect.iscoroutinefunction(factory):
+            try:
+                context._system_prompt_factory = time_preparation(coordinator, 'context.factory', factory)
+            except (AttributeError, TypeError):
+                pass
+    from amplifier_core import HookResult
+    def boundary(name, data):
+        timing, emit = preparation_timing(coordinator, 'provider.hooks')
+        if timing is not None:
+            timing.marks.clear()
+            timing.mark(name)
+            iteration = data.get('iteration')
+            if type(iteration) is int and 0 <= iteration < 2**31:
+                timing.facts['iteration'] = iteration
+            try:
+                emit(timing.snapshot())
+            except Exception:
+                pass
+    async def start(event, data):
+        boundary('start', data)
+        return HookResult()
+    async def end(event, data):
+        boundary('end', data)
+        return HookResult()
+    coordinator.hooks.register('provider:request', start, priority=-10000,
+                               name='unified-preparation-start')
+    coordinator.hooks.register('provider:request', end, priority=10000,
+                               name='unified-preparation-end')
+
+
 class PerformanceDiagnostics:
     def __init__(self):
         self.operations = {}
@@ -207,6 +315,11 @@ class PerformanceDiagnostics:
         if row.get('kind') and row.get('marks'):
             row['sessionId'] = session_id
             row['observedAt'] = time.time()
+            if row['kind'] == 'preparation':
+                # Compare this receipt with worker marks only when domains
+                # match. Wall clocks and an absent domain prove no IPC delay.
+                row['hostClockDomain'] = clock_domain()
+                row['marks']['host.observed'] = time.monotonic_ns()
             with self.lock:
                 self.runtime_timings.append(row)
 
@@ -256,7 +369,8 @@ class PerformanceDiagnostics:
             with self.lock:
                 self.projection_failures.append({'at': time.time(), 'reason': reason, **value})
 
-    def record_shell_query(self, operation, section, queued_at, started_at, result, *, accepted):
+    def record_shell_query(self, operation, section, queued_at, started_at, result, *, accepted,
+                           completed_at=None, disposition=None):
         """Bounded scheduling facts; no page keys, query text or source paths."""
         if operation not in {'chats', 'workspace_counts', 'pinned_navigation'}:
             return
@@ -266,6 +380,14 @@ class PerformanceDiagnostics:
                'queueWaitMs': round(max(0, started_at - queued_at) * 1000, 2),
                'readMs': round(max(0, time.monotonic() - started_at) * 1000, 2),
                'accepted': bool(accepted)}
+        from .history_projection_process import REASONS
+        reason = result.get('reason')
+        if isinstance(reason, str) and reason in REASONS:
+            row['reason'] = reason
+        if disposition in ('accepted', 'no_interest', 'retired', 'stale', 'retry'):
+            row['disposition'] = disposition
+        if completed_at is not None:
+            row['ownerWaitMs'] = round(max(0, time.monotonic() - completed_at) * 1000, 2)
         for key in ('vmSteps', 'decodedRows', 'elapsedMs', 'threadCpuMs'):
             value = stats.get(key)
             if type(value) in (int, float) and 0 <= value < float('inf'):

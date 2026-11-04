@@ -6,6 +6,7 @@ requires-python = ">=3.13"
 dependencies = [
   "amplifier-memory @ git+https://github.com/microsoft/amplifier-bundle-memory@main",
   "amplifier-core>=2.0.2",
+  "amplifier-bundle-ui-use @ git+https://github.com/microsoft/amplifier-bundle-ui-use@main",
   "amplifier-module-loop-live",
   "amplifier-foundation",
   "amplifier-module-hooks-session-naming",

@@ -15,7 +15,7 @@ def configured(tmp_path, rows, **settings):
 
 
 def bundle(rows):
-    return SimpleNamespace(providers=rows, tools=[], hooks=[], session={})
+    return SimpleNamespace(providers=rows, tools=[], hooks=[], session={}, agents={})
 
 
 def test_saved_named_connection_is_source_qualified_without_account_fallback(tmp_path):
@@ -41,6 +41,37 @@ def test_known_connection_without_bundle_provider_uses_catalog_source(tmp_path):
     result = _apply_settings(bundle([]), configured(tmp_path, [saved]))
     assert result.providers[0]['source'] == 'git+https://github.com/microsoft/amplifier-module-provider-openai@main'
     assert result.providers[0]['config'] == saved['config']
+
+
+@pytest.mark.parametrize('module,hook', [
+    ('provider-jev', 'hooks-jev-decisions'),
+    ('provider-local-decisions', 'hooks-local-decisions'),
+])
+def test_settings_created_decision_account_has_source_before_hook_projection(tmp_path, module, hook):
+    from amplifier_web.decision_accounts import DecisionAccounts, logical_plan
+    from amplifier_web.host.session import module_source
+    from amplifier_web.provider_isolation import ProviderIsolation
+
+    saved = {'module': module, 'id': 'configured-decision-account', 'config': {
+        'api_key': 'synthetic-unused', 'chat_enabled': False,
+        'decisions': {'enabled': True, 'backends': {
+            'ui-browser-configured': {'model': 'fixture', 'enabled': True},
+            'ui-computer-configured': {'model': 'fixture', 'enabled': True},
+        }}}}
+    original = copy.deepcopy(saved)
+    config = configured(tmp_path, [saved])
+    result = _apply_settings(bundle([]), config)
+    adapter = DecisionAccounts({'providers': result.providers}, ProviderIsolation(),
+        lambda name, source: module_source(config, False, name, source),
+        definitions={module: hook})
+    assert not adapter.failures, adapter.failures
+    assert len(adapter.expected) == 1
+    projected = adapter.plan['hooks'][0]
+    assert projected['module'] == hook
+    assert projected['source'] == f'git+https://github.com/microsoft/amplifier-module-{module}@main'
+    assert projected['config']['decisions'] == saved['config']['decisions']
+    assert logical_plan(adapter.plan, definitions={module: hook})['providers'][0]['config'] == original['config']
+    assert saved == original
 
 
 @pytest.mark.parametrize('setting', ['sources', 'overrides'])

@@ -1,6 +1,7 @@
 // Run only in the manager's existing DTU, after building current candidate assets.
 // Uses production UI + existing synthetic host fixture; no model/provider calls.
 import {spawn} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
@@ -250,29 +251,116 @@ try{
  await page.unroute('**/api/canvas/*/source?version=*');
  await copy(canvas.getByRole('button',{name:'Copy canvas source',exact:true}),savedSource);
  assert.equal((await action('canvas.versions.inspect',{id:storedArtifact.id,version:1,includeSource:true})).result.source.content,savedSource);
- // A delayed source response belongs to its old selected version, not the
- // later control. This is independent of a pending clipboard completion.
+ // Hold consumer completion after the real v1 body arrives. Holding the network
+ // route instead only proves abort-on-remount, not rejection of a late success.
  await page.getByRole('button',{name:'Preview',exact:true}).click();
  await expect(canvas.locator('.a-canvas-preview > .a-canvas-code')).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Preview',exact:true})).toHaveAttribute('aria-pressed','true');
- let delayedSource;
- const delayedRequest=new Promise(resolve=>delayedSource=resolve);
- await page.route('**/api/canvas/*/source?version=*',route=>delayedSource(route));
+ stage='successful late saved-source completion';await save();
+ const expectedOldBody={id:storedArtifact.id,bytes:Buffer.byteLength(savedSource),
+  sha256:createHash('sha256').update(savedSource).digest('hex')};
+ await page.evaluate(expected=>{
+  const descriptor=Object.getOwnPropertyDescriptor(Response.prototype,'text'),nativeText=descriptor.value;
+  const selected=()=>{const canvas=window.amplifier.getState().canvas;return {id:canvas.id,version:canvas.selectedVersion??canvas.revision}};
+  let release;
+  const gate=new Promise(resolve=>{release=resolve});
+  const control=window.blockCopyLateSource={facts:{expected,phase:'armed',events:[]},release,
+   record:event=>{
+    const events=control.facts.events;
+    if(['held','v2observed','released','fulfilled','observedafter'][events.length]!==event)
+     throw Error('Unexpected late-source event order');
+    events.push({sequence:events.length+1,event});
+   },
+   restore:()=>Object.defineProperty(Response.prototype,'text',descriptor)};
+  Object.defineProperty(Response.prototype,'text',{...descriptor,value:function(...args){
+   const address=new URL(this.url,location.href);
+   if(address.origin!==location.origin||address.pathname!==`/api/canvas/${expected.id}/source`||address.searchParams.get('version')!=='1')
+    return nativeText.apply(this,args);
+   control.restore(); // One response only; all later reads use the native method.
+   Object.assign(control.facts,{phase:'reading',status:this.status,path:address.pathname,version:1});
+   control.pending=nativeText.apply(this,args).then(async text=>{
+    const bytes=new TextEncoder().encode(text);
+    Object.assign(control.facts,{bodyArrivedAt:performance.now(),bodyUsed:this.bodyUsed,
+     bytes:bytes.length,arrivalSelection:selected(),
+     sha256:Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('')});
+    if(this.status!==200||!this.bodyUsed||bytes.length!==expected.bytes||control.facts.sha256!==expected.sha256)
+     throw Error('The delayed consumer must receive the exact real successful v1 body');
+    control.record('held');
+    Object.assign(control.facts,{phase:'held',verifiedAt:performance.now()});
+    await gate;
+    return text; // The actual native body, not a substituted fixture constant.
+   }).then(text=>{
+    control.record('fulfilled');
+    Object.assign(control.facts,{phase:'fulfilled',fulfilledAt:performance.now(),completionSelection:selected()});
+    return text;
+   }).catch(error=>{Object.assign(control.facts,{phase:'failed',error:error.message});throw error});
+   return control.pending;
+  }});
+ },expectedOldBody);
+ try{
  await page.getByRole('button',{name:'Source',exact:true}).click();
- let delayedTimer;
- const oldSourceRoute=await Promise.race([delayedRequest,new Promise((_,reject)=>{delayedTimer=setTimeout(()=>reject(Error('Delayed saved-source request did not arrive')),15000)})]).finally(()=>clearTimeout(delayedTimer));
+ await expect.poll(async()=>{
+  const facts=await page.evaluate(()=>window.blockCopyLateSource.facts);
+  assert.notEqual(facts.phase,'failed',JSON.stringify(facts));
+  return facts.phase;
+ }).toBe('held');
+ evidence.lateSource=await page.evaluate(()=>window.blockCopyLateSource.facts);await save();
+ assert.deepEqual(evidence.lateSource.arrivalSelection,{id:storedArtifact.id,version:1});
+ await expect(canvas.getByText('Loading saved source…',{exact:true})).toBeVisible();
+ await expect(canvas.getByRole('button',{name:'Copy canvas source',exact:true})).toHaveCount(0);
  const newStoredSource='<p>New selected stored-source version</p>\n';
  await action('canvas.versions.revise',{id:storedArtifact.id,expectedRevision:1,content:newStoredSource});
- await action('canvas.select',{id:storedArtifact.id,version:2});
+ // Even inert saved HTML is an executable preview. Use the fixture's explicit
+ // version/reset controls while the old body's consumer completion remains held.
+ await page.getByRole('combobox',{name:'Artifact version',exact:true}).selectOption('2');
+ await page.getByRole('group',{name:'Confirm saved preview version',exact:true}).getByRole('button',{name:'Load v2 — resets preview and runs its code',exact:true}).click();
+ await expect.poll(async()=>(await state()).canvas.selectedVersion).toBe(2);
  await action('canvas.view',{id:storedArtifact.id,patch:{source:true}});
- await oldSourceRoute.continue();
- await page.unroute('**/api/canvas/*/source?version=*');
  await expect.poll(async()=>(await state()).canvas.content).toBe(newStoredSource);
  await expect(canvas.getByText('Loading saved source…',{exact:true})).toHaveCount(0);
+ await expect.poll(()=>canvas.locator('.a-canvas-preview > .a-canvas-code').textContent()).toBe(newStoredSource);
  await expect(canvas.locator('.a-block-copy-notice')).toHaveText('');
+ // Preserve the normal copy count, and prove existing feedback/clipboard survive
+ // the old fulfillment, not only that a later click can copy the new source.
  await copy(canvas.getByRole('button',{name:'Copy canvas source',exact:true}),newStoredSource);
+ evidence.lateSource=await bounded(page.evaluate(async id=>{
+  const control=window.blockCopyLateSource,current=window.amplifier.getState().canvas;
+  if(control.facts.phase!=='held'||current.id!==id||current.selectedVersion!==2)
+   throw Error('Release requires the real held v1 body and confirmed v2 selection');
+  control.record('v2observed');
+  Object.assign(control.facts,{selectionObservedAt:performance.now(),releaseSelection:{id:current.id,version:current.selectedVersion}});
+  control.record('released');
+  control.facts.releasedAt=performance.now();control.release();
+  await control.pending;
+  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  control.record('observedafter');
+  control.facts.observedAfterFulfillmentAt=performance.now();
+  return control.facts;
+ },storedArtifact.id),'Release successful old-source completion');
+ await save();
+ const late=evidence.lateSource;
+ assert.equal(late.phase,'fulfilled');assert.equal(late.status,200);assert.equal(late.bodyUsed,true);
+ assert.equal(late.bytes,expectedOldBody.bytes);assert.equal(late.sha256,expectedOldBody.sha256);
+ // Clock precision may tie correctly ordered microtasks; guarded events prove causality.
+ assert.deepEqual(late.events,['held','v2observed','released','fulfilled','observedafter'].map((event,index)=>({sequence:index+1,event})));
+ assert.ok(late.bodyArrivedAt<=late.verifiedAt&&late.verifiedAt<=late.selectionObservedAt&&late.selectionObservedAt<=late.releasedAt&&late.releasedAt<=late.fulfilledAt&&late.fulfilledAt<=late.observedAfterFulfillmentAt,JSON.stringify(late));
+ assert.deepEqual(late.completionSelection,{id:storedArtifact.id,version:2});
+ assert.equal((await state()).canvas.selectedVersion,2);
+ assert.equal(await canvas.locator('.a-canvas-preview > .a-canvas-code').textContent(),newStoredSource);
+ await expect(canvas.locator('.a-block-copy-notice')).toHaveText('Copied.');
+ assert.equal(await clipboard(),newStoredSource);
+ late.after={selectedVersion:2,displayedSha256:createHash('sha256').update(await canvas.locator('.a-canvas-preview > .a-canvas-code').textContent()).digest('hex'),
+  clipboardSha256:createHash('sha256').update(await clipboard()).digest('hex'),feedback:await canvas.locator('.a-block-copy-notice').textContent()};
  assert.equal((await action('canvas.versions.inspect',{id:storedArtifact.id,version:1,includeSource:true})).result.source.content,savedSource);
- await action('canvas.select',{id:storedArtifact.id,version:1});
+ late.storedV1Unchanged=true;await save();
+ }finally{
+  const observed=await page.evaluate(()=>{const control=window.blockCopyLateSource;control?.restore();return control?.facts}).catch(()=>null);
+  evidence.lateSource={...evidence.lateSource,...observed};
+  await save();
+ }
+ await page.getByRole('combobox',{name:'Artifact version',exact:true}).selectOption('1');
+ await page.getByRole('group',{name:'Confirm saved preview version',exact:true}).getByRole('button',{name:'Load v1 — resets preview and runs its code',exact:true}).click();
+ await expect.poll(async()=>(await state()).canvas.selectedVersion).toBe(1);
  // A failed saved-source read must not enable copying an empty/partial preview.
  await page.evaluate(()=>navigator.clipboard.writeText('retained on source failure'));
  await page.getByRole('button',{name:'Preview',exact:true}).click();

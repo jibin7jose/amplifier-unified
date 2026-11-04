@@ -38,7 +38,7 @@ export function actionContent(node,inputText=node.input,outputText=node.output){
  if(/write(_file)?$/.test(name)&&path)return {...base,kind:'write',title:verb('Wrote','Writing','Write'),target:path,content:first(args,['content','text'])};
  if(typeof args.action==='string'||typeof args.operation==='string'){
   const nested=name==='app_control'&&args.operation==='dispatch'?first(record(args.args),['action']):'';
-  return {...base,kind:'app',title:'App action',target:nested?`dispatch → ${nested}`:typeof args.action==='string'?args.action:args.operation,preview:concise(output)};
+  return {...base,kind:name==='app_control'?'app':'generic',title:name==='app_control'?'App action':tool,target:nested?`dispatch → ${nested}`:typeof args.action==='string'?args.action:args.operation,preview:concise(output)};
  }
  if(/delegate|task|agent/.test(name)&&first(args,['instruction','instructions','prompt','task']))return {...base,kind:'delegate',title:verb('Delegated','Delegating','Delegate'),target:first(args,['agent','name','description']),task:first(args,['instruction','instructions','prompt','task'])};
  return {...base,kind:'generic',title:tool,preview:concise(fallback)};

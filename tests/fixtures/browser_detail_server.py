@@ -157,6 +157,57 @@ async def main():
                 service.state['updates'].update(args.get('updates', {}))
                 service.state['view'].update(args.get('view',{}))
                 for sid,patch in args.get('sessions',{}).items(): service._session(sid).update(patch)
+            elif op=='attention-priority':
+                updates = service.state['updates']
+                diagnostics = service.update_manager.diagnostics
+                step = args.get('step', 'seed')
+                if step == 'seed':
+                    updates.update(phase='checked', error=None, items=[], available=0,
+                        application={'id':'application','kind':'app','current':'1.0.0','latest':'v1.0.0',
+                            'status':'current','releaseNotes':[{'version':'1.0.0','title':'Synthetic release',
+                                'changes':['Optional improvements.'],'notices':[
+                                    {'id':f'news-{i}','title':f'Optional news {i}',
+                                     'detail':'Informational release guidance.',
+                                     'action':'No action is required for ordinary browser use.'} for i in range(53)]}]})
+                    service.state['releaseNoticeStartVersion'] = '1.0.0'
+                    service.state['feedback']['requests'] = [
+                        {'requestId':f'sent-{i}','status':'submitted','title':'Synthetic feedback',
+                         'message':'Feedback sent.'} for i in range(3)]
+                elif step in {'fail', 'distinct'}:
+                    diagnostics.begin('ecosystem')
+                    diagnostics.record('ecosystem-validation', 'failed', reason='runtime-resolution-mismatch',
+                        component='amplifier-module-loop-live' if step=='fail' else 'amplifier-module-hooks-approval',
+                        expectedRevision='a'*40, observedRevision='b'*40, errorType='ValueError')
+                    await service.update_manager.publish(phase='error', error='Component update preparation failed. Current components remain active.')
+                elif step == 'check':
+                    updates.update(phase='checked', error=None)
+                elif step in {'uncertainty', 'unknown-repeat', 'overflow-repeat'}:
+                    if step == 'uncertainty':
+                        # Real owner events: fill the bounded summary then recover
+                        # its matched groups. Overflow remains, as does unknown scope.
+                        for i in range(33):
+                            diagnostics.begin('ecosystem', components=[f'amplifier-test-{i}'])
+                            diagnostics.record('ecosystem-validation', 'failed', component=f'amplifier-test-{i}')
+                        diagnostics.begin('ecosystem', components=[f'amplifier-test-{i}' for i in range(33)])
+                        diagnostics.record('ecosystem-activation', 'succeeded')
+                    if step == 'overflow-repeat':
+                        for i in range(33):
+                            diagnostics.begin('ecosystem', components=[f'amplifier-later-{i}'])
+                            diagnostics.record('ecosystem-validation', 'failed', component=f'amplifier-later-{i}')
+                        diagnostics.begin('ecosystem', components=[f'amplifier-later-{i}' for i in range(33)])
+                        diagnostics.record('ecosystem-activation', 'succeeded')
+                    else:
+                        diagnostics.begin('application', 'a'*40)
+                        diagnostics.record('candidate-install', 'failed', errorType='ValueError')
+                    diagnostics.begin('application', 'a'*40, application_extras=[])
+                    diagnostics.record('restart-ack', 'succeeded')
+                    updates.update(phase='installed', error=None)
+                elif step == 'recover':
+                    diagnostics.begin('ecosystem', components=['amplifier-module-loop-live','amplifier-module-hooks-approval'])
+                    diagnostics.clear_failure()
+                    diagnostics.record('ecosystem-activation', 'succeeded')
+                    updates.update(phase='installed', error=None)
+                service._save_changes(globals={'updates','feedback','releaseNoticeStartVersion'})
             elif op=='interim-start':
                 row=service._session(aid);now=time.time()-10
                 removed = {message['id'] for message in row['messages']}

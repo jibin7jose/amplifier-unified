@@ -222,7 +222,7 @@ def test_installed_skills_root_child_and_companions(tmp_path, monkeypatch, caplo
         }
         for relative in (
             "skills/amplifier-shell/SKILL.md", "skills/amplifier-shell/presentation.md",
-            "skills/coordinate-work/SKILL.md",
+            "skills/coordinate-work/SKILL.md", "skills/coordinate-work/references/protocol.md",
         ):
             assert (packaged / relative).is_file(), f"Missing installed Unified resource: {relative}"
             assert "amplifier_web/bundle_data/" + relative in unified_records, relative
@@ -302,6 +302,10 @@ def test_installed_skills_root_child_and_companions(tmp_path, monkeypatch, caplo
                 await _read_exact(coordinator, directory / "SKILL.md")
                 if name == "amplifier-shell":
                     await _read_exact(coordinator, directory / "presentation.md")
+                else:
+                    assert "references/protocol.md" in loaded["content"]
+                    assert "# Coordination protocol reference" not in loaded["content"]
+                    await _read_exact(coordinator, directory / "references/protocol.md")
             loaded = await _call(coordinator, "load_skill", skill_name="fixture-cached")
             assert loaded["loaded_from"] == remote and "CACHED-NOT-FETCHED" in loaded["content"]
             assert Path(loaded["skill_directory"]) == cached

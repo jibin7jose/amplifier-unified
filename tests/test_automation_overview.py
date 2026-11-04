@@ -110,6 +110,70 @@ async def test_human_recovery_does_not_wake_owner_and_next_due_runs_once(tmp_pat
     finally: await app.close()
 
 
+async def test_recovery_due_uses_real_management_and_preserves_both_occurrences(tmp_path, monkeypatch):
+    """The browser fixture uses Management, not attach()'s mocked preparation."""
+    from amplifier_web.management import Management
+    from test_schedules import finish
+    app, runtime, now, sid = await fixture(tmp_path, monkeypatch)
+    app.management = Management(app)
+    started = []
+    original_start = runtime.start
+    async def observed_start(session, emit, **kwargs):
+        started.append(session['id'])
+        return await original_start(session, emit, **kwargs)
+    runtime.start = observed_start
+    try:
+        record, _ = await create(app, sid, now[0])
+        owner = app._session(sid)
+        before_configuration = template(app, owner)[1]
+        owner.update(status='stopped', interruptionRevision=1)
+        args = {'sessionId': sid, 'id': record['id'], 'expectedRevision': record['revision']}
+        preview = (await app.dispatch('schedule.repairPreview', args))['result']
+        await app.dispatch('schedule.repairResume', {
+            **args, 'previewHash': preview['previewHash'], 'acknowledgeStop': True})
+        assert not started and not runtime.inputs
+        previous = None
+        destinations = set()
+        for occurrence in range(2):
+            now[0] = app.schedules.store.get(sid, record['id'])['nextDue'] + 1
+            await app.schedules.tick(); await app.schedules.tick()
+            run = app.schedules.store.runs(sid)[0]
+            assert run['phase'] == 'accepted', run
+            assert run['creationConfirmed'] and run['taskId']
+            assert run['destinationSessionId'] not in destinations | {sid}
+            destinations.add(run['destinationSessionId'])
+            assert len(runtime.inputs) == occurrence + 1
+            assert runtime.inputs[-1][0] == run['destinationSessionId']
+            await finish(app, run['destinationSessionId'], run)
+            if previous:
+                assert app.schedules.store.run(sid, previous['id']) == previous
+            previous = copy.deepcopy(app.schedules.store.run(sid, run['id']))
+            assert previous['phase'] == 'completed'
+        assert set(started) == destinations and sid not in started
+        assert owner['status'] == 'stopped' and owner['interruptionRevision'] == 1
+        assert owner['messages'] == [] and template(app, owner)[1] == before_configuration
+    finally:
+        await app.close()
+
+
+async def test_synthetic_start_honors_guard_after_management_preflight(tmp_path, monkeypatch):
+    from amplifier_web.management import Management
+    app, runtime, _, sid = await fixture(tmp_path, monkeypatch)
+    app.management = Management(app)
+    calls = []
+    def guard():
+        calls.append('checked')
+        if len(calls) == 2:
+            raise ValueError('Stop won the startup boundary')
+    try:
+        with pytest.raises(ValueError, match='Stop won'):
+            await app.management.ensure_runtime(app._session(sid), restart_guard=guard)
+        assert calls == ['checked', 'checked']  # host preflight and runtime boundary
+        assert not runtime.inputs and not runtime.workers
+    finally:
+        await app.close()
+
+
 async def test_recovery_denies_agent_stale_stop_configuration_and_unknown(tmp_path, monkeypatch):
     app, runtime, now, sid = await fixture(tmp_path, monkeypatch)
     try:

@@ -144,7 +144,7 @@ test('explicit reconnect uses the reviewed binding and retains the mounted frame
  const frame={contentWindow:{},draft:'unsaved'},sent=[];let component;
  globalThis.fetch=async(path,options)=>{
   if(path.endsWith('/status'))return response({...available,status:'disconnected',message:'Saved source available; reconnect.'});
-  if(path==='/api/actions'){sent.push(JSON.parse(options.body));return response({operationId:'reconnect-receipt'})}
+  if(path==='/api/actions'){sent.push(JSON.parse(options.body));return response({accepted:true,operationId:'reconnect-receipt'})}
   assert.equal(path,'/api/smart-tools/operations/reconnect-receipt');return response({status:'completed',result:available});
  };
  await act(async()=>{component=create(React.createElement(McpAppViewer,{canvas:{id:'retained',open:true,mcp:{}},act:async()=>({})}),{createNodeMock:node=>node.type==='iframe'?frame:null})});

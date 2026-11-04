@@ -33,6 +33,7 @@ def definitions(schema, string):
         'canvas.views.imageDraft': ('Attach this exact saved image to the current client draft for a follow-up. Does not send, generate, or overwrite the original.', schema(target, list(target))),
         'canvas.views.reveal': ('Reveal the exact artifact file in the file manager on its named owning app host. It does not open the browser device file manager. Bind hostId and instanceId from fileReveal.', schema({**target,'hostId':string(200),'instanceId':string(100)}, [*target,'hostId','instanceId'])),
         'canvas.views.inspect': ('Inspect the selected artifact view and available renderers.', schema()),
+        'canvas.views.loadVersion': ('Explicit UI-only replacement of an ordinary HTML/3D preview with one exact saved version. Rejects stale targets and dirty edits; preserves selection intent unless followLatest is explicit, but resets preview-local state.', schema({**target, 'version': {'type': 'integer', 'minimum': 1}, 'followLatest': {'type': 'boolean'}}, [*target, 'version'])),
         'canvas.views.renderer': ('Select a validated renderer for this exact artifact/view generation.', schema({**target, 'renderer': string(100)})),
         'canvas.views.recover': ('Restore this view to its built-in renderer; retain the saved artifact.', schema(target)),
         'canvas.views.command': ('Invoke an explicitly targeted renderer control without retargeting the selected conversation.', schema({**target, 'action': string(100), 'args': {'type': 'object'}}, [*target, 'action', 'args'])),
@@ -139,6 +140,14 @@ class CanvasViews:
                     and (destination != 'inline' or not self.same_source(binding, source))]
         if same_primary and destination != 'canvas' and (primary.get('open') or record.get('retained')):
             outgoing.append('primary')
+        # Selecting a new version in the same primary frame is also a reset,
+        # even when the request merely says "Latest".
+        from .canvas_versions import ordinary_preview
+        if (primary.get('id') == row['id'] and not same_primary
+                and destination == 'canvas' and ordinary_preview(primary)
+                and not primary.get('_presentationDisposed')
+                and (primary.get('open') or record.get('retained'))):
+            outgoing.append('primary')
         for identity in outgoing:
             preference = record.get('preferences', {}).get(identity + ':' + row['id'], {})
             if preference.get('dirty'):
@@ -146,9 +155,9 @@ class CanvasViews:
                                409, code='canvas_view_dirty')
             # An open/retained primary or allocated inline lease may already
             # execute before its asynchronous mount report reaches the server.
-            if row['kind'] in {'html', 'babylon'} and not (reset and origin == 'ui'):
+            if (row['kind'] in {'html', 'babylon'} or identity == 'primary' and ordinary_preview(primary)) and not (reset and origin == 'ui'):
                 raise AppError('This interactive preview has local state. Keep it here, or explicitly '
-                               'reset the preview to open its saved version in the other surface.',
+                               'reset the preview to load the requested saved version or presentation.',
                                409, code='canvas_preview_reset_required')
         # Validate every outgoing owner before releasing any view.
         for identity in outgoing:
@@ -231,7 +240,11 @@ class CanvasViews:
     @staticmethod
     def revision(row):
         # View preferences, reports and transient tool context are not content.
-        return hashlib.sha256(encoded({**{key: row.get(key) for key in ('id', 'kind', 'body', 'url', 'revision', 'selectedVersion')}, **({'appRevision': row['app']['revision']} if row.get('app') else {})}).encode()).hexdigest()
+        from .canvas_versions import ordinary_preview
+        content = {key: row.get(key) for key in ('id', 'kind', 'body', 'url', 'revision', 'selectedVersion')}
+        if ordinary_preview(row):
+            content['selectedVersion'] = None  # Selection intent is not executable content.
+        return hashlib.sha256(encoded({**content, **({'appRevision': row['app']['revision']} if row.get('app') else {})}).encode()).hexdigest()
 
     def preference(self, view_id, row):
         preferences = self.record()['preferences']
@@ -262,8 +275,8 @@ class CanvasViews:
             if current.get('questionId'):
                 self.service.questions.review_artifact(row['sessionId'], current['questionId'],
                     current['questionContentRevision'], identity, current['selectedVersion'])
-        from .canvas_versions import definition
-        row = definition(row, current.get('selectedVersion'), self.service.db)
+        from .canvas_versions import view_definition
+        row = view_definition(row, current, self.service.db)
         preference = self.preference(view_id, row)
         previous_binding = record.get(view_id + 'Binding')
         visible_binding = (previous_binding[2] if record.get('retained') and previous_binding else bool(current.get('open'))) if view_id == 'primary' else True
@@ -340,6 +353,8 @@ class CanvasViews:
                 'filePaths': paths(self.service.state, row),
                 'fileReveal': reveal_status(self.service.instance_id) if row.get('path') else None,
                 'selectedVersion': row.get('selectedVersion'),
+                'runningVersion': row.get('runningVersion'),
+                'previewRetained': row.get('previewRetained', False),
                 'latestStateRevision': self.artifact(row['id']).get('app', {}).get('stateRevision'),
                 'latestVersion': row.get('latestVersion', row.get('app', {}).get('revision', row.get('revision', 1))),
                 'versions': [{k: item.get(k) for k in ('version', 'title', 'createdAt')} for item in row.get('app', {}).get('versions', row.get('versions', []))],
@@ -432,6 +447,8 @@ class CanvasViews:
 
     def command(self, action, args, origin):
         """Called under the normal AppService action lock and receipt handling."""
+        if action == 'canvas.views.loadVersion' and origin != 'ui':
+            fail('Only an explicit user control can load a saved interactive preview.', 403)
         if action == 'canvas.views.inline':
             return self.open_inline(args), []
         if action == 'canvas.views.observe':
@@ -439,6 +456,38 @@ class CanvasViews:
         if action == 'canvas.views.inspect':
             return self.project(), []
         row, preference = self.target(args)
+        if action == 'canvas.views.loadVersion':
+            from .canvas_versions import definition, ordinary_preview
+            from .canvas_library import load, scope
+            from .service import AppError
+            if args['viewId'] != 'primary' or not ordinary_preview(row) or not scope(self.service.state, row):
+                fail('Load a saved version from the primary HTML or 3D preview.', 409)
+            if preference['dirty']:
+                raise AppError('Finish or cancel this preview edit before loading a saved version.',
+                               409, code='canvas_view_dirty')
+            saved = definition(self.artifact(row['id']), args['version'], self.service.db)
+            if not ordinary_preview(saved):
+                fail('This saved version is not an ordinary HTML or 3D preview.', 409)
+            if args['version'] != row['runningVersion']:
+                # Exact target and saved definition are validated before any
+                # presentation/selection mutation. The UI Load is the reset.
+                self.choose(saved, args['version'], 'canvas', reset=True, origin=origin)
+                current = self.service.state['canvas']
+                follow = args.get('followLatest', current.get('selectedVersion') is None)
+                selected = None if follow else args['version']
+                view = copy.deepcopy(current.get('view', {}))
+                load(self.service.state, self.service.db, row['id'],
+                     open_panel=current.get('open', False), version=args['version'])
+                self.service.state['canvas'].update(selectedVersion=selected,
+                    readOnlyVersion=selected is not None, view=view,
+                    previewRetained=selected is None and args['version'] < saved['latestVersion'])
+                for key in ('document', 'interaction', 'events'):
+                    preference.pop(key, None)
+            elif 'followLatest' in args:
+                self.service.state['canvas'].update(selectedVersion=None if args['followLatest'] else args['version'],
+                    readOnlyVersion=not args['followLatest'],
+                    previewRetained=args['followLatest'] and args['version'] < saved['latestVersion'])
+            return self.summary('primary'), []
         if action == 'canvas.views.imageDraft':
             from .attachments import save, MAX_FILES
             from .canvas_downloads import filename

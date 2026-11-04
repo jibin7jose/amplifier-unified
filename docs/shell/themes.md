@@ -100,9 +100,16 @@ The shared transcript baseline owns overflow cues, not individual appearances.
 It uses the existing scroll owner to fade only an edge with content beyond it:
 18px at the top and 24px at the bottom. Short transcripts have no fade; reaching
 the bottom removes the bottom fade so the final text and actions remain readable.
-Focus within the transcript disables the mask, and forced colors removes it.
-The scrollbar gutter remains intact. The navigator and composer are outside the
-masked scroller; do not mask the conversation panel or reposition its children.
+Keyboard-visible focus on the scroll pane or a descendant, and focus on an active
+editor (`input`, `textarea`, `select`, `[contenteditable]`, or `iframe`), disables
+the mask. Pointer/programmatic focus on a non-visible container alone does not.
+An active embedded review is detected from the host document's active iframe,
+not only CSS focus selectors; no child-document access is required. A mounted
+but inactive iframe leaves the fade enabled. Native focus changes and frame
+removal clear this host-owned guard without moving the reading position.
+Forced colors removes the mask. The scrollbar gutter remains intact. The navigator
+and composer are outside the masked scroller; do not mask the conversation panel
+or reposition its children.
 
 CSS appearances may tune `--a-transcript-fade-top` and
 `--a-transcript-fade-bottom`; omitted values retain the native defaults above.
@@ -118,7 +125,8 @@ rewrite saved user copies.
 
 Check the installed baseline before relying on these properties. This describes
 the shared authoring baseline, not certification that an arbitrary skin preserves
-it; check top/middle/bottom, short content, keyboard focus and forced colors.
+it; check top/middle/bottom, short content, pointer-triggered question review,
+keyboard-visible focus, active editors and forced colors.
 
 ### Main panel surfaces
 
@@ -238,6 +246,14 @@ The [production-design account](https://www.latimes.com/archives/la-xpm-2010-dec
 informed those materials, not sampled color values or copied imagery. Functional
 accent colors are readability adaptations. A reference does not replace contrast
 measurements and rendered review in either scheme.
+
+Breadbin is a static, home-computer-inspired appearance with warm ivory casing
+and deep violet accents in light mode, a blue-violet conversation screen and
+smoked casing in dark mode, and an optional four-color header edge. It uses
+system UI text and readable monospace conversation, not a bundled retro font.
+Keycap depth is paint only; pressed controls keep their dimensions. Message
+actions stay outside the bubble bodies, and transcript fades remain host-owned.
+Adding the bundled entry does not apply it or replace saved personal versions.
 
 For a bundled appearance change, keep qualification focused: confirm the packaged
 CSS and metadata load unchanged, preview the actual host in both schemes and a

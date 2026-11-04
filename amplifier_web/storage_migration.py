@@ -13,6 +13,7 @@ RESULT_BYTES = 32_000_000
 RESULT_DAYS = 30
 BACKGROUND_PRUNE_LIMIT = 1024
 BACKGROUND_ROOT_CATCHUPS = 3
+BACKGROUND_EDGE_BATCH = 64
 
 
 def trim_operations(db, state):
@@ -233,9 +234,9 @@ async def _maintenance_async(service):
         with measure(service, 'storage.gc.roots.durable', synchronous=True):
             return resource_roots.references(snapshot)
 
-    def inspect(source):
+    def inspect(batch):
         with measure(service, 'storage.gc.body', synchronous=True):
-            return edges.read(source)
+            return {child for source in batch.values() for child in edges.read(source)}
 
     def unavailable():
         return service.closed or getattr(service, 'backup_in_progress', False)
@@ -257,16 +258,23 @@ async def _maintenance_async(service):
             reason = 'presentation-recovery-pending'
         while valid:
             while pending and valid:
-                identity = pending.pop()
-                if identity in sources:
+                identities = set()
+                while pending and len(identities) < BACKGROUND_EDGE_BATCH:
+                    identity = pending.pop()
+                    if identity not in sources:
+                        identities.add(identity)
+                if not identities:
                     continue
                 try:
                     async with service.lock:
                         if unavailable():
                             return
-                        source = detach(service.db, identity)
-                    pending.extend(await settle_worker(inspect, source))
-                    sources[identity] = source
+                        batch = {identity: detach(service.db, identity) for identity in identities}
+                    # One handoff for a small metadata batch, not one per retained
+                    # file. Bodies still stay outside the app/writer boundary;
+                    # the complete mark is revalidated before any deletion.
+                    pending.extend(await settle_worker(inspect, batch))
+                    sources.update(batch)
                 except (OSError, ValueError, TypeError, KeyError, RecursionError):
                     valid, reason = False, 'resource-body-unavailable'
             if not valid:

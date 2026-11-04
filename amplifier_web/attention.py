@@ -83,6 +83,7 @@ def snapshot(state, *, session_items=None):
         if status in {'submitted','failed','unknown'}:
             add('feedback:'+receipt['requestId'],{'submitted':'Feedback sent','failed':'Feedback could not be sent','unknown':'Check feedback delivery'}[status],
                 'feedback','feedback',receipt.get('message',''),status,requestId=receipt['requestId'],label=receipt.get('title','Feedback'),url=receipt.get('url'),status=status)
+            items[-1]['informational'] = status == 'submitted'
     for provider in state.get('setup',{}).get('providers',[]):
         if provider.get('enabled',True) and provider.get('authenticationRequired'):
             add('provider-auth:'+provider['id'],'AI connection needs sign-in','setup','ai-connections',
@@ -101,6 +102,7 @@ def snapshot(state, *, session_items=None):
             add(notice_id(release,notice),notice['title'],'maintenance','updates',
                 notice['detail']+' '+notice['action'],release['version'],
                 previous_titles=notice.get('previousTitles',()),releaseVersion=release['version'])
+            items[-1]['informational'] = True
     automatic = state.get('settings', {}).get('updates', {}).get('autoInstall', True) or updates.get('sequence', {}).get('install')
     preparing = automatic and not updates.get('error') and updates.get('phase') not in {'error', 'interrupted'}
     for row in updates.get('items', []):
@@ -109,7 +111,35 @@ def snapshot(state, *, session_items=None):
         if row.get('status') in {'update','check_failed','local_changes'}:
             status=row['status'];label={'update':'Update available','check_failed':'Could not check','local_changes':'Local edits preserved'}[status]
             add('source:'+row['id'],label+' · '+row['label'],'maintenance','updates',row.get('detail',''),[status,row.get('latest'),row.get('current')])
-    if updates.get('error'):add('updates:error','Update needs attention','maintenance','updates',updates['error'])
+    failures = updates.get('diagnostics', {}).get('activeFailures', {})
+    overflow = updates.get('diagnostics', {}).get('failureOverflow')
+    from .update_diagnostics import disposition_occurrence
+    if overflow:
+        add('updates:failure-overflow', 'Additional update failures need review', 'maintenance', 'updates',
+            'More distinct failures occurred than the active summary can retain. Review the bounded update diagnostic history; recovery of these additional failures is unverified.' +
+            (' Some original receipts could not be stored.' if updates.get('diagnostics', {}).get('storageUnavailable') else ''),
+            overflow.get('firstAt'), actionRequired=True, occurrences=overflow['occurrences'],
+            dispositionOccurrence=disposition_occurrence('updates:failure-overflow', overflow))
+    for key, failure in sorted(failures.items(), key=lambda pair: pair[1]['first'].get('at', 0), reverse=True):
+        kind = failure['kind']
+        event = failure['first']
+        label = {'ecosystem': 'Component update', 'application': 'Application update',
+                 'smart-tools': 'Smart Tool update'}.get(kind, 'Update')
+        detail = event.get('reason') or event.get('probe', {}).get('reason') or event.get('errorType') or 'Update did not finish'
+        if event.get('component'):
+            detail += ' · ' + event['component']
+        if kind == 'ecosystem' and event.get('phase') != 'ecosystem-activation':
+            detail += '. Current components remain active.'
+        detail += ' Open Updates to review details and recovery options.'
+        add('updates:failure:' + key, label + ' needs attention', 'maintenance', 'updates',
+            detail, failure['id'], actionRequired=True, updateKind=kind,
+            occurrences=failure['occurrences'], firstFailure=event, latestFailure=failure['latest'])
+        token = disposition_occurrence(items[-1]['id'], failure)
+        if token:
+            items[-1]['dispositionOccurrence'] = token
+    if updates.get('error') and not any(group.get('displayError') == updates['error'] for group in failures.values()):
+        add('updates:error','Update needs attention','maintenance','updates',updates['error'],actionRequired=True)
+        items.insert(0, items.pop())  # A distinct current check error precedes older incidents.
     if not preparing and (updates.get('pendingApp') or updates.get('pendingRelease')):add('updates:pending','Update ready; waiting for idle','maintenance','updates',version=updates.get('pendingRelease') or updates.get('pendingApp'))
     routes={'providers':('setup','providers'),'routing':('setup','routing'),'configuration':('capabilities','loaded-modules'),'bundle':('capabilities','add-bundles'),'bundles':('capabilities','app-bundles'),'modules':('capabilities','registries'),'sources':('capabilities','registries'),'history':('maintenance','history'),'permissions':('maintenance','permissions'),'notifications':('maintenance','notifications'),'maintenance':('maintenance','repair')}
     for action,op in state.get('actionStatus',{}).items():
@@ -151,14 +181,16 @@ def snapshot(state, *, session_items=None):
                          for position in range(session_item_count(session))
                          if (item := session_item_at(session, read, position)) is not None)
     items.extend(session_items)
+    items.sort(key=lambda item: not item.get('actionRequired', False))
     unread=[item for item in items if not item['read']]
+    attention=[item for item in items if item.get('actionRequired') or (not item['read'] and not item.get('informational'))]
     # Count once: many saved workspaces and unread outcomes must not produce
     # a workspaces × unread-items scan on every streamed publication.
     workspace_counts = Counter(i.get('workspace') for i in unread if i.get('sessionId'))
-    return {'items':items,'unread':len(unread),'badgeUnread':sum(state.get('notificationSettings',{}).get('completionBadge',False) or not i['id'].startswith('completion:') for i in unread),'settingsUnread':sum(i['section'] in {'setup','capabilities','maintenance'} for i in unread),
+    return {'items':items,'unread':len(unread),'badgeUnread':sum(state.get('notificationSettings',{}).get('completionBadge',False) or not i['id'].startswith('completion:') for i in attention),'settingsUnread':sum(i['section'] in {'setup','capabilities','maintenance'} for i in attention),
             'sessions':{i['sessionId']:1 for i in unread if i.get('sessionId')},
             'workspaces':{w['id']:workspace_counts.get(w['path'], 0) for w in state.get('workspaces',[])},
-            'sections':{key:sum(i['section']==key or (key=='setup' and i['page']=='loaded-modules') for i in unread) for key in {'setup','capabilities','maintenance','chats','feedback'}},'pages':{key:sum(i['page']==key for i in unread) for key in {i['page'] for i in items}}}
+            'sections':{key:sum(i['section']==key or (key=='setup' and i['page']=='loaded-modules') for i in attention) for key in {'setup','capabilities','maintenance','chats','feedback'}},'pages':{key:sum(i['page']==key for i in attention) for key in {i['page'] for i in items}}}
 
 
 def reviewed_session_errors(attention):

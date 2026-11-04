@@ -18,8 +18,19 @@ const port=reservation.address().port,base=`http://127.0.0.1:${port}`;
 await new Promise((resolve,reject)=>reservation.close(error=>error?reject(error):resolve()));
 const fixture=spawn(fixturePython(process.env.FIXTURE_PYTHON||fileURLToPath(new URL('../../.venv/bin/python',import.meta.url))),[process.env.ARTIFACT_FIXTURE||fileURLToPath(new URL('../../tests/fixtures/inline_artifacts_server.py',import.meta.url)),String(port)],{stdio:'inherit'});
 const stop=ownFixture(fixture,{label:'Artifact presentation fixture'});
-let browser,page,failure;const errors=[];
+let browser,page,failure,identity;const errors=[];
 const action=(name,args={})=>page.evaluate(([name,args])=>window.amplifier.dispatch(name,args),[name,args]);
+const presentationState=()=>page.evaluate(id=>{
+ const s=window.amplifier.getState(),canvas=s.canvas||{},card=document.querySelector(`.a-document-output[data-artifact-id="${id}"]`);
+ return {clientId:s.client?.id,selectedSessionId:s.selectedSessionId,
+  primary:{id:canvas.id,open:canvas.open,selectedVersion:canvas.selectedVersion,disposed:!!canvas._presentationDisposed},
+  choices:(s.canvasWorkspace?.presentations||[]).filter(row=>row.id===id),
+  inlineViews:(s.canvasWorkspace?.views||[]).filter(row=>row.resourceId===id&&row.viewId.startsWith('inline-')).map(row=>({viewId:row.viewId,resourceRevision:row.resourceRevision,generation:row.generation,selectedVersion:row.selectedVersion})),
+  disclosure:card?.querySelector('.a-document-preview-toggle')?.getAttribute('aria-expanded'),
+  inlineFrames:card?.querySelectorAll('iframe').length||0,
+  primaryFrames:document.querySelectorAll('.a-canvas-workspace iframe').length,
+  notices:[...(card?.querySelectorAll('.a-inline-artifact-notice')||[])].map(node=>node.textContent)};
+},identity);
 try{
  for(let i=0;i<100;i++){try{if((await fetch(base+'/api/health')).ok)break}catch{}if(fixture.exitCode!==null)throw Error('Fixture exited before readiness');await new Promise(resolve=>setTimeout(resolve,100));}
  browser=await chromium.launch({headless:true,args:process.env.CHROMIUM_SINGLE_PROCESS?['--single-process']:[]});
@@ -32,7 +43,7 @@ try{
  await page.getByRole('textbox',{name:'Message Amplifier'}).fill('Review one saved artifact.');await page.getByRole('button',{name:'Send message',exact:true}).click();
  await page.waitForFunction(()=>{const s=window.amplifier.getState(),chat=s.sessions.find(r=>r.id===s.selectedSessionId);return chat?.status==='idle'&&chat.messages?.some(r=>r.role==='assistant'&&r.text?.startsWith('## Ready'))});
  await action('canvas.show',{kind:'html',title:'One surface example',content:'<h1>Exact saved example</h1><label>Local note<input aria-label="Local note"></label><button onclick="this.textContent=\'Clicked\'">Try it</button>'});
- const identity=await page.evaluate(()=>window.amplifier.getState().canvas.id);
+ identity=await page.evaluate(()=>window.amplifier.getState().canvas.id);
  if(process.env.ARTIFACT_DUPLICATE_PROBE==='1'){
   const legacyCard=page.locator('.a-inline-artifact').filter({hasText:'One surface example'}).first();
   await legacyCard.scrollIntoViewIfNeeded();
@@ -95,9 +106,23 @@ try{
  await expect(card.getByRole('button',{name:'Preview in chat',exact:true})).toHaveAttribute('aria-expanded','false');
  await card.getByRole('button',{name:'Preview in chat',exact:true}).click();
  await card.frameLocator('iframe').getByRole('heading',{name:'Exact saved example'}).waitFor();
+ const beforeReload=await presentationState();
+ await writeFile(`${evidence}/reload-presentation.json`,JSON.stringify({before:beforeReload},null,2));
  await page.reload();await page.waitForSelector('#amp-one');await showFixtureConversation(page);
+ const afterReload=await presentationState();
+ await writeFile(`${evidence}/reload-presentation.json`,JSON.stringify({before:beforeReload,after:afterReload},null,2));
+ assert.notEqual(afterReload.clientId,beforeReload.clientId,'A new page owns a new client');
+ assert.equal(afterReload.selectedSessionId,beforeReload.selectedSessionId);
+ assert.deepEqual(afterReload.choices,beforeReload.choices,'Reload must retain the exact inline publication choice');
+ assert.equal(afterReload.primary.disposed,true,'Reload must not reclaim the primary for an inline presentation');
+ assert.equal(afterReload.primary.open,false);
  await card.scrollIntoViewIfNeeded();await card.locator('iframe').waitFor();
  await expect(page.locator('.a-canvas-workspace iframe')).toHaveCount(0);
+ const restored=await presentationState();
+ await writeFile(`${evidence}/reload-presentation.json`,JSON.stringify({before:beforeReload,after:afterReload,restored},null,2));
+ assert.equal(restored.inlineFrames,1);
+ assert.equal(restored.inlineViews.length,1);
+ assert.ok(restored.inlineViews.every(row=>beforeReload.inlineViews.every(old=>old.viewId!==row.viewId)),'Reload must allocate a fresh inline lease');
  // A separate client changes its own choice, not this page's.
  const other=await page.context().newPage();await other.goto(base+'/');
  await other.waitForSelector('#amp-one');await showFixtureConversation(other);
@@ -198,5 +223,13 @@ try{
  await writeFile(`${evidence}/settings-draft.json`,JSON.stringify({unrelatedInlineDidNotNavigate:true,unsavedValuePreserved:true,replacementGuarded:true}));
  assert.deepEqual(errors,[]);
  console.log('PASS one-surface default, explicit transitions/reset refusal, hide/reopen/reload/second client, exact version, shared document controls, dirty unrelated Canvas/draft, keyboard and narrow containment');
-}catch(error){failure=error;if(page)await page.screenshot({path:`${evidence}/failure.png`});throw error}
+}catch(error){
+ failure=error;
+ if(page){
+  const presentation=identity?await presentationState().catch(error=>({unavailable:error.message})):null;
+  await writeFile(`${evidence}/failure-state.json`,JSON.stringify({error:error.message,pageErrors:errors,presentation},null,2));
+  await page.screenshot({path:`${evidence}/failure.png`});
+ }
+ throw error;
+}
 finally{await finishFixture({label:'Artifact presentation fixture',close:[['Artifact browser',()=>browser?.close()]],stop,originalError:failure})}

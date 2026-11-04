@@ -16,13 +16,18 @@ from test_task_continuity import Coordinator
 boundary = pytest.importorskip('amplifier_module_context_managed.boundary')
 
 
-async def mount(directory, messages):
+async def mount(directory, messages, *, context_config=None):
     coordinator = Coordinator()
     coordinator.hooks = None
     async def mount_context(name, context): coordinator.context = context
     coordinator.mount = mount_context
     coordinator.register_contributor = lambda *args: None
-    await boundary.mount_boundary(coordinator, {'durable_checkpoints': True, 'max_tokens': 6000, 'summarize_trigger': .2})
+    config = {'durable_checkpoints': True, 'max_tokens': 6000, 'summarize_trigger': .2} if context_config is None else context_config
+    if context_config is None:
+        await boundary.mount_boundary(coordinator, config)
+    else:
+        from amplifier_module_context_managed import mount as mount_context_module
+        await mount_context_module(coordinator, config)
     provider = SimpleNamespace(get_info=lambda: {'id': 'fixture', 'defaults': {'model': 'model-a'}}, complete=AsyncMock(return_value=SimpleNamespace(content=[SimpleNamespace(type='text', text='Original task; revised constraints; operation uncertain-op outcome unknown; artifact report.md.')])) )
     coordinator.loop.root_provider = provider
     coordinator.loop._select_provider = lambda providers: provider
@@ -193,11 +198,11 @@ class SyntheticNativeProvider:
         return SimpleNamespace(content=[])
 
 
-async def native_fixture(directory, original, *, provider=None):
+async def native_fixture(directory, original, *, provider=None, context_config=None):
     from amplifier_core import ChatRequest, Message, ToolSpec
     from amplifier_web.host.session import SelectedProvider
     from amplifier_web.surface_delivery import SurfaceProvider
-    coordinator, _, adapter, checkpoint, transcript = await mount(directory, original)
+    coordinator, _, adapter, checkpoint, transcript = await mount(directory, original, context_config=context_config)
     raw = provider or SyntheticNativeProvider()
     selected = SelectedProvider(raw, {'model': 'selected-model'})
     # Real host wrapper, with no unrelated surface/coordination input.
@@ -242,7 +247,7 @@ def native_history():
     ]
 
 
-async def test_native_measured_context_reduces_twice_and_restores_without_provider_calls(tmp_path):
+async def test_native_measured_context_reduces_twice_and_restores_without_compaction_or_completion(tmp_path):
     original = native_history()
     c, raw, selected, adapter, checkpoint, transcript, prepare = await native_fixture(tmp_path, original)
     ends = []
@@ -972,3 +977,81 @@ async def test_lazy_restore_requires_committed_recovery_candidate(tmp_path, stat
     else:
         assert raw.counted  # Ordinary fitting is not replay or another recovery.
     assert await second.context.get_messages() == source
+
+
+@pytest.mark.parametrize('explicit_engine', [False, True])
+async def test_live_plan_default_boundary_retains_native_checkpoint_across_reload(tmp_path, explicit_engine):
+    from amplifier_web.host.session import live_plan
+    from amplifier_core import ChatRequest, Message
+    requested = {'module': 'context-managed', 'config': {
+        'max_tokens': 20000, 'summarize_trigger': .2,
+        # This checks checkpoint continuity, not archive selection/omission.
+        'archive_recovery': False,
+        **({'engine': 'boundary'} if explicit_engine else {})}}
+    plan, _ = live_plan({'session': {'orchestrator': 'loop-live', 'context': requested}})
+    config = plan['session']['context']['config']
+    original = native_history()
+    original[1]['content'] = 'FILLER:' + 'research ' * 12000
+
+    c, raw, _, adapter, checkpoint, transcript, prepare = await native_fixture(
+        tmp_path, original, context_config=config)
+    raw_limit = raw.input_limit
+    # Canonical history is larger than the continuation budget, not merely
+    # above a trigger. The fake native compactor accepts a larger source window.
+    base_budget = raw.request_budget(ChatRequest(messages=[Message(**row) for row in original]))
+    assert base_budget['estimated_input_tokens'] > raw_limit
+    raw.input_limit = 50000
+    result = await prepare()
+    assert result['final_attempt']['budget_decision']['estimated_input_tokens'] < raw_limit
+    await checkpoint()
+    assert adapter.path.is_file(), 'Default Boundary must persist the accepted native checkpoint'
+    first = json.loads(adapter.path.read_text())
+    saved_bytes = adapter.path.read_bytes()
+    assert first['summary']['kind'] == 'native'
+    assert json.loads(transcript.read_text()) == original
+    assert raw.sent == [] and len(raw.compactions) == 1
+
+    # A fresh context/host adapter receives the same originals but cannot
+    # compact this prefix again. Only restoring the accepted checkpoint works.
+    next_raw = SyntheticNativeProvider()
+    next_raw.nonreducing = True
+    newer, next_raw, _, restored, _, _, next_prepare = await native_fixture(
+        tmp_path, original, provider=next_raw, context_config=config)
+    restored.save()
+    assert restored.path.read_bytes() == saved_bytes
+    fitted = await next_prepare()
+    assert restored.path.read_bytes() == saved_bytes
+    assert restored.public()['status'] == 'restored'
+    assert next_raw.compactions == next_raw.sent == []
+    assert next_raw.counted, 'Restoration still counts; it is not zero provider calls'
+    assert fitted['final_attempt']['budget_decision']['estimated_input_tokens'] < raw_limit
+    assert await newer.context.get_messages() == original
+
+    next_raw.nonreducing = False
+    for row in [
+        {'role': 'assistant', 'content': 'FILLER:' + 'new research ' * 7000},
+        {'role': 'user', 'content': 'Correction: keep report-v3 too.'},
+        {'role': 'assistant', 'content': 'Acknowledged.'},
+        {'role': 'user', 'content': 'Continue without replay.'},
+    ]:
+        await newer.context.add_message(row)
+    next_raw.input_limit = 50000
+    second_view = await next_prepare()
+    restored.save()
+    second = json.loads(restored.path.read_text())
+    assert second['summary']['throughMessage'] > first['summary']['throughMessage']
+    assert second_view['final_attempt']['budget_decision']['estimated_input_tokens'] < raw_limit
+    assert len(next_raw.compactions) == 1 and next_raw.sent == []
+    text = json.dumps(next_raw.expanded(second_view['final_attempt']['dispatch']))
+    for required in ('Build report; keep originals.', 'report-v1; effect completed once.',
+                     'Correction: use report-v2.', 'Correction: keep report-v3 too.',
+                     'Accepted instruction:', 'Accepted reminder:', 'uncertain-op'):
+        assert required in text
+    assert (await newer.context.get_messages())[:len(original)] == original
+    print(json.dumps({'default_engine': not explicit_engine,
+        'synthetic_canonical_tokens': base_budget['estimated_input_tokens'],
+        'continuation_limit': raw_limit,
+        'first_fitted': result['final_attempt']['budget_decision']['estimated_input_tokens'],
+        'restored_fitted': fitted['final_attempt']['budget_decision']['estimated_input_tokens'],
+        'second_fitted': second_view['final_attempt']['budget_decision']['estimated_input_tokens'],
+        'covered_messages': [first['summary']['throughMessage'], second['summary']['throughMessage']]}))

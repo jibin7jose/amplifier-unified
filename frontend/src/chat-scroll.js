@@ -9,7 +9,7 @@ export function readingPositions(storage){
  };
 }
 export function createChatScroll(pane,following={current:true},onAway=()=>{},{loadAnchor,readingReference}={}){
- const view=pane.ownerDocument.defaultView;
+ const document=pane.ownerDocument,view=document.defaultView;
  // This owner preserves message anchors; browser anchoring can otherwise move
  // the reader independently when incoming transcript rows replace the tail.
  const previousOverflowAnchor=pane.style.overflowAnchor;pane.style.overflowAnchor='none';
@@ -30,6 +30,20 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
  let storage;try{storage=view.sessionStorage}catch{}
  const positions=readingPositions(storage);
  let frame=0,disposed=false,sessionId=null,ready=false,restore=null,submitted=null,snapshot=null,saveTimer=0,initial=false,resuming=false;
+ // A sandboxed preview can be the host activeElement without matching CSS
+ // :focus/:focus-within. Observe host focus only, never the embedded document.
+ // Keep this frame separate: focus observation must not move or save anchors.
+ let iframeFocusFrame=0,iframeFocused=false;
+ const clearIframeFocus=()=>{view.cancelAnimationFrame(iframeFocusFrame);iframeFocusFrame=0;iframeFocused=false;delete pane.dataset.transcriptIframeFocus};
+ const flushIframeFocus=()=>{
+  iframeFocusFrame=0;if(disposed)return;
+  const active=document.activeElement;
+  const next=!!(ready&&pane.isConnected&&active?.localName==='iframe'&&pane.contains(active));
+  if(next===iframeFocused)return;
+  iframeFocused=next;
+  if(next)pane.dataset.transcriptIframeFocus='true';else delete pane.dataset.transcriptIframeFocus;
+ };
+ const queueIframeFocus=()=>{if(ready&&!disposed&&!iframeFocusFrame)iframeFocusFrame=view.requestAnimationFrame(flushIframeFocus)};
  let callId=null,callSessionId=null,callPaused=false;
  let anchorLoad=null,attemptedAnchor=null,unresolvedPosition=null;
  const followingCall=()=>!!callId&&callSessionId===sessionId&&!callPaused;
@@ -109,9 +123,10 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   for(const child of observed)if(child.parentElement!==pane){resize.unobserve(child);observed.delete(child)}
   for(const child of pane.children)if(!observed.has(child)){resize.observe(child);observed.add(child)}
  };
- const mutations=new view.MutationObserver(()=>{observeChildren();update()});
+ const mutations=new view.MutationObserver(()=>{observeChildren();update();queueIframeFocus()});
  resize.observe(pane);observeChildren();mutations.observe(pane,{subtree:true,childList:true,characterData:true});
  pane.addEventListener('scroll',scroll,{passive:true});pane.addEventListener('wheel',wheel,{passive:true});pane.addEventListener('touchmove',stop,{passive:true});pane.addEventListener('keydown',keyDown);view.addEventListener('pagehide',persist);
+ document.addEventListener('focusin',queueIframeFocus);document.addEventListener('focusout',queueIframeFocus);view.addEventListener('blur',queueIframeFocus);view.addEventListener('focus',queueIframeFocus);
  return {
   update,
   // React-owned layout changes can arrive after this frame's observer flush.
@@ -123,7 +138,7 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   },
   select(id,isReady=true){
    if(id!==sessionId){
-    persist();clearOverflow();const sendingNewChat=sessionId===null&&submitted;
+    clearIframeFocus();persist();clearOverflow();const sendingNewChat=sessionId===null&&submitted;
     sessionId=id;snapshot=null;restore=positions.get(id)||null;anchorLoad=null;attemptedAnchor=null;unresolvedPosition=null;
     submitted=sendingNewChat||(typeof restore?.submittedId==='string'?restore.submittedId:null);
     resuming=!!submitted&&!sendingNewChat;
@@ -131,11 +146,11 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
     if(submitted)restore=null;
     initial=!restore&&!submitted;onAway(false);
    }
-   ready=isReady;if(!ready)clearOverflow();update();
+   ready=isReady;if(!ready){clearOverflow();clearIframeFocus()}else queueIframeFocus();update();
   },
   submitted(id){if(callId&&callSessionId===sessionId)callPaused=false;anchorLoad=null;unresolvedPosition=null;submitted=id;resuming=false;restore=null;initial=false;following.current=true;update()},
   jump(id){stop();const node=messages().find(row=>row.dataset.messageId===id);if(node){node.tabIndex=-1;pane.scrollTop+=node.getBoundingClientRect().top-pane.getBoundingClientRect().top-16;node.focus({preventScroll:true});report()}},
   reveal(){stop();if(callId&&callSessionId===sessionId)callPaused=false;pane.scrollTop=pane.scrollHeight;report()},
-  dispose(){persist();disposed=true;clearOverflow();restoreGutterInsets();pane.style.overflowAnchor=previousOverflowAnchor;view.cancelAnimationFrame(frame);view.clearTimeout(saveTimer);resize.disconnect();mutations.disconnect();pane.removeEventListener('scroll',scroll);pane.removeEventListener('wheel',wheel);pane.removeEventListener('touchmove',stop);pane.removeEventListener('keydown',keyDown);view.removeEventListener('pagehide',persist)},
+  dispose(){persist();disposed=true;clearOverflow();clearIframeFocus();restoreGutterInsets();pane.style.overflowAnchor=previousOverflowAnchor;view.cancelAnimationFrame(frame);view.clearTimeout(saveTimer);resize.disconnect();mutations.disconnect();pane.removeEventListener('scroll',scroll);pane.removeEventListener('wheel',wheel);pane.removeEventListener('touchmove',stop);pane.removeEventListener('keydown',keyDown);view.removeEventListener('pagehide',persist);document.removeEventListener('focusin',queueIframeFocus);document.removeEventListener('focusout',queueIframeFocus);view.removeEventListener('blur',queueIframeFocus);view.removeEventListener('focus',queueIframeFocus)},
  };
 }

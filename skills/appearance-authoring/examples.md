@@ -165,12 +165,14 @@ Keep decorative lines away from labels and controls.
 }
 ```
 
-The host's message scroller owns conditional 18px top/24px bottom fades, focus
-suppression and forced-colors handling. Optional `--a-transcript-fade-top` and
-`--a-transcript-fade-bottom` tune lengths within host limits; first confirm support
-in the installed baseline. No custom mask, overlay or scroll listener is needed.
-Short content must stay unfaded, and the bottom fade must disappear at the end.
-Preserve the scrollbar gutter, navigator, composer and final message actions.
+The host's message scroller owns conditional 18px top/24px bottom fades and
+forced-colors handling. Keyboard-visible focus and active editors suppress the
+mask; pointer/programmatic focus on a non-visible container does not. Optional
+`--a-transcript-fade-top` and `--a-transcript-fade-bottom` tune lengths within
+host limits; first confirm support in the installed baseline. No custom mask,
+overlay or scroll listener is needed. Short content must stay unfaded, and the
+bottom fade must disappear at the end. Preserve the scrollbar gutter, navigator,
+composer and final message actions.
 Remove obsolete masks only from the bundled skin being updated, not saved user
 copies. Background artwork is independent and need not be removed.
 
@@ -207,9 +209,11 @@ of OS light/dark and explicit Light/Dark, plus Device following each OS mode.
 2. Use long chats, a multiline unsent draft, code, buttons and an error fixture.
    Check contrast, focus, navigator, bubble/footer bounds, input/model-selector/
    status separation and local feedback at narrow and wide widths plus zoom.
-   Check transcript edges at top/middle/bottom and with short content; focus must
-   remove the mask, and final text/actions must be fully visible at the bottom.
-   Static swatches cannot establish these results.
+   Check transcript edges at top/middle/bottom and with short content. A pointer
+   **Review questions** action must retain fades when it focuses a non-visible
+   section; keyboard-visible focus and active editing must suppress them. Final
+   text/actions must be fully visible at the bottom. Static swatches cannot
+   establish these results.
 3. Toggle decorations in a disposable client, restore its initial preference,
    and check reduced motion/forced colors. Record unsupported checks as unknown.
 4. If applying is authorized, compare committed output with preview and reload.

@@ -10,7 +10,8 @@ from test_task_continuity import controls
 
 class Runtime:
     def __init__(self): self.workers, self.inputs, self.before_admission, self.failure = {}, [], None, None
-    async def start(self, *args): pass
+    async def start(self, *args, guard=None):
+        if guard is not None: guard()
     async def control(self, sid, operation, args, *, guard=None):
         if sid not in self.workers:
             self.workers[sid] = controls(sid)

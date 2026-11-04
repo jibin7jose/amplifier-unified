@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -189,9 +190,23 @@ def docker_reconcile(payload, universe, backend, source):
         complete = False
     absent = not containers and not remaining and complete
     status = ('stopped' if all(item['State'] in {'exited', 'dead'} for item in containers) else 'running') if containers else 'absent' if absent else 'unknown'
+    cleanup = {}
+    if payload.get('effectAction') == 'settled-local-cleanup' and containers:
+        identities, stopped = [], True
+        for item in containers:
+            identity = item.get('ID')
+            if not isinstance(identity, str) or not re.fullmatch(r'[a-f0-9]{12,64}', identity):
+                raise ValueError('The cleanup container identity is unavailable.')
+            detail = docker_json(payload, 'inspect', identity, '--format', '{{json .State}}')
+            stopped &= (detail.get('Status') == 'exited' and type(detail.get('Pid')) is int and detail['Pid'] == 0
+                        and all(detail.get(key) is False for key in ('Running', 'Paused', 'Restarting', 'Dead'))
+                        and not detail.get('RemovalInProgress'))
+            identities.append(identity)
+        status = 'stopped' if stopped else 'unknown'
+        cleanup = {'cleanupStoppedVerified': stopped, 'containerIds': identities}
     return {'ok': status != 'unknown', 'status': status, 'universeId': universe,
-            'observation': observation(payload, universe, backend, source,
-                'matched' if containers else 'absent' if absent else 'unknown', complete, absent)}
+            'observation': {**observation(payload, universe, backend, source,
+                'matched' if containers else 'absent' if absent else 'unknown', complete, absent), **cleanup}}
 
 
 def docker_owner(payload, universe, backend, source):

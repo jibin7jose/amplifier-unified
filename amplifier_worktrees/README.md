@@ -6,9 +6,16 @@ helpers are disabled. A file lock in the common Git directory serializes
 participating hosts; Git retains its own branch/worktree locking. It performs no
 fetch, push, merge, reset, or forced deletion.
 
-Create requires the exact inspected source revision (HEAD, index/worktree diffs,
-untracked content hashes). Default mode starts a clean detached checkout from a
-committed ref; a requested new branch uses ordinary Git ownership checks. An
+Clean inspection (`inspect(mode='clean', ref=...)`) resolves a committed ref
+without reading the source index, diffs or untracked files. Create with the returned
+`expected_commit` to pin that immutable commit; an optional `ref` must resolve to
+the same commit. Dirty files, conflicts and large retained evidence in the source
+do not affect this clean route and are not copied or modified.
+
+Existing `expected_revision` callers retain the full inspected snapshot binding
+(HEAD, index/worktree diffs, untracked content hashes), even for clean creation.
+It is not a Git commit ID and cannot be combined with `expected_commit`.
+Default mode starts a clean detached checkout; a requested new branch uses ordinary Git ownership checks. An
 explicit `carry_dirty` copies staged/unstaged patches and nonignored untracked
 regular files/symlinks. It requires current HEAD and refuses unmerged indexes,
 submodules, and index flags it cannot preserve. Originals are never changed.
@@ -25,6 +32,11 @@ Unreferenced detached commits must be retained on a branch/tag or another worktr
 before removal. It preserves branches, source folders, manifests and history. The host supplies
 active-task/handoff guards and explicit user intent; this library owns no runtime
 or permission controller.
+
+`CheckoutNotStarted` distinguishes a refusal before durable admission with no
+existing ownership receipt. After admission begins, including an ambiguous
+receipt write or lost acknowledgment, failures retain their uncertain/partial
+semantics and must never be automatically replayed.
 
 Managed storage must be outside the source checkout. This avoids storing the
 manifest itself among the source files being copied. A checkout can be a source

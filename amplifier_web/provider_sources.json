@@ -4,6 +4,8 @@
   "provider-chat-completions": "git+https://github.com/microsoft/amplifier-module-provider-chat-completions@main",
   "provider-gemini": "git+https://github.com/microsoft/amplifier-module-provider-gemini@main",
   "provider-github-copilot": "git+https://github.com/microsoft/amplifier-module-provider-github-copilot@main",
+  "provider-jev": "git+https://github.com/microsoft/amplifier-module-provider-jev@main",
+  "provider-local-decisions": "git+https://github.com/microsoft/amplifier-module-provider-local-decisions@main",
   "provider-ollama": "git+https://github.com/microsoft/amplifier-module-provider-ollama@main",
   "provider-openai": "git+https://github.com/microsoft/amplifier-module-provider-openai@main",
   "provider-openai-chatgpt": "git+https://github.com/microsoft/amplifier-module-provider-openai-chatgpt@main",

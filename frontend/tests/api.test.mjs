@@ -9,8 +9,36 @@ test('commands send structured JSON to same origin and return server receipt',as
 test('server validation errors remain visible and do not report success',async()=>{
  const original=globalThis.fetch;try{globalThis.fetch=async()=>new Response(JSON.stringify({accepted:false,error:'Select a conversation first.'}),{status:400});await assert.rejects(request('/api/actions',{method:'POST',body:{}}),/Select a conversation first/);}finally{globalThis.fetch=original}
 });
+test('rejection identifies its request endpoint without retaining private query context',async()=>{
+ const original=globalThis.fetch;
+ try{
+  globalThis.fetch=async()=>new Response(JSON.stringify({error:'Permission denied'}),{status:403});
+  for(const path of ['/api/actions','/api/state'])await assert.rejects(request(path+'?private=do-not-retain'),error=>{
+   assert.equal(error.requestPath,path);assert.equal(error.status,403);assert.ok(!JSON.stringify(error).includes('do-not-retain'));return true;
+  });
+ }finally{globalThis.fetch=original}
+});
 test('unexpected HTML response gives useful connection error',async()=>{
  const original=globalThis.fetch;try{globalThis.fetch=async()=>new Response('<html>proxy failure</html>',{status:502});await assert.rejects(request('/api/state'),/unexpected response \(502\)/);}finally{globalThis.fetch=original}
+});
+test('unreadable acknowledgements keep mutations unconfirmed and never replay',async()=>{
+ const original=globalThis.fetch;let calls=0;
+ try{
+  for(const [status,body] of [[502,'<html>proxy failure</html>'],[200,'{"accepted":'],[200,''],[200,'null'],[200,'{}'],[200,'[]'],[200,'{"accepted":"true"}'],[502,''],[502,'{"error":{}}'],[502,'{"message":true}']]){
+   globalThis.fetch=async()=>{calls++;return new Response(body,{status})};
+   await assert.rejects(request('/api/actions',{method:'POST',body:{action:'canvas.views.loadVersion'}}),error=>{
+    assert.equal(error.unconfirmed,true,`Unreadable ${status} acknowledgement is not a refusal`);
+    assert.equal(error.code,'invalid_response');assert.equal(error.status,status);return true;
+   });
+  }
+  assert.equal(calls,10);
+  globalThis.fetch=async()=>new Response('<html>proxy failure</html>',{status:502});
+  await assert.rejects(request('/api/state'),error=>error.code==='invalid_response'&&error.unconfirmed===false);
+  for(const status of [409,200]){
+   globalThis.fetch=async()=>new Response(JSON.stringify({accepted:false,status:409,error:'Unfinished edits',code:'dirty_view'}),{status});
+   await assert.rejects(request('/api/actions',{method:'POST',body:{action:'canvas.views.loadVersion'}}),error=>error.status===409&&!error.unconfirmed&&error.code==='dirty_view');
+  }
+ }finally{globalThis.fetch=original}
 });
 test('live timers anchor to the host response clock instead of a skewed device clock',async()=>{
  const {hostNow}=await import('../src/api.js'),original=globalThis.fetch;
@@ -87,7 +115,7 @@ test('support timings retain correlation and exclude query strings and bodies',a
  const {recentRequestTimings}=await import('../src/api.js');
  const original=globalThis.fetch;
  try{
-  globalThis.fetch=async()=>new Response('{}',{headers:{'Server-Timing':'app;dur=12.3','X-Amplifier-Request-Id':'request-1'}});
+  globalThis.fetch=async()=>new Response('{"accepted":true}',{headers:{'Server-Timing':'app;dur=12.3','X-Amplifier-Request-Id':'request-1'}});
   await request('/api/actions?private=secret',{method:'POST',body:{action:'session.create',args:{text:'private prompt'}}});
   const row=recentRequestTimings().at(-1);
   assert.equal(row.serverMs,12.3);assert.equal(row.requestId,'request-1');assert.equal(row.action,'session.create');

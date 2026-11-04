@@ -162,6 +162,13 @@ removing those files in a worker. Cancellation settles the file worker before
 releasing exclusion. Later saves continue the backlog with a fresh proof.
 Explicit/offline collection keeps its complete proof and existing batch scope.
 The immutable-resource walk also runs outside the application and writer locks.
+It captures up to 64 immutable resource indexes per short owner-lock acquisition,
+then inspects those files in one settled worker call. This bounds metadata per
+handoff and avoids one executor round trip and lock acquisition per retained file;
+it does not limit retained files or their size. Each file still uses the existing
+verified-edge cache and the final proof rechecks every inspected index. Large
+individual files remain linear validation work, and continuous new roots can
+still defer a pass at the unchanged catch-up boundary.
 Cancellation before pruning does not delete anything; cancellation after pruning
 settles the bounded file removal before releasing exclusion. Missing bodies or
 an uncertain reference graph defer collection, and navigation need not wait for
@@ -268,11 +275,23 @@ The policy asks the existing ecosystem-generation and purpose-installed test
 runner and qualified dependency-layer owners to remove only copies they can still prove unused. Current and
 rollback versions, live generation leases, configurations, observed process
 references, local source edits/untracked files/unpublished commits, and uncertain
-operations protect a copy. Python import bytecode in `__pycache__` does not pin
-an otherwise unused generation when a bounded inspection reproduces its payload
-from regular, tracked source covered by the verified installed graph. Caches from
-other interpreters or producers, unknown files, packaging metadata and nested
-environments remain protected. Owners repeat their checks at removal admission;
+operations protect a copy. Conventional untracked Python import caches in
+`__pycache__` are disposable when their regular tracked source is unchanged:
+the verified installed graph or the cache's recorded Git commit must prove the
+complete tracked tree. An uninstalled cache also needs a remote-containing ref
+or the exact commit-and-source `FETCH_HEAD` receipt left by the updater's normal
+detached SHA download. This includes on-disk content that
+Git index flags could otherwise hide. Supported CPython 3.12–3.14 cache names
+must match their header, have a nonempty payload, and remain regular files beside
+the tracked module; symbolic links are never accepted. A cache payload can be
+stale, damaged or hand-edited and is still disposable under this rule. Inspection
+never imports source, starts its interpreter, or deserializes cached code.
+Regular files in `build/lib` are also disposable when byte-identical to a proven
+tracked source file at the repository root or under `src`; their conventional
+import caches follow the same header checks. Unique or edited build output,
+unknown names/producers, files outside these conventions, packaging metadata and
+nested environments remain protected. Names alone never establish that a file
+is disposable. Owners repeat their checks at removal admission;
 links are not followed as cleanup targets. Ecosystem qualification is bound to
 a bounded inventory captured before its source checks; a changed inventory or
 runtime-sharing decision defers that candidate. The same inventory follows the
@@ -283,12 +302,22 @@ receipts remain visible and are not permission to repeat an uncertain effect.
 read performs no scan and starts no worker. Each pass inspects at most four
 ecosystem candidates, eight purpose-installed runner candidates and eight
 qualified dependency layers, with time
-limits and a retained cursor. Incomplete inspection is labeled; uninspected
+limits and a retained cursor. The cleanup policy saves that cursor in its durable
+receipt and restores it after restart; a scan position is never deletion authority.
+Protected copies include bounded reasons distinguishing unverified source,
+unverified extra files, local edits, and a changed or incomplete final check.
+Incomplete inspection is labeled; uninspected
 copies stay put. File-content measurements are not physical disk-allocation
 promises: hard links, shared runtimes and copy-on-write blocks can retain storage.
-The size target currently applies to the fully measured eligible batch, not a
-hard ceiling on all host storage. The age policy reaches other candidates in
-later batches. Automatic checks run hourly while the app is open and after
+The size target uses the existing observation ledger's latest measured sizes
+across bounded batches. Timestamp-only legacy observations retain their age but
+contribute no invented size until measured. Newly protected, absent or removed
+copies stop contributing; unvisited observations survive a partial pass.
+The preview distinguishes this rolling estimate from the current freshly
+verified batch and does not claim a complete inventory or hard disk ceiling.
+Only candidates freshly verified by their existing owner can be selected and
+removed; an earlier observation is never deletion authority. The age policy
+continues to apply independently. Automatic checks run hourly while the app is open and after
 existing updater maintenance triggers; update/activation work takes priority.
 Successful runner selection only wakes this policy owner; it cannot bypass the
 global off setting or retention grace. Explicit user uninstall and Skip actions

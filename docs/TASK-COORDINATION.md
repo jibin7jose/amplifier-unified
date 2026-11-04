@@ -1,5 +1,30 @@
 # Task and worker coordination
 
+## Manager and worker operating model
+
+The manager coordinates **many** independent workers, choosing deliverables,
+priority and actual dependencies. Each worker receives a complete objective and
+acceptance criteria, carries ordinary repairs and focused isolated validation to
+completion, then returns a reviewable result or a concrete external blocker.
+Routine progress, implementation choices and failed-check repairs do not require
+manager acknowledgement or renewed approval. A higher-level manager uses the same
+pattern for workstreams. Real Stop, user choices, permissions, explicit limits,
+writer ownership and unknown effects still require their proper resolution.
+
+Use current assignment briefs and exact result references for decisions. The
+on-demand [coordinate-work skill](../skills/coordinate-work/SKILL.md) describes the
+normal loop; its packaged reference retains detailed API and recovery rules.
+Host tasks and receipts remain canonical. Shared scratch is only a current
+context/index, never another task ledger or source of authority. Historical
+qualification sections below are evidence, not instructions to repeat those
+checks or add new release gates.
+
+Direction and implementation are distinct: the [workspace vision](workspaces/docs/VISION.md)
+sets the one-manager/many-workers goal. The current discovered action schema owns
+available commissioning and placement behavior; do not infer atomic placement
+from the existence of independent chats. Accepted completion uses the existing
+manager task-completion path without another worker model turn.
+
 ## Atomic returns for existing-root requests
 
 For new queued work that needs a returned result, `coordination.send` accepts

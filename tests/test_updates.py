@@ -59,8 +59,21 @@ async def test_stage_activate_and_rollback_preserve_original_cache(app,repo):
         assert git(stage/'foundation/cache/repository','rev-parse','HEAD')==repo[2]
         assert git(root,'rev-parse','HEAD')==repo[1]
     manager.validate=validate
+    manager.diagnostics.begin('ecosystem', components=['repo'])
+    failure=manager.diagnostics.record('ecosystem-validation','failed',errorType='ValueError')
+    from amplifier_web.attention import snapshot
+    assert any(item.get('actionRequired') for item in snapshot(app.state)['items'])
+    published=[]
+    publish=app._publish_changes
+    def observe(**kwargs):
+        published.append(snapshot(app.state))
+        return publish(**kwargs)
+    app._publish_changes=observe
     await manager.install()
     assert app.state['updates']['phase']=='installed'
+    assert not any(item.get('actionRequired') for item in snapshot(app.state)['items'])
+    assert any(not any(item.get('actionRequired') for item in state['items']) for state in published)
+    assert failure in manager.diagnostics.state['events']
     assert git(foundation_home(app.data_dir)/'cache/repository','rev-parse','HEAD')==repo[2]
     assert git(root,'rev-parse','HEAD')==repo[1]
     await manager.rollback()
@@ -471,6 +484,7 @@ async def test_post_commit_promotion_retry_preserves_pointer_identity(app, repo,
     target = committed.get('current')
     assert committed == {'current': target, 'previous': before.get('current'), 'at': committed['at']}
     assert app.state['updates']['phase'] == 'error'
+    assert manager.diagnostics.state['activeFailures']
     if rollback:
         assert 'pendingRollback' in app.state['updates']
     else:
@@ -483,6 +497,7 @@ async def test_post_commit_promotion_retry_preserves_pointer_identity(app, repo,
 
     assert active_release(app.data_dir) == committed
     assert app.state['updates']['phase'] == 'installed'
+    assert not manager.diagnostics.state['activeFailures']
     assert app.state['updates'].get('pendingRelease') is None
     assert 'pendingRollback' not in app.state['updates']
 

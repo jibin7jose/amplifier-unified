@@ -1,0 +1,77 @@
+import {startSettingsFixture} from './settings-fixture.mjs';
+import {finishFixture} from './fixture-lifecycle.mjs';
+import {openSettingsPage} from './browser-settings.mjs';
+import {chromium,expect} from '@playwright/test';
+import assert from 'node:assert/strict';
+import {mkdir,writeFile} from 'node:fs/promises';
+const evidence=process.env.DECISION_SETUP_EVIDENCE||'/tmp/decision-setup-evidence';
+await mkdir(evidence,{recursive:true});
+const {base,stop}=await startSettingsFixture({SETTINGS_DECISION_SETUP_FIXTURE:'1'});
+let browser,page,failure;const errors=[],actions=[];
+let delayChoices=false,releaseChoices;
+const choicesGate=new Promise(resolve=>{releaseChoices=resolve});
+try{
+ browser=await chromium.launch({headless:true,...(process.env.AMPLIFIER_TEST_CHROMIUM?{executablePath:process.env.AMPLIFIER_TEST_CHROMIUM}:{})});
+ page=await browser.newPage({viewport:{width:1280,height:980},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
+ page.on('pageerror',error=>errors.push(error.message));
+ page.on('request',request=>{if(request.url()===base+'/api/actions'&&request.method()==='POST')actions.push(request.postDataJSON())});
+ await page.route(base+'/api/actions',async route=>{
+  if(delayChoices&&route.request().method()==='POST'&&route.request().postDataJSON()?.action==='providers.decisionModels')await choicesGate;
+  await route.continue();
+ });
+ const observe=async()=>{const response=await page.request.get(base+'/fixture/decision-setup-observations');assert.ok(response.ok());return response.json()};
+ const openDecisions=async()=>{
+  await openSettingsPage(page,'ai-connections');
+  const disclosure=page.locator('details').filter({has:page.locator(':scope > summary').filter({hasText:'Decision models (optional)'})});
+  if(await disclosure.count()&&!await disclosure.evaluate(node=>node.open))await disclosure.locator(':scope > summary').click();
+  await page.getByLabel('Use for',{exact:true}).waitFor();
+ };
+ await page.goto(base+'/');await openDecisions();
+ await expect(page.getByLabel('Use for',{exact:true})).toHaveValue('both');
+ assert.equal((await observe()).decisionAccountCount,0);
+ await expect(page.locator('#decision-mode option[value=decision]')).toBeDisabled();
+ await page.getByRole('button',{name:/^Connect Jev/}).click();
+ await expect(page.getByText('Use the key already on this host',{exact:true})).toBeVisible();
+ delayChoices=true;
+ await page.getByRole('button',{name:'Save connection',exact:true}).click();
+ const confirmation=page.getByText('Connection saved.',{exact:true});
+ await expect(confirmation).toBeVisible();
+ await expect(page.getByLabel('Use for',{exact:true})).toHaveValue('both');
+ await expect(page.locator('#decision-mode option[value=decision]')).toBeEnabled({timeout:3000});
+ assert.ok(await confirmation.evaluate(node=>!!(node.compareDocumentPosition(document.querySelector('[data-part=decision-model-settings]'))&Node.DOCUMENT_POSITION_FOLLOWING)),'Save confirmation precedes the choices');
+ assert.equal(await page.getByRole('button',{name:'Connect Jev',exact:true}).count(),0,'Saved account needs no duplicate setup');
+ releaseChoices();delayChoices=false;
+ await page.getByLabel('Action selection',{exact:true}).selectOption('decision');
+ const provider=await page.getByLabel('Provider connection',{exact:true}).inputValue();assert.ok(provider);
+ await expect(page.getByRole('button',{name:'Save selection',exact:true})).toBeDisabled();
+ await page.getByRole('checkbox',{name:'Allow observations from browser and computer to be sent to this decision service',exact:true}).check();
+ await page.getByRole('button',{name:'Save selection',exact:true}).click();
+ await expect(page.getByText('Saved for new conversations. Applies to bundles with UI use enabled.',{exact:true})).toBeVisible();
+ let saved=await observe();assert.equal(saved.decisionAccountCount,1);assert.equal(saved.usesEnvironmentReference,true);
+ assert.equal(saved.ordinaryProvidersPreserved,true);assert.equal(saved.ordinaryRoutingPreserved,true);
+ assert.equal(saved.selection.browser.mode,'decision');assert.equal(saved.selection.computer.mode,'decision');
+ assert.notEqual(saved.selection.browser.backend,saved.selection.computer.backend);
+ await page.locator('[data-part=decision-current]').scrollIntoViewIfNeeded();
+ await page.screenshot({animations:'disabled',path:evidence+'/both-desktop.png'});
+ await page.reload();await openDecisions();
+ await expect(page.getByLabel('Use for',{exact:true})).toHaveValue('both');
+ await expect(page.getByLabel('Action selection',{exact:true})).toHaveValue('decision');
+ // Editing one purpose preserves the other after reload, including on a phone.
+ await page.setViewportSize({width:390,height:844});
+ await page.getByLabel('Use for',{exact:true}).selectOption('browser');
+ await page.getByLabel('Action selection',{exact:true}).selectOption('standard');
+ await page.getByRole('button',{name:'Save selection',exact:true}).click();
+ await expect(page.getByText('Saved for new conversations. Applies to bundles with UI use enabled.',{exact:true})).toBeVisible();
+ saved=await observe();assert.equal(saved.selection.browser.mode,'standard');assert.equal(saved.selection.computer.mode,'decision');
+ await page.locator('[data-part=decision-current]').scrollIntoViewIfNeeded();
+ assert.equal(await page.locator('.a-dialog').evaluate(node=>node.scrollWidth<=node.clientWidth),true);
+ await page.screenshot({animations:'disabled',path:evidence+'/independent-mobile.png'});
+ const names=actions.map(action=>action.action);
+ assert.equal(names.filter(name=>name==='providers.save').length,1);
+ assert.equal(names.filter(name=>name==='providers.configureDecisions').length,2);
+ assert.ok(!names.some(name=>['updates.featureInstall','updates.install','providers.models','providers.testMessage'].includes(name)));
+ assert.deepEqual(errors,[]);
+ await writeFile(evidence+'/result.json',JSON.stringify({passed:true,saved,actions:names,errors,limits:'Synthetic state and credential; real installed Jev catalog and canonical settings persistence. No inference or live account call.'},null,2)+'\n');
+ console.log(JSON.stringify({passed:true,provider,decisionAccountCount:saved.decisionAccountCount,ordinaryPreserved:true,bothSaved:true,independentEdit:true,evidence}));
+}catch(error){failure=error;if(page){await page.screenshot({path:evidence+'/failure.png'}).catch(()=>{});await writeFile(evidence+'/failure.txt',await page.locator('body').innerText()).catch(()=>{})}throw error}
+finally{releaseChoices();await finishFixture({label:'Decision setup browser fixture',close:[['Browser',()=>browser?.close()]],stop,originalError:failure})}

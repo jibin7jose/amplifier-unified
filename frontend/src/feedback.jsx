@@ -154,7 +154,7 @@ export function FeedbackDiagnostics({state,act,requestId,device,downloadable=fal
 
 export function FeedbackNotice({state,act}){
  if(['feedback','activity'].includes(state.view?.panel))return null;
- const items=(state.attention?.items||[]).filter(i=>i.requestId&&!i.read);
+ const items=(state.attention?.items||[]).filter(i=>i.requestId&&!i.read&&!i.informational&&i.status!=='submitted');
  const pending=state.feedback?.requests?.find(r=>['queued','sending'].includes(r.status));
  const item=items[0],receipt=pending||state.feedback?.requests?.find(r=>r.requestId===item?.requestId);
  if(!receipt)return null;

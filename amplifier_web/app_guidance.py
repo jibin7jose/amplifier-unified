@@ -299,7 +299,8 @@ async def install_app_access(coordinator, bridge):
         if callable(observe):provider = observe(provider)
         for original, wrapped in transformed:
             if original is provider:return wrapped
-        wrapped = SurfaceProvider(WorkRecoveringProvider(provider, coordinator), delivery)
+        wrapped = SurfaceProvider(WorkRecoveringProvider(provider, coordinator), delivery,
+                                  coordinator=coordinator)
         transformed.append((provider, wrapped))
         del transformed[:-16]
         return wrapped
@@ -402,4 +403,14 @@ async def install_app_access(coordinator, bridge):
     coordinator.hooks.register('tool:pre', bind_nested_pre, priority=-200, name='web-work-nested-origin')
     coordinator.hooks.register('provider:request', guidance, name='web-canvas-guidance')
     coordinator.hooks.register('tool:post', bind_image_pair, name='web-image-pair-receipt')
+    async def ui_host(operation, args):
+        return await bridge('ui.use', {'operation': operation, 'args': args})
+    coordinator.register_capability('ui.use.host', ui_host)
+    async def ui_stop_guard(event, data):
+        if data.get('tool_name') in {'computer','desktop','ui_use'} and (data.get('tool_input') or {}).get('action') not in {'observe','screenshot','doctor','list_windows'}:
+            current = await ui_host('configuration', {'surface':'computer'})
+            if current.get('stopped'):
+                return HookResult(action='deny',reason='The user paused UI access. Resume from Browser & computer controls before further input.')
+        return HookResult()
+    coordinator.hooks.register('tool:pre',ui_stop_guard,priority=-100,name='web-ui-stop')
     coordinator.register_capability('web.app_access', True)

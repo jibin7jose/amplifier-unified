@@ -174,6 +174,15 @@ def outcome(native, before, after):
 
 
 async def collect(app, args, origin, identity, digest, captured):
+    files = {}
+    try:
+        return await _collect(app, args, origin, identity, digest, captured, files)
+    finally:
+        for batch in files.values():
+            batch.close()
+
+
+async def _collect(app, args, origin, identity, digest, captured, files):
     sid = args['sessionId']
     async with app.lock:
         candidate = copy.deepcopy(evidence.receipt(app, sid, args['captureId']))
@@ -193,20 +202,15 @@ async def collect(app, args, origin, identity, digest, captured):
             raise ValueError('At most sixteen exact result references may be retained.')
         native = {root: operation(app, sid, run) for root, run in by_root.items()}
     after = await check(app, sid, candidate['id'])
-    from .result_artifacts import prepare_files, MAX_DECLARATION
-    files = {}
-    total = 0
+    from .result_artifacts import prepare_files
+    from . import retained_files
     for root, row in declared.items():
-        files[root] = await asyncio.to_thread(prepare_files, root, row.get('references', []))
+        files[root] = await retained_files.prepared(prepare_files, root, row.get('references', []))
         if len(files[root]) != len(set(row.get('references', []))):
             raise ValueError('Result files require local path@sha256:digest references.')
-        total += sum(item.get('bytes', 0) for item in files[root])
-    if total > MAX_DECLARATION:
-        raise ValueError('The combined result exceeds the sixteen MiB file limit.')
     # Bracket result capture too; artifacts can survive later source changes,
     # while the candidate match always reports this collection's observation.
     final = await check(app, sid, candidate['id'])
-    from .resource_files import put_prepared_async
     async with bound_repositories(app, final), app.lock:
         require_authority(app, sid, captured)
         prior = app.collaboration.duplicate(identity, digest)
@@ -232,13 +236,13 @@ async def collect(app, args, origin, identity, digest, captured):
                     if run['authority'] != captured and state == 'passed': state = 'unknown'
                     row.update(status=state, validationId=run['id'], invocation={'command': run['command'], 'timeout': run['timeout']}, operation=native[root])
                 for item in files.get(root, []):
-                    artifact = {key: value for key, value in item.items() if key not in {'resource', 'path', 'filename'}}
+                    artifact = {key: value for key, value in item.items() if key not in {'resource', 'pieces', 'bodyFormat', 'path', 'filename'}}
                     if item['status'] == 'retained':
                         if app.db.execute('SELECT count(*) FROM output_records').fetchone()[0] >= 10000:
                             raise ValueError('The retained output relationship limit is reached.')
-                        body = await put_prepared_async(app.db, item['resource'])
+                        body = await retained_files.adopt(app.db, item)
                         output = app.outputs.store.create(sid, {'kind': 'file', 'filename': item['filename'],
-                            'title': item['filename'], 'body': body, 'bytes': item['bytes'], 'sha256': item['sha256'],
+                            'title': item['filename'], 'body': body, 'bodyFormat': item['bodyFormat'], 'bytes': item['bytes'], 'sha256': item['sha256'],
                             'versionEvidence': 'snapshot', 'origin': {'source': origin},
                             'integrationResult': {'collectionId': identity, 'captureId': candidate['id'], 'repositoryPath': root,
                                                   'sourceRevision': observation.get('sourceRevision'), 'reference': item['reference']}})

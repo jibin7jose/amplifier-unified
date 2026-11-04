@@ -19,6 +19,26 @@ def latest(row):
     return row.get('app', {}).get('revision', row.get('revision', 1))
 
 
+def ordinary_preview(row):
+    return row.get('kind') in {'html', 'babylon'} and not row.get('app')
+
+
+def view_definition(row, canvas, db=None):
+    """Resolve the saved running definition, independently of Latest intent."""
+    version = canvas.get('selectedVersion')
+    if ordinary_preview(canvas):
+        version = canvas.get('runningVersion', version or canvas.get('revision', 1))
+    selected = definition(row, version, db)
+    if ordinary_preview(selected):
+        selected = copy.deepcopy(selected)
+        selected['runningVersion'] = version or latest(row)
+        selected['selectedVersion'] = canvas.get('selectedVersion')
+        selected['readOnlyVersion'] = canvas.get('selectedVersion') is not None
+        selected['latestVersion'] = latest(row)
+        selected['previewRetained'] = selected['selectedVersion'] is None and selected['runningVersion'] < latest(row)
+    return selected
+
+
 def entries(row):
     return row.get('app', {}).get('versions', row.get('versions', []))
 
@@ -127,7 +147,7 @@ def assert_clean(service, identity):
 def definitions(schema, string):
     identity = {'id': string(100), 'sessionId': string(200), 'clientId': string(100)}
     return {
-        'canvas.versions.inspect': ('Inspect saved artifact definitions and exact revision links without selecting or executing them.',
+        'canvas.versions.inspect': ('Inspect saved artifact definitions, file paths and exact-version download links without selecting or executing them.',
             schema({**identity, 'includeSource': {'type': 'boolean'}, 'version': {'type': 'integer', 'minimum': 1}}, ['id'])),
         'canvas.versions.revise': ('Save a new document definition in the same tab. Inspect first and supply its expectedRevision; never rewrites earlier versions. Use canvas.apps.revise for interactive surfaces.',
             schema({**identity, 'expectedRevision': {'type': 'integer', 'minimum': 1}, 'content': string(7000000), 'surface': {'type': 'object'}, 'title': string(200)}, ['id', 'expectedRevision'])),
@@ -146,9 +166,18 @@ def command(service, action, args, origin):
     if row is None:
         raise AppError('This artifact is unavailable in the calling conversation.', 404)
     if action == 'canvas.versions.inspect':
-        selected = definition(row, args.get('version'), service.db)
-        result = {'id': row['id'], 'title': selected['title'], 'revision': latest(row), 'reference': reference(row, args.get('version')),
+        from .canvas_paths import paths
+        from .canvas_downloads import filename
+        version = args.get('version') or latest(row)
+        # Inspect metadata without loading document bodies or historical app
+        # state. includeSource remains the explicit body-read opt-in below.
+        selected = definition(row, args.get('version'))
+        result = {'id': row['id'], 'title': selected['title'], 'revision': latest(row), 'version': version,
+                  'reference': reference(row, version), 'filePaths': paths(state, selected),
                   'versions': [{k: v.get(k) for k in ('version', 'title', 'createdAt', 'messageId')} for v in entries(row)]}
+        if selected.get('kind') in {'text', 'markdown', 'code', 'html', 'mermaid', 'dot', 'json', 'jsonl', 'babylon'} and not selected.get('app'):
+            result['download'] = {'url': '/api/canvas/' + row['id'] + '/download?version=' + str(version),
+                                  'filename': filename(selected)}
         if args.get('includeSource'):
             result['source'] = resource(service.db, selected['body']['$resource'])
         return result
@@ -180,19 +209,29 @@ def command(service, action, args, origin):
     canvas.update(id=row['id'], sessionId=sid, workspaceId=row.get('workspaceId'), createdAt=row.get('createdAt'), _versionWrite=True, _forceVersion=True)
     scoped = {**state, 'canvas': canvas}
     remember(scoped, service.db)
-    if state.get('canvas', {}).get('id') == row['id'] and (state.get('canvas', {}).get('selectedVersion') is None or action == 'canvas.versions.restore'):
+    if (state.get('canvas', {}).get('id') == row['id']
+            and not ordinary_preview(state['canvas'])
+            and (state['canvas'].get('selectedVersion') is None or action == 'canvas.versions.restore')):
         load(state, service.db, row['id'], open_panel=state['canvas'].get('open', False))
     return {'id': row['id'], 'revision': row['revision'], 'version': row['revision'], 'reference': reference(row)}
 
 
 def sync(service):
-    """Latest followers receive a new definition; exact historical views stay put."""
+    """Passive Latest follows; executable previews discover without replacing."""
     from .canvas_library import load
     rows = {r['id']: r for r in service._state.get('canvasArtifacts', [])}
     for record in [service._state, *service.clients.records.values()]:
         canvas = record.get('canvas', {})
         row = rows.get(canvas.get('id'))
-        if not row or row.get('app') or canvas.get('selectedVersion') is not None:
+        if not row or row.get('app'):
+            continue
+        if ordinary_preview(canvas):
+            canvas.setdefault('runningVersion', canvas.get('selectedVersion') or canvas.get('revision', 1))
+            canvas.update(latestVersion=latest(row),
+                          previewRetained=canvas.get('selectedVersion') is None and canvas['runningVersion'] < latest(row),
+                          versions=copy.deepcopy(entries(row)), publications=copy.deepcopy(row.get('publications', [])))
+            continue
+        if canvas.get('selectedVersion') is not None:
             continue
         if canvas.get('revision', 1) != latest(row):
             scoped = {**service._state, **record}

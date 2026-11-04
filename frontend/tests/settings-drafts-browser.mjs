@@ -10,7 +10,7 @@ const secret='fixture-unsaved-key-keep-local';
 const open=async()=>{await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings'}}));await openSettingsPage(page,'providers');await page.locator('[data-part=provider-settings] [data-collection-id=one] button').click();await page.evaluate(async()=>{for(const accessOpen of [false,true])await window.amplifier.dispatch('view.update',{patch:{providerEditor:{...window.amplifier.getState().view.providerEditor,accessOpen}}})});await page.locator('#provider-key-source').selectOption('private');await page.locator('#provider-key').fill(secret)};
 const agentPanel=async panel=>{const result=await page.evaluate(async panel=>{const response=await fetch('/fixture/agent-view',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientId:window.amplifier.shellClientId,patch:{panel}})});return {ok:response.ok,body:await response.json()}},panel);assert.equal(result.ok,true,JSON.stringify(result.body))};
 try{
- browser=await chromium.launch({headless:true});
+ browser=await chromium.launch({headless:true,args:process.env.CHROMIUM_SINGLE_PROCESS==='1'?['--single-process','--no-zygote']:[]});
  page=await browser.newPage({viewport:{width:1100,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
  page.on('pageerror',error=>errors.push(error.message));
  await page.goto(base+'/');await page.waitForSelector('#amp-one');

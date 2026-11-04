@@ -43,6 +43,10 @@ Resources record ownership separately from whether they still exist.
 5. **Unknown effects remain unresolved.** Lost acknowledgments retain a stable
    receipt and unknown state. Retry returns that record; restart does not replay
    work. Ownership reconciliation follows the existing reviewed handoff protocol.
+   Fresh worker commissioning uses the existing checkout and task receipts to
+   settle preparation before the initial input. A completed checkout can be
+   adopted after restart from its exact receipt; an unconfirmed filesystem
+   operation is retained and never repeated merely to make the worker active.
 
 6. **Cleanup follows actual ownership.** Resources distinguish created/owned,
    borrowed, reaped, and observed absent. Cleanup consults current references,

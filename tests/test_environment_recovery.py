@@ -2354,21 +2354,33 @@ async def test_finish_cleanup_preserves_original_unknown_and_keeps_owner(app, ba
         await start(app, 'next-check')
 
 
-async def test_cleanup_recovery_rejects_unrelated_request_before_effect(app, backend):
+@pytest.mark.parametrize('preparation_pending', [False, True])
+async def test_cleanup_recovery_rejects_unrelated_request_before_effect(app, backend, preparation_pending):
     row = (await start(app))['resource']
     row = (await act(app, 'stop', row, 'stop'))['resource']
+    if preparation_pending:
+        row = owner.save(app.data_dir, owner.get(app.data_dir, row['sessionId'], row['id']),
+                         preparationPending=True)
+    before = owner.get(app.data_dir, row['sessionId'], row['id'])
     result = await act(app, 'finishCleanup', row, 'bad-recovery', previousRequestId='stop')
     assert result['request']['state'] == 'failed'
+    assert result['request']['result']['effectAdmitted'] is False
+    assert owner.get(app.data_dir, row['sessionId'], row['id']) == before
     assert [name for name, _ in backend] == ['prepare', 'start', 'stop']
     assert owner.get(app.data_dir, row['sessionId'], row['id'])['status'] != 'retired'
 
 
-async def test_finish_cleanup_after_known_preservation_failure_keeps_original_receipt(app, backend, monkeypatch):
+@pytest.mark.parametrize('phase,code', [
+    ('verifying', 'archive_verification_failed'),
+    ('preserving', 'retention_storage'),
+])
+async def test_finish_cleanup_after_known_preservation_failure_keeps_original_receipt(
+        app, backend, monkeypatch, phase, code):
     row = (await start(app))['resource']
     row = (await act(app, 'stop', row, 'stop'))['resource']
     monkeypatch.setattr(owner, 'invoke', lambda *a: {
-        'ok': False, 'status': 'stopped', 'phase': 'verifying',
-        'effectAdmitted': False, 'code': 'archive_verification_failed'})
+        'ok': False, 'status': 'stopped', 'phase': phase,
+        'effectAdmitted': False, 'code': code})
     failed = await act(app, 'remove', row, 'known-export-failure')
     assert failed['request']['state'] == 'failed'
     calls = []

@@ -48,8 +48,12 @@ try{
  await page.getByText(/Your CLI projects and conversations appear automatically/).waitFor();
  assert.equal(await page.getByRole('button',{name:'Browse saved conversations',exact:true}).count(),0);
  await openSettingsPage(page,'updates');
- const updateUnread=(await state()).attention.pages.updates;assert.equal(updateUnread,2,'Fixture supplies two current release notices');
- assert.equal(await page.locator('[data-settings-section=updates] .a-attention-badge').innerText(),String(updateUnread));
+ // News remains unread until viewed, but is not an actionable Settings badge.
+ const attention=(await state()).attention,releaseNotices=attention.items.filter(item=>item.id.startsWith('release-notice:'));
+ assert.deepEqual(releaseNotices.map(item=>item.id),['release-notice:0.21.0:settings','release-notice:0.21.0:permissions']);
+ for(const item of releaseNotices){assert.equal(item.informational,true);assert.equal(item.read,false);assert.equal(!!item.actionRequired,false)}
+ assert.equal(attention.pages.updates,0,'Informational release notices do not count as actionable updates');
+ await expect(page.locator('[data-settings-section=updates] .a-attention-badge')).toHaveCount(0);
  await openSettingsPage(page,'updates');
  const advanced=page.locator('[data-part=ecosystem-update-details]');if(!await advanced.evaluate(el=>el.open))await advanced.locator(':scope > summary').click();await page.locator('[data-part=important-release-changes]>summary').click();
  await page.locator('#available-updates-list > li').first().waitFor();
@@ -57,12 +61,14 @@ try{
  assert.match(await page.locator('#available-updates-list').innerText(),/×2/);
  assert.equal(await page.locator('#available-updates-list .a-check-result').count(),0);
  await page.getByRole('region',{name:'High-impact changes',exact:true}).waitFor();
- const noticeCount=await page.locator('.a-release-notices article').count();assert.ok(noticeCount>=2);
+ const noticeCount=await page.locator('.a-release-notices article').count();assert.equal(noticeCount,2);
+ for(const title of ['Settings scope updated','File access updated'])await expect(page.locator('.a-release-notices').getByText(title,{exact:true})).toBeVisible();
  assert.equal(await page.locator('.a-release-entry').count(),(await state()).updates.application.releaseNotes.length);
  await page.screenshot({animations:'disabled',path:'/tmp/amplifier-release-notices-desktop.png'});
  // Viewing notices acknowledges them; their contents remain readable afterward.
  for(const notice of await page.locator('.a-release-notices article').all())await notice.scrollIntoViewIfNeeded();
  await page.waitForFunction(()=>window.amplifier.getState().attention.unread===0);
+ assert.deepEqual((await state()).attention.items.filter(item=>item.id.startsWith('release-notice:')),releaseNotices.map(item=>({...item,read:true})));
  assert.equal(await page.locator('[data-settings-section=updates] .a-attention-badge').count(),0);
  assert.equal(await page.locator('#available-updates-list > li').count(),1);
  assert.equal(await page.locator('.a-release-notices article').count(),noticeCount);
@@ -73,6 +79,7 @@ try{
  await page.getByRole('region',{name:'Changelog',exact:true}).waitFor();
  await page.getByRole('region',{name:'Changelog',exact:true}).locator('.a-update-disclosure > summary').click();
  assert.equal((await state()).attention.unread,0,'Viewed notices remain acknowledged after reload');
+ assert.deepEqual((await state()).attention.items.filter(item=>item.id.startsWith('release-notice:')),releaseNotices.map(item=>({...item,read:true})));
  await page.locator('.a-release-entry summary').filter({hasText:'0.11.0'}).click();
  await page.locator('.a-release-entry').filter({hasText:'0.11.0'}).getByText('Settings now apply across Amplifier apps',{exact:true}).waitFor();
  await page.setViewportSize({width:680,height:844});
@@ -206,7 +213,7 @@ try{
  await expect(page.getByRole('button',{name:'Use dropped',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Cancel preview',exact:true}).click();
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({attentionTrail:true,reviewClearsBadges:true,compactGroupedUpdates:true,narrowerModalBreakpoint:true,typedFolderPath:true,registeredBundlePicker:true,actionSpacing:true,focusedPages:true,wildcardFilters:true,filterRetainsSelection:true,inlineBundleRadio:true,inlineAddModule:true,singleModelSelector:true,providerResult:true,providerDragOrder:true,activeRoutingEdit:true,inlineCheckbox:true,mobileFullscreen:true,noHorizontalOverflow:true,liveModuleConfig:true,liveModuleToggle:true,folderBrowser:true,fileDrop:true,browserErrors:errors.length}));
+ console.log(JSON.stringify({attentionTrail:true,informationalNoticesDoNotBadge:true,noticeReviewPersists:true,compactGroupedUpdates:true,narrowerModalBreakpoint:true,typedFolderPath:true,registeredBundlePicker:true,actionSpacing:true,focusedPages:true,wildcardFilters:true,filterRetainsSelection:true,inlineBundleRadio:true,inlineAddModule:true,singleModelSelector:true,providerResult:true,providerDragOrder:true,activeRoutingEdit:true,inlineCheckbox:true,mobileFullscreen:true,noHorizontalOverflow:true,liveModuleConfig:true,liveModuleToggle:true,folderBrowser:true,fileDrop:true,browserErrors:errors.length}));
 }catch(error){
  failure=error;
  console.error(error);

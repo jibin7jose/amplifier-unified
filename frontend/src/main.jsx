@@ -331,7 +331,7 @@ function App(){
    }
    // Navigation and answers have separate queues; neither may overtake an
    // already declared renderer edit when its transition can remove the view.
-   if((navigation||['question.answer','question.cancel','question.supersede'].includes(action))&&dirtyBarrier)await dirtyBarrier;
+   if((navigation||['question.answer','question.cancel','question.supersede','canvas.views.loadVersion'].includes(action))&&dirtyBarrier)await dirtyBarrier;
    if(capabilityMutation)capabilityStopFence.current.assertMutation(args,meta.capabilityRead);
    if(meta.chatLink&&!meta.chatLinkIsCurrent())return {accepted:false};
    if(meta.archiveIsCurrent&&!meta.archiveIsCurrent())return {accepted:false};
@@ -359,10 +359,18 @@ function App(){
      void capabilityStopFence.current.reconcile(stop.sessionId);
     }
     if(historyVisit)destinationHistory.current.finish(result);
-    if(result.state)acceptState(result.state);
-    // Exact annotation and read-only preview receipts settle locally. Navigation
-    // still waits for its authoritative frame and exact history confirmation.
-    else if(!['message.reaction','peer.preview'].includes(action))await awaitState(result);
+    try{
+     if(result.state)acceptState(result.state);
+     // Exact annotation and read-only preview receipts settle locally. Navigation
+     // still waits for its authoritative frame and exact history confirmation.
+     else if(!['message.reaction','peer.preview'].includes(action))await awaitState(result);
+    }catch(error){
+     // An accepted reset is not a refusal when only its following read fails.
+     // Keep the exact receipt; the Canvas owner offers a read, never a replay.
+     if(action==='canvas.views.loadVersion'&&result.accepted===true)
+      return {...result,stateConfirmation:{status:'unconfirmed',message:error.message}};
+     throw error;
+    }
     if(historyVisit){
      // awaitState's recovery may return without the receipt's revision. The
      // history model requires its own exact route/host/revision evidence.
@@ -434,7 +442,7 @@ function App(){
  // before its queued action; refresh only after the server accepts that scope.
  const shell=useShell(serverState.current,dispatch,clientId,state,{onError:reportError,onRecovered:()=>setConnectionFailure(afterReconnect)});
  useEffect(()=>root.current?actionFeedback.current.attach(root.current):undefined,[!!state,shell.ready]);
- const act=useCallback((name,args={},meta={})=>dispatch(name,args,meta).catch(e=>reportError(e)),[dispatch,reportError]);
+ const act=useCallback((name,args={},meta={})=>dispatch(name,args,meta).catch(e=>{if(meta.propagateError)throw e;return reportError(e)}),[dispatch,reportError]);
  const peerPreview=usePeerPreview(state,dispatch),[peerOpen,setPeerOpen]=useState({});
  const peerPresentation=useMemo(()=>({open:peerOpen,setOpen:setPeerOpen,preview:peerPreview.open}),[peerOpen,peerPreview.open]);
  useEffect(()=>{
@@ -783,7 +791,7 @@ function App(){
   if(value!==lastDraft.current||sessionId!==(latest.current?.selectedSessionId??null))throw Error('Your draft changed while saving. Select Reload now again when you’re ready.');
  }});
  const settingsState={...state,view:{...state?.view,settingsCanvas:canvasSettingsVisible}};
- const settingsAct=(name,args={})=>act(name,name==='view.update'&&canvasSettingsVisible&&args.patch?.panel==='settings'?{...args,patch:{...args.patch,panel:null,settingsCanvas:true}}:args);
+ const settingsAct=(name,args={},meta={})=>act(name,name==='view.update'&&canvasSettingsVisible&&args.patch?.panel==='settings'?{...args,patch:{...args.patch,panel:null,settingsCanvas:true}}:args,meta);
  const settingsSurface=<SettingsExperience state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} appearance={<AppearanceSettings state={state} shell={shell} act={dispatch} editor={appearanceEditor} preview={!!previewSnapshot} previewSnapshot={previewSnapshot} setPreview={setPreview} defaultSkin={defaultSkin}/>}/>;
  const browsing=workSurface(state)!=='chat';
  const browse=(surface,id=null)=>act('view.update',{patch:{...browsePatch(surface,id),navExpanded:false}});

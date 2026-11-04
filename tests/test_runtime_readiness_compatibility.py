@@ -21,6 +21,9 @@ def command(home, monkeypatch):
 
 
 def test_stock_compatibility_revision_uses_fresh_cache_and_keeps_provider_branch(tmp_path, monkeypatch):
+    # Qualify the genuine ordinary default. Decision-feature projection and
+    # frozen-generation retention are covered independently in UI-use packaging.
+    monkeypatch.setattr('amplifier_web.app_updates.installed_extras', lambda: [])
     old = OLD_MANIFEST.read_bytes()
     old_project = environments.prepare_project(tmp_path, content=old)
     old_lock = old_project / 'uv.lock'

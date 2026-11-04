@@ -127,6 +127,28 @@ class ClientViews:
                 views.get('preferences', {}).pop(view_id + ':' + binding['resourceId'], None)
                 views.pop(view_id + 'Binding', None)
             record["canvasTabs"] = record.get("canvasTabs") or {}
+            # A new page has no surviving JavaScript memory. Latest opens fresh;
+            # reconnecting the same client identity above keeps its binding.
+            from .canvas_versions import ordinary_preview
+            current = record.get('canvas', {})
+            if ordinary_preview(current):
+                from .canvas_library import load, scope
+                scoped = {**self.service._state, **record}
+                if any(row['id'] == current.get('id') and scope(scoped, row)
+                       for row in self.service._state.get('canvasArtifacts', [])):
+                    load(scoped, self.service.db, current['id'],
+                         open_panel=current.get('open', False), version=current.get('selectedVersion'))
+                    record['canvas'] = scoped['canvas']
+                    # Reload replaces executable state, not the client's choice
+                    # to show this exact version inline or as a saved card.
+                    if current.get('_presentationDisposed'):
+                        record['canvas']['_presentationDisposed'] = True
+                    views.pop('primaryBinding', None)
+                    views.pop('retained', None)
+                    preference = views.get('preferences', {}).get('primary:' + current['id'], {})
+                    preference.update(dirty=False, renderReports={})
+                    for key in ('activation', 'document', 'interaction', 'events'):
+                        preference.pop(key, None)
             self.records[identity] = record
             self.dirty.add(identity)
             if resume:
@@ -443,8 +465,8 @@ class ClientViews:
             canvas = value.get("canvas", {})
             artifact = next((a for a in self.service._state.get("canvasArtifacts", []) if a["id"] == canvas.get("id")), None)
             if artifact and artifact.get("body"):
-                from .canvas_versions import definition
-                canvas["contentResource"] = definition(artifact, canvas.get('selectedVersion'))["body"]
+                from .canvas_versions import view_definition
+                canvas["contentResource"] = view_definition(artifact, canvas, self.service.db)["body"]
                 canvas.pop("content", None)
                 canvas.pop("surface", None)
             encoded = json.dumps(value)

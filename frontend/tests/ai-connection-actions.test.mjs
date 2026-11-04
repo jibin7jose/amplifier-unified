@@ -43,10 +43,11 @@ test('semantic connection actions retain explicit workspace ownership and scoped
  try{
   await act(async()=>{root=create(React.createElement(ConfigurationBoundary,{target,state:{view:{aiConnectionEditor:{id:'global'},configurationDrafts:{'workspace:other':{aiConnectionEditor:{id:'local'}}}}},act:(...args)=>calls.push(args)},value=>{scoped=value;return null}))});
   assert.equal(scoped.state.view.aiConnectionEditor.id,'local');
-  scoped.act('settings.connection.select',{module:'provider-openai',scope:'project',sessionId:'unrelated'});
-  assert.deepEqual(calls,[['settings.connection.select',{module:'provider-openai',scope:'project',configurationTarget:target}]]);
+  const meta={id:'owned-selection',propagateError:true};
+  scoped.act('settings.connection.select',{module:'provider-openai',scope:'project',sessionId:'unrelated'},meta);
+  assert.deepEqual(calls,[['settings.connection.select',{module:'provider-openai',scope:'project',configurationTarget:target},meta]]);
   scoped.act('settings.connection.services',{});
-  assert.deepEqual(calls.at(-1),['settings.connection.services',{}],'catalog read has no configuration owner arguments');
+  assert.deepEqual(calls.at(-1),['settings.connection.services',{},{}],'catalog read has no configuration owner arguments');
  }finally{await act(async()=>root?.unmount())}
 });
 
@@ -68,5 +69,44 @@ test('external connection selection keeps a private key until review or discard,
   assert.equal(password().props.value,'');assert.equal(calls.at(-1)[1].patch.aiConnectionEditor.id,'new');
   assert.ok(calls.slice(beforeDiscard).every(([,args])=>args.patch?.aiConnectionEditor?.id==='new'),'discarding the old private form cannot reset an externally selected editor');
   assert.ok(!JSON.stringify(calls).includes('private-test-key'));
+ }finally{await act(async()=>root?.unmount())}
+});
+
+test('conditional decision service preserves the existing chat account workflow',async()=>{
+ const service={module:'provider-azure-openai',name:'Microsoft Azure',auth:'optional-key',endpoint:true,
+  decisionOnly:true,decisionOnlyWhen:{chat_enabled:false}};
+ for(const decisionOnly of [false,true]){
+  let root;
+  const current={...state({step:'detail',id:'azure',module:service.module}),setup:{
+   providersLoadedAt:1,providers:[{id:'azure',module:service.module,config:{chat_enabled:!decisionOnly,default_model:'existing-chat'}}],
+   decisionModels:{services:[service]}}};
+  try{
+   await act(async()=>{root=create(React.createElement(AIConnections,{state:current,act:async()=>({accepted:true}),navigate:()=>{}}))});
+   const buttons=root.root.findAllByType('button').map(node=>node.children.join(''));
+   assert.equal(buttons.includes('Choose decision preferences'),decisionOnly);
+   assert.equal(buttons.includes('Choose model'),!decisionOnly);
+   assert.equal(buttons.includes('Check connection'),!decisionOnly);
+  }finally{await act(async()=>root?.unmount())}
+ }
+});
+
+test('new decision-only Azure setup saves its own endpoint without requesting a chat catalog',async()=>{
+ const service={module:'provider-azure-openai',name:'Microsoft Azure',auth:'optional-key',endpoint:true,
+  endpoint_config_key:'azure_endpoint',credential_hint:'Leave blank only after configuring host Entra authentication.',
+  decisionOnly:true,decisionOnlyWhen:{chat_enabled:false}};
+ let root,calls=[];
+ const current={...state({step:'connect',id:'azure-decision',module:service.module,
+  baseUrl:'https://example.services.ai.azure.com',credentialMode:'private'}),setup:{
+   providersLoadedAt:1,providers:[],decisionModels:{services:[service]}}};
+ try{
+  await act(async()=>{root=create(React.createElement(AIConnections,{state:current,
+   act:async(...args)=>{calls.push(args);return {accepted:true,operationId:'save-azure'}},navigate:()=>{}}))});
+  assert.ok(JSON.stringify(root.toJSON()).includes(service.credential_hint));
+  const save=root.root.findByProps({'data-action':'providers.save'});
+  assert.equal(Boolean(save.props.disabled),false);
+  await act(async()=>save.props.onClick());
+  assert.deepEqual(calls.find(([action])=>action==='providers.save')[1].config,
+   {chat_enabled:false,azure_endpoint:'https://example.services.ai.azure.com'});
+  assert.equal(calls.some(([action])=>action==='providers.models'),false);
  }finally{await act(async()=>root?.unmount())}
 });

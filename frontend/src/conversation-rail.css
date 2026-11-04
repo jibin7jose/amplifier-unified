@@ -65,16 +65,19 @@
   black calc(100% - var(--_a-transcript-fade-bottom)),
   transparent 100%);
 }
-#amp-one .a-messages[data-overflow-above=true]:not(:focus-within),
-#amp-one .a-messages[data-overflow-below=true]:not(:focus-within){
+/* Keep text readable for keyboard-visible controls and active editors. The host
+   observes active iframe identity because :focus need not cross its boundary.
+   Pointer/programmatic focus on a non-visible container does not disable fades. */
+#amp-one .a-messages[data-overflow-above=true]:not([data-transcript-iframe-focus=true]):not(:focus-visible):not(:has(:focus-visible, input:focus, textarea:focus, select:focus, [contenteditable]:focus, iframe:focus)),
+#amp-one .a-messages[data-overflow-below=true]:not([data-transcript-iframe-focus=true]):not(:focus-visible):not(:has(:focus-visible, input:focus, textarea:focus, select:focus, [contenteditable]:focus, iframe:focus)){
  -webkit-mask-image:var(--_a-transcript-edge-mask),var(--_a-transcript-gutter-mask)!important;
  -webkit-mask-composite:source-over!important;
  mask-image:var(--_a-transcript-edge-mask),var(--_a-transcript-gutter-mask)!important;
  mask-composite:add!important;
 }
 @media(forced-colors:active){
- #amp-one .a-messages[data-overflow-above=true]:not(:focus-within),
- #amp-one .a-messages[data-overflow-below=true]:not(:focus-within){
+ #amp-one .a-messages[data-overflow-above=true]:not([data-transcript-iframe-focus=true]):not(:focus-visible):not(:has(:focus-visible, input:focus, textarea:focus, select:focus, [contenteditable]:focus, iframe:focus)),
+ #amp-one .a-messages[data-overflow-below=true]:not([data-transcript-iframe-focus=true]):not(:focus-visible):not(:has(:focus-visible, input:focus, textarea:focus, select:focus, [contenteditable]:focus, iframe:focus)){
   -webkit-mask-image:none!important;
   mask-image:none!important;
  }

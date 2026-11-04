@@ -17,6 +17,23 @@ MAX_BYTES = 20 * 1024 * 1024
 MAX_FILES = 2000
 
 
+class CheckoutNotStarted(ValueError):
+    """Creation refused before its durable admission or any checkout mutation."""
+
+
+def source_binding(expected_revision, expected_commit, mode):
+    if mode not in {'clean', 'carry_dirty'}:
+        raise ValueError('Choose clean or carry_dirty explicitly')
+    if expected_commit is not None:
+        if expected_revision is not None or mode != 'clean':
+            raise ValueError('expectedCommit is only for clean creation; do not combine it with sourceRevision')
+        if (not isinstance(expected_commit, str) or len(expected_commit) not in {40, 64}
+                or any(c not in '0123456789abcdef' for c in expected_commit)):
+            raise ValueError('expectedCommit must be a full Git commit ID from clean inspection')
+    elif not isinstance(expected_revision, str) or not expected_revision:
+        raise ValueError('Provide expectedCommit for clean creation or the inspected sourceRevision for a snapshot')
+
+
 def digest(value):
     return hashlib.sha256(value if isinstance(value, bytes) else json.dumps(value, sort_keys=True).encode()).hexdigest()
 
@@ -145,9 +162,16 @@ class GitWorktrees:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with FileLock(str(path), timeout=30): yield
 
-    def inspect(self, path):
+    def inspect(self, path, *, mode=None, ref='HEAD'):
         root, repository = common(path)
-        with self.lock(repository): return snapshot(root)[0]
+        with self.lock(repository):
+            if mode == 'clean':
+                commit = text(root, 'rev-parse', '--verify', '--end-of-options', bounded_ref(ref) + '^{commit}')
+                return {'root': str(root), 'repository': str(repository), 'head': commit,
+                        'expectedCommit': commit, 'ref': ref, 'sourceKind': 'commit'}
+            if mode not in {None, 'carry_dirty'}:
+                raise ValueError('Choose clean or carry_dirty explicitly')
+            return snapshot(root)[0]
 
     @contextmanager
     def command_lock(self, action, command_id):
@@ -158,14 +182,35 @@ class GitWorktrees:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with FileLock(str(path), timeout=30): yield
 
-    def create(self, source, *, command_id, expected_revision, mode='clean', ref='HEAD', branch=None, session_id=None, admit=None):
+    def create(self, source, *, command_id, expected_revision=None, expected_commit=None, mode='clean', ref=None, branch=None, session_id=None, admit=None):
         with self.command_lock('create', command_id):
-            return self._create(source, command_id=command_id, expected_revision=expected_revision,
-                                mode=mode, ref=ref, branch=branch, session_id=session_id, admit=admit)
+            admitted = False
 
-    def _create(self, source, *, command_id, expected_revision, mode='clean', ref='HEAD', branch=None, session_id=None, admit=None):
+            def admission(effect):
+                def commit():
+                    nonlocal admitted
+                    # Even an ambiguous receipt-write failure must stay unknown.
+                    admitted = True
+                    return effect()
+                return admit(commit) if admit else commit()
+
+            try:
+                return self._create(source, command_id=command_id, expected_revision=expected_revision,
+                    expected_commit=expected_commit, mode=mode, ref=ref,
+                    branch=branch, session_id=session_id, admit=admission)
+            except Exception as exc:
+                identity = str(uuid.uuid5(uuid.NAMESPACE_URL, 'managed-worktree:' + command_id))
+                if not admitted and not self.record_path(identity).exists():
+                    raise CheckoutNotStarted(str(exc)) from exc
+                raise
+
+    def _create(self, source, *, command_id, expected_revision=None, expected_commit=None, mode='clean', ref=None, branch=None, session_id=None, admit=None):
+        source_binding(expected_revision, expected_commit, mode)
+        ref = ref if ref is not None else expected_commit or 'HEAD'
         identity = str(uuid.uuid5(uuid.NAMESPACE_URL, 'managed-worktree:' + command_id))
         signature = digest([str(source), expected_revision, mode, ref, branch, session_id])
+        if expected_commit is not None:
+            signature = digest([str(source), {'expectedCommit': expected_commit}, mode, ref, branch, session_id])
         root, repository = common(source)
         if self.directory.is_relative_to(root): raise ValueError('Managed checkout storage must be outside the source checkout')
         with self.lock(repository):
@@ -175,12 +220,17 @@ class GitWorktrees:
                 if record['signature'] != signature: raise ValueError('The command ID already has different contents')
                 result = {**record, 'duplicate': True}
                 return admit(lambda: result) if admit else result
-            before, cached, changes = snapshot(root)
-            if before['sourceRevision'] != expected_revision: raise ValueError('The source checkout changed; inspect it again')
-            if mode not in {'clean', 'carry_dirty'}: raise ValueError('Choose clean or carry_dirty explicitly')
+            if expected_commit is None:
+                before, cached, changes = snapshot(root)
+                if before['sourceRevision'] != expected_revision:
+                    raise ValueError('The source checkout changed; sourceRevision must be the inspected snapshot digest, not a Git commit. Use expectedCommit for clean creation.')
+            else:
+                before, cached, changes = {}, b'', b''
             commit = text(root, 'rev-parse', '--verify', '--end-of-options', bounded_ref(ref) + '^{commit}')
+            if expected_commit is not None and commit != expected_commit:
+                raise ValueError('The selected ref no longer matches expectedCommit; inspect the committed ref again')
             if mode == 'carry_dirty' and commit != before['head']: raise ValueError('Carry changes requires the exact current source HEAD')
-            if git(root, 'ls-files', '-u'): raise ValueError('Resolve source index conflicts before creating a managed checkout')
+            if expected_commit is None and git(root, 'ls-files', '-u'): raise ValueError('Resolve source index conflicts before creating a managed checkout')
             if mode == 'carry_dirty' and any(row.startswith(b'160000 ') for row in git(root, 'ls-files', '--stage', '-z').split(b'\0')):
                 raise ValueError('Carry changes with submodules is not supported; their separate working state must be preserved explicitly')
             if mode == 'carry_dirty':
@@ -190,7 +240,8 @@ class GitWorktrees:
             if branch:
                 bounded_ref(branch); git(root, 'check-ref-format', 'refs/heads/' + branch)
             target = self.directory / 'checkouts' / identity
-            record = {'id': identity, 'revision': 1, 'signature': signature, 'sessionId': session_id, 'executionHost': copy.deepcopy(self.execution_host), 'source': str(root), 'repository': str(repository), 'path': str(target), 'head': commit, 'branch': branch, 'mode': mode, 'status': 'creating', 'owned': True, 'createdAt': time.time(), 'sourceRevision': before['sourceRevision'], 'manifest': {'sourceUnchanged': True, 'stagedPatchSha256': digest(cached), 'unstagedPatchSha256': digest(changes), 'untracked': before['untracked'] if mode == 'carry_dirty' else [], 'ignoredFilesIncluded': False}}
+            binding = {'expectedCommit': expected_commit} if expected_commit is not None else {'sourceRevision': before['sourceRevision']}
+            record = {'id': identity, 'revision': 1, 'signature': signature, 'sessionId': session_id, 'executionHost': copy.deepcopy(self.execution_host), 'source': str(root), 'repository': str(repository), 'path': str(target), 'head': commit, 'branch': branch, 'mode': mode, 'status': 'creating', 'owned': True, 'createdAt': time.time(), **binding, 'manifest': {'sourceUnchanged': True, 'stagedPatchSha256': digest(cached), 'unstagedPatchSha256': digest(changes), 'untracked': before['untracked'] if mode == 'carry_dirty' else [], 'ignoredFilesIncluded': False}}
             evidence = self.directory / 'manifests' / identity
             record['manifest']['evidenceDirectory'] = str(evidence)
             # The host may commit this short durable admission under its state
@@ -211,7 +262,7 @@ class GitWorktrees:
                 for saved in evidence.iterdir():
                     saved.chmod(0o600)
                     with saved.open('rb') as stream: os.fsync(stream.fileno())
-                if snapshot(root)[0]['sourceRevision'] != before['sourceRevision']: raise ValueError('The source checkout changed during capture')
+                if expected_commit is None and snapshot(root)[0]['sourceRevision'] != before['sourceRevision']: raise ValueError('The source checkout changed during capture')
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 git(root, 'worktree', 'add', *(['-b', branch] if branch else ['--detach']), str(target), commit)
                 if mode == 'carry_dirty':

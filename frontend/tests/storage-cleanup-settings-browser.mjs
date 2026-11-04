@@ -150,6 +150,16 @@ try{
  assert.equal((await observe()).unusedExists,true);
  await section.getByRole('button',{name:'Review unused copies',exact:true}).click();
  await expect(section.getByLabel('Cleanup preview')).toBeVisible();
+ await expect(section.getByLabel('Cleanup preview')).toContainText('This inspection found');
+ await expect(section.getByLabel('Cleanup preview')).toContainText('Across cleanup batches:');
+ await expect(section.getByLabel('Cleanup preview')).toContainText('Earlier measurements can be out of date');
+ await expect(section.getByLabel('Cleanup preview')).toContainText('not a complete inventory');
+ await page.screenshot({path:join(outputDir,'cleanup-budget-preview-desktop.png'),animations:'disabled'});
+ await page.setViewportSize({width:390,height:844});
+ await section.getByLabel('Cleanup preview').scrollIntoViewIfNeeded();
+ assert.equal(await section.evaluate(element=>element.scrollWidth<=element.clientWidth),true);
+ await page.screenshot({path:join(outputDir,'cleanup-budget-preview-mobile.png'),animations:'disabled'});
+ await page.setViewportSize({width:1100,height:900});
  await expect(section.getByRole('button',{name:'Clean unused copies now',exact:true})).toBeEnabled();
  assert.equal((await observe()).unusedExists,true);
  const cleanupAttempts=[];let loseCleanup=true;

@@ -118,9 +118,11 @@ def load(state, db, identity, *, open_panel=True, version=None):
     if not row:
         raise AppError('This artifact belongs to another chat or is no longer available.')
     local = presentation(state, row)
-    from .canvas_versions import definition
+    from .canvas_versions import definition, ordinary_preview
     selected = definition(row, version, db)
     canvas = {**copy.deepcopy(selected), **{key: copy.deepcopy(local[key]) for key in ('view', 'tabOpen', 'lastViewedAt') if key in local}, 'open':open_panel, 'renderReports':{}}
+    if ordinary_preview(selected):
+        canvas.update(runningVersion=selected.get('revision', 1), latestVersion=row.get('revision', 1), previewRetained=False)
     if not selected.get('contentResource'):
         try:
             body = resource(db, selected['body']['$resource'])
@@ -189,7 +191,19 @@ def command(state, db, action, args):
     from .errors import AppError
     remember(state,db)
     if action=='canvas.select':
-        load(state,db,args['id'],version=args.get('version'))
+        from .canvas_versions import ordinary_preview, latest
+        current = state.get('canvas', {})
+        row = next((r for r in state.get('canvasArtifacts', []) if r['id'] == args['id'] and scope(state, r)), None)
+        version = args.get('version') or (latest(row) if row else None)
+        if (row and ordinary_preview(current) and current.get('id') == row['id']
+                and current.get('runningVersion', current.get('revision', 1)) == version
+                and not current.get('_presentationDisposed')):
+            # Pin/unpin intent can change without rerunning the same definition.
+            current.update(open=True, selectedVersion=args.get('version'),
+                           readOnlyVersion=args.get('version') is not None, previewRetained=False)
+            presentation(state, row)['tabOpen'] = True
+        else:
+            load(state,db,args['id'],version=args.get('version'))
     elif action=='canvas.reopen':
         current=state.get('canvas',{})
         if scope(state,current) and not current.get('placeholder'):

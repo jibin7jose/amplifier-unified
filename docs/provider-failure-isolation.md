@@ -26,8 +26,18 @@ persistence without publishing messages, endpoints, configuration or credentials
 Core owns provider mount-table rollback, including overwritten and removed slots,
 before host recovery is called. This does not reverse arbitrary external effects
 inside third-party mount code. Unavailable preflight instances never enter loader
-or mount code. Non-provider module failures remain fatal. Unsupported Core
+or mount code. Unrelated non-provider module failures remain fatal. Unsupported Core
 versions retain strict all-or-nothing preparation; they do not approximate isolation.
+
+The optional decision-account adapter is a separate, narrow composition policy.
+It retains saved provider accounts but mounts their package-owned decision hooks,
+without adding a chat provider or weakening Core's provider validation. Exact
+source/account credentials and child/resume binding remain authoritative. A hook
+may report an account unavailable only after complete rollback and explicit host
+acceptance; safe diagnostics explain the failure while configured ordinary UI-use
+selection may continue. Unknown, cancelled or unsafe mount receipts abort
+initialization. The host does not excuse arbitrary hook failures or use a backend
+left behind by a rejected mount. See [the UI-use contract](../contracts/ui-use.v1.md).
 
 Root explicit selection, default selection, named child accounts, inherited and
 resumed selections are checked before executing work. A broken selected account

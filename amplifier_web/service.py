@@ -162,6 +162,8 @@ ACTION_DEFINITIONS = {
     "providers.list": ("List provider connections and setup status without creating a conversation",schema({"refresh":{"type":"boolean"},"location": LOCATION,"sessionId":string(200),"workspace":string(4000)},[])),
     "providers.save": ("Add or edit a provider connection",schema({"sessionId":string(200),"id":string(200),"module":string(200),"source":string(4000),"config":{"type":"object"},"apiKey":string(16000),"apiKeyEnv":string(200),"useGitHubCli":{"type":"boolean"},"scope":{"enum":["global","project","local"]}},["module","config"])),
     "providers.finishSetup": ("Save a connection's default model while preserving provider fields and existing model rules. Optionally initialize general and fast rules only for the first connection without custom routing.",schema({"sessionId":string(200),"id":string(200),"model":string(200),"scope":{"enum":["global","project","local"]},"initializeRouting":{"type":"boolean"}},["id","model"])),
+    "providers.decisionModels": ("List installed optional decision backends and saved per-surface preferences. No inference or credential discovery.", schema({"sessionId":string(200),"workspace":string(4000),"location":LOCATION}, [])),
+    "providers.configureDecisions": ("Save an explicit browser, computer, or both selection preference for new sessions. Both saves the same choice for the two independent purposes atomically. Standard remains the default. Requires separately composed UI-use tools; decision selection also requires a decision backend. Does not install or enable tools or change approvals.", schema({"sessionId":string(200),"purpose":{"enum":["browser","computer","both"]},"mode":{"enum":["standard","decision"]},"allowExternalState":{"type":"boolean"},"backend":schema({"provider":string(100),"model":string(200),"endpoint":string(2000)},["provider","model"]),"scope":{"enum":["global","project","local"]}},["purpose","mode","scope"])),
     "providers.configureImages": ("Choose automatic provider-priority image selection (mode=automatic), turn images off (mode=off), or select an existing connection with id, enabled, and a catalog model. Set exclusive=true when choosing the single image connection: the previous image choices are disabled atomically in the selected scope. Preserve chat models, credentials and tool permissions. No image request is sent.",schema({"sessionId":string(200),"id":string(200),"enabled":{"type":"boolean"},"exclusive":{"type":"boolean"},"mode":{"enum":["automatic","off"]},"model":string(200),"scope":{"enum":["global","project","local"]}},[])),
     "providers.imageModels": ("Discover compatible image models through a saved connection without generating an image",schema({"location":LOCATION,"id":string(200),"sessionId":string(200),"workspace":string(4000),"refresh":{"type":"boolean"}},["id"])),
     "providers.remove": ("Remove a provider connection",schema({"sessionId":string(200),"id":string(200),"scope":{"enum":["global","project","local"]}},["id"])),
@@ -221,11 +223,12 @@ ACTION_DEFINITIONS = {
     "maintenance.reset": ("Preview or reset selected app data with a retained private backup",schema({"parts":{"type":"array","items":{"enum":["runtime","cache","settings","conversations"]}},"apply":{"type":"boolean"},"confirmation":string(20)},["parts"])),
     "maintenance.repair": ("Repair runtime dependency installation while idle",schema()),
     "updates.app": ("Stage a published application release and restart when idle",schema()),
-    "updates.featureInstall": ("Explicitly add native-desktop to the same serving app revision, preserving installed dependencies and extras. Qualifies an isolated candidate, installs and restarts through existing idle/queue guards. Does not grant OS permission or desktop control. Inspect updates.featureResults for the durable outcome; do not replay an unknown result.", schema({"feature":{"enum":["native-desktop"]},"hostInstanceId":string(200)})),
+    "updates.featureInstall": ("Explicitly add optional browser, decision-provider or native observation support to the same serving app revision, preserving installed dependencies and extras. Qualifies an isolated candidate, installs and restarts through existing idle/queue guards. Does not configure a model, grant OS permission or grant control. Inspect updates.featureResults for the durable outcome; do not replay an unknown result.", schema({"feature":{"enum":["native-desktop","managed-browser","decisions-openai","decisions-azure","decisions-jev","decisions-local"]},"hostInstanceId":string(200)})),
     "updates.smartToolRollback": ("Restore the previous installed Smart Tool revision when idle; preserves conversation history.", schema({"id":string(200)},["id"])),
     "updates.smartToolRetry": ("Retry one failed Smart Tool update using its current update resultId (or previous installation ID when no resultId is present). Healthy tools are not repeated.", schema({"id":string(200)},["id"])),
     "updates.smartToolSkip": ("Skip one failed Smart Tool revision using its current update resultId (or previous installation ID when no resultId is present). Retain the current installation; newer revisions remain eligible.", schema({"id":string(200)},["id"])),
     "updates.check": ("Check published application releases and ecosystem sources for updates", schema()),
+    "updates.failureDisposition": ("User-only: close one exact overflow or unknown-feature-scope failure as acknowledged uncertainty, not verified recovery. Use dispositionOccurrence from attention; reading alone never closes it.", schema({"id":string(300),"expectedOccurrence":{"type":"string","pattern":"^[a-f0-9]{64}$"},"disposition":{"enum":["acknowledged-uncertainty"]}},["id","expectedOccurrence","disposition"])),
     "updates.diagnostics": ("Collect a sanitized update support report, including source provenance, without credentials, chat content or private paths.", schema()),
     "updates.forceRestart": ("Explicitly confirm interrupting active work to restart into one staged qualified app. Saved history and unresolved checkout fences remain; no work is replayed.", schema({"confirm":{"enum":[True]},"hostInstanceId":string(200),"revision":string(40),"generation":string(32),"attemptId":string(200)}, ["confirm","hostInstanceId","revision","generation","attemptId"])),
     "updates.install": ("Stage and validate available application or ecosystem updates; activate when idle. Application updates restart the host.", schema()),
@@ -449,7 +452,7 @@ for _access, _actions in {
         "session.inspect", "session.titlePreview", "session.history", "session.deletePreview", "session.export",
         "session.exportDeliver", "session.sharePreview", "session.shareRead", "session.shareList",
         "message.copy", "history.export", "conversation.delivery", "runtime.dependencies",
-        "permissions.get", "providers.credentials", "providers.schema", "providers.list",
+        "permissions.get", "providers.credentials", "providers.schema", "providers.list", "providers.decisionModels",
         "diagnostics.records", "task.get", "task.history", "task.detail", "task.receipt",
         "capacity.read", "modelCapacity.read", "question.list", "question.read",
         "schedule.list", "schedule.read", "schedule.overview", "session.plans", "storage.inspect", "workspace.deleteFilesPreview", "feedback.destination",
@@ -2919,7 +2922,7 @@ class AppService:
                         owner = self._session(sid) if sid else None
                         file_root = (owner.get('workingDirectory') or owner.get('workspace')) if owner else None
                         canvas_command(scoped,action,args,origin,file_root=file_root)
-                    from .canvas_versions import assert_clean, reference, message_id
+                    from .canvas_versions import assert_clean, reference, message_id, ordinary_preview
                     publication_message = message_id(scoped, sid)
                     if destination == 'inline':
                         from .canvas_views import INLINE_KINDS
@@ -2938,10 +2941,18 @@ class AppService:
                     remember(scoped,self.db)
                     diagnostic_result = {'id': scoped['canvas']['id'], 'revision': scoped['canvas'].get('revision', 1), 'reference': reference(scoped['canvas'])}
                     if sid==self.state.get('selectedSessionId') and scoped['selectedWorkspaceId']==self.state['selectedWorkspaceId']:
-                        self.canvas_views.choose(scoped['canvas'], diagnostic_result['revision'], destination,
-                                                 message_id=publication_message, origin=origin)
+                        current = self.state.get('canvas', {})
+                        retain_preview = (destination == 'canvas' and current.get('id') == scoped['canvas']['id']
+                                          and ordinary_preview(current) and not current.get('_presentationDisposed')
+                                          and (current.get('open') or (self.clients.record() or {}).get('canvasViews', {}).get('retained')))
+                        if not retain_preview:
+                            self.canvas_views.choose(scoped['canvas'], diagnostic_result['revision'], destination,
+                                                     message_id=publication_message, origin=origin)
                         if destination == 'canvas':
-                            self.state['canvas']=scoped['canvas']
+                            if not retain_preview:
+                                self.state['canvas']=scoped['canvas']
+                            elif current['id'] in scoped.get('canvasTabs', {}):
+                                scoped['canvasTabs'][current['id']]['view'] = copy.deepcopy(current.get('view', {}))
                             if args.get('kind') == 'settings':
                                 self.state['view']['panel'] = None
                             self.state['view'].setdefault('canvasDraft',{}).update(library=False,open=False,browser=False,overview=False)
@@ -3462,6 +3473,11 @@ class AppService:
                 if origin not in {"ui", "user"}:
                     raise AppError("This tool requested user approval. It must be answered by the user.", 403)
                 decision = "allow" if args["decision"] in {"allow", "approve"} else "deny"
+                offered = approval.get("options") or ["allow", "deny"]
+                selected = next((value for value in offered
+                    if isinstance(value, str) and value.casefold() == decision), None)
+                if selected is None:
+                    raise AppError("This permission request does not offer that decision.", 409)
                 approval["status"] = decision
                 comment = args.get('comment', '').strip()
                 if comment:
@@ -3469,7 +3485,7 @@ class AppService:
                     self._message(session, 'user', f'Permission {decision}:\n\n{comment}', 'permission',
                                   approvalId=args['id'], inputOrigin='approval')
                 if self.runtime:
-                    values = (session["id"], args["id"], decision) + ((comment,) if comment else ())
+                    values = (session["id"], args["id"], selected) + ((comment,) if comment else ())
                     pending.append((self.runtime.approval, values))
             elif action == "attention.read":
                 from .attention import snapshot
@@ -3659,6 +3675,14 @@ class AppService:
                     target = self._session(args['sessionId'])
                     values += ({'recovery': self.management.recovery_admission_binding(target)},)
                 pending.append((self.management.command, values))
+            elif action == "updates.failureDisposition":
+                if origin not in {'ui', 'user'}:
+                    raise AppError('Closing update uncertainty requires an explicit user action.', 403)
+                if not self.update_manager: raise AppError("Update service is unavailable.")
+                try:
+                    diagnostic_result = self.update_manager.diagnostics.dispose(args['id'], args['expectedOccurrence'])
+                except ValueError as error:
+                    raise AppError(str(error), 409) from None
             elif action.startswith("updates."):
                 if not self.update_manager: raise AppError("Update service is unavailable.")
                 if action == 'updates.forceRestart':
@@ -5135,6 +5159,8 @@ class AppService:
             return await self._app_bridge(operation, args, session_id, input_origin=origin)
 
     async def _app_bridge(self, operation, args, session_id, *, input_origin=None):
+        if operation == 'ui.use':
+            return await self.ui_use.call(session_id, args.get('operation'), args.get('args', {}))
         if operation == 'context.prepare':
             from .preparation_context import OPERATIONS, SECTION_TIMEOUT
             async def read(name):

@@ -180,6 +180,9 @@ HOST_CREDENTIAL = {"$hostProviderCredential": True}
 def credential_bindings(value, *, provider=False, module=None):
     """Retain references, not literal credentials, in inherited task snapshots."""
     from .runtime_controls import credential_field
+    if isinstance(value, dict) and ("session" in value or "agents" in value):
+        from .decision_accounts import logical_plan
+        value = logical_plan(value)
     if isinstance(value, dict):
         if "module" in value:
             provider = str(value["module"]).startswith("provider-")
@@ -206,7 +209,9 @@ def rebind_provider_credentials(edited, authorized):
     The saved marker grants no fallback to a module family's ambient account.
     Required-secret schema validation still runs after this in-memory resolution.
     """
-    result = copy.deepcopy(edited)
+    from .decision_accounts import logical_plan
+    result = logical_plan(edited)
+    authorized = logical_plan(authorized)
     bound = False
 
     def restore(value, original):

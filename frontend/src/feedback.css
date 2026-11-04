@@ -41,7 +41,9 @@
 #amp-one .a-feedback-notice-actions>.a-icon{margin-left:auto}
 #amp-one .a-feedback-receipt{padding:12px 0;border-top:1px solid var(--a-line);display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
 #amp-one .a-feedback-receipt>strong,#amp-one .a-feedback-receipt>.a-check-result{width:100%;margin:0}
-#amp-one .a-attention-item{display:flex;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--a-line)}
+#amp-one .a-attention-item{display:flex;align-items:center;flex-wrap:wrap;gap:16px;padding:12px 0;border-bottom:1px solid var(--a-line)}
+#amp-one .a-failure-disposition{flex-basis:100%;min-width:0;padding:12px;border:1px solid var(--a-line);border-radius:8px;overflow-wrap:anywhere}
+#amp-one .a-failure-dispositions{margin-top:16px;overflow-wrap:anywhere}
 #amp-one .a-attention-open{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:5px;border:0;background:transparent;color:var(--a-ink);cursor:pointer}
 #amp-one .a-attention-open span{font-size:var(--a-text-base,14px);color:var(--a-muted);overflow-wrap:anywhere}
 #amp-one .a-activity-inbox{overflow:auto}

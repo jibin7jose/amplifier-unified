@@ -16,11 +16,11 @@ test('attach restores unsaved drafts only into its new client before resolving',
  assert.equal(storage.getItem('amplifier.pendingDrafts.v1'),undefined);assert.equal(storage.getItem('amplifier.clientId'),api.clientId);
 }));
 test('failed restoration retains text for a connection retry without resubmitting work',()=>fixture(async({storage,api})=>{
- let failed=false;const actions=[];globalThis.fetch=async(path,options)=>{const body=JSON.parse(options.body);if(path==='/api/actions'){actions.push(body.action);if(!failed){failed=true;throw Error('offline')}}return new Response('{}')};
+ let failed=false;const actions=[];globalThis.fetch=async(path,options)=>{const body=JSON.parse(options.body);if(path==='/api/actions'){actions.push(body.action);if(!failed){failed=true;throw Error('offline')}}return new Response(path==='/api/actions'?'{"accepted":true}':'{}')};
  await assert.rejects(api.attachClient(),/interrupted/);assert.equal(JSON.parse(storage.getItem('amplifier.pendingDrafts.v1')).rows[0].text,'unsent text');
  await api.attachClient();assert.deepEqual(actions,['view.update','view.update','view.update']);assert.equal(storage.getItem('amplifier.pendingDrafts.v1'),undefined);
 }));
 test('a missing conversation keeps its recovery copy without blocking other drafts',()=>fixture(async({storage,api})=>{
- globalThis.fetch=async(path,options)=>{const body=JSON.parse(options.body);return path==='/api/actions'&&body.args.sessionId==='chat'?new Response(JSON.stringify({error:'Select or create a conversation first.'}),{status:404}):new Response('{}')};
+ globalThis.fetch=async(path,options)=>{const body=JSON.parse(options.body);return path==='/api/actions'&&body.args.sessionId==='chat'?new Response(JSON.stringify({error:'Select or create a conversation first.'}),{status:404}):new Response(path==='/api/actions'?'{"accepted":true}':'{}')};
  await api.attachClient();assert.deepEqual(JSON.parse(storage.getItem('amplifier.pendingDrafts.v1')).rows.map(({sessionId,text})=>[sessionId,text]),[['chat','unsent text']]);
 }));

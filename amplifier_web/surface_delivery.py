@@ -37,6 +37,7 @@ class SurfaceDelivery:
         self.notices = {}
         self.focus = None
         self.epoch = None
+        self.epoch_available = False
         self.last_delivery = {}
 
     async def read(self, args):
@@ -94,8 +95,11 @@ class SurfaceDelivery:
             manifest = await asyncio.wait_for(self.bridge('context.manifest', {}), 1.5)
         except Exception:
             manifest = {'surfaces': [], 'unavailable': True}
-        epoch = manifest.get('inputIds', [])
-        if self.epoch != epoch:
+        self.epoch_available = not manifest.get('unavailable')
+        # An unavailable read is not a new empty input. Keep the last known
+        # identity, but deliver no selected evidence until it is checked again.
+        epoch = manifest.get('inputIds', []) if self.epoch_available else self.epoch
+        if self.epoch_available and self.epoch != epoch:
             self.epoch = epoch
             self.focus = None
             self.images = {k: v for k, v in self.images.items() if v['epoch'] == epoch}
@@ -176,11 +180,16 @@ class SurfaceDelivery:
 
 class SurfaceProvider:
     """Same augmentation for budget checks, complete and streaming protocols."""
-    def __init__(self, original, delivery):
+    def __init__(self, original, delivery, *, coordinator=None):
         self.original, self.delivery = original, delivery
         self.prepared = []
         self.refused = []
         self.refusal_overflow = False
+        from .performance_diagnostics import TIMING_ENABLED, time_preparation
+        self.timing_coordinator = coordinator if TIMING_ENABLED else None
+        if self.timing_coordinator is not None:
+            self._prepare = time_preparation(coordinator, 'surface.prepare', self._prepare)
+            self.refit_request = time_preparation(coordinator, 'provider.refit', self.refit_request)
 
     async def _prepare(self, request, commit=False, *, explicit_budget=False, refit_binding=None):
         entry = next((row for row in self.prepared if row[0] is request), None)
@@ -188,7 +197,10 @@ class SurfaceProvider:
         if refused and not explicit_budget:
             raise ValueError("The request was refused before transport; a new explicit budget/refit is required.")
         if entry is None:
-            cached = await self.delivery.prepare(request, self.original)
+            refit = getattr(self.delivery, 'prepare_refit', None)
+            cached = (await refit(request, self.original, binding=refit_binding)
+                      if refit_binding is not None and callable(refit)
+                      else await self.delivery.prepare(request, self.original))
             if refused and hasattr(self.delivery, "revalidate"):
                 # Stabilize revoked visual/context warnings BEFORE the new
                 # measurement. Never replace fitted bytes during transport.
@@ -200,10 +212,17 @@ class SurfaceProvider:
                 from .request_refit import RequestFitChanged
                 self.delivery.check_execution_scope(refit_binding['executionScope'])
                 current = entry[3]
-                if (not current or current.get('required') != refit_binding.get('required')
-                        or current.get('executionScope') != refit_binding.get('executionScope')):
+                same_scope = current and current.get('executionScope') == refit_binding.get('executionScope')
+                same_required = current and current.get('required') == refit_binding.get('required')
+                if (not same_scope or (not same_required
+                        and not self.delivery.current_full(refit_binding['executionScope']))):
                     self.delivery.discard_work(current)
-                    raise RequestFitChanged('authority_changed')
+                    unavailable = not current or current.get('required', {}).get('status') != 'available'
+                    raise RequestFitChanged('authority_unavailable' if unavailable else 'authority_changed')
+                if not same_required:
+                    # Retain the Full reliance across awaited budget work, even
+                    # when the new observation itself is unavailable.
+                    current['assuranceUnavailable'] = True
             self.prepared = (self.prepared + [entry])[-4:]
             self.refused = [row for row in self.refused if row[0] is not request]
         _, cached, fitted, binding = entry
@@ -216,6 +235,9 @@ class SurfaceProvider:
             except Exception as error:
                 # Only the pretransport checks are covered. A sent/unknown
                 # provider request never enters this refit path.
+                from .request_refit import RequestFitChanged
+                if isinstance(error, RequestFitChanged):
+                    error.local_refusal = True
                 self.prepared = [row for row in self.prepared if row[0] is not request]
                 if hasattr(self.delivery, "discard_work"):
                     self.delivery.discard_work(binding)
@@ -257,11 +279,15 @@ class SurfaceProvider:
         binding = row[2]
         if not binding or binding.get('executionScope') is None:
             return None
-        self.delivery.check_execution_scope(binding['executionScope'])
         budget = getattr(self.original, 'request_budget', None)
         if not callable(budget):
             return None
-        cached = await self._prepare(request, explicit_budget=True, refit_binding=binding)
+        try:
+            self.delivery.check_execution_scope(binding['executionScope'])
+            cached = await self._prepare(request, explicit_budget=True, refit_binding=binding)
+        except RequestFitChanged as error:
+            error.local_refusal = True
+            raise
         return await self._budget(budget, cached, request_options=request_options, **kwargs)
 
     def __getattr__(self, name):
@@ -309,7 +335,11 @@ class SurfaceProvider:
         if name == 'request_budget' and callable(method):
             async def budget(request, *, request_options=None, **kwargs):
                 request = await self._prepare(request, explicit_budget=True)
-                return await self._budget(method, request, request_options=request_options, **kwargs)
+                actual = self._budget
+                if self.timing_coordinator is not None:
+                    from .performance_diagnostics import time_preparation
+                    actual = time_preparation(self.timing_coordinator, 'provider.budget', actual)
+                return await actual(method, request, request_options=request_options, **kwargs)
             return budget
         return method
 

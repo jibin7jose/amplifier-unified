@@ -9,7 +9,7 @@ const server=await createServer({configFile:false,server:{middlewareMode:true,hm
 const {OperationsPanel}=await server.ssrLoadModule('/src/operations.jsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>server.close());
-const response=(result,status=200)=>new Response(JSON.stringify(status===200?{result}:{error:result}),{status});
+const response=(result,status=200)=>new Response(JSON.stringify(status===200?{accepted:true,result}:{error:result}),{status});
 
 for(const action of ['operations.list','operations.request'])for(const transition of ['conversation','reopen'])for(const outcome of ['success','error']){
  test(`${action} ignores late ${outcome} after ${transition}`,async()=>{

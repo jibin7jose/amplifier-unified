@@ -58,27 +58,32 @@ def prepare(app, source, target, value, lineage, boundary):
     if (value['expectedInterruptionRevision'] != target.get('interruptionRevision', 0)
             or human.get('createdAt', 0) <= (target.get('lastInterruption') or {}).get('at', 0)):
         raise ValueError('Stop changed or occurred after the human request; use a fresh human resume instruction.')
-    if target.get('status') in {'interrupted', 'stopping'}:
+    if target.get('status') == 'stopping':
         raise ValueError('Wait for the recipient to settle before requesting resume.')
     if reason := safety_halt(target):
         raise ValueError(reason)
     recovery = None
-    if target.get('status') == 'error':
+    # A shutdown interruption is settled only when the old generation ended
+    # and the existing native ownership probe proves no writer remains.
+    interrupted = target.get('status') == 'interrupted'
+    if interrupted or target.get('status') == 'error':
         failure = target.get('failure') or {}
         active = target.get('collaborationGeneration') or {}
         evidence = retained_terminal_evidence(target)
         prove = getattr(app.runtime, 'stopped_boundary', None)
-        if (not evidence and (not failure.get('generationId') or failure['generationId'] != active.get('id'))
-                or not active.get('terminal') or not callable(prove)
+        if ((not interrupted and not evidence
+                and (not failure.get('generationId') or failure['generationId'] != active.get('id')))
+                or not active.get('id') or not active.get('terminal') or not callable(prove)
                 or target.get('configurationBusy')
                 or any(w.get('status') in {'queued', 'starting', 'running', 'working', 'stopping'}
                        for w in target.get('workers', []))):
-            raise ValueError('The failed recipient has not reached a recoverable stopped boundary.')
+            raise ValueError('The recipient has not reached a recoverable stopped boundary.')
         try:
             proof = boundary.enter_context(prove(target))
         except (OSError, RuntimeError, ValueError) as exc:
-            raise ValueError(f'Could not confirm that the failed recipient has stopped. {exc}') from None
+            raise ValueError(f'Could not confirm that the recipient has stopped. {exc}') from None
         recovery = {**proof, 'failure': copy.deepcopy(failure),
+                    **({'generation': copy.deepcopy(active)} if interrupted else {}),
                     **({'terminalEvidence': evidence} if evidence else {})}
     key = fingerprint([source['id'], human['id'], target['id'], target.get('interruptionRevision', 0)])
     previous = app.db.execute("""SELECT id FROM commands
@@ -91,7 +96,7 @@ def prepare(app, source, target, value, lineage, boundary):
         'assignmentId': assignment['id'], 'assignmentRevision': assignment['revision'],
         'targetHumanMessageId': (latest_human(target) or {}).get('id'),
         'authorizationKey': key,
-        **({'failedRecovery': recovery} if recovery else {}),
+        **({('interruptedRecovery' if interrupted else 'failedRecovery'): recovery} if recovery else {}),
     }
 
 
@@ -99,8 +104,14 @@ def guard(app, receipt, source, target):
     scope = receipt['humanResume']
     human = latest_human(source)
     recovered = scope.get('failedRecovery')
+    interrupted = scope.get('interruptedRecovery')
     if reason := safety_halt(target):
         return reason
+    if target.get('status') == 'interrupted' and not interrupted:
+        return 'The interrupted recipient needs a fresh stopped-boundary check.'
+    if interrupted and (interrupted['generation'] != target.get('collaborationGeneration')
+                        or interrupted['failure'] != (target.get('failure') or {})):
+        return 'The interrupted recipient changed before recovery.'
     if target.get('status') == 'error' and (not recovered or recovered['failure'] != target.get('failure')):
         return 'The recipient failure changed before recovery.'
     if recovered and recovered.get('terminalEvidence') and (

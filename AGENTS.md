@@ -82,3 +82,17 @@ public `session.archive` action. Qualify late-response navigation races, the
 noncurrent-chat path, Undo, and the raw action's selection-preserving behavior.
 Release the interactive mutation lock on its confirmed receipt, independently of
 navigation. Qualify stalled navigation with usable Undo and superseding intent.
+
+## Keep agent context and coordination useful
+
+Workspace starter instructions and the coordinate-work skill must support one
+manager coordinating many independent workers through complete deliverables.
+Prefer current task briefs, exact outcome links and on-demand details over
+repeated whole-history reads or routine progress/approval exchanges. Preserve
+actual Stop, authority, ownership and unknown-effect recovery boundaries.
+
+Automatically loaded scratch is a short current context/index, not task status,
+a release ledger, event history or new authority. Keep detailed evidence with its
+owner; replace stale current entries and preserve useful history outside automatic
+includes. Changes to these templates should verify rendered prompts omit linked
+archives while current notes still reload, and preserve existing user files.

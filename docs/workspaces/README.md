@@ -27,8 +27,11 @@ The sidebar presents Pinned, Workspaces and Recent. All chats retains the existi
 
 `worktree.inspect/create/attach` accept `repositoryPath` for a repository inside
 the task's workspace, execution folder or an already associated ready checkout.
-Relative paths use the execution folder. Inspect first and carry the returned
-absolute `repository.root` and `sourceRevision` into creation. This supports
+Relative paths use the execution folder. For clean checkouts, inspect with
+`mode:"clean"` and carry the returned absolute `repository.root` and `expectedCommit`
+into creation. This avoids reading unrelated dirty/untracked source files.
+Legacy full inspection still supplies `sourceRevision` for snapshot-bound creation
+and explicit `carry_dirty`; a Git commit is not a snapshot digest. This supports
 several child repositories beneath a non-Git workspace; each checkout retains
 its own source and Git identity. Chat → Advanced → Work & automation exposes
 the same repository selection and shows each checkout's source.
@@ -45,7 +48,11 @@ worktree placement or ownership through either dispatch entry point.
 New workspace creation offers **Start from…**. **Blank** keeps the empty-folder
 flow. **Development** adds repository guidance without forcing Git or a bundle.
 **Amplifier development** adds the Amplifier, Core and Foundation repositories
-as independent child checkouts and sets the workspace's `anchors-amp-dev` default.
+as independent child checkouts. New plans inherit an explicitly saved Unified app
+or shared Amplifier bundle default, without copying that choice into project
+settings. If neither is set, this starter keeps its `anchors-amp-dev` workspace
+fallback. The currently selected workspace's override does not choose the default
+for a different new workspace. Blank and Development continue to inherit defaults.
 
 **Settings → Workspaces** keeps ordinary placement settings approachable.
 Its **Manage starters** link opens a separate advanced list/detail editor,
@@ -56,6 +63,14 @@ then edit its description, instructions, optional bundle default, repository
 URLs/folders/branches and resource tracking. Deleting a definition never deletes
 created workspaces. Edits apply to future plans; prepared plans retain their exact
 starter snapshot.
+Amplifier development revision 6 makes this choice when the plan is prepared.
+An inherited plan stays inherited if defaults later change; new chats use the
+then-current defaults. Already reviewed revision-5 plans keep their explicit
+bundle, as do saved custom starters. Duplicating a built-in copies its current
+choice when duplicated, including inheritance, from a fresh server snapshot.
+The returned copy is loaded into the editor; a previously displayed choice may
+be stale. Duplication does not create or change a workspace. Explicit chat choices
+and existing conversations are unchanged; no workspace settings are migrated.
 Bundle choices share the chat dropdown's catalog: the preconfigured `anchors`
 and `anchors-amp-dev` roots from Amplifier Foundation and `work` and `work-amp-dev` from
 amplifier-bundle-work, plus enabled standalone bundles added through Advanced
@@ -85,8 +100,14 @@ existing-folder attachment does not apply a starter.
 The guidance restores the workspace-as-container model: project source goes in
 child repositories, leaving the root available for plans, working scripts,
 investigations and handoffs. Unlike the old temporary-workspace template, it
-does not promise destruction at session end. Shared scratch stays bounded and
-attributed; concurrent tasks keep detailed notes separately. Frequent source
+does not promise destruction at session end. Shared scratch is a short, attributed current-context index, not another task
+ledger, event log, release history or authority source. Task state stays with the
+host; detailed evidence stays with its owner and is read on demand. Ordinary
+paths or Markdown links avoid automatically including archived history. Managers
+promote only shared decisions and replace superseded entries, preserving useful
+history and unfinished work outside automatic context. Cleanup is deliberate:
+read current files, preserve concurrent edits and unresolved constraints, and do
+not overwrite existing user guidance on an application update. Frequent source
 checkpoints/worktrees belong to child repositories. Local workspace Git is
 optional and enabled by default for **Amplifier development** only. Custom copies
 expose **Initialize local workspace Git**. Enabled setup initializes an empty

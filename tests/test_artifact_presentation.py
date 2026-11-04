@@ -43,6 +43,62 @@ async def test_exact_inline_selection_hide_and_reload_do_not_create_versions(app
     assert app.state['canvasArtifacts'] == original
 
 
+@pytest.mark.parametrize('kind', ['html', 'babylon'])
+@pytest.mark.parametrize('presentation', ['inline', 'saved'])
+async def test_new_page_preserves_disposed_primary_and_exact_presentation(app, kind, presentation):
+    first = await published(app, '<input value="saved one">', kind)
+    identity = first['resourceId']
+    args = {'id': identity, 'version': 1, 'messageId': 'inline-message'}
+    await command(app, 'canvas.select', args)
+    await command(app, 'canvas.versions.revise', {
+        'id': identity, 'expectedRevision': 1, 'content': '<input value="saved two">'})
+    await command(app, 'canvas.select', {**args, 'presentation': 'inline', 'resetPreview': True})
+    lease_args = {'resourceId': identity, 'version': 1, 'messageId': 'inline-message',
+                  'previewId': 'old-page', 'presentationRequest': True}
+    old = (await command(app, 'canvas.views.inline', lease_args))['result']
+    await command(app, 'canvas.views.dirty', {**target(old), 'dirty': True})
+    await command(app, 'view.update', {'patch': {'draft': 'Keep the unsent draft'}})
+
+    # A transport reconnect is still the same page: retain its dirty lease.
+    app.clients.attach('one')
+    assert view(app, old['viewId'])['dirty']
+    assert app.clients.records['one']['canvas']['_presentationDisposed']
+    if presentation == 'saved':
+        await command(app, 'canvas.views.dirty', {**target(old), 'dirty': False})
+        await command(app, 'canvas.select', {**args, 'presentation': 'saved', 'resetPreview': True})
+    before_choices = choices(app)
+    before_canvas = deepcopy(app.clients.records['one']['canvas'])
+    before_artifacts = deepcopy(app.state['canvasArtifacts'])
+
+    # A browser reload resumes the private choice but must allocate fresh leases.
+    app.clients.attach('reload', resume='one')
+    reloaded = app.clients.records['reload']
+    assert choices(app, 'reload') == before_choices
+    assert reloaded['canvas']['_presentationDisposed']
+    assert not reloaded['canvas']['open']
+    assert reloaded['canvas']['selectedVersion'] == reloaded['canvas']['runningVersion'] == 1
+    assert reloaded['canvas']['latestVersion'] == 2
+    assert reloaded['view']['draft'] == 'Keep the unsent draft'
+    assert not reloaded['canvasViews'].get('inline')
+    assert old['viewId'] + ':' + identity not in reloaded['canvasViews']['preferences']
+    assert app.clients.records['one']['canvas'] == before_canvas
+    assert choices(app, 'two') == []
+
+    if presentation == 'inline':
+        opened = (await command(app, 'canvas.views.inline',
+            {**lease_args, 'previewId': 'new-page'}, client='reload'))['result']
+        assert opened['viewId'] != old['viewId']
+        assert not opened['dirty']
+        assert view(app, old['viewId'])['dirty']  # The old client was not reset.
+        with app.clients.bind('reload'):
+            assert app.canvas_views.canvas(opened['viewId'])['content'] == '<input value="saved one">'
+    else:
+        with pytest.raises(AppError, match='presentation changed'):
+            await command(app, 'canvas.views.inline',
+                {**lease_args, 'previewId': 'new-page'}, client='reload')
+    assert app.state['canvasArtifacts'] == before_artifacts
+
+
 async def test_stateful_transition_refusal_retains_frame_and_explicit_ui_reset(app):
     first = await published(app, '<input value="saved">', 'html')
     await command(app, 'canvas.views.status', {**target(first), 'status': 'ready', 'message': 'Synthetic mounted frame'})

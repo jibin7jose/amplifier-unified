@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connect Amplifier</title><link rel="stylesheet" href="client.css">
+<main><p class="eyebrow">AMPLIFIER CONNECT · PREVIEW</p><h1>Connect this browser.</h1>
+<p id="host"></p><p id="status" role="status"></p><div id="code"></div>
+<button id="retry" hidden>Retry background connection</button><p><a id="network-help" target="_blank" rel="noopener" hidden>Open connection help</a></p>
+<figure id="qr-wrap" hidden><img id="qr" width="200" height="200" alt="Scan to approve on another device"><figcaption>Or scan to approve on another device.</figcaption></figure>
+<div id="controls"><label><input type="checkbox" id="browser" checked> Allow tasks in browser tabs I explicitly select</label>
+<button id="connect">Connect</button></div>
+<a id="approval" target="_blank" rel="noreferrer" hidden>Open approval page</a>
+<p id="help">Your service will ask you to approve this app. Then choose a tab using the extension’s toolbar button.</p>
+<button id="upgrade" hidden>Enable browser access</button>
+<button id="task-upgrade" hidden>Enable tasks across pages</button><p>This optional access keeps one selected tab available while it navigates. Your browser displays a debugging indicator. Stop disconnects the tab immediately.</p>
+<a id="return" hidden>Return to Devices & apps</a>
+<details id="advanced"><summary>Connection details</summary><p>Your saved access is reused when the browser reconnects. You can remove it from Devices & apps.</p><button id="rotate" hidden>Refresh access</button></details>
+</main><script src="network.js"></script><script src="connect.js"></script></html>

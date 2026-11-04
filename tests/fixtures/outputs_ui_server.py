@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -46,10 +47,32 @@ async def main(home):
     runner=web.AppRunner(app);await runner.setup();site=web.TCPSite(runner,'127.0.0.1',0);await site.start()
     url=f'http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}'
     app['allowed_origins']=app['allowed_origins']|{url}
-    print(json.dumps({'url':url,'sessionId':sid,'original':original,'workspace':str(root)}),flush=True)
-    try:await asyncio.Event().wait()
-    finally:await runner.cleanup()
+    stopped=asyncio.Event();loop=asyncio.get_running_loop();installed_signals=[]
+    shutdown={'pid':os.getpid(),'home':str(home),'signal':None,'runnerCleanup':False}
+    def request_stop(signum):
+        shutdown['signal']=signal.Signals(signum).name
+        stopped.set()
+    try:
+        # POSIX qualification requires these handlers before reporting readiness.
+        # Other platforms retain startup support, but cannot claim graceful
+        # signal cleanup without the receipt and a normal process exit.
+        for signum in (signal.SIGTERM,signal.SIGINT) if os.name=='posix' else ():
+            loop.add_signal_handler(signum,request_stop,signum)
+            installed_signals.append(signum)
+        print(json.dumps({'url':url,'sessionId':sid,'original':original,'workspace':str(root)}),flush=True)
+        await stopped.wait()
+    finally:
+        try:
+            await runner.cleanup()
+            shutdown['runnerCleanup']=True
+        finally:
+            for signum in installed_signals:
+                loop.remove_signal_handler(signum)
+    return shutdown
 
 
 if __name__=='__main__':
-    with tempfile.TemporaryDirectory(prefix='outputs-fixture-') as home:asyncio.run(main(Path(home)))
+    with tempfile.TemporaryDirectory(prefix='outputs-fixture-') as home:
+        shutdown=asyncio.run(main(Path(home)))
+    shutdown['homeRemoved']=not Path(home).exists()
+    print(json.dumps({'outputsFixtureCleanup':shutdown}),flush=True)

@@ -35,6 +35,14 @@ RESOURCE_PRESETS = {
         'background': 'none',
         'radius': '8px', 'heading': 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif', 'tag': 'Architectural',
     },
+    'ready': {
+        'name': 'Breadbin',
+        'description': 'Warm ivory casing, a violet conversation screen and a restrained four-color header edge. Static and self-contained.',
+        'palette': {'bg': '#d5c6a6', 'surface': '#f7f1e6', 'ink': '#332d28', 'accent': '#43367b', 'line': '#b6a88d'},
+        'background': 'none',
+        'radius': '5px', 'heading': 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        'tag': 'Retro / Hardware',
+    },
 }
 PRESETS = {
     'aurora': {

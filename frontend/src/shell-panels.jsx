@@ -4,7 +4,7 @@ import {PublishingSettings} from './publishing';
 import {ChatOverview} from './work-overview';
 import {PermissionHistory,approvalGroups} from './approval-card';
 import {NavigationOpen,useModalFocus,navigationExpanded} from './responsive-navigation';
-import {CanvasControlsHost,CanvasPrimaryActionsHost} from './canvas-controls';
+import {CanvasControlsHost,CanvasPrimaryActionsHost,CanvasDocumentRefresh,CanvasVersionLoadProvider} from './canvas-controls';
 import {CanvasOverviewSection,useCanvasReading,useCanvasOverviewState} from './canvas-overview-state';
 import {CanvasWorkspace} from './canvas-workspace';
 import {McpAppVisibilityProvider} from './mcp-app-lifecycle';
@@ -172,7 +172,7 @@ export function AgentCanvas({state,act,dispatch=act,suppressed=false,settingsSur
  },[visible,overview,state.selectedSessionId,draft.delivery,draft.permissionHistoryKey]);
  if(!mounted.current)return null;
  const latestEvent=canvas.events?.at(-1);
- return <CanvasPrimaryActionsHost.Provider value={actionsHost}><CanvasControlsHost.Provider value={controlsHost}><aside ref={panel} id="workspace-canvas" className="a-canvas-panel" hidden={suppressed||!canvas.open||!state.selectedSessionId} inert={suppressed||!canvas.open||!state.selectedSessionId} aria-hidden={suppressed||!canvas.open||!state.selectedSessionId||undefined} data-part="canvas" data-mode={overview?'overview':'artifact'} data-focused={focused} data-controls={controls} data-pinned={!!view.canvasControlsPinned} aria-label="Canvas" role={focused?'dialog':undefined} aria-modal={focused||undefined} aria-owns={focused?'canvas-toggle':undefined} onKeyDown={event=>{
+ return <CanvasVersionLoadProvider view={resourceView}><CanvasPrimaryActionsHost.Provider value={actionsHost}><CanvasControlsHost.Provider value={controlsHost}><aside ref={panel} id="workspace-canvas" className="a-canvas-panel" hidden={suppressed||!canvas.open||!state.selectedSessionId} inert={suppressed||!canvas.open||!state.selectedSessionId} aria-hidden={suppressed||!canvas.open||!state.selectedSessionId||undefined} data-part="canvas" data-mode={overview?'overview':'artifact'} data-focused={focused} data-controls={controls} data-pinned={!!view.canvasControlsPinned} aria-label="Canvas" role={focused?'dialog':undefined} aria-modal={focused||undefined} aria-owns={focused?'canvas-toggle':undefined} onKeyDown={event=>{
   if(controls&&event.key==='Escape'&&!event.defaultPrevented&&!event.target.closest('dialog[open]')){event.preventDefault();closeControls()}
  }}>
 
@@ -187,7 +187,8 @@ export function AgentCanvas({state,act,dispatch=act,suppressed=false,settingsSur
    <div ref={readerRef} className="a-canvas-reader" inert={covered} aria-hidden={covered||undefined}>
    <div className="a-canvas-artifact-toolbar" hidden={overview||!hasContent}>
     <strong title={canvas.title}>{canvas.title}</strong>
-    {resourceView?.versions?.length>0&&<button type="button" className="a-canvas-version-shortcut a-soft" aria-label="Choose artifact version" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>openControls('version')}>v{resourceView.selectedVersion??resourceView.latestVersion}{resourceView.selectedVersion!=null?' · Saved':''}</button>}
+    {resourceView?.versions?.length>0&&<button type="button" className="a-canvas-version-shortcut a-soft" aria-label="Choose artifact version" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>openControls('version')}>v{resourceView.runningVersion??resourceView.selectedVersion??resourceView.latestVersion}{resourceView.selectedVersion!=null?' · Saved':''}</button>}
+    {resourceView?.versions?.length>0&&!canvas.app&&!['settings','browser','mcp-app'].includes(canvas.kind)&&<CanvasDocumentRefresh key={state.selectedSessionId+':'+resourceView.resourceId+':'+(resourceView.selectedVersion??'latest')} view={resourceView} dispatch={dispatch}/>}
     <div ref={setActionsHost} className="a-canvas-primary-actions"/>
     <button type="button" className="a-soft a-canvas-details" aria-label="Canvas details" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>controls?closeControls():openControls()}><Info/><span>Details</span></button>
    </div>
@@ -217,5 +218,5 @@ export function AgentCanvas({state,act,dispatch=act,suppressed=false,settingsSur
    </aside>
   </div>
   {latestEvent&&<div className="a-canvas-event" role="status"><Check/><span>Response recorded · {latestEvent.name}</span><small>The agent can see this response in app state.</small></div>}
- </aside></CanvasControlsHost.Provider></CanvasPrimaryActionsHost.Provider>;
+ </aside></CanvasControlsHost.Provider></CanvasPrimaryActionsHost.Provider></CanvasVersionLoadProvider>;
 }

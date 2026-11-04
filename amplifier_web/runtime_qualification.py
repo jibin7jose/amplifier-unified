@@ -323,7 +323,7 @@ async def freeze(manager, generation, project):
     policies = await qualify_cache_policies(policies, checked, process)
     if not graph:
         raise ValueError('The prepared worker has no installed distribution evidence.')
-    content = frozen_manifest(environments.manifest_path().read_bytes(), graph)
+    content = frozen_manifest(environments.declared_manifest(), graph)
     # Share only a fully qualified immutable graph with the same Python/OS
     # contract. Active environments are never uv-synced or repaired in place.
     # Generation receipts retain separate ref policy and rollback identity.
@@ -383,7 +383,7 @@ async def freeze(manager, generation, project):
             manager.diagnostics.record('ecosystem-runtime-reuse', 'succeeded')
     from .deployment import write_private
     write_private(receipt / 'runtime-project.json', json.dumps({'project': final.name}))
-    receipt.joinpath('runtime-base.toml').write_bytes(environments.manifest_path().read_bytes())
+    receipt.joinpath('runtime-base.toml').write_bytes(environments.declared_manifest())
     shutil.copy2(final / 'pyproject.toml', receipt / 'runtime.toml')
     shutil.copy2(final / 'uv.lock', receipt / 'runtime.lock')
     receipt.joinpath('runtime-sources.json').write_text(json.dumps(policies, indent=2) + '\n')

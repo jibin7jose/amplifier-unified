@@ -1,5 +1,6 @@
 """Synthetic receiving-only fixture. Model/provider starts are forbidden."""
 import asyncio
+import copy
 import json
 import hashlib
 import os
@@ -7,12 +8,14 @@ from pathlib import Path
 import signal
 import sys
 import tempfile
+from types import SimpleNamespace
 
-ROOT = Path(sys.argv[1]).resolve()
+ROOT = Path(sys.argv[1]).resolve() if __name__ == "__main__" else Path(__file__).resolve().parents[2]
 INSTALLED = os.environ.get("AMPLIFIER_TEST_INSTALLED_STATIC") == "1"
-if not INSTALLED:
-    sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "tests"))
+if __name__ == "__main__":
+    if not INSTALLED:
+        sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(ROOT / "tests"))
 from aiohttp import web
 from amplifier_web import server
 from amplifier_web.server import create_app
@@ -22,18 +25,104 @@ from test_collaborative_workspaces import generation, agent_action
 class NoModel:
     def __init__(self):
         self.starts = self.sends = 0
+        self.native_submits = 0
+        self.calls = []
+        self.expected = None
+
+    def bind_watch(self, service, watch, recipient):
+        assert self.expected is None
+        assert watch["commandAction"] == "coordination.watch" and watch["watch"]["status"] == "waiting"
+        assert watch["senderSessionId"] == recipient["id"]
+        self.service = service
+        self.expected = {"inputId": watch["subscription"]["continuationId"],
+                         "watchId": watch["requestId"], "recipientId": recipient["id"],
+                         "senderId": watch["target"]["sessionId"],
+                         "generationId": recipient["collaborationGeneration"]["id"]}
 
     async def start(self, *args):
         self.starts += 1
+        self.calls.append({"method": "start", "fatal": "Model start prohibited"})
         raise AssertionError("Receiving fixture cannot start a model")
 
     async def send(self, *args):
         self.sends += 1
+        self.calls.append({"method": "send", "inputId": args[2] if len(args) > 2 else None,
+                           "fatal": "Model send prohibited"})
         raise AssertionError("Receiving fixture cannot send to a model")
 
-    async def collaboration_input(self, *args):
-        self.sends += 1
-        raise AssertionError("Receiving fixture cannot admit a notification")
+    async def submit(self, value, *args):
+        self.native_submits += 1
+        self.calls.append({"method": "submit", "inputId": getattr(value, "id", None),
+                           "fatal": "Native submission prohibited"})
+        raise AssertionError("Receiving fixture cannot submit native input")
+
+    async def collaboration_input(self, session, args, guard, emit):
+        from amplifier_web.collaboration_input import deliver
+        observed = {"method": "collaboration_input", "sessionId": session["id"],
+                    "arguments": copy.deepcopy(args), "authorizations": []}
+        self.calls.append(observed)
+        try:
+            expected = self.expected
+            assert expected and args.get("inputId") == expected["inputId"], "Unexpected input"
+            assert session["id"] == expected["recipientId"], "Unexpected recipient"
+            assert args.get("automaticDelivery") is True, "Expected automatic watch delivery"
+
+            def task():
+                current = self.service._session(session["id"])
+                return current.get("task") or self.service.coordination.task(session["id"])
+
+            async def no_task():
+                # This receiving fixture has no task. Do not simulate a broader
+                # task/budget policy; the real host guards still run below.
+                assert not task(), "Unexpected saved task"
+                return True
+
+            async def authorize(values):
+                check = {"guardReason": guard()}
+                observed["authorizations"].append(check)
+                assert check["guardReason"] is None, "Host guard refused"
+                receipt = self.service.collaboration.receipt(values["inputId"])
+                observed["receipt"] = {key: copy.deepcopy(receipt.get(key)) for key in
+                    ("requestId", "inputId", "messageId", "origin", "mode", "delivery",
+                     "dependencyRequestId", "dependencyOutcomeRevision", "dependencySatisfied")}
+                assert receipt["origin"] == "system" and receipt["mode"] == "auto", "Not a system auto input"
+                assert receipt["target"]["sessionId"] == expected["recipientId"]
+                assert receipt["senderSessionId"] == expected["senderId"]
+                assert receipt["dependencyRequestId"] == expected["watchId"], "Wrong watch dependency"
+                watch = self.service.collaboration.receipt(expected["watchId"])
+                assert watch["commandAction"] == "coordination.watch" and watch["watch"]["status"] == "changed"
+                assert watch["subscription"]["continuationId"] == values["inputId"]
+                assert receipt["dependencyOutcomeRevision"] == 1 and receipt["dependencySatisfied"] is False
+                current = self.service._session(session["id"])
+                assert session["status"] == current["status"] == "working", "Recipient no longer busy"
+                assert not current["collaborationGeneration"].get("terminal")
+                assert session["collaborationGeneration"]["id"] == current["collaborationGeneration"]["id"] == expected["generationId"]
+                permission = self.service.collaboration.admission(session["id"], values)
+                check.update(admitted=permission.get("admitted"), currentGenerationId=permission.get("currentGenerationId"))
+                assert permission.get("admitted") is True, "Canonical host admission refused"
+                assert permission.get("currentGenerationId") == expected["generationId"]
+                assert not any(permission.get(key) for key in ("humanResume", "completedTaskInput", "blockedTaskInput"))
+                return permission
+
+            def no_idle():
+                raise AssertionError("The expected watch must not reach idle submission")
+
+            controls = SimpleNamespace(
+                tasks=SimpleNamespace(record=task, continuation_allowed=no_task),
+                coordinator=SimpleNamespace(session_state={}, get_capability=lambda name: None),
+                require_idle=no_idle)
+            native = SimpleNamespace(generation={"id": expected["generationId"]}, closed=False,
+                stop_requested=False, steering_closed=True, max_input_chars=200_000, submit=self.submit)
+            result = await deliver(controls, native, args, None, authorize,
+                stop_epoch=lambda: self.service._session(session["id"]).get("interruptionRevision", 0))
+            observed["result"] = copy.deepcopy(result)
+            assert len(observed["authorizations"]) == 2
+            assert result == {"accepted": False, "effect": "none", "waitingForBoundary": True,
+                              "reason": "Waiting for a supported recipient boundary."}, "Unexpected admission outcome"
+            return result
+        except BaseException as exc:
+            observed["fatal"] = type(exc).__name__ + ": " + str(exc)
+            raise
 
     async def close(self):
         pass
@@ -130,12 +219,19 @@ async def main():
         watch = await agent_action(service, recipient, 'coordination.watch', {
             'sessionId': recipient['id'], 'targetSessionId': sender['id'],
             'condition': 'status_changed', 'expiresInSeconds': 60}, 'visible-watch')
+        runtime.bind_watch(service, watch, recipient)
         await service.on_runtime_event('runtime.status', {'sessionId': sender['id'], 'status': 'idle'})
         notification = service.collaboration.receipt(watch['subscription']['continuationId'])
         service._publish()
 
         async def facts(request):
+            receipt = service.collaboration.receipt(runtime.expected["inputId"])
             return web.json_response({"starts": runtime.starts, "sends": runtime.sends, "probeAttempts": probe_attempts,
+                "nativeSubmits": runtime.native_submits, "boundaryCalls": runtime.calls,
+                "expectedBoundary": runtime.expected,
+                "notificationReceipt": {key: receipt.get(key) for key in
+                    ("requestId", "inputId", "messageId", "origin", "mode", "delivery",
+                     "dependencyRequestId", "dependencyOutcomeRevision", "dependencySatisfied", "admission")},
                 "queryWorkers": len(query_workers),
                 "peerTextDigest": hashlib.sha256(peer_text.encode()).hexdigest(), "peerTextLength": len(peer_text.encode()),
                 "agent": agent["messageId"], "human": human["messageId"], "older": older["messageId"],
@@ -178,4 +274,5 @@ async def main():
             await runner.cleanup()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

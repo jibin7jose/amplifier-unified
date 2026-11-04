@@ -8,10 +8,86 @@ const server=await createServer({server:{middlewareMode:true,hmr:false},appType:
 const {ChatDetails,WorkspaceManager}=await server.ssrLoadModule('/src/shell/navigation-components.jsx');
 const {WorkspaceRail:Rail,ChatRename,AgentCanvas,CanvasToggle,A2UISurface,reopenCanvas,SessionHistoryControls}=await server.ssrLoadModule('/src/shell-panels.jsx');
 const {WorkHeader}=await server.ssrLoadModule('/src/work-shell.jsx');
+const {CanvasDocumentRefresh}=await server.ssrLoadModule('/src/canvas-controls.jsx');
 const {WorkNavigationContext}=await server.ssrLoadModule('/src/work-navigation.js');
 function WorkspaceRail(props){return React.createElement(Rail,{...props,shell:shellFor(props.state,props.act)})}
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+test('document Refresh reads saved state only and ignores an obsolete response',async()=>{
+ let root,resolve,reject,completion,calls=[];
+ let view={viewId:'primary',resourceId:'one',resourceRevision:'body-one',selectedVersion:1,latestVersion:2};
+ const dispatch=(name,args)=>{calls.push([name,args]);return new Promise((yes,no)=>{resolve=yes;reject=no})};
+ const render=()=>React.createElement(CanvasDocumentRefresh,{view,dispatch});
+ await renderAct(async()=>{root=create(render())});
+ const button=()=>root.root.findByProps({'aria-label':'Refresh document'});
+ const text=()=>JSON.stringify(root.toJSON());
+ assert.match(text(),/Historical · Version 2 available/);
+ await renderAct(async()=>{completion=button().props.onClick()});
+ assert.equal(button().props['aria-disabled'],true);assert.match(text(),/Checking saved content/);
+ await renderAct(async()=>{await button().props.onClick()});
+ assert.deepEqual(calls,[['canvas.views.inspect',{}]],'No duplicate, reload, selection or source-file action');
+ view={...view,resourceId:'two',selectedVersion:null,latestVersion:1};await renderAct(async()=>root.update(render()));
+ await renderAct(async()=>{resolve({result:{views:[{...view,resourceId:'one',selectedVersion:1}]}});await completion});
+ assert.doesNotMatch(text(),/Checked|Could not refresh/);
+ await renderAct(async()=>{completion=button().props.onClick()});
+ await renderAct(async()=>{reject(Error('Offline'));await completion});
+ assert.match(text(),/Could not refresh: Offline/);assert.equal(button().props['aria-disabled'],false);
+ await renderAct(async()=>{completion=button().props.onClick()});
+ await renderAct(async()=>{resolve({result:{views:[view]}});await completion});
+ assert.match(text(),/Checked · Latest · Version 1 · Current saved content/);
+ await renderAct(async()=>{completion=button().props.onClick()});
+ view={...view,resourceRevision:'body-two',latestVersion:2};await renderAct(async()=>root.update(render()));
+ assert.equal(button().props['aria-disabled'],true);assert.match(text(),/Checking saved content/);
+ await renderAct(async()=>{reject(Error('Disconnected after update'));await completion});
+ assert.match(text(),/Disconnected after update/);assert.equal(button().props['aria-disabled'],false);
+ await renderAct(async()=>{completion=button().props.onClick()});
+ await renderAct(async()=>{resolve({result:{views:[view]}});await completion});
+ assert.match(text(),/Checked · Latest · Version 2/);
+ await renderAct(async()=>root.unmount());
+});
 test.after(()=>server.close());
+test('retained executable preview labels running version and loads only the clicked exact revision',async()=>{
+ let root,resolve,completion;
+ const calls=[],view={viewId:'primary',resourceId:'html-one',resourceRevision:'v1-body',generation:2,selectedVersion:null,runningVersion:1,latestVersion:2,previewRetained:true};
+ const dispatch=(name,args)=>{calls.push({name,args});return new Promise(done=>{resolve=done})};
+ const render=()=>React.createElement(CanvasDocumentRefresh,{view,dispatch});
+ await renderAct(async()=>{root=create(render())});
+ assert.match(JSON.stringify(root.toJSON()),/Viewing v1 · v2 available · preview retained/);
+ const button=()=>root.root.findByProps({className:'a-soft a-canvas-load-version'});
+ await renderAct(async()=>{completion=button().props.onClick()});
+ view.latestVersion=3;await renderAct(async()=>root.update(render()));
+ await renderAct(async()=>button().props.onClick());
+ assert.deepEqual(calls,[{name:'canvas.views.loadVersion',args:{viewId:'primary',resourceId:'html-one',resourceRevision:'v1-body',generation:2,version:2}}]);
+ await renderAct(async()=>{resolve({accepted:true});await completion});
+ await renderAct(async()=>root.unmount());
+});
+for(const outcome of ['accepted-read-failed','unknown','refused'])test('Canvas Load feedback preserves '+outcome+' separately from readback',async()=>{
+ let root,loads=0,reads=0,failRead=true;
+ const view={viewId:'primary',resourceId:'feedback-html',resourceRevision:'v1',generation:4,selectedVersion:null,runningVersion:1,latestVersion:2,previewRetained:true};
+ const accepted={accepted:true,result:{...view,runningVersion:2,resourceRevision:'v2',generation:5},stateConfirmation:{status:'unconfirmed',message:'read unavailable'}};
+ const dispatch=async name=>{
+  if(name==='canvas.views.inspect'){reads++;if(failRead)throw Error('read unavailable');return {accepted:true,result:{views:[view]}}}
+  loads++;
+  if(outcome==='accepted-read-failed')return accepted;
+  throw Object.assign(Error(outcome==='refused'?'unfinished edits':'connection lost'),{unconfirmed:outcome==='unknown'});
+ };
+ await renderAct(async()=>{root=create(React.createElement(CanvasDocumentRefresh,{view,dispatch}))});
+ const load=()=>root.root.findByProps({className:'a-soft a-canvas-load-version'}),refresh=()=>root.root.findByProps({'aria-label':'Refresh document'});
+ const text=()=>JSON.stringify(root.toJSON());
+ await renderAct(async()=>load().props.onClick());
+ if(outcome==='refused'){
+  assert.match(text(),/unfinished edits.*current preview is retained/);assert.equal(load().props['aria-disabled'],false);
+ }else{
+  assert.match(text(),outcome==='unknown'?/completion is unconfirmed/:/Load v2 was accepted/);
+  assert.doesNotMatch(text(),/preview retained|preview is retained/);
+  assert.equal(load().props['aria-disabled'],true);
+  await renderAct(async()=>load().props.onClick());assert.equal(loads,1);
+  await renderAct(async()=>refresh().props.onClick());
+  assert.doesNotMatch(text(),/open document is retained/);assert.equal(load().props['aria-disabled'],true);
+  failRead=false;await renderAct(async()=>refresh().props.onClick());
+  assert.equal(loads,1);assert.equal(reads,2);assert.equal(load().props['aria-disabled'],false);
+ }
+ await renderAct(async()=>root.unmount());
+});
 const initial=()=>({view:{navExpanded:true,navSimple:false},workspaceExplorer:{path:'/',parentPath:null,breadcrumbs:[{name:'/',path:'/'}],filter:'',page:1,pages:1,totalWorkspaces:2,rows:[{path:'/one',name:'one',workspaceId:'one',chatCount:2,canBrowse:false,unread:0},{path:'/two',name:'two',workspaceId:'two',chatCount:1,canBrowse:false,unread:0}]},workspaces:[{id:'one',name:'One',path:'/one',available:true},{id:'two',name:'Two',path:'/two',available:true}],selectedWorkspaceId:'one',sessions:[{id:'a',title:'First plan',workspace:'/one'},{id:'b',title:'Another plan',workspace:'/one'},{id:'c',title:'Other workspace',workspace:'/two'}]});
 
 test('workspace drill-in filters independently of Recent',async()=>{

@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from filelock import FileLock
 from amplifier_worktrees.git import atomic
 from .host.config import PRECONFIGURED_BUNDLES
-from .bundle_selection import catalog_entry
+from .bundle_selection import catalog_entry, defaults
 
 DEVELOPMENT_INSTRUCTIONS = """# Development workspace
 
@@ -34,7 +34,7 @@ Typical layout:
 
     workspace/
       AGENTS.md               workspace-wide guidance
-      SCRATCH.md              bounded shared working memory
+      SCRATCH.md              current shared context and detail links
       .amplifier/             host configuration and instruction entry point
       project-one/            its own .git and project conventions
       project-two/            its own .git and project conventions
@@ -52,28 +52,38 @@ Use small, meaningful commits in the child repository for reversible checkpoints
 
 @SCRATCH.md
 
-Keep SCRATCH.md bounded and focused on current goals, important facts, decisions, open questions and the next action, not a growing activity log. Attribute updates to their task/conversation. Concurrent work keeps detailed notes in task-specific files or host task records; do not overwrite another task's shared notes. Promote only relevant shared decisions and prune stale material deliberately.
+SCRATCH.md is loaded into every request. Keep it a short current context and index: shared focus, decisions still relevant to several tasks, and links to the owning task or evidence. It is not a task database, event log, release ledger, copy of a transcript, or source of authority. Saved host tasks and receipts own status; actual user instructions and current permissions own authority. Do not copy their full records here or treat an old note as a current hold.
+
+Workers keep implementation notes, failed attempts, detailed checks and receipts with their own task. The manager promotes only decisions that other workers need. Use ordinary paths or Markdown links for on-demand details; do not add instruction includes that load archives, logs or whole task folders into every request. Keep durable workspace conventions in AGENTS.md, not in SCRATCH.md.
+
+Replace superseded current entries rather than appending a new dated account. Preserve unfinished work and useful history in a task file or archive outside automatic context; obsolete duplicate notes need not be retained. Read current contents before editing, update only your owned section, and preserve concurrent changes. Keep owner and next decision beside any unresolved shared blocker. A scratch edit neither completes a task nor resolves an unknown operation.
+
+## Managers and independent workers
+
+One manager coordinates many independent goal-driven workers when the work permits. Split the objective into useful deliverables with clear ownership, acceptance criteria, dependencies and existing authority. Each worker carries its deliverable through implementation, ordinary repairs, focused isolated checks and a reviewable result or PR. Use separate working copies for concurrent source writers through supported host placement; do not share a mutable checkout by accident.
+
+The manager prioritizes, integrates, reviews and resolves cross-task decisions. Workers report a completed result or a concrete blocker requiring someone else, not every step or passing check. Routine repair and testing within the assigned objective do not need another approval. Reuse evidence when its relevant inputs are unchanged. Keep actual Stop, permissions, explicit limits and uncertain-effect recovery intact. Resource pressure may delay a dependent check; it does not require idling unrelated work.
 
 ## External resources and completion
 
 Record externally created resources promptly using the host's workspace resource actions: exact identifier, owner, purpose and cleanup responsibility. Containers, previews and cloud resources do not disappear when a folder or registration does. Keep active, reaped (our confirmed teardown), and observed_absent (independent absence) distinct, with evidence. Inventory entries do not authorize teardown. Before finishing, reconcile resources, preserve remaining work, provide an explicit cleanup handoff where needed, and verify the promised result at the user-visible boundary. A local-only project must be backed up or published deliberately before any approved deletion of its folder.
 """
 
-SCRATCH_TEMPLATE = """# Workspace working memory
+SCRATCH_TEMPLATE = """# Current workspace context
 
-Keep this file bounded. Record current state and the next action, not a log. Attribute notes to their task or conversation; preserve other tasks' entries.
+This file is loaded into every request. Keep only current shared context and links to details; replace stale entries rather than appending history. It is not a task database, event log or source of authority. Host tasks and receipts own status; user instructions and current permissions own authority.
 
-## Shared goals and decisions
+## Current focus and shared decisions
 
-No shared decisions recorded yet.
+No shared decisions recorded yet. Keep only decisions that still affect several tasks; durable workspace conventions belong in AGENTS.md.
 
-## Active tasks
+## Unresolved shared blockers
 
-For each task: owner/conversation, current state, open question, next action. Keep detailed concurrent notes with the task, not in one overwrite-prone journal.
+Record an owner, the missing decision or dependency, and a pointer to its current task. A scratch note does not resolve an unknown operation or complete work.
 
-## Resources and handoffs
+## Detail index
 
-Use the host's workspace resource inventory for identifiers, owners and evidence. Record any remaining responsibility here with a link or identifier.
+Link to task-owned notes and exact evidence only when another worker needs them. Use ordinary paths or Markdown links, not automatic instruction includes. Do not paste transcripts, full receipts, release history or duplicate task status here. Workers keep their own detail; the manager promotes only shared decisions. Before editing, reread and preserve other owners' current changes. Move useful superseded history outside automatic context; preserve unfinished work and discard obsolete duplicate notes.
 """
 
 BUILTINS = [
@@ -148,11 +158,12 @@ def definition(value, bundle_names=None):
 
 
 class StarterCatalog:
-    def __init__(self, home, bundles=None, sources=None):
+    def __init__(self, home, bundles=None, sources=None, *, inherit_amplifier_default=False):
         self.path = home / 'workspace-starters.json'
         self.bundles = copy.deepcopy(bundles if bundles is not None else [catalog_entry(name) for name in PRECONFIGURED_BUNDLES])
         self.bundle_names = {row['value'] for row in self.bundles}
         self.sources = dict(sources or {})
+        self.inherit_amplifier_default = inherit_amplifier_default
 
     def _read(self):
         if not self.path.exists():
@@ -167,7 +178,12 @@ class StarterCatalog:
 
     def listing(self):
         value = self._read()
-        builtins = [{**copy.deepcopy(row), 'builtIn': True, 'revision': 5 if row['id'] != 'blank' else 1} for row in BUILTINS]
+        revisions = {'blank': 1, 'development': 6, 'amplifier-development': 7}
+        builtins = [{**copy.deepcopy(row), 'builtIn': True, 'revision': revisions[row['id']]} for row in BUILTINS]
+        if self.inherit_amplifier_default:
+            # Inherit deliberately saved defaults, not the automatic Work fallback.
+            # Only future built-in snapshots change; saved custom choices do not.
+            next(row for row in builtins if row['id'] == 'amplifier-development')['bundle'] = ''
         # Older custom definitions retain their behavior; no file migration.
         customs = [{**copy.deepcopy(row), 'scratch': row.get('scratch', False), 'rootGit': row.get('rootGit', False)} for row in value['items']]
         return {'revision': value['revision'], 'items': builtins + customs,
@@ -238,8 +254,10 @@ def configured_catalog(service):
     from .host.config import read_config
     from .bundles import offered_catalog
     config = read_config(service.state['settings']['workspace'], home=service.data_dir)
+    inherited = defaults(service.data_dir, service.state['settings']['workspace'],
+                         service.state['settings'].get('appBundle'), global_only=True)
     return StarterCatalog(service.data_dir, offered_catalog(config), {
         name: config.resolve_source(config.registrations[name]) or config.registrations[name]
         for name in config.settings.get('bundle', {}).get('added', {})
         if name in config.registrations
-    })
+    }, inherit_amplifier_default=bool(inherited['app'] or inherited['shared']))

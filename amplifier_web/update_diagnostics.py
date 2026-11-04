@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import errno
 import os
 import re
@@ -10,6 +11,7 @@ import time
 import uuid
 
 PROBE_PREFIX = 'AMPLIFIER_UPDATE_PROBE='
+MAX_ACTIVE_FAILURES = 32
 ERROR_TYPES = {'Exception','CommandFailure','CommandTimeout','AssertionError','ImportError','ModuleNotFoundError','FileNotFoundError','PermissionError',
                'OSError','RuntimeError','ValueError','TimeoutError','CancelledError','ModuleActivationError',
                'BundleNotFoundError','BundleLoadError','BundleValidationError','BundleDependencyError','HostComponentConflict','AmbiguousBundleReferenceError',
@@ -21,9 +23,31 @@ STORAGE_REASONS = {getattr(errno, name): reason for name, reason in {
     'ENOSPC': 'disk-full', 'EDQUOT': 'disk-quota-exceeded',
     'EACCES': 'storage-permission-denied', 'EPERM': 'storage-permission-denied',
     'EROFS': 'read-only-storage'}.items() if hasattr(errno, name)}
-RECOVERY_REASONS = {'smart-tool-startup-failed', 'smart-tool-update-failed', 'missing-configured-environment', 'incompatible-conversation-loop', 'protected-runtime-source', 'runtime-source-constraint', 'runtime-source-changed', 'runtime-resolution-mismatch', 'runtime-installed-source-mismatch', *PREPARATION_REASONS.values(), *STORAGE_REASONS.values()}
+RECOVERY_REASONS = {'smart-tool-startup-failed', 'smart-tool-update-failed', 'missing-configured-environment', 'incompatible-conversation-loop', 'protected-runtime-source', 'runtime-source-constraint', 'runtime-source-unbound', 'runtime-source-conflict', 'runtime-source-changed', 'runtime-resolution-mismatch', 'runtime-installed-source-mismatch', *PREPARATION_REASONS.values(), *STORAGE_REASONS.values()}
 RESOLUTION_FIELDS = {'source', 'repository', 'ref', 'subdirectory', 'revision'}
 PROBE_STAGES = {'imports','package','assets','login','terminal','complete','prepare','prepared','capabilities','cleanup','worker-imports'}
+
+def sanitized_application_extras(value):
+    """Public optional-feature scope; missing or malformed is unknown, not base."""
+    if value is None:
+        return None
+    from .app_updates import validated_extras
+    try:
+        return validated_extras(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def disposition_occurrence(identity, group):
+    """Separate from read identity: every occurrence invalidates a close request."""
+    eligible = identity == 'updates:failure-overflow' or (
+        group.get('kind') == 'application' and
+        sanitized_application_extras(group.get('latest', {}).get('applicationExtras')) is None)
+    if not eligible:
+        return None
+    observed = [identity, group.get('id'), group.get('firstAt'), group.get('first'),
+                group.get('latest'), group.get('occurrences')]
+    return hashlib.sha256(json.dumps(observed, sort_keys=True).encode()).hexdigest()
 
 
 def exception_type(error):
@@ -60,6 +84,8 @@ def exception_facts(error):
 
 def failure_guidance(event):
     return {
+        'runtime-source-unbound': 'A selected component has no matching source binding for its declared ref and commit. The current components remain active. This does not establish local edits. Share the update diagnostics; do not change refs or remove caches to bypass this check.',
+        'runtime-source-conflict': 'Selected declarations name conflicting refs for one component repository. The current components remain active. This does not establish local edits. Share the update diagnostics before changing source configuration.',
         'runtime-source-constraint': 'A package source declaration could not be reconciled with the selected component. The current components remain active. This does not establish local edits. Share the update diagnostics for review; do not remove pins or caches to bypass this check.',
         'runtime-installed-source-mismatch': 'A component changed to a different source during update preparation. Amplifier kept the current components active. Check for an app update before retrying; if this happens again, share the update details.',
         'disk-full': 'The update stopped because its destination disk is full. Free space on the computer running Amplifier, then try again.',
@@ -164,8 +190,148 @@ class UpdateDiagnostics:
         self.state=manager.service.state['updates'].setdefault('diagnostics',{'events':[]})
         self.state.setdefault('events',[])
         self.path=manager.directory/'diagnostics.jsonl'
+        # An old lastFailure may be history after exact restart reconciliation.
+        if 'activeFailures' not in self.state:
+            self.state['activeFailures'] = {}
+            updates = manager.service.state['updates']
+            failure = self.state.get('lastFailure')
+            reconciliation = updates.get('reconciliation') or {}
+            recovered = bool(failure and failure.get('kind') == 'application' and failure.get('attemptId') and
+                reconciliation.get('attemptId') == failure['attemptId'] and
+                reconciliation.get('verifiedAt', 0) >= failure.get('at', 0))
+            if failure and not recovered:
+                self._track_failure(failure)
+        self._pending_failure = None
 
-    def begin(self,kind,revision=None,attempt_id=None,*,tier=None,components=()):
+    def _track_failure(self, event):
+        phase = event.get('phase', '')
+        kind = event.get('kind') or ('application' if phase.startswith(('app-', 'restart-')) else
+                                    'ecosystem' if phase.startswith('ecosystem-') else 'update')
+        if kind == 'rollback':
+            kind = 'ecosystem'
+        if kind not in {'application', 'ecosystem'}:
+            return  # Other domains retain their existing owner recovery semantics.
+        # Attempt/command IDs, elapsed time and byte counts are occurrences, not
+        # causes. Retain every original receipt in the existing diagnostic sink.
+        cause = {key: event[key] for key in (
+            'phase', 'reason', 'component', 'package', 'errorType', 'osError',
+            'expectedRevision', 'observedRevision', 'resolutionMismatches',
+            'expectedVersion', 'observedVersion', 'failureLocation', 'probe') if key in event}
+        if 'probe' in cause:
+            cause['probe'] = {key: value for key, value in cause['probe'].items()
+                              if key not in {'elapsedMs', 'profileIndex'}}
+        cause['tier'] = self.state.get('batch', {}).get('tier')
+        if kind == 'application':
+            cause['revision'] = event.get('revision')
+            cause['applicationExtras'] = sanitized_application_extras(event.get('applicationExtras'))
+        if not (event.get('component') or event.get('package') or event.get('probe', {}).get('package')):
+            batch = self.state.get('batch', {})
+            cause['scope'] = [batch.get('components', []), batch.get('componentCount', 0)]
+        fingerprint = hashlib.sha256(json.dumps(cause, sort_keys=True).encode()).hexdigest()
+        active = self.state.setdefault('activeFailures', {})
+        key = kind + ':' + fingerprint
+        previous = active.get(key)
+        if previous:
+            previous.update(occurrences=previous['occurrences'] + 1, latest=event)
+        else:
+            if len(active) >= MAX_ACTIVE_FAILURES:
+                overflow = self.state.setdefault('failureOverflow', {'occurrences': 0, 'firstAt': event.get('at'), 'first': event})
+                overflow.update(occurrences=overflow['occurrences'] + 1, latest=event)
+                self._pending_failure = None
+                return  # Truthful unresolved overflow; never infer those causes recovered.
+            identity = event.get('id') or hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
+            batch = self.state.get('batch', {})
+            active[key] = {'id': identity, 'cause': fingerprint, 'kind': kind,
+                           'tier': batch.get('tier'), 'components': batch.get('components', []),
+                           'componentCount': batch.get('componentCount', 0),
+                           'first': event, 'latest': event, 'occurrences': 1}
+        self._pending_failure = key
+
+    def _settle_failure(self, phase):
+        # Preparation, accepted restart, checks, skips and partial installs are
+        # not verified recovery. These completion events already have owner guards.
+        kind = {'ecosystem-activation': 'ecosystem', 'ecosystem-rollback': 'ecosystem',
+                'restart-ack': 'application', 'restart-reconcile': 'application',
+                'restart-superseded': 'application'}.get(phase)
+        if not kind:
+            return
+        if self.state.get('kind') not in {kind, 'rollback' if kind == 'ecosystem' else kind}:
+            return
+        batch = self.state.get('batch', {})
+        active = self.state.setdefault('activeFailures', {})
+        covered = dict(batch.get('recoveringFailures', {}))
+        if phase == 'restart-ack':
+            covered.update(batch.get('verifiedBrowserFailures', {}))
+        for key, observed in covered.items():
+            group = active.get(key)
+            # Only failures covered when this exact attempt began. A later
+            # occurrence invalidates that evidence, including an identical cause.
+            if group and group['kind'] == kind and group['latest'].get('id') == observed:
+                del active[key]
+
+    def dispose(self, identity, expected_occurrence):
+        """Explicit uncertainty acknowledgement, never installation recovery."""
+        overflow = identity == 'updates:failure-overflow'
+        key = identity.removeprefix('updates:failure:')
+        active = self.state.get('activeFailures', {})
+        group = self.state.get('failureOverflow') if overflow else active.get(key)
+        token = disposition_occurrence(identity, group) if group else None
+        if token is None or token != expected_occurrence:
+            raise ValueError('Update failure changed or is not eligible; review the current occurrence before closing.')
+        from .update_report import event as public_event
+        receipt = {'id': uuid.uuid4().hex, 'at': time.time(), 'phase': 'failure-disposition',
+                   'status': 'acknowledged-uncertainty', 'recoveryVerified': False,
+                   'target': identity, 'occurrence': token, 'occurrences': group['occurrences'],
+                   'firstFailure': public_event(group.get('first', {})),
+                   'firstFailureAvailable': bool(group.get('first')),
+                   'latestFailure': public_event(group['latest'])}
+        # Close only this retained episode. Current errors and installation
+        # safety gates have separate owners and remain actionable, even when
+        # their displayed text happened to match this episode.
+        if overflow:
+            del self.state['failureOverflow']
+        else:
+            del active[key]
+        self.state['failureDispositions'] = (self.state.get('failureDispositions', []) + [receipt])[-20:]
+        self._retain(receipt)
+        return receipt
+
+    def capture_activation_retry(self, target, *, rollback=False):
+        """Snapshot failures for this validated promotion, before any new effects."""
+        recovery = self.state.setdefault('batch', {}).setdefault('recoveringFailures', {})
+        for key, group in self.state.get('activeFailures', {}).items():
+            event = group['latest']
+            if (group['kind'] == 'ecosystem' and event.get('phase') == 'ecosystem-activation'
+                    and event.get('revision') == target
+                    and (event.get('kind') == 'rollback') == rollback):
+                recovery[key] = event.get('id')
+
+    def browser_qualified(self):
+        """A validated blank launch covers this attempt's earlier browser failures.
+
+        Qualification alone does not settle attention. The application must still
+        complete its guarded activation/restart acknowledgement.
+        """
+        batch = self.state.get('batch', {})
+        if self.state.get('kind') == 'application':
+            batch['verifiedBrowserFailures'] = dict(batch.get('browserFailures', {}))
+
+    def browser_failures(self, extras):
+        extras = sanitized_application_extras(extras)
+        if extras is None or 'managed-browser' not in extras:
+            return {}
+        result = {}
+        for key, group in self.state.get('activeFailures', {}).items():
+            failure = group['latest']
+            scope = sanitized_application_extras(failure.get('applicationExtras'))
+            if (group['kind'] == 'application' and scope is not None and 'managed-browser' in scope
+                    and failure.get('phase') in {'managed-browser-install', 'managed-browser-probe'}):
+                result[key] = failure.get('id')
+        return result
+
+    def begin(self,kind,revision=None,attempt_id=None,*,tier=None,components=(),application_extras=None):
+        self._pending_failure = None
+        previous_revision = self.state.get('revision')
         identity=attempt_id if isinstance(attempt_id,str) and re.fullmatch(r'[a-f0-9]{32}',attempt_id) else uuid.uuid4().hex
         self.state.update(attemptId=identity,kind=kind)
         if revision and re.fullmatch(r'[a-f0-9]{32,40}',revision):self.state['revision']=revision
@@ -174,8 +340,41 @@ class UpdateDiagnostics:
         # workspaces, credential-bearing URLs or exception messages.
         names=sorted({name for name in components if isinstance(name,str) and
                       re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}',name)})
+        previous_batch = self.state.get('batch', {})
         self.state['batch']={'attemptId':identity,'kind':kind,'tier':tier if tier in {'included','other'} else kind,
                              'startedAt':time.time(),'components':names[:5],'componentCount':len(names)}
+        extras = sanitized_application_extras(application_extras) if kind == 'application' else None
+        if extras is not None:
+            self.state['batch']['applicationExtras'] = extras
+        recovering = {}
+        browser_failures = self.browser_failures(extras) if kind == 'application' else {}
+        for key, group in self.state.get('activeFailures', {}).items():
+            failure = group['latest']
+            if group['kind'] == kind == 'application':
+                scope = sanitized_application_extras(failure.get('applicationExtras'))
+                matches = bool(revision and failure.get('revision') == revision
+                               and scope is not None and extras is not None and scope == extras)
+            elif group['kind'] == kind == 'ecosystem':
+                component = failure.get('component') or failure.get('package') or failure.get('probe', {}).get('package')
+                scope = set(group.get('components', []))
+                matches = (group.get('tier') in {None, 'ecosystem', tier} and
+                           (component in names if component else bool(scope) and
+                            len(scope) == group.get('componentCount') and scope <= set(names)))
+            else:
+                matches = False
+            if matches:
+                recovering[key] = failure.get('id')
+        if previous_batch.get('attemptId') == identity and kind != 'application':
+            # Re-entering an existing attempt cannot adopt intervening failures.
+            recovering = previous_batch.get('recoveringFailures', {})
+        self.state['batch']['recoveringFailures'] = recovering
+        if kind == 'application':
+            same_attempt = (previous_batch.get('attemptId') == identity and previous_revision == revision
+                            and previous_batch.get('kind') == kind and previous_batch.get('applicationExtras') == extras)
+            # An older updater has no browser snapshot. The successor may take
+            # one before its own verified blank launch, never infer that proof.
+            self.state['batch']['browserFailures'] = previous_batch.get('browserFailures', browser_failures) if same_attempt else browser_failures
+            self.state['batch']['verifiedBrowserFailures'] = previous_batch.get('verifiedBrowserFailures', {}) if same_attempt else {}
         self.manager.service.state['updates'].pop('probeProgress',None)
         return identity
 
@@ -184,6 +383,10 @@ class UpdateDiagnostics:
         event={'id':uuid.uuid4().hex,'at':time.time(),'attemptId':self.state.get('attemptId'),
                'kind':self.state.get('kind'),'phase':phase,'status':status}
         if self.state.get('revision'):event['revision']=self.state['revision']
+        if event['kind'] == 'application':
+            extras = sanitized_application_extras(self.state.get('batch', {}).get('applicationExtras'))
+            if extras is not None:
+                event['applicationExtras'] = extras
         if isinstance(facts.get('reason'),str) and facts['reason'] in RECOVERY_REASONS:event['reason']=facts['reason']
         if isinstance(facts.get('resolutionMismatches'), list):
             fields = sorted({value for value in facts['resolutionMismatches']
@@ -225,23 +428,30 @@ class UpdateDiagnostics:
             if status=='interrupted' and self.state.get('lastFailure',{}).get('attemptId')==event['attemptId'] and self.state.get('lastFailure',{}).get('status')=='failed':
                 prior_failure=self.state['lastFailure']
             self.state['lastFailure']=prior_failure if prior_failure is not None else event
+            if prior_failure is None:
+                self._track_failure(event)
+        elif status == 'succeeded':
+            self._settle_failure(phase)
+        self._retain(event)
+        return event
+
+    def _retain(self, event):
         collector=getattr(self.manager.service,'diagnostics',None)
-        delivered=False
         if collector:
             try:
-                collector.record('updates',{'event':'update:'+phase,'data':event})
-                delivered=True
+                collector.record('updates',{'event':'update:'+event['phase'],'data':event})
             except Exception:pass
-        if not delivered:
-            try:
-                if self.path.exists() and self.path.stat().st_size>1_000_000:
-                    old=self.path.with_suffix('.previous.jsonl');os.replace(self.path,old)
-                fd=os.open(self.path,os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
-                with os.fdopen(fd,'a') as stream:
-                    os.fchmod(stream.fileno(),0o600)
-                    stream.write(json.dumps(event,separators=(',',':'))+'\n')
-            except OSError:
-                self.state['storageUnavailable']=True
+        # The general collector may be disabled or retain metadata only. Keep
+        # the already-sanitized original in the existing bounded update journal.
+        try:
+            if self.path.exists() and self.path.stat().st_size>1_000_000:
+                old=self.path.with_suffix('.previous.jsonl');os.replace(self.path,old)
+            fd=os.open(self.path,os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
+            with os.fdopen(fd,'a') as stream:
+                os.fchmod(stream.fileno(),0o600)
+                stream.write(json.dumps(event,separators=(',',':'))+'\n')
+        except OSError:
+            self.state['storageUnavailable']=True
         try:self.manager.service._save_changes(globals={'updates'})
         except (OSError,sqlite3.Error):self.state['storageUnavailable']=True
         return event

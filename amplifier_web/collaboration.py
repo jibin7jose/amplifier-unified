@@ -129,11 +129,18 @@ def definitions(schema, string):
             **sid, "proposalId": string(200), "decision": {"enum": ["allow", "deny"]},
         }, ["sessionId", "proposalId", "decision"])),
         "coordination.send": ("Commit attributed task input to an exact existing root in this user's Unified installation, including other workspaces and managed chats. Discover IDs with coordination.list scope=all. No assignment, permissions, files or resume authority transfers. Auto (the default) delivers at the next supported model request boundary or when idle. Explicit queue waits for idle; notify never wakes. Preparation continues under service ownership. Read results, never replay uncertain input. To resume a commissioned same-workspace member after an explicit human instruction, use queue with resume={sourceMessageId, expectedInterruptionRevision}; the host binds the current human input and exact Stop/task/assignment boundaries. This admits one fresh input without resetting budgets, permissions or replaying old work. For explicit human repair of existing same-workspace schedules, scheduleRepair scopes the sourceMessageId and exact target IDs/revisions; the owner may resume those schedules unchanged.", schema(message, ["sessionId", "text"])),
-        "coordination.create": ("Commission an authorized durable task chat inheriting the caller's configuration, workspace and actual execution placement, with a saved return notification before its brief can run. This does not create an independent user chat in a different folder. Inspect this operation's requestId for its initial result. Returns before preparation and does not select the peer. Set returnNotification:false only when no automatic return is wanted.", schema({
+        "coordination.create": ("Commission one authorized durable worker; repeat independently for as many parallel tasks as needed. Inherits configuration and workspace. Optional execution creates a clean isolated checkout and optional objective installs its saved goal before the first brief can run. A saved return notification reports its outcome. This does not create an independent user chat in a different folder. Inspect this operation's requestId for its initial result. Returns before preparation and does not select the peer. Set returnNotification:false only when no automatic return is wanted.", schema({
             "senderSessionId": string(200), "grantId": string(200), "title": {**string(100), "minLength": 1},
             "text": {**string(16000), "minLength": 1}, "references": references,
             "returnNotification": {"type": "boolean", "default": True},
             "workReferences": references_schema(schema, string),
+            "objective": {**string(16000), "minLength": 1,
+                          "description": "Authorized durable goal to pursue through completion, saved before the initial brief."},
+            "constraints": {"type": "array", "maxItems": 100, "items": {**string(4000), "minLength": 1}},
+            "execution": schema({"kind": {"const": "worktree"}, "repositoryPath": string(4000),
+                                 "expectedCommit": {**string(64), "description": "Full Git commit ID for a clean checkout; obtain with worktree.inspect mode=clean. Local changes are not scanned or copied."},
+                                 "sourceRevision": {**string(100), "description": "Legacy inspected working-folder snapshot digest, not a Git commit. Supply this or expectedCommit, never both."},
+                                 "ref": string(500), "branch": string(500)}, ["kind"]),
         }, ["title", "text"])),
         "coordination.read": ("Read a bounded window from one existing native conversation without selecting or warming it.", schema({
             **sid, "scope": {"enum": ["workspace", "all"]}, "messageId": string(200), "offset": {"type": "integer", "minimum": 0},
@@ -147,7 +154,7 @@ def definitions(schema, string):
         "coordination.artifact": ("Read an exact retained file as an original request participant or Full-access observer, even after its source disappears. Current delegated Full-access reviewers may use this passive read. Observers use workspace/all read scope. Bounded text and download identity; no peer output-library access or work admission. Retained bytes are not proof of correctness.", schema({**sid,
             "requestId": string(200), "reference": string(2000), "scope": {"enum": ["workspace", "all"]}, "responseRevision": {"type": "integer", "minimum": 1}, "offset": {"type": "integer", "minimum": 0},
             "limit": {"type": "integer", "minimum": 1, "maximum": 4000}}, ["sessionId", "requestId", "reference"])),
-        "coordination.reply": ("Record a typed reply to your exact delivered request. Optional messageIds name your current-generation assistant output, never the incoming request messageId; omit them when unknown. Retain files using path@sha256:<64 lowercase hex digits> in references. Before ending the turn, check artifactVerification and each artifacts[].status: bytes are saved before this reply is acknowledged; later terminal sealing only qualifies the report. Later current generations may reply with expectedResponseRevision from coordination.result. Questions/deferrals stay open; reports are unqualified until separately proven terminal. Exact command IDs deduplicate retries. Meaningful revisions retain the original request identity without a lifetime count limit.", schema({
+        "coordination.reply": ("Record a typed reply to your exact delivered request. Optional messageIds name your current-generation assistant output, never the incoming request messageId; omit them when unknown. Retain files using path@sha256:<64 lowercase hex digits> in references. Before ending the turn, check artifactVerification and each artifacts[].status: bytes are saved before this reply is acknowledged; later terminal sealing only qualifies the report. Correct a staged report in the same current generation, or reply from a later current generation after it settles, using expectedResponseRevision from coordination.result. Questions/deferrals stay open; reports are unqualified until separately proven terminal. Exact command IDs deduplicate retries. Meaningful revisions retain the original request identity without a lifetime count limit.", schema({
             "requestId": string(200), "kind": {"enum": ["result", "ack", "defer", "decline", "question", "conflict"]},
             "expectedResponseRevision": {"type": "integer", "minimum": 0},
             "outcome": {"enum": ["success", "failed", "deferred", "declined", "question", "conflict", "cancelled"]},
@@ -608,8 +615,9 @@ class Collaboration:
         revision = request.get('responseRevision', 1 if request.get('response') else 0)
         if args.get('expectedResponseRevision', 0) != revision:
             self.error('The response revision changed. Read the retained result and use its expectedResponseRevision.', 409)
-        if request.get('response', {}).get('status') == 'staged':
-            self.error('The previous report is awaiting terminal evidence. Inspect it before submitting another revision.', 409)
+        previous = request.get('response') or {}
+        if previous.get('status') == 'staged' and previous.get('generationId') != active['id']:
+            self.error('The previous report belongs to another generation awaiting terminal evidence. Inspect it before submitting another revision.', 409)
         if args['requestId'] not in delivered:
             if request.get('delivery') not in {'accepted', 'applied'}:
                 self.error('A later generation needs confirmed prior input admission.', 409)
@@ -856,7 +864,7 @@ class Collaboration:
         if not task_matches(task, binding):
             return 'The requesting assignment changed.'
         if (source['workspace'] != receipt['workspace']
-                or (source.get('workingDirectory') or source['workspace']) != receipt['result']['workingDirectory']):
+                or (source.get('workingDirectory') or source['workspace']) != receipt.get('sourceWorkingDirectory', receipt['result']['workingDirectory'])):
             return 'The requester execution placement changed.'
         if receipt.get('workReferences'):
             return self.service.work_invocation.plan_reason(receipt)
@@ -936,8 +944,8 @@ class Collaboration:
             resuming = peer_resume.pending(receipt)
             if resuming and (reason := peer_resume.guard(self.service, receipt, source, target)):
                 return reason
-            if target.get("status") in {"stopping", "interrupted"} or (
-                    target.get("status") in {"stopped", "error", "cancelled", "failed"} and not resuming):
+            if target.get("status") == "stopping" or (
+                    target.get("status") in {"stopped", "interrupted", "error", "cancelled", "failed"} and not resuming):
                 return "The recipient is stopped or unavailable."
             task = target.get("task") or self.service.coordination.task(target["id"])
             from .completed_followup import matches_request
@@ -1924,7 +1932,8 @@ class Collaboration:
             prepared_artifacts = await prepare(self, source, args, origin, identity, digest)
             if prepared_artifacts.get('duplicate'):
                 return prepared_artifacts['duplicate']
-        async with (self.service.lock,
+        async with ((prepared_artifacts['items'] if prepared_artifacts else AsyncExitStack()),
+                    self.service.lock,
                     self.service.work_invocation.initial_transaction(action, identity),
                     AsyncExitStack() as recovery_boundary):
             duplicate = self.duplicate(identity, digest)
@@ -1985,6 +1994,13 @@ class Collaboration:
                 original = copy.deepcopy(request)
                 try:
                     await store(self, source, request, response, prepared_artifacts, identity)
+                    if original.get('response', {}).get('status') == 'staged':
+                        # Corrections are new receipts, not edits to saved evidence.
+                        # Only the latest declaration can be sealed at this turn's end.
+                        prior = copy.deepcopy(original)
+                        prior['response'].update(status='superseded', qualified=False,
+                                                 supersededBy=identity)
+                        self.save_response(prior)
                     request['responseRevision'] = revision+1
                     request['response'] = response
                     if response_ready(response):
@@ -2182,6 +2198,17 @@ class Collaboration:
         from .provider_environment import credential_bindings
         config = credential_bindings(config)
         summary["configurationHash"] = fingerprint(config)
+        if args.get('constraints') and not args.get('objective'):
+            self.error('Commissioned constraints require an objective.', 400)
+        if 'objective' in args and not args['objective'].strip():
+            self.error('Enter a nonempty commissioned objective.', 400)
+        execution = copy.deepcopy(args.get('execution'))
+        if execution:
+            from amplifier_worktrees.git import source_binding
+            source_binding(execution.get('sourceRevision'), execution.get('expectedCommit'), 'clean')
+            self.service.worktrees.check_host(source)
+            execution['repositoryPath'] = await asyncio.to_thread(
+                self.service.worktrees.repository_path, source, execution.get('repositoryPath'))
         new_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "collaborative-task:" + source["id"] + ":" + identity))
         metadata = {"creatorSessionId": source["id"], "creatorTitle": source["title"], "requestId": identity,
             "configurationHash": summary["configurationHash"], **lineage,
@@ -2244,11 +2271,16 @@ class Collaboration:
                 "requestId": identity, "senderSessionId": source["id"], "workspace": source["workspace"], "protocol": PROTOCOL,
                 "sessionId": new_id, "delivery": "creation_pending", "result": metadata,
                 'creationVersion': 1, 'phase': 'planned', 'title': args['title'], 'origin': origin,
+                'sourceWorkingDirectory': metadata['workingDirectory'],
                 **lineage,
                 'sourceTaskId': task.get('id'), 'sourceTaskRevision': task.get('revision'),
                 'sourceTaskContinuationEpoch': continuation_epoch(task),
                 "initialInputId": identity + ":brief", "detail": "Creation committed; preparation is owned by the service."}
             receipt['assignmentId'] = assignment_id
+            if execution:
+                receipt['execution'] = execution
+            if args.get('objective'):
+                receipt['objective'] = {'objective': args['objective'], 'constraints': args.get('constraints', [])}
             if args.get('workReferences'):
                 receipt['workReferences'] = copy.deepcopy(args['workReferences'])
             if notify:
@@ -2292,7 +2324,7 @@ class Collaboration:
                 if reason:
                     self.end_creation(receipt, 'suppressed', reason)
                     return
-                if receipt.get('phase') not in {'planned', 'creating_root', 'root_retained'}:
+                if receipt.get('phase') not in {'planned', 'creating_checkout', 'checkout_ready', 'creating_root', 'root_retained', 'installing_objective', 'objective_ready'}:
                     self.end_creation(receipt, 'unknown', 'The preparation phase is unsupported. Retained effects were not replayed.', notify=True)
                     return
                 row = self.service.db.execute('SELECT configuration FROM collaboration_preparations WHERE request_id=?', (identity,)).fetchone()
@@ -2316,10 +2348,16 @@ class Collaboration:
                 # A lost acknowledgment after the input transaction is not a lost
                 # operation. Keep its exact admitted/queued receipt untouched.
                 if receipt.get('phase') != 'input_committed':
+                    from amplifier_worktrees.git import CheckoutNotStarted
                     receipt['errorType'] = type(exc).__name__
                     reason = self.creation_guard(receipt)
                     if reason:
                         self.end_creation(receipt, 'suppressed', reason)
+                    elif isinstance(exc, CheckoutNotStarted):
+                        receipt['preparationFailure'] = {'kind': 'checkout_not_started', 'detail': str(exc)[:1000]}
+                        self.end_creation(receipt, 'not_sent',
+                            'Checkout preparation refused before any checkout effect or initial input. '
+                            'The existing worker is retained. ' + str(exc)[:1000], notify=True)
                     else:
                         self.end_creation(receipt, 'unknown', 'Preparation did not confirm all effects. Inspect the retained operation; no effects were replayed.', notify=True)
         finally:
@@ -2362,17 +2400,31 @@ class Collaboration:
                     or (target.get('workingDirectory') or target['workspace']) != metadata['workingDirectory']):
                 self.error('The retained root does not match this creation operation.', 409)
             directory = self.service.data_dir / 'sessions' / (target.get('runtimeSessionId') or target['id'])
-            for filename, expected in [('configuration.json', config['plan']), ('control-state.json', config['controls'])]:
+            expected_files = [('configuration.json', config['plan'])]
+            if receipt['phase'] not in {'installing_objective', 'objective_ready'}:
+                expected_files.append(('control-state.json', config['controls']))
+            for filename, expected in expected_files:
                 if json.loads((directory / filename).read_text()) != expected:
                     self.error('The retained root configuration changed before initial input.', 409)
-            receipt.update(delivery='created_initial_pending', phase='root_retained',
-                           detail='Root retained. Initial input and return policy are being committed.')
+            receipt.update(delivery='created_initial_pending',
+                           phase=receipt['phase'] if receipt['phase'] in {'creating_checkout', 'checkout_ready', 'installing_objective', 'objective_ready'} else 'root_retained',
+                           detail='Root retained. Objective, initial input and return policy are being committed.')
             if receipt.get('assignmentId'):
                 assignment = self.service.assignments.load(receipt['assignmentId'])
                 assignment['members'][new_id]['status'] = 'bound'
                 self.service.assignments.save(assignment)
             self.save(identity, receipt)
             self.publish_receipt(receipt)
+        if receipt.get('execution'):
+            from .worker_commissioning import prepare_checkout
+            await prepare_checkout(self, identity)
+            receipt = self.receipt(identity)
+            if receipt['delivery'] not in {'creation_pending', 'created_initial_pending'}:
+                return
+            metadata = receipt['result']
+        if receipt.get('objective'):
+            from .worker_commissioning import prepare_objective
+            await prepare_objective(self, identity)
         # The durable brief is ordinary attributed input, not copied history.
         token = CREATION.set((source["id"], fingerprint(values), None, config, metadata))
         try:

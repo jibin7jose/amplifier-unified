@@ -180,7 +180,17 @@ browser tests and real Docker qualification remain separate evidence.
 not a retry of the test. It takes the resource identity and revision, a new stable
 request identity, and `previousRequestId` naming this owner's confirmed failure
 before teardown. The prior receipt must explicitly record no removal effect,
-the preservation or verification phase, and a safe preservation failure code.
+and either the preservation or verification phase with a safe failure code
+(including `preserving` / `retention_storage` when retention space was unavailable), or
+the `preparing` phase and `cleanup_helper_not_started` code proving that no
+cleanup helper started. Once `Popen` returns, a lost response or helper process
+failure remains uncertain; it is not covered by this preflight exception.
+A local refusal before the new cleanup helper is invoked stays a failed request;
+retained dependency preparation from an earlier start does not make it an unknown
+removal. Known local refusal boundaries have bounded reason codes; arbitrary
+exception details are not published. This does not settle any earlier UNKNOWN
+receipt or change its ownership.
+This adds no automatic replay or new automatic continuation.
 Stopped inventory alone does not qualify. An unresolved removal or cleanup
 executor, including an unbound journal entry, blocks a new destructive identity.
 It uses the retained original backend configuration. The failed operation receipt,
@@ -197,6 +207,23 @@ original receipt digest and those bindings on the new cleanup continuation,
 without rewriting the original UNKNOWN. Another unresolved removal still blocks
 continuation. A passive read reports this qualification separately from current
 physical state and continuation availability; it performs no backend action.
+
+A genuinely interrupted local Docker removal can instead qualify a **new**
+cleanup attempt from current observations. The old receipt remains UNKNOWN.
+Under the existing exclusive environment lock, the host verifies the original
+resource, owner, backend daemon, retained installation and source snapshot; proves
+that no matching local helper or Docker child can still act; and observes every
+original container in native exited state with no live PID, restart or removal
+in progress. It repeats those checks at the effect boundary. Remote or otherwise
+uninspectable executors, ambiguous native state, and unbound or still-running
+removal requests remain held. Exact bound UNKNOWN receipts for this same owner
+and resource remain unchanged and do not block that freshly qualified attempt.
+
+The new request records its qualification and uses its own retention directory.
+It must export and verify the current workspace and artifacts again before
+teardown; an old export or missing helper file is not proof. A passive recovery
+read can advertise `finishCleanup` as the action that performs this inspection,
+but does not claim that the executor is settled or continuation is available.
 
 A separate case is a guest whose successful removal is already committed while
 only owned dependency preparation cleanup remains pending. The public `remove`

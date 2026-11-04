@@ -112,6 +112,9 @@ async def test_status_reports_pending_guard_without_installing(helper_manager, p
     assert status["appRevision"] == REVISION
     assert status["installedExtras"] == ["tui"]
     assert status["action"] == "updates.featureInstall"
+    assert {row['id']:row['providerModule'] for row in status['features'] if row['id'].startswith('decisions-')} == {
+        'decisions-openai':'provider-openai', 'decisions-azure':'provider-azure-openai',
+        'decisions-jev':'provider-jev', 'decisions-local':'provider-local-decisions'}
     await helper_manager.lock.acquire()
     assert app_features.status(helper_manager)["pending"] is True
     helper_manager.lock.release()
@@ -250,6 +253,7 @@ async def managed(tmp_path, monkeypatch):
     monkeypatch.setattr(app_features, "running_application", lambda manager: copy.deepcopy(HOST_APP))
     monkeypatch.setattr(app_updates, "installed_extras", lambda: ["tui"])
     monkeypatch.setattr(app_updates.components, "installed_graph", lambda: copy.deepcopy(BASELINE))
+    monkeypatch.setattr("amplifier_web.app_feature_probe.installed_dependency_extras", lambda extras: {})
     monkeypatch.setattr(app_updates.components, "read_graph", AsyncMock(return_value=copy.deepcopy(CANDIDATE)))
     monkeypatch.setattr(app_updates.components, "updates", AsyncMock(side_effect=AssertionError("feature checked newer components")))
     monkeypatch.setattr(app_updates, "check", AsyncMock(side_effect=AssertionError("feature checked newer app releases")))
@@ -331,6 +335,51 @@ async def test_normal_staging_keeps_published_release_selection_and_existing_ext
     pending = managed.service.state["updates"]["pendingApp"]
     assert pending["revision"] == "d" * 40 and "featureSelection" not in pending
     assert not managed.service.state["updates"].get("featureResults")
+
+@pytest.mark.parametrize("recover_feature", [False, True])
+async def test_attention_feature_failure_requires_same_revision_feature_recovery(managed, monkeypatch, recover_feature):
+    from amplifier_web.attention import snapshot
+    from amplifier_web.auth import data_identity
+    manager, service = managed.manager, managed.service
+    original_process = app_updates.process
+    async def reject_install(*args, **kwargs):
+        if "tool" in args and "install" in args:
+            raise RuntimeError("synthetic unavailable feature")
+        return await original_process(*args, **kwargs)
+    monkeypatch.setattr(app_updates, "process", reject_install)
+    with pytest.raises(RuntimeError):
+        await app_updates.stage(manager, feature="native-desktop", request_id="failed-feature")
+    failure = next(item for item in snapshot(service.state)["items"] if item.get("updateKind") == "application")
+    await service.dispatch("attention.read", {"ids": [failure["id"]],
+        "fingerprints": {failure["id"]: failure["fingerprint"]}})
+    monkeypatch.setattr(app_updates, "process", original_process)
+    if recover_feature:
+        await stage_feature(managed, "matching-feature")
+        graph, extras = CANDIDATE, ["native-desktop", "tui"]
+    else:
+        graph = sorted([*BASELINE, HOST_APP], key=lambda row: row["name"])
+        extras = ["tui"]
+        app_updates.components.read_graph.return_value = copy.deepcopy(graph)
+        service.state["updates"]["application"] = {
+            "status": "update", "revision": REVISION, "latest": app_updates.__version__}
+        await app_updates.stage(manager)
+    await app_updates.activate(manager)
+    # A replacement host reconstructs diagnostics from saved values, not the
+    # staging manager's in-memory feature selection.
+    service.state["updates"] = json.loads(json.dumps(service.state["updates"]))
+    service.update_manager = manager = UpdateManager(service)
+    manager.running_identity = {"version": app_updates.__version__, "revision": REVISION,
+                                "instanceId": "new-process"}
+    monkeypatch.setattr(app_updates, "installed_extras", lambda: extras)
+    monkeypatch.setattr(app_updates.components, "installed_graph",
+                        lambda: [row for row in graph if row["name"] != "amplifier-unified"])
+    health = {"ok": True, "app": "amplifier-unified", "dataIdentity": data_identity(manager.home),
+              **manager.running_identity}
+    assert await manager.confirm_readiness(health)
+    remaining = [item for item in snapshot(service.state)["items"] if item.get("updateKind") == "application"]
+    assert len(remaining) == (0 if recover_feature else 1)
+    if remaining:
+        assert remaining[0]["fingerprint"] == failure["fingerprint"] and remaining[0]["read"]
 
 
 @pytest.mark.parametrize("change", ["drop-transitive", "upgrade-transitive", "new-app-revision"])
@@ -523,7 +572,8 @@ async def test_rejected_concurrent_feature_keeps_active_update_phase_and_receipt
 
 
 @pytest.mark.parametrize("caller", ["ui", "agent"])
-async def test_shared_action_persists_queued_admission_and_exact_retry_cannot_replay(managed, monkeypatch, caller):
+@pytest.mark.parametrize("feature", ["native-desktop", "managed-browser", "decisions-openai", "decisions-azure", "decisions-jev", "decisions-local"])
+async def test_shared_action_persists_queued_admission_and_exact_retry_cannot_replay(managed, monkeypatch, caller, feature):
     service = managed.service
     scheduled = []
 
@@ -535,7 +585,7 @@ async def test_shared_action_persists_queued_admission_and_exact_retry_cannot_re
         return None
 
     monkeypatch.setattr(service, "_task", hold)
-    args = {"feature": "native-desktop", "hostInstanceId": service.instance_id}
+    args = {"feature": feature, "hostInstanceId": service.instance_id}
 
     async def request():
         if caller == "agent":

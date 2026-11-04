@@ -1,15 +1,10 @@
 """Request-scoped retained versions, owned by the existing output registry."""
-import asyncio
-import base64
 import copy
-import hashlib
 import json
 from pathlib import Path
 import re
 
-from .outputs import file_bytes, MAX_FILE
-
-MAX_DECLARATION = 2 * MAX_FILE
+from . import retained_files
 EXACT = re.compile(r'([^@\n]+)@sha256:([a-f0-9]{64})\Z')
 FILE_DIGEST = re.compile(r'[@#]sha256\b', re.IGNORECASE)
 URI = re.compile(r'^[a-z][a-z0-9+.-]*:', re.IGNORECASE)
@@ -32,7 +27,15 @@ def fence(source, request):
 
 def prepare_files(root, references):
     """No database or live session objects cross this worker boundary."""
-    items, total = [], 0
+    items = retained_files.Batch()
+    try:
+        return _prepare_files(root, references, items)
+    except BaseException:
+        items.close()
+        raise
+
+
+def _prepare_files(root, references, items):
     for reference in dict.fromkeys(references):
         match = EXACT.fullmatch(reference)
         file_uri = reference.lower().startswith('file:')
@@ -46,22 +49,10 @@ def prepare_files(root, references):
         path, expected = match.groups()
         item = {'reference': reference, 'sha256': expected}
         try:
-            data, actual, name = file_bytes(root, path)
-            if hashlib.sha256(data).hexdigest() != expected:
-                item.update(status='changed', detail='Source bytes do not match the declared SHA-256.')
-            elif total + len(data) > MAX_DECLARATION:
-                item.update(status='unavailable', detail='This declaration exceeds the 16 MiB retained-file limit.')
-            else:
-                total += len(data)
-                from .resource_files import prepare as prepare_resource
-                try:
-                    body = {'encoding': 'utf-8', 'data': data.decode('utf-8')}
-                except UnicodeDecodeError:
-                    body = {'encoding': 'base64', 'data': base64.b64encode(data).decode()}
-                item.update(status='retained', resource=prepare_resource(body), bytes=len(data), path=actual, filename=name)
+            item.update(retained_files.capture(root, path, expected, items))
         except (OSError, ValueError):
             # Do not expose details about a rejected external path or content.
-            item.update(status='unavailable', detail='Source unavailable or outside the supported workspace/file limits.')
+            item.update(status='unavailable', detail='Source unavailable, changed, outside the workspace, or insufficient disk space to retain it.')
         items.append(item)
     return items
 
@@ -76,7 +67,7 @@ async def prepare(collaboration, source, args, origin, identity, digest):
         _, request, _, _ = collaboration.validate_reply(source, args)
         captured = fence(source, request)
         root = source.get('workingDirectory') or source['workspace']
-    items = await asyncio.to_thread(prepare_files, root, list(args.get('references', [])))
+    items = await retained_files.prepared(prepare_files, root, list(args.get('references', [])))
     return {'fence': captured, 'items': items}
 
 
@@ -84,19 +75,18 @@ async def store(collaboration, source, request, response, prepared, command_id):
     """Caller owns the lock and the reply transaction. Never commits itself."""
     if prepared['fence'] != fence(source, request):
         collaboration.error('The task or response changed while retaining results; inspect and retry.', 409)
-    from .resource_files import put_prepared_async
     app = collaboration.service
     artifacts = []
     available = max(0, 10000 - app.db.execute('SELECT count(*) FROM output_records').fetchone()[0])
     for item in prepared['items']:
-        summary = {key: value for key, value in item.items() if key not in {'resource', 'path', 'filename'}}
+        summary = {key: value for key, value in item.items() if key not in {'resource', 'pieces', 'bodyFormat', 'path', 'filename'}}
         if item['status'] == 'retained' and not available:
             summary.update(status='unavailable', detail='The retained output relationship limit is reached.')
         elif item['status'] == 'retained':
-            body = await put_prepared_async(app.db, item['resource'])
+            body = await retained_files.adopt(app.db, item)
             record = app.outputs.store.create(source['id'], {
                 'kind': 'file', 'title': item['filename'], 'filename': item['filename'],
-                'sha256': item['sha256'], 'bytes': item['bytes'], 'body': body,
+                'sha256': item['sha256'], 'bytes': item['bytes'], 'body': body, 'bodyFormat': item['bodyFormat'],
                 'versionEvidence': 'snapshot', 'origin': {'source': 'agent'},
                 'collaborationResult': {'requestId': request['requestId'], 'commandId': command_id,
                     'reference': item['reference'], 'generationId': response['generationId'],
@@ -174,7 +164,7 @@ def image_record(collaboration, sid, record):
     return retained
 
 
-async def load(collaboration, sid, request_id, reference, response_revision=None, *, scope='workspace'):
+async def load(collaboration, sid, request_id, reference, response_revision=None, *, scope='workspace', preview=None):
     """Detach immutable reads; recheck request authority after worker I/O."""
     app = collaboration.service
     async with app.lock:
@@ -183,7 +173,8 @@ async def load(collaboration, sid, request_id, reference, response_revision=None
     if record is None:
         return item, None, response
     try:
-        data = await app.outputs.content_async(record)
+        data = (await app.outputs.preview_async(record, *preview) if preview is not None
+                else await app.outputs.content_async(record))
         if data is None:
             raise ValueError('Retained artifact bytes unavailable.')
     except (OSError, ValueError, KeyError):
@@ -198,18 +189,13 @@ async def load(collaboration, sid, request_id, reference, response_revision=None
 
 
 async def read(collaboration, sid, args):
-    item, data, response = await load(collaboration, sid, args['requestId'], args['reference'], args.get('responseRevision'), scope=args.get('scope', 'workspace'))
+    item, data, response = await load(collaboration, sid, args['requestId'], args['reference'], args.get('responseRevision'),
+        scope=args.get('scope', 'workspace'), preview=(args.get('offset', 0), args.get('limit', 4000)))
     result = {**item, 'responseStatus': response.get('status'), 'qualified': response.get('qualified', False),
               'independentArtifactVerification': False}
     if data is not None:
         result['downloadUrl'] = '/api/outputs/' + item['outputId'] + '/content'
-        try:
-            content = data.decode('utf-8')
-            start, limit = args.get('offset', 0), args.get('limit', 4000)
-            result.update(text=content[start:start + limit], offset=start,
-                          nextOffset=start + limit if start + limit < len(content) else None)
-        except UnicodeDecodeError:
-            result['binary'] = True
+        result.update(data)
     return result
 
 

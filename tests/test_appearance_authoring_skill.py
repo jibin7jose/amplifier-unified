@@ -175,27 +175,28 @@ if __name__ == "__main__":
         assert "amplifier_web/bundle_data/skills/appearance-authoring/" + entry in {
             str(path) for path in distribution.files}
     records = {str(path): path for path in distribution.files}
-    lightline_expected = expected["lightline"]
-    resource = Path(files("amplifier_web").joinpath("appearances", "lightline.amplifier.css"))
-    for relative, actual in (("amplifier_web/theme_library.py", Path(theme_library.__file__)),
-                             (lightline_expected["resource"], resource)):
-        actual = actual.resolve(strict=True)
-        assert actual.is_relative_to(installed)
-        record = records[relative]
-        assert actual == Path(distribution.locate_file(record)).resolve(strict=True)
-        assert record.hash and record.hash.mode == "sha256"
-        assert record.hash.value == base64.urlsafe_b64encode(
-            hashlib.sha256(actual.read_bytes()).digest()).decode("ascii").rstrip("=")
-    data = resource.read_bytes()
-    assert hashlib.sha256(data).hexdigest() == lightline_expected["sha256"]
-    # Resource presets need no AppService, user library or provider configuration.
-    lightline = theme_library.preset(None, "lightline")
-    css = lightline.pop("css")
-    assert lightline == lightline_expected["metadata"]
-    assert css.encode("utf-8") == data
-    assert theme_library.fingerprint(css) == lightline_expected["sha256"]
-    assert theme_library.metadata(css)[0] == {
-        key: lightline_expected["metadata"][key] for key in ("name", "description")}
+    for key in ("lightline", "ready"):
+        appearance_expected = expected[key]
+        resource = Path(files("amplifier_web").joinpath("appearances", f"{key}.amplifier.css"))
+        for relative, actual in (("amplifier_web/theme_library.py", Path(theme_library.__file__)),
+                                 (appearance_expected["resource"], resource)):
+            actual = actual.resolve(strict=True)
+            assert actual.is_relative_to(installed)
+            record = records[relative]
+            assert actual == Path(distribution.locate_file(record)).resolve(strict=True)
+            assert record.hash and record.hash.mode == "sha256"
+            assert record.hash.value == base64.urlsafe_b64encode(
+                hashlib.sha256(actual.read_bytes()).digest()).decode("ascii").rstrip("=")
+        data = resource.read_bytes()
+        assert hashlib.sha256(data).hexdigest() == appearance_expected["sha256"]
+        # Resource presets need no AppService, user library or provider configuration.
+        appearance = theme_library.preset(None, key)
+        css = appearance.pop("css")
+        assert appearance == appearance_expected["metadata"]
+        assert css.encode("utf-8") == data
+        assert theme_library.fingerprint(css) == appearance_expected["sha256"]
+        assert theme_library.metadata(css)[0] == {
+            field: appearance_expected["metadata"][field] for field in ("name", "description")}
     asyncio.run(_loader_probe(resource_root(), Path(sys.argv[3])))
     _installed_package_probe(appearance_packages)
     print("APPEARANCE_PACKAGE_INSTALLED_OK")
@@ -293,15 +294,17 @@ def test_wheel_installed_loader_outside_checkout(tmp_path):
 
     checkout = Path(__file__).resolve().parents[1]
     assert Path(theme_library.__file__).resolve() == checkout / "amplifier_web/theme_library.py"
-    resource = checkout / "amplifier_web/appearances/lightline.amplifier.css"
     # Capture checkout expectations before building; the isolated probe imports
     # only the installed package and receives these independent values as JSON.
-    lightline_expected = {
-        "resource": resource.relative_to(checkout).as_posix(),
-        "sha256": hashlib.sha256(resource.read_bytes()).hexdigest(),
-        "metadata": {"id": "builtin:lightline", "source": "built-in",
-                     **theme_library.RESOURCE_PRESETS["lightline"]},
-    }
+    appearances_expected = {}
+    for key in ("lightline", "ready"):
+        resource = checkout / f"amplifier_web/appearances/{key}.amplifier.css"
+        appearances_expected[key] = {
+            "resource": resource.relative_to(checkout).as_posix(),
+            "sha256": hashlib.sha256(resource.read_bytes()).hexdigest(),
+            "metadata": {"id": f"builtin:{key}", "source": "built-in",
+                         **theme_library.RESOURCE_PRESETS[key]},
+        }
     wheels = tmp_path / "wheels"
     wheels.mkdir()
     wheel = Path(next(WheelBuilder(str(checkout)).build(directory=str(wheels))))
@@ -314,7 +317,7 @@ def test_wheel_installed_loader_outside_checkout(tmp_path):
         assert hashlib.sha256(archive.read(module_name)).hexdigest() == source_sha256
     expected = tmp_path / "installed-expectations.json"
     expected.write_text(json.dumps({"sourceSha256": source_sha256, "recordHash": row[1],
-                                    "recordSize": int(row[2]), "lightline": lightline_expected}), encoding="utf-8")
+                                    "recordSize": int(row[2]), **appearances_expected}), encoding="utf-8")
     target = tmp_path / "installed"
     uv = shutil.which("uv")
     assert uv, "Wheel qualification requires uv (no packages are downloaded)"

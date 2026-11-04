@@ -4,6 +4,7 @@ Run with the candidate worker Python and a new disposable directory. No user
 session is opened and the fixture provider refuses all model requests.
 """
 import asyncio
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -25,15 +26,33 @@ async def main():
                       AMPLIFIER_CONTEXT_INTELLIGENCE_BASE_PATH=str(root / 'captures'))
     shared = root / 'shared'
     shared.mkdir()
-    (shared / 'settings.yaml').write_text('bundle:\n  app: []\n')
+    from amplifier_web.builtin_behaviors import DEFAULT_BEHAVIORS
+    # Optional host defaults are not this offline startup fixture's inputs.
+    # Keep the real loop and ordinary-root capture hook, using the prepared
+    # interpreter's installed modules rather than fetching another graph.
+    modules = {}
+    for name, package in [('loop-live', 'amplifier_module_loop_live'),
+                          ('hook-context-intelligence', 'amplifier_module_hook_context_intelligence')]:
+        spec = importlib.util.find_spec(package)
+        assert spec and spec.origin, f'Missing prepared startup dependency: {package}'
+        modules[name] = str(Path(spec.origin).parent)
+    (shared / 'settings.yaml').write_text(json.dumps({
+        'bundle': {'app': []},
+        'web_bundles': {'excluded': list(DEFAULT_BEHAVIORS)},
+        'sources': {'modules': modules},
+    }))
     provider = root / 'provider' / 'amplifier_module_provider_fixture'
     provider.mkdir(parents=True)
-    (provider / '__init__.py').write_text('''from amplifier_core import ProviderInfo
+    calls = root / 'model-calls'
+    (provider / '__init__.py').write_text('''from pathlib import Path
+from amplifier_core import ProviderInfo
 class FixtureProvider:
     name = 'fixture'
     def get_info(self): return ProviderInfo(id='fixture', display_name='Fixture', defaults={'model': 'fixture'})
     async def list_models(self): return []
-    async def complete(self, *args, **kwargs): raise AssertionError('No model calls allowed in startup qualification')
+    async def complete(self, *args, **kwargs):
+        Path(''' + repr(str(calls)) + ''').touch()
+        raise AssertionError('No model calls allowed in startup qualification')
     def parse_tool_calls(self, response): return []
 async def mount(coordinator, config=None):
     await coordinator.mount('providers', FixtureProvider(), name='fixture')
@@ -74,7 +93,11 @@ providers:
             worker.read = worker.shutdown.wait
             worker.shutdown.set()
             await worker.run()
-    assert sum(e.get('type') == 'runtime.ready' for e in events) == 2
+    ready = [e['report'] for e in events if e.get('type') == 'runtime.ready']
+    assert len(ready) == 2
+    assert ready[0]['resumed'] is False and ready[1]['resumed'] is True
+    assert not any(e.get('type') == 'runtime.error' for e in events)
+    assert not calls.exists()
     assert not any(e.get('type') in {'input.delivered', 'generation.started'} for e in events)
     print(json.dumps({'workerStarts': 2, 'resumed': True, 'modelCalls': 0,
                       'sharedRegistryUnchanged': True, 'productionHistoryTouched': False}))

@@ -90,6 +90,29 @@ def _accounting_copy(value):
     return copy.deepcopy(value)
 
 
+def _receipt_copy(receipt):
+    """Copy ordinary flat receipt fields without recursively copying scalars.
+
+    Keep one memo for shared child dictionaries. Unusual keys/values use the
+    original deepcopy contract, including hooks and deeper/cyclic structures.
+    """
+    scalar_types = (str, int, float, bool, type(None))
+    result, children = {}, {}
+    for key, value in receipt.items():
+        if type(key) is not str:
+            return copy.deepcopy(receipt)
+        if type(value) in scalar_types:
+            result[key] = value
+        elif type(value) is dict and all(type(k) is str and type(v) in scalar_types
+                                        for k, v in value.items()):
+            if id(value) not in children:
+                children[id(value)] = value.copy()
+            result[key] = children[id(value)]
+        else:
+            return copy.deepcopy(receipt)
+    return result
+
+
 def accounting_projection(tree, *, _retired=None):
     scalar_types = (str, int, float, bool, type(None))
     rows = [(row, False) for row in tree.get('retiredUsageNodes', [])]
@@ -185,7 +208,7 @@ def _observed_work(row, turns, accounting):
         receipt = accounting.get((row['sessionId'], row['id']))
         if not receipt or not receipt.get('producerId'):
             return None
-        result = copy.deepcopy(receipt)
+        result = _receipt_copy(receipt)
     else:
         return None
     fields = {'id', 'parentId', 'turnId', 'sessionId', 'rootSessionId', 'kind',
@@ -277,20 +300,18 @@ def persist(home, state, cache, *, session_ids=None, by_id=None, references=None
                  if key not in {'historyActivity', 'questions', 'workProjection'}}
         if 'execution' in value:
             raw_tree = value['execution']
-            value['execution'] = stored_execution(raw_tree, _retired=(
-                (lambda rows: execution_preparation.retired(session['id'], rows))
-                if execution_preparation is not None else None))
-            tree = value['execution']
-            if db is not None and len(tree.get('retiredUsageNodes', ())) >= 128:
-                from .cold_display import execution_reference
-                resource = (execution_preparation.reference(db, session, tree, pending_execution)
-                            if execution_preparation is not None and pending_execution is not None else None)
-                value[MARKER] = {**value.get(MARKER, {}),
-                                 'execution': execution_reference(db, tree, prepared=(
-                                     execution_preparation.prepare(session['id'], tree)
-                                     if execution_preparation is not None and resource is None else None),
-                                     resource=resource)}
+            if execution_preparation is not None and db is not None and pending_execution is not None:
+                tree, reference = execution_preparation.stored(db, session, raw_tree, pending_execution)
+            else:
+                tree, reference = stored_execution(raw_tree), None
+                if db is not None and len(tree.get('retiredUsageNodes', ())) >= 128:
+                    from .cold_display import execution_reference
+                    reference = execution_reference(db, tree)
+            if reference is not None:
+                value[MARKER] = {**value.get(MARKER, {}), 'execution': reference}
                 value.pop('execution')
+            else:
+                value['execution'] = tree
         messages = value.get('messages')
         if (db is not None and isinstance(messages, list)
                 and sum(len(message.get('text', '')) for message in messages

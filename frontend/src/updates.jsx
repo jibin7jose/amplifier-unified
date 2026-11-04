@@ -1,5 +1,5 @@
 import {AppReloadNotice} from './app-reload.jsx';
-import {AttentionReview,ReadWhenVisible,useReadVisible} from './attention';
+import {AttentionReview,ReadWhenVisible,useReadVisible,FailureDisposition,FailureDispositions} from './attention';
 import {updateOverview} from './update-overview';
 import {ActivityRegion} from './activity-region';
 import {useListFilter} from './list-filter.jsx';
@@ -35,6 +35,7 @@ function ComponentSummary({updates,items,busy}){
 }
 export function UpdateSettings({state,act}){
  const unread=(state.attention?.items||[]).filter(item=>item.page==='updates'&&!item.read),releaseUnread=unread.filter(item=>item.id.startsWith('release-notice:')),componentUnread=unread.filter(item=>!item.id.startsWith('release-notice:'));
+ const unresolved=(state.attention?.items||[]).filter(item=>item.page==='updates'&&item.actionRequired);
  const updates=state.updates||{},options=state.settings?.updates||{},replacement=updates.pendingReplacement!=null,busy=replacement||['checking','staging','validating','activating'].includes(updates.phase);
  const intervalHours=options.intervalHours??4,legacyInterval=![1,4,8,24].includes(intervalHours);
  const application=updates.application||(updates.items||[]).find(item=>item.kind==='app')||{};
@@ -61,18 +62,21 @@ export function UpdateSettings({state,act}){
  const canRefreshRunner=overview.runnerOnlyPending&&!replacement&&!busy;
  const checkDisabled=!!updates.applicationCheckPending||(!canRefreshQueued&&!canRefreshRunner&&(controlsBusy||!!pending));
  const summarizeProgress=overview.tone==='working'&&overview.currentProgress&&!updates.initialPreparation;
- const simpleDetail=summarizeProgress?'We’re preparing and checking the updated components. This continues automatically.':overview.detail;
- const simpleTitle=summarizeProgress?'Finishing your update':overview.title;
+ const persistentFailure=unresolved[0]&&!busy&&!pending;
+ const simpleDetail=persistentFailure?unresolved[0].detail:summarizeProgress?'We’re preparing and checking the updated components. This continues automatically.':overview.detail;
+ const simpleTitle=persistentFailure?unresolved[0].title:summarizeProgress?'Finishing your update':overview.title;
  const change=patch=>act('settings.update',{patch:{updates:patch}});
  return <ActivityRegion as="section" name="updates" busy={overview.processing} className="a-updates" data-part="updates">
   <div ref={statusRef} className="a-app-update a-update-quiet" data-part="application-update" aria-label="Overall update status" role="status" aria-live="polite">
-   <div className="a-update-overall">{overview.tone==='error'?<AlertCircle/>:overview.tone==='ready'?<Check/>:overview.tone==='available'?<ArrowUpCircle/>:overview.processing?<LoaderCircle className="a-progress-spinner" aria-hidden="true"/>:<Clock3/>}<div><h4>{simpleTitle}</h4><p id="update-action-status">{simpleDetail}</p></div></div>
+   <div className="a-update-overall">{persistentFailure||overview.tone==='error'?<AlertCircle/>:overview.tone==='ready'?<Check/>:overview.tone==='available'?<ArrowUpCircle/>:overview.processing?<LoaderCircle className="a-progress-spinner" aria-hidden="true"/>:<Clock3/>}<div><h4>{simpleTitle}</h4><p id="update-action-status">{simpleDetail}</p></div></div>
    <p className="a-update-version-line">Amplifier {application.current||'version not reported'}{application.latest&&application.latest.replace(/^v/,'')!==application.current?.replace(/^v/,'')?' · Latest '+application.latest:''}{updates.lastCheck?' · Checked '+new Date(updates.lastCheck*1000).toLocaleString():''}</p>
    {overview.applicationResult&&<p className="a-caption" data-part="confirmed-application-result">{overview.applicationResult.phase==='restart-ack'?'Application updated successfully':'Current application verified'} · {overview.applicationResult.version} · Confirmed {new Date(overview.applicationResult.verifiedAt*1000).toLocaleString()}</p>}
   </div>
   <UpdateReleaseSummary updates={updates} application={application} overview={overview}/>
    {overview.waiting&&!overview.runnerOnlyPending&&!!updates.blockers?.length&&<details className="a-update-work" data-part="update-blockers"><summary>View active work ({updates.blockers.length})</summary><ul>{updates.blockers.map((item,index)=><li key={index}>{item.label}{item.sessionId&&<> — <button type="button" className="a-link" data-action="session.select" onClick={async()=>{const result=await act('session.select',{id:item.sessionId});if(result&&result.accepted!==false)await act('view.update',{patch:{panel:null,workSurface:'chat'}})}}>{item.title||'Open conversation'}</button></>}</li>)}</ul><p className="a-caption">Idle chats alone don’t hold up the update. Background workers, calls, and tools may still need to finish.</p><UpdateRestart updates={updates} act={act}/></details>}
-  {overview.tone!=='working'&&<ReadWhenVisible item={unread.find(item=>item.id==='updates:error')} act={act}><ResultNotice phase={resultPhase} message={resultPhase==='error'?resultMessage:''}/></ReadWhenVisible>}
+  {unresolved.map(item=><ReadWhenVisible key={item.id} item={item} act={act}><ResultNotice phase="error" message={`${item.title}: ${item.detail}${item.occurrences>1?` (${item.occurrences} occurrences)` :''}`}/><p className="a-caption">Reading this does not resolve it. Diagnostic history is retained below.</p><FailureDisposition item={item} act={act}/></ReadWhenVisible>)}
+  <FailureDispositions state={state}/>
+  {!unresolved.length&&overview.tone!=='working'&&<ReadWhenVisible item={unread.find(item=>item.id==='updates:error')} act={act}><ResultNotice phase={resultPhase} message={resultPhase==='error'?resultMessage:''}/></ReadWhenVisible>}
   <AppReloadNotice/>
   <SmartToolUpdateResults updates={updates} act={act} busy={busy||!!updates.pendingRestart||!!updates.pendingReplacement}/>
   {application.canInstall===false&&<p className="a-ai-hint" role="status">This is a development preview. App updates are deployed by its owner; this preview cannot replace the installed app.</p>}
@@ -83,7 +87,7 @@ export function UpdateSettings({state,act}){
   <div className="a-update-simple-options"><label><input type="checkbox" data-action="settings.update" checked={options.autoCheck!==false&&options.autoInstall!==false} onChange={e=>change(e.target.checked?{autoCheck:true,autoInstall:true}:{autoInstall:false})}/>Keep Amplifier up to date</label><p className="a-caption">Restarts wait until your work is finished.</p></div>
 
   </div>
-  <details className="a-update-disclosure" data-part="important-release-changes"><summary>Important changes{releaseUnread.length>0?` · ${releaseUnread.length} unread`:''}</summary><div className="a-update-disclosure-body"><AttentionReview state={state} act={act} page="updates" items={releaseUnread}/><ReleaseNotices application={application} state={state} act={act}/>{!state.attention?.items?.some(item=>item.id.startsWith('release-notice:'))&&<p className="a-caption">No high-impact notices to review. Earlier guidance remains in Changelog.</p>}</div></details>
+  <details className="a-update-disclosure" data-part="important-release-changes"><summary>Important changes</summary><div className="a-update-disclosure-body"><AttentionReview state={state} act={act} page="updates" items={releaseUnread}/><ReleaseNotices application={application} state={state} act={act}/>{!state.attention?.items?.some(item=>item.id.startsWith('release-notice:'))&&<p className="a-caption">No high-impact notices to review. Earlier guidance remains in Changelog.</p>}</div></details>
   <ReleaseHistory application={application} state={state} act={act}/>
   <details className="a-update-disclosure" data-part="ecosystem-update-details" open={overview.tone==='error'||undefined}><summary>{overview.tone==='error'?'Advanced details · review issue':'Advanced details'}</summary><div className="a-update-disclosure-body">
    <AttentionReview state={state} act={act} page="updates" items={componentUnread} showItems/>

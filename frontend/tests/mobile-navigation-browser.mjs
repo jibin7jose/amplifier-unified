@@ -2,22 +2,29 @@ import {fixturePython} from './fixture-python.mjs';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 import {readComposerDraft} from './composer-test-helpers.mjs';
 import {spawn} from 'node:child_process';
+import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
+import {combinedFailure} from './chat-reference-harness.mjs';
 import {fileURLToPath} from 'node:url';
 import {chromium,expect} from '@playwright/test';
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
-let base=process.env.AMPLIFIER_TEST_URL,fixture;
+const focusOnly=process.env.MOBILE_NAVIGATION_FOCUS_ONLY==='1';
+assert.ok(process.env.MOBILE_NAVIGATION_FOCUS_ONLY===undefined||focusOnly,'Unknown mobile-navigation selection');
+let base=process.env.AMPLIFIER_TEST_URL,fixture,stopFixture,browser,page,failure;
+assert.ok(!focusOnly||!base,'Focused qualification owns its canonical fixture');
+const out=process.env.AMPLIFIER_TEST_OUTPUT||'/tmp/amplifier-mobile-navigation';await mkdir(out,{recursive:true});
+const errors=[],results=[],focusChecks=[],cleanup={browserClosed:false,fixtureExit:null};
+try{
 if(!base){
  fixture=spawn(fixturePython(fileURLToPath(new URL('../../.venv/bin/python',import.meta.url))),[fileURLToPath(new URL('../../tests/fixtures/mobile_navigation_ui_server.py',import.meta.url))],{stdio:['ignore','pipe','inherit']});
+ stopFixture=ownFixture(fixture,{label:'Mobile navigation fixture'});
  base=await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>{fixture.kill();reject(Error('Fixture startup timed out'))},15000);fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exited '+code))});fixture.stdout.on('data',chunk=>{output+=chunk;const url=output.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(url){clearTimeout(timer);resolve(url)}})});
 }
-const out=process.env.AMPLIFIER_TEST_OUTPUT||'/tmp/amplifier-mobile-navigation';await mkdir(out,{recursive:true});
-const browser=await chromium.launch({headless:true});
-const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true,extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
-const errors=[];page.on('pageerror',e=>errors.push(e.message));
+browser=await chromium.launch({headless:true});
+page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true,extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
+page.on('pageerror',e=>errors.push(e.message));
 const action=(action,args={})=>page.evaluate(([action,args])=>window.amplifier.dispatch(action,args),[action,args]);
 const patch=patch=>action('view.update',{patch});
-const results=[];
 const readingPosition=()=>page.locator('.a-messages').evaluate(pane=>{
  const rect=pane.getBoundingClientRect(),message=[...pane.querySelectorAll('[data-message-id]')].find(row=>row.getBoundingClientRect().bottom>rect.top);
  if(!message)throw Error('No visible conversation message');
@@ -28,7 +35,6 @@ const workReady=()=>page.waitForFunction(()=>{
  const state=window.amplifier.getState(),session=state.sessions.find(row=>row.id===state.selectedSessionId);
  return session?.workProjection?.status==='ready'&&!document.querySelector('[data-part="work-projection-status"]');
 });
-try{
  await page.goto(base);await showFixtureConversation(page);await page.getByRole('textbox',{name:'Message Amplifier'}).waitFor();
  await action('theme.reset');
  await action('session.create',{title:'Improve mobile navigation and Canvas'});
@@ -36,7 +42,7 @@ try{
  await patch({navPinned:true,navExpanded:false});
  await page.getByRole('textbox',{name:'Message Amplifier'}).fill('Keep this unsent draft');
  const drawer=page.getByRole('dialog',{name:'Workspaces and chats',exact:true});
- for(const width of [320,360,390,412,600,760,1024,1440]){
+ for(const width of focusOnly?[]:[320,360,390,412,600,760,1024,1440]){
   await page.setViewportSize({width,height:844});await page.waitForTimeout(150);
   const metrics=await page.evaluate(()=>{
    const box=s=>{const el=document.querySelector(s),b=el.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height,display:getComputedStyle(el).display}};
@@ -57,7 +63,7 @@ try{
    assert.ok(metrics.actions.every(row=>separate(metrics.title,row)&&(row.label==='Home'||separate(metrics.home,row))));
    assert.ok(metrics.actions.every((row,i)=>metrics.actions.slice(i+1).every(other=>separate(row,other))));
    assert.notEqual(metrics.home.display,'none');assert.ok(metrics.home.width>=44&&metrics.home.height>=44);
-   assert.deepEqual(metrics.actions.map(row=>row.label),['Open navigation','Home','Back in navigation history','Forward in navigation history','Recent places','Chat','Open canvas']);
+   assert.deepEqual(metrics.actions.map(row=>row.label),['Open navigation','Home','Back in navigation history','Forward in navigation history','Recent places','Browser & computer','Chat','Open canvas']);
    assert.ok(metrics.actions.every(row=>contained(row)&&row.width>=44&&row.height>=44&&row.x>=0&&row.x+row.width<=width));
   }
   await page.screenshot({path:`${out}/chat-${width}.png`});
@@ -86,6 +92,13 @@ try{
  assert.ok(await page.locator('.a-conversation').evaluate(el=>el.inert));
  await page.screenshot({path:`${out}/drawer.png`});assert.ok(await drawer.locator('input').evaluateAll(nodes=>nodes.filter(node=>node.getClientRects().length).every(node=>parseFloat(getComputedStyle(node).fontSize)>=16)));
  const toggle=page.locator('#navigation-toggle');
+ const focusSample=()=>page.evaluate(()=>({activeId:document.activeElement.id,
+  viewport:{width:innerWidth,height:innerHeight},
+  activeLabel:document.activeElement.getAttribute('aria-label'),
+  activeInert:!!document.activeElement.closest('[inert]'),
+  drawerHidden:document.querySelector('.a-nav-slot').hidden,
+  chatInert:document.querySelector('.a-conversation').inert,
+  detailsCount:document.querySelectorAll('.a-navigation-flyout').length}));
  await expect(drawer.getByRole('button',{name:'Home',exact:true})).toBeFocused();
  await page.keyboard.press('Shift+Tab');await expect(toggle).toBeFocused();
  await page.keyboard.press('Shift+Tab');assert.ok(await drawer.evaluate(el=>el.contains(document.activeElement)));
@@ -94,12 +107,20 @@ try{
  const details=drawer.locator('.a-navigation-more').first();await details.focus();await details.click();await page.locator('.a-navigation-flyout').waitFor();
  await page.screenshot({path:`${out}/details.png`});
  await page.keyboard.press('Escape');assert.equal(await drawer.isVisible(),true);
+ await expect(page.locator('.a-navigation-flyout')).toHaveCount(0);await expect(details).toBeFocused();
+ assert.equal(await page.locator('.a-conversation').evaluate(el=>el.inert),true);
+ focusChecks.push({check:'child Escape retains parent drawer, invoker and background inertness',passed:true,state:await focusSample()});
  await page.keyboard.press('Escape');await page.waitForFunction(()=>document.querySelector('.a-nav-slot').hidden);
+ await expect(toggle).toBeFocused();assert.equal(await page.locator('.a-conversation').evaluate(el=>el.inert),false);
  assert.equal(await readComposerDraft(page.getByRole('textbox',{name:'Message Amplifier'})),'Keep this unsent draft');
  assert.equal(await page.evaluate(()=>window.amplifier.getState().view.navPinned),true);
+ focusChecks.push({check:'parent Escape restores header opener, draft and noninert chat',passed:true,state:await focusSample()});
  await page.getByRole('button',{name:'Open navigation',exact:true}).click();
  await page.getByRole('button',{name:'Close navigation',exact:true}).tap();
  assert.equal(await drawer.isVisible(),false);
+ await expect(toggle).toBeFocused();assert.equal(await page.locator('.a-conversation').evaluate(el=>el.inert),false);
+ focusChecks.push({check:'reopened drawer close returns focus to its header opener',passed:true,state:await focusSample()});
+ if(!focusOnly){
  await page.getByRole('button',{name:'Chat',exact:true}).click();
  await page.getByRole('group',{name:'Chat',exact:true}).getByRole('button',{name:'Chat info',exact:true}).waitFor();
  await page.screenshot({path:`${out}/more.png`});
@@ -189,5 +210,19 @@ try{
   assert.equal(await readComposerDraft(page.getByRole('textbox',{name:'Message Amplifier'})),'Keep this unsent draft');
   results.push({reading:'retry-to-ready',removedHeight,before:retryBefore,after:retryAfter});
  }
- assert.deepEqual(errors,[]);await writeFile(`${out}/results.json`,JSON.stringify({results,errors},null,2));console.log('Responsive layouts, drawer focus, sheets, typography, delayed rapid toggles, retained viewer, draft and reload passed');
-}finally{await writeFile(`${out}/results-partial.json`,JSON.stringify({results,errors},null,2));await browser.close();fixture?.kill()}
+ }
+ assert.deepEqual(errors,[]);
+}catch(error){failure=error}
+finally{
+ try{
+  await finishFixture({label:'Mobile navigation fixture',close:[['Mobile navigation browser',async()=>{
+   if(browser){await browser.close();cleanup.browserClosed=!browser.isConnected();assert.equal(cleanup.browserClosed,true)}
+  }]],stop:async()=>{if(stopFixture)cleanup.fixtureExit=await stopFixture()}});
+ }catch(error){failure=combinedFailure(failure,[error])}
+ const receipt={passed:!failure,selection:focusOnly?'focus-only':'full',results,errors,focusChecks,cleanup,
+  ...(failure?{error:String(failure)}:{})};
+ await writeFile(`${out}/results-partial.json`,JSON.stringify(receipt,null,2));
+ if(!failure)await writeFile(`${out}/results.json`,JSON.stringify(receipt,null,2));
+}
+if(failure)throw failure;
+console.log(focusOnly?'Mobile drawer and nested Details focus checks passed':'Responsive layouts, drawer focus, sheets, typography, delayed rapid toggles, retained viewer, draft and reload passed');

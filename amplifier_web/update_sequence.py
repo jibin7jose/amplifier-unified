@@ -10,26 +10,32 @@ from urllib.parse import urlsplit
 
 
 def git_source(uri):
+    """Read Foundation-consumed declarations without resolving their sources.
+
+    Foundation's parse_uri defaults an omitted Git ref to main, not remote
+    HEAD. Keep explicit refs verbatim; source_key must not alias the two.
+    """
     if not isinstance(uri, str) or not uri.startswith('git+'):
         return None
     parsed = urlsplit(uri[4:])
     path, separator, ref = parsed.path.rpartition('@')
     return {'url': parsed._replace(path=path if separator else parsed.path, fragment='').geturl(),
-            'ref': ref if separator else 'HEAD'}
+            'ref': ref if separator else 'main'}
 
 
 def included_sources():
-    from .runtime_environment import manifest_path, package_name
+    from .runtime_environment import declared_manifest, package_name
     from .builtin_behaviors import resource_root
     import yaml
-    manifest = tomllib.loads(manifest_path().read_text())
+    content = declared_manifest()
+    manifest = tomllib.loads(content.decode())
     packages = {package_name(name) for name in manifest.get('tool', {}).get('uv', {}).get('sources', {})}
     for value in manifest['project']['dependencies']:
         name, separator, uri = value.partition(' @ ')
         if separator and git_source(uri):
             packages.add(package_name(name))
     from .runtime_registry_updates import open_policy
-    if open_policy(manifest_path().read_bytes()) is not None:
+    if open_policy(content) is not None:
         packages.add('amplifier-core')
     # Includes and module sources in shipped app behaviors are required even
     # before the first conversation has populated their source cache.

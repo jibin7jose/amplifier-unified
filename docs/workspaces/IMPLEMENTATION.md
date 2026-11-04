@@ -114,7 +114,8 @@ Every listed repository has its own outcome; an unvalidated repository stays
 unvalidated. A zero exit without complete native evidence or matching source
 does not qualify a passed validation. Current Git HEAD/source snapshots and up
 to sixteen exact local result references are retained, using the existing
-Outputs store with its 8 MiB/file and 16 MiB combined limits. Publication is
+Outputs store with bounded file preparation and no fixed byte limit per file or
+collection. Publication is
 unknown unless explicitly reported, with author/reference and an explicit lack
 of owner confirmation. Recording a publication report has no external effect.
 
@@ -228,10 +229,29 @@ Fresh `coordination.reply` declarations capture supported local SHA-256 file
 references before acknowledgment. The existing output registry and private
 resource store own those immutable bytes; request receipts retain only the
 declared references, verification outcomes and output identities. Files are
-bounded to 8 MiB each and 16 MiB per declaration. Opaque references remain
+captured in bounded pieces when larger than one MiB, without a fixed per-file
+or declaration byte ceiling. Opaque references remain
 unverified. The producing generation, execution directory/revision, request
 and declaring operation are retained as provenance. This is an exact file
 snapshot, not proof of repository integration or semantic correctness.
+
+Large files use a flat manifest of ordinary content-addressed resources in the
+existing output registry. The manifest retains the whole-file SHA-256 and byte
+count; existing garbage collection follows its resource references. Preparation
+uses temporary encoded pieces, verifies the source before/after and rechecks the
+declared digest. Admission checks current free disk space; resource pressure
+remains an explicit unavailable result, never a successful qualification.
+Prepared pieces are adopted in the existing output/reply transaction. Temporary
+files are removed after success, failure, or settled cancellation.
+
+Text inspection incrementally decodes the saved pieces, returns only the requested
+character range, and verifies every piece and the complete file. Large downloads
+first verify into temporary disk scratch, then stream with backpressure. No bytes
+are sent before complete verification. Capture, verification, download and GC work
+remain linear in the selected file bytes; file bodies do not become resident in
+proportion to file size. Manifest metadata grows with the number of pieces.
+Existing image/canvas preview limits and output relationship-count policy are
+unchanged. This does not add another store or qualify the file's semantic content.
 
 Capture runs outside the service lock, then rechecks generation, Stop, placement
 and response revision. Output relationships and reply acknowledgment commit
@@ -845,8 +865,12 @@ original delivered request using the observed `expectedResponseRevision`. The
 workspace, task, delivery and Stop boundary must still match. Each reply has a
 monotonic revision and stable operation identity; earlier full declarations and
 terminal evidence remain in existing reply command receipts. Questions, deferrals
-and conflicts remain open reports. Exact retries return their retained revision;
-new payloads cannot reuse the same command ID.
+and conflicts remain open reports. The same current generation may correct a staged
+report with the observed revision before finishing its turn. The earlier declaration
+and retained file versions remain inspectable as superseded; only the latest report
+can qualify when that generation ends. Another generation cannot replace an
+unsettled report. The correction and superseded marker commit atomically.
+Exact retries return their retained revision; new payloads cannot reuse the same command ID.
 
 Negative reports notify immediately as unqualified claims. Successful dependency
 acceptance still needs the exact checkpointed native terminal row, root,

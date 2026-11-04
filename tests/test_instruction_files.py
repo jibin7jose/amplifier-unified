@@ -86,6 +86,34 @@ async def test_root_workspace_guidance_and_scratch_reload_through_entry_point(tm
     assert 'ROOT-SCRATCH-UPDATED' in second and 'ROOT-SCRATCH-INITIAL' not in second
 
 
+async def test_scratch_detail_links_do_not_autoload_history_or_receipts(tmp_path):
+    from amplifier_web.workspace_starters import DEVELOPMENT_INSTRUCTIONS, SCRATCH_TEMPLATE
+    workspace = tmp_path / 'workspace'
+    (workspace / '.amplifier').mkdir(parents=True)
+    (workspace / 'working-files').mkdir()
+    (workspace / 'working-files/archive.md').write_text('SUPERSEDED-HOLD-MUST-NOT-LOAD')
+    (workspace / 'working-files/checks.json').write_text('{"private-evidence":"FULL-RECEIPT-MUST-NOT-LOAD"}')
+    (workspace / 'AGENTS.md').write_text(DEVELOPMENT_INSTRUCTIONS)
+    (workspace / '.amplifier/AGENTS.md').write_text('@../AGENTS.md\n@../SCRATCH.md\n')
+    scratch = workspace / 'SCRATCH.md'
+    scratch.write_text(SCRATCH_TEMPLATE + '\nCURRENT-DECISION: ready for review.\n'
+                       '[Earlier detail](working-files/archive.md)\n'
+                       'Check receipt: working-files/checks.json\n')
+    render = factory(include_instruction_files(Bundle(name='work', instruction='Root'),
+                                             execution_workspace=workspace), workspace)
+    first = await render()
+    assert first.count('CURRENT-DECISION: ready for review.') == 1
+    assert 'SUPERSEDED-HOLD-MUST-NOT-LOAD' not in first
+    assert 'FULL-RECEIPT-MUST-NOT-LOAD' not in first
+    assert 'working-files/archive.md' in first
+    scratch.write_text(SCRATCH_TEMPLATE + '\nCURRENT-DECISION: accepted.\n')
+    second = await render()
+    assert 'CURRENT-DECISION: accepted.' in second
+    assert 'CURRENT-DECISION: ready for review.' not in second
+    assert 'working-files/archive.md' not in second
+    assert (workspace / 'working-files/archive.md').read_text() == 'SUPERSEDED-HOLD-MUST-NOT-LOAD'
+
+
 @pytest.mark.parametrize('name', ['work', '', None, 'root with spaces', 'root:other', 'root/path', 'root@other'])
 async def test_selected_home_and_all_cwd_files_need_no_root_namespace(tmp_path, name):
     home, workspace, cache = (tmp_path / part for part in ('selected home', 'work tree', 'cache'))

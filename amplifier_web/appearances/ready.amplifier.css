@@ -1,0 +1,413 @@
+/* amplifier-appearance: {"name":"Breadbin","description":"Warm ivory casing, a violet conversation screen and a restrained four-color header edge. Static and self-contained."} */
+/* Breadbin. Material cues are adapted for readability; layout and behavior stay native. */
+#amp-one {
+  color-scheme: light dark;
+
+  --a-bg: light-dark(#d5c6a6, #191720);
+  --a-surface: light-dark(#f7f1e6, #211e31);
+  --a-soft: light-dark(#e4d7be, #302b30);
+  --a-ink: light-dark(#332d28, #efeaff);
+  --a-muted: light-dark(#585047, #c4bdd4);
+  --a-line: light-dark(#b6a88d, #665d6b);
+  --a-accent: light-dark(#43367b, #c7bbff);
+  --a-tint: light-dark(#e2dcef, #423874);
+  --a-green: light-dark(#245638, #a5d4ad);
+  --a-danger: light-dark(#8f3039, #ffb1b8);
+  --a-warning: light-dark(#79531d, #edca8b);
+  --a-on-accent: light-dark(#fffaf2, #241b3c);
+  --a-accent-ink: var(--a-on-accent);
+
+  --ready-case: var(--a-soft);
+  --ready-case-ink: var(--a-ink);
+  --ready-case-line: var(--a-line);
+  --ready-case-highlight: light-dark(#fff9eb, #786f79);
+  --ready-screen: light-dark(#f7f1e6, #30266e);
+  --ready-code-surface: light-dark(#eee8f5, #3b2f86);
+  --ready-code-ink: light-dark(#34295f, #f0ebff);
+  --ready-user-surface: light-dark(#efe5d3, #2b2730);
+  --ready-user-ink: light-dark(#4c3928, #f0e8da);
+  --ready-user-line: light-dark(#b6a88d, #665d6b);
+  --ready-user-edge: light-dark(#8e6928, #dfbd77);
+  --ready-key-highlight: light-dark(#fffaf0, #ffffff22);
+  --ready-key-depth: light-dark(#51462f33, #09070e99);
+  --ready-key-press: light-dark(#51462f55, #09070ecc);
+  --ready-key-bevel: inset 0 1px 0 var(--ready-key-highlight), 0 2px 0 var(--ready-key-depth);
+  --ready-key-pressed: inset 0 1px 2px var(--ready-key-press);
+  --ready-header-bevel: inset 0 1px var(--ready-case-highlight);
+  --ready-spectrum: linear-gradient(
+    90deg,
+    #aa625d 0 25%,
+    #c18a52 25% 50%,
+    #b4a255 50% 75%,
+    #648e89 75% 100%
+  );
+  --ready-ui: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ready-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --a-font: var(--ready-ui);
+  --a-chrome-bg: var(--ready-case);
+  --a-chrome-ink: var(--ready-case-ink);
+  --a-radius: 5px;
+  --a-panel-radius: 5px;
+  --a-control-radius: 5px;
+  --a-card-radius: 5px;
+  --a-composer-radius: 5px;
+  --a-message-radius: 5px;
+  --a-panel-line: var(--a-line);
+  --a-panel-shadow: none;
+  --a-card-line: var(--a-line);
+  --a-composer-line: var(--a-line);
+  --a-surface-shadow: none;
+  --a-navigation-art: none;
+  --a-navigation-art-size: 100% 100%;
+  --a-navigation-art-repeat: no-repeat;
+  --a-conversation-art: none;
+  --a-canvas-art: none;
+
+  color: var(--a-ink);
+  background-color: var(--a-bg);
+  background-image: none;
+  font-family: var(--ready-ui);
+}
+
+#amp-one[data-theme-scheme="light"] {
+  color-scheme: light;
+}
+
+#amp-one[data-theme-scheme="dark"] {
+  color-scheme: dark;
+}
+
+/* The real application header carries the only optional color spectrum. */
+#amp-one.a-chat-shell.a-approachable-shell [data-part="header"] {
+  background-color: var(--ready-case);
+  background-image: var(--ready-spectrum);
+  background-position: left bottom;
+  background-repeat: no-repeat;
+  background-size: 100% 3px;
+  border-bottom-color: var(--ready-case-line);
+  box-shadow: var(--ready-header-bevel);
+  color: var(--ready-case-ink);
+}
+
+/* Navigation uses the same warm case; selected rows remain functional signals. */
+#amp-one.a-chat-shell.a-approachable-shell [data-part="navigation"] .a-nav-rail {
+  background-color: var(--ready-case);
+  background-image: none;
+  border-color: var(--ready-case-line);
+  color: var(--ready-case-ink);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="navigation"] :is(
+  .a-nav-chat:not(.a-nav-chat-rename),
+  .a-workspace-row
+) {
+  box-sizing: border-box;
+  padding-inline-start: 8px;
+  padding-inline-end: 4px;
+  border-radius: var(--a-control-radius);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="navigation"] :is(
+  .a-nav-chat.is-selected,
+  .a-workspace-row.is-selected
+) {
+  background-color: var(--a-tint);
+  color: var(--a-accent);
+  box-shadow: inset 3px 0 var(--a-accent);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell :is(
+  .a-nav-eyebrow,
+  .a-nav-conversations,
+  .a-nav-chat-group-title,
+  .a-workspace-explorer-heading
+) {
+  color: var(--a-muted);
+  font-family: var(--ready-ui);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+/* The blue screen is a conversation surface, not a message-row decoration. */
+#amp-one.a-chat-shell.a-approachable-shell [data-part="conversation"] {
+  background-color: var(--ready-screen);
+  background-image: none;
+  border-color: var(--a-line);
+  box-shadow: none;
+  color: var(--a-ink);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] {
+  background-color: transparent;
+  scrollbar-color: var(--a-line) var(--ready-screen);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] :is(.a-message, .a-markdown) {
+  font-family: var(--ready-mono);
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+  line-height: 1.7;
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] :is(.a-message, .a-markdown) :is(
+  p,
+  li,
+  span,
+  strong,
+  em,
+  blockquote,
+  td,
+  th,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  summary,
+  pre,
+  code
+) {
+  font-family: var(--ready-mono) !important;
+  letter-spacing: 0;
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] :is(
+  .a-markdown pre,
+  .a-markdown code,
+  kbd
+) {
+  font-family: var(--ready-mono);
+  font-variant-ligatures: none;
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] .a-markdown pre {
+  background-color: var(--ready-code-surface);
+  border-color: var(--a-line);
+  border-radius: var(--a-card-radius);
+  color: var(--ready-code-ink);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] .a-markdown :not(pre) > code {
+  background-color: var(--ready-code-surface);
+  border-radius: var(--a-control-radius);
+  color: var(--ready-code-ink);
+}
+
+/* Native row wrappers stay transparent; the message bodies own the surface. */
+#amp-one.a-chat-shell.a-approachable-shell :is(.a-message.a-assistant, .a-message.a-user) {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+/* The assistant screen and personal bubble live on their bodies, not the row. */
+#amp-one.a-chat-shell.a-approachable-shell .a-message.a-assistant > .a-message-body {
+  box-sizing: border-box;
+  background-color: var(--ready-screen);
+  border: 1px solid var(--a-line);
+  border-radius: var(--a-message-radius);
+  color: var(--a-ink);
+  padding: 16px 20px;
+}
+
+#amp-one.a-chat-shell.a-approachable-shell .a-message.a-user > .a-message-body {
+  box-sizing: border-box;
+  background-color: var(--ready-user-surface);
+  border: 1px solid var(--ready-user-line);
+  border-radius: var(--a-message-radius) var(--a-message-radius) 4px var(--a-message-radius);
+  box-shadow: inset 3px 0 var(--ready-user-edge);
+  color: var(--ready-user-ink);
+  padding: 11px 16px;
+}
+
+@container conversation (max-width: 520px) {
+  #amp-one.a-chat-shell.a-approachable-shell .a-message.a-assistant > .a-message-body {
+    padding: 12px;
+  }
+
+  #amp-one.a-chat-shell.a-approachable-shell .a-message.a-user > .a-message-body {
+    padding: 9px 12px;
+  }
+}
+
+/* The outer composer stays unboxed; the existing inner surface gets the casing. */
+#amp-one.a-chat-shell.a-approachable-shell [data-part="composer-surface"] {
+  background-color: var(--a-surface);
+  border-color: var(--a-composer-line);
+  border-radius: var(--a-composer-radius);
+  box-shadow: var(--ready-key-bevel);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="composer-surface"]:focus-within {
+  border-color: var(--a-accent);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="composer-surface"] [role="textbox"][contenteditable="true"] {
+  caret-color: var(--a-accent);
+  color: var(--a-ink);
+}
+
+/* Accent controls always use the authored on-accent foreground. */
+#amp-one.a-chat-shell.a-approachable-shell :is(.a-primary, .a-send) {
+  background-color: var(--a-accent);
+  border: 1px solid var(--a-accent);
+  color: var(--a-on-accent);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell .a-message-actions .a-delivery-confirm .a-primary {
+  background-color: var(--a-accent);
+  border-color: var(--a-accent);
+  color: var(--a-on-accent);
+}
+
+/* Bevels are paint only; pressed controls keep the same border and dimensions. */
+#amp-one.a-chat-shell.a-approachable-shell :is(
+  .a-soft:not([aria-pressed]),
+  .a-primary,
+  .a-send
+) {
+  box-shadow: var(--ready-key-bevel);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell :is(
+  .a-soft:not([aria-pressed]),
+  .a-primary,
+  .a-send
+):active {
+  box-shadow: var(--ready-key-pressed);
+}
+
+#amp-one.a-chat-shell.a-approachable-shell :is(
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  summary,
+  [role="button"],
+  [role="link"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="switch"],
+  [role="tab"],
+  [role="textbox"]
+):focus-visible {
+  outline: 2px solid var(--a-accent);
+  outline-offset: 3px;
+}
+
+/* The shared composer surface owns its focus ring, not the text inside it.
+   Keep standalone textboxes and the composer's action buttons independently
+   focus-visible; only suppress the redundant nested editor rectangle. */
+#amp-one.a-chat-shell.a-approachable-shell [data-part="composer-surface"] [role="textbox"][contenteditable="true"]:focus-visible {
+  outline: none;
+}
+
+#amp-one.a-chat-shell.a-approachable-shell [data-part="work-browser"] {
+  background-color: var(--a-bg);
+  background-image: none;
+  color: var(--a-ink);
+}
+
+#amp-one ::selection {
+  background-color: var(--a-accent);
+  color: var(--a-on-accent);
+}
+
+/* Decorations are optional; functional focus, selection and row states remain. */
+#amp-one[data-decorations="off"] {
+  --ready-spectrum: none;
+  --ready-header-bevel: none;
+  --ready-key-bevel: none;
+  --ready-key-pressed: none;
+}
+
+@media (forced-colors: active) {
+  #amp-one {
+    --a-bg: Canvas;
+    --a-surface: Canvas;
+    --a-soft: Canvas;
+    --a-ink: CanvasText;
+    --a-muted: CanvasText;
+    --a-line: ButtonBorder;
+    --a-accent: Highlight;
+    --a-tint: Canvas;
+    --a-green: CanvasText;
+    --a-danger: CanvasText;
+    --a-warning: CanvasText;
+    --a-on-accent: CanvasText;
+    --a-accent-ink: HighlightText;
+    --ready-case: Canvas;
+    --ready-case-ink: CanvasText;
+    --ready-case-line: ButtonBorder;
+    --ready-case-highlight: Canvas;
+    --ready-screen: Canvas;
+    --ready-code-surface: Canvas;
+    --ready-code-ink: CanvasText;
+    --ready-user-surface: Canvas;
+    --ready-user-ink: CanvasText;
+    --ready-user-line: ButtonBorder;
+    --ready-user-edge: Highlight;
+    --ready-spectrum: none;
+    --ready-header-bevel: none;
+    --ready-key-bevel: none;
+    --ready-key-pressed: none;
+    --a-chrome-bg: Canvas;
+    --a-chrome-ink: CanvasText;
+  }
+
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="header"] {
+    background-color: Canvas;
+    background-image: none;
+    border-color: ButtonBorder;
+    box-shadow: none;
+    color: CanvasText;
+  }
+
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="navigation"] .a-nav-rail,
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="conversation"],
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="work-browser"],
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="composer-surface"],
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] .a-markdown pre,
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] .a-markdown :not(pre) > code {
+    background-color: Canvas;
+    background-image: none;
+    border-color: ButtonBorder;
+    color: CanvasText;
+  }
+
+  #amp-one.a-chat-shell.a-approachable-shell .a-message.a-user > .a-message-body {
+    background-color: Canvas;
+    border-color: ButtonBorder;
+    box-shadow: inset 3px 0 Highlight;
+    color: CanvasText;
+  }
+
+  #amp-one.a-chat-shell.a-approachable-shell :is(.a-primary, .a-send),
+  #amp-one.a-chat-shell.a-approachable-shell .a-message-actions .a-delivery-confirm .a-primary {
+    background-color: ButtonFace;
+    border-color: ButtonBorder;
+    box-shadow: none;
+    color: ButtonText;
+  }
+
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="navigation"] :is(
+    .a-nav-chat.is-selected,
+    .a-workspace-row.is-selected
+  ) {
+    background-color: Canvas;
+    box-shadow: inset 3px 0 Highlight;
+    color: CanvasText;
+    outline: 1px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  #amp-one ::selection {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+}

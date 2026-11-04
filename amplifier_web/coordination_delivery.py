@@ -866,6 +866,28 @@ class CoordinationDelivery:
             request = await self.previous.revalidate(request)
         return request
 
+    async def revalidate_work(self, binding):
+        """Fresh currentness, bounded by the bridge's existing response deadline."""
+        scope = binding.get('executionScope')
+        self.check_execution_scope(scope)
+        try:
+            # This required check must not use the optional observation deadline.
+            # The bridge owns timeout/cancellation; Stop is rechecked afterward.
+            check = await self.bridge('work.invocation.revalidate',
+                                      {'version': binding['required']['version']})
+        except TimeoutError:
+            raise RequestFitChanged('authority_unavailable', cause='bridge_timeout') from None
+        except Exception:
+            raise RequestFitChanged('authority_unavailable', cause='bridge_error') from None
+        self.check_execution_scope(scope)
+        if not isinstance(check, dict) or not isinstance(check.get('required'), dict):
+            raise RequestFitChanged('authority_unavailable', cause='invalid_response')
+        if check['required'].get('status') != 'available':
+            raise RequestFitChanged('authority_unavailable', cause='required_unavailable')
+        if (check.get('current') is not True or check.get('effectAuthorized') is not False
+                or check['required'] != binding['required']):
+            raise RequestFitChanged('authority_changed')
+
     async def finalize_work(self, request, *, fitted, binding):
         """Last awaited check after every outer wrapper, before commit/send."""
         if not binding:
@@ -873,6 +895,8 @@ class CoordinationDelivery:
         scope = binding.get('executionScope')
         self.check_execution_scope(scope)
         full = self.current_full(scope)
+        if binding.get('assuranceUnavailable') and not full:
+            raise RequestFitChanged('authority_changed')
         if binding['required']['status'] != 'available' and not full:
             return request
         saved = self._request(request)
@@ -885,17 +909,8 @@ class CoordinationDelivery:
             # Keep the fitted bytes, but never promote their observed Work
             # version to current assurance when that check was waived.
             saved['assuranceUnavailable'] = True
-        else:
-            try:
-                check = await asyncio.wait_for(self.bridge('work.invocation.revalidate',
-                                                          {'version': saved['required']['version']}), 1.5)
-            except Exception:
-                raise RequestFitChanged('authority_unavailable') from None
-            if not isinstance(check, dict):
-                raise RequestFitChanged('authority_unavailable')
-            if (check.get('current') is not True or check.get('effectAuthorized') is not False
-                    or check.get('required') != saved['required']):
-                raise RequestFitChanged('authority_changed')
+        if not full:
+            await self.revalidate_work(saved)
         self.check_execution_scope(scope)
         after = request.model_dump_json()
         if self._request(request) is not saved:

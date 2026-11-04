@@ -309,13 +309,16 @@ Previously recorded rejected revisions remain retained.
 A fresh response declaration snapshots supported local `path@sha256:<digest>`
 references before the reply is acknowledged. The existing output/resource owner
 retains matching bytes, their producing execution binding and the request
-relationship. File reads are bounded to 8 MiB per file and 16 MiB per declaration,
-inside the producer's execution folder. Reads happen outside the host lock;
+relationship. Files remain inside the producer's execution folder. Larger files
+use a flat manifest of bounded pieces in the existing resource store; there is no
+fixed byte ceiling per file or declaration. Current free disk space governs
+preparation, and text previews remain bounded. Complete saved bytes are verified
+before a download starts. Reads happen outside the host lock;
 generation, Stop, placement and response revision are rechecked before commit.
 Snapshot and reply records commit together. Exact command retries return the
 retained result without rereading mutable files, including after restart.
 
-Missing, changed, unsupported or over-limit sources remain explicit artifact
+Missing, changed, unsupported or resource-constrained sources remain explicit artifact
 states in the recorded report. An incomplete exact reference cannot satisfy a
 successful dependency. Retained bytes prove the referenced version, not semantic
 correctness, successful integration or independent review. Opaque references
@@ -638,9 +641,12 @@ replayed. Restart recovery does not itself grant execution authority.
 Typed negative reports and questions can notify the requester immediately as
 unqualified agent claims. Exact successful root terminal evidence can qualify a
 result separately; unrelated background jobs do not erase that evidence. Only a
-qualified successful result satisfies the dependency. Each report revision
-produces at most one automatic continuation, while rejection or unknown terminal
-qualification remains inspectable. Every continuation retains the requester's
+qualified successful result satisfies the dependency. The current recipient
+generation may correct its staged report using the expected response revision. Earlier declarations
+and retained artifacts remain inspectable as superseded, never qualified by the
+later terminal event. A different generation cannot take over an unsettled report.
+Each report revision produces at most one automatic continuation, while rejection
+or unknown terminal qualification remains inspectable. Every continuation retains the requester's
 saved task and Stop boundary. A newer meaningful report supersedes an
 unsubmitted earlier success notification, preserving both receipts and preventing
 stale dependency success. Requests made under older single-notification

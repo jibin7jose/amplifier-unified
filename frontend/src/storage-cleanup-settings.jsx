@@ -47,7 +47,8 @@ export function StorageCleanupSettings({act,navigate=()=>{}}){
   {dirty&&!pending&&<button className="a-link" disabled={busy} onClick={()=>setDraft({...report.policy})}>Discard edits and use saved settings</button>}
   <button className="a-soft" disabled={busy||!!pending} onClick={inspect}>Review unused copies</button>
   {pending&&<p role="status">The last request is not confirmed. Check the same request to learn its outcome.</p>}
-  {preview&&<div aria-label="Cleanup preview"><p>{preview.complete?'Measured':'At least'} {bytes(preview.unusedFileBytes)} in proven unused copies; {bytes(preview.selectedFileBytes)} currently selected by your saved policy.</p>
+  {preview&&<div aria-label="Cleanup preview"><p>This inspection found {bytes(preview.unusedFileBytes)} in proven unused copies; {bytes(preview.selectedFileBytes)} currently selected by your saved policy.</p>
+   {preview.observedUnusedFileBytes!==undefined&&<p>Across cleanup batches: {bytes(preview.observedUnusedFileBytes)} in last measured unused copies. {preview.observationNote}</p>}
    <p>Protected copies measured: {preview.protectedMeasurementComplete?'':'at least '}{bytes(preview.protectedFileBytes||0)}.</p><p>{preview.measurementNote}</p>{!preview.complete&&<p>The inspection was limited. Unverified copies are kept. Review again to inspect another batch.</p>}
    <ul>{preview.rows.map(row=><li key={`${row.kind}:${row.id}`}>{row.label}: {bytes(row.fileBytes)} · {row.reason}</li>)}</ul>
    <details><summary>What stays protected ({preview.protectedCount})</summary><ul>{preview.protected.map((row,index)=><li key={`${row.kind}:${row.id||index}`}>{row.label}: {row.reason}</li>)}</ul></details>

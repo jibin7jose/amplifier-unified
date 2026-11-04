@@ -10,6 +10,37 @@ import pytest
 PACKAGE = Path(__file__).resolve().parents[1] / "amplifier_web"
 
 
+def test_apply_settings_does_not_require_server_dependencies():
+    # Use a fresh interpreter so a server module imported by another test cannot
+    # mask an accidental dependency. Workers intentionally do not install aiohttp.
+    runner = textwrap.dedent("""
+        import importlib.util, sys
+        from types import SimpleNamespace
+        sys.path.insert(0, sys.argv[1])
+        sys.modules['aiohttp'] = None
+        assert importlib.util.find_spec('aiohttp') is None
+        from amplifier_web.host.session import _apply_settings
+        config = SimpleNamespace(settings={}, providers=[])
+        ordinary = SimpleNamespace(tools=[], providers=[], hooks=[], session={})
+        assert _apply_settings(ordinary, config).tools == []
+        configured = SimpleNamespace(
+            tools=[{'module': 'tool-ui-use'}, {'module': 'tool-computer-use'}],
+            providers=[], hooks=[], session={},
+        )
+        result = _apply_settings(configured, config)
+        assert result.tools[0]['config']['browser']['host_adapter'] is True
+        assert result.tools[1]['config']['observed_control'] is True
+        assert sys.modules['aiohttp'] is None
+        assert 'amplifier_web.ui_use' not in sys.modules
+        assert 'amplifier_web.device_connections' not in sys.modules
+    """)
+    result = subprocess.run(
+        [sys.executable, '-I', '-c', runner, str(PACKAGE.parent)],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
 @pytest.mark.parametrize("entrypoint,refresh", [("update_probe.py", False), ("update_probe.py", True), ("runtime_worker.py", False)])
 def test_worker_scripts_do_not_expose_host_site_packages(tmp_path, entrypoint, refresh):
     outer = tmp_path / "host-site-packages"

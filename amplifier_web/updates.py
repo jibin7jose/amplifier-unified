@@ -503,6 +503,12 @@ class UpdateManager:
 
     async def publish(self, **values):
         async with self.service.lock:
+            if values.get('error'):
+                group = self.diagnostics.state.get('activeFailures', {}).get(
+                    getattr(self.diagnostics, '_pending_failure', None))
+                if group:
+                    group['displayError'] = values['error']
+                self.diagnostics._pending_failure = None
             self.service.state['updates'].update(values)
             state = self.service.state['updates']
             state['blockers'] = self.blockers() if self.requires_idle(state) else []
@@ -620,6 +626,7 @@ class UpdateManager:
     async def command(self, action, args=None, command_id=None):
         if self.awaiting_restart() and action not in {'featureInstall', 'forceRestart'}:return
         previous_error=self.service.state['updates'].get('error')
+        previous_event=self.diagnostics.state.get('latest',{}).get('id')
         try:
             if action == 'forceRestart':
                 from .app_updates import activate
@@ -654,7 +661,8 @@ class UpdateManager:
             from .update_diagnostics import exception_facts, failure_guidance
             last=self.diagnostics.state.get('latest',{})
             phase=last.get('phase',action)
-            if last.get('status')!='failed':self.diagnostics.record(phase,'failed',**exception_facts(error))
+            if last.get('status')!='failed' or last.get('id')==previous_event:
+                self.diagnostics.record(phase,'failed',**exception_facts(error))
             await self.publish(phase='activating' if self.service.state['updates'].get('pendingRestart') else 'error',error=failure_guidance(self.diagnostics.state.get('lastFailure', {})) or 'Update failed during '+phase.replace('-',' ')+'. Review the diagnostic receipt; no conversation work was replayed.')
         finally:
             # Manual actions used to leave ready work behind a 60-second
@@ -842,30 +850,41 @@ class UpdateManager:
                 await self.publish(phase='error', error='Update check failed. Your installed sources are unchanged.')
 
     async def featureInstall(self, feature, hostInstanceId, request_id):
-        from .app_features import record
-        from .app_updates import stage, activate, installed_extras
+        from .app_features import FEATURES, record
+        from .app_updates import stage, activate, installed_extras, prepare_browser
         request_id = request_id or uuid.uuid4().hex
         try:
             if hostInstanceId != self.service.instance_id:
-                raise ValueError('The app host changed. Check desktop setup again before installing.')
-            if feature != 'native-desktop':
-                raise ValueError('Only native-desktop can be added through this action.')
+                raise ValueError('The app host changed. Check setup again before installing.')
+            if not isinstance(feature, str) or feature not in FEATURES:
+                raise ValueError('Choose a supported optional feature.')
             state = self.service.state['updates']
             if (self.closed or self.lock.locked() or self.awaiting_restart()
                     or state.get('pendingApp') or state.get('pendingRelease') or state.get('pendingSmartTools')):
                 raise ValueError('Another update is pending. Finish or inspect that update before adding a feature.')
             async with self.lock:
                 if feature in installed_extras():
-                    await record(self, request_id, 'already_installed', detail='The native observation package is already installed. Check readiness; this request changed nothing.')
+                    browser_receipt = None
+                    if feature == 'managed-browser':
+                        import sys
+                        self.diagnostics.begin('application', self.running_identity.get('revision'))
+                        await record(self, request_id, 'staging', feature=feature,
+                            detail='Preparing the browser binary in this service’s own cache.')
+                        browser_receipt = await prepare_browser(self, sys.executable, [feature])
+                    await record(self, request_id, 'already_installed', feature=feature,
+                        **({'managedBrowser':browser_receipt} if browser_receipt else {}),
+                        detail='Browser launch verified using '+browser_receipt['selection']+' executable; refresh browser readiness.' if browser_receipt
+                            else 'The optional package is already installed. Decision support also requires current conversation components.')
                     return
-                await record(self, request_id, 'staging', detail='Qualifying native observation against this same app and its existing components.')
+                await record(self, request_id, 'staging', feature=feature,
+                    detail='Qualifying '+FEATURES[feature]+' against this same app and its existing components.')
                 await stage(self, feature=feature, request_id=request_id)
             await activate(self)
         except asyncio.CancelledError:
-            await record(self, request_id, 'interrupted', detail='The request was interrupted. Inspect update diagnostics before any retry.')
+            await record(self, request_id, 'interrupted', feature=feature, detail='The request was interrupted. Inspect update diagnostics before any retry.')
             raise
         except Exception as error:
-            await record(self, request_id, 'error', detail=str(error) if isinstance(error, ValueError) else 'The feature request did not finish. Inspect update diagnostics before retrying; nothing was replayed.')
+            await record(self, request_id, 'error', feature=feature, detail=str(error) if isinstance(error, ValueError) else 'The feature request did not finish. Inspect update diagnostics before retrying; nothing was replayed.')
             raise
 
     async def app(self):
@@ -1223,6 +1242,7 @@ class UpdateManager:
                     write_private(self.directory/'releases'/target/'validated.json',json.dumps(marker))
             hot = bool(target and marker.get('generationSchema') == 1 and marker.get('workerProtocol') == 1
                        and callable(getattr(self.service.runtime, 'promote_generation', None)))
+            self.diagnostics.capture_activation_retry(target, rollback=rollback)
             async with self.service.lock:
                 if self.service.closed:
                     return
@@ -1294,6 +1314,7 @@ class UpdateManager:
                         self.service._publish_changes(globals={'updates','settings'})
                 self.diagnostics.clear_failure()
                 self.diagnostics.record('ecosystem-rollback' if rollback else 'ecosystem-activation','succeeded')
+                await self.publish()  # Publish settled attention, not just the preceding installed status.
                 self.inventory=[]
                 if self.cleanup_task is None or self.cleanup_task.done():
                     self.cleanup_task = asyncio.create_task(self.retire_storage())
@@ -1427,13 +1448,14 @@ class UpdateManager:
         await self.wait_for_work(3)
         while not self.closed:
             self.wakeup.clear()
+            previous_event=self.diagnostics.state.get('latest',{}).get('id')
             try:
                 await self.tick()
             except asyncio.CancelledError: raise
             except Exception as error:
                 from .update_diagnostics import exception_facts, failure_guidance
                 last=self.diagnostics.state.get('latest',{})
-                if last.get('status') not in {'failed','interrupted'}:
+                if last.get('status') not in {'failed','interrupted'} or last.get('id')==previous_event:
                     self.diagnostics.record('background-update','failed',**exception_facts(error))
                 phase=self.diagnostics.state['latest']['phase']
                 await self.publish(phase='activating' if self.service.state['updates'].get('pendingRestart') else 'error',error=failure_guidance(self.diagnostics.state.get('lastFailure', {})) or 'Background update failed during '+phase.replace('-',' ')+'. Review its diagnostic receipt; no work was replayed.')

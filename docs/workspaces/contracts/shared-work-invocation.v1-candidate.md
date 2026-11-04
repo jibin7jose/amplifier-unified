@@ -267,6 +267,11 @@ bytes and the captured native generation/input/Stop scope while allowing stale
 or unavailable Work-version assurance. Skipping that assurance leaves coverage
 unavailable, never complete. Native send admission rechecks current Full when
 preparation relied on it.
+An unsent request refit uses that same policy. Reusing its measured observation
+must not introduce an additional Work-assurance gate under Full. Refitting still
+retains the same native input/generation/Stop scope, measures the actual revised
+bytes, and never retries a sent or uncertain provider request. Ask revalidates
+its required Work version after all awaited preparation and measurement.
 An actual native call already present in the adapter's consumed-call set cannot
 execute again, independently of coverage completeness. A new native call may
 inspect or exactly retry an app command through that command's canonical receipt.

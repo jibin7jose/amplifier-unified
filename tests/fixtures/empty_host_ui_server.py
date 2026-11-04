@@ -131,6 +131,45 @@ async def main(home):
                            voice='--voice-settings' in sys.argv, background_updates=False)
     app["control_token"] = "fixture-browser-control-token"
     runtime.service = app['service']
+    stalled_body_release = asyncio.Event()
+    stalled_body_transports = []
+    stalled_body_mode = os.environ.get('CANVAS_RENDERER_STALLED_BODY') == '1'
+    if stalled_body_mode:
+        # Test-only, one exact request marked by the renderer journey's route.
+        # Run the complete production handler/auth first; never fabricate acceptance.
+        @web.middleware
+        async def stall_canvas_details_body(request, handler):
+            response = await handler(request)
+            identity = request.headers.get('X-Canvas-Renderer-Stall')
+            if not identity or request.method != 'POST' or request.path != '/api/actions':
+                return response
+            payload = await request.json()
+            assert request.headers.get('Authorization') == 'Bearer fixture-browser-control-token'
+            assert identity == payload['id'] and payload['action'] == 'view.update'
+            assert set(payload['args']) == {'sessionId', 'patch'}
+            assert payload['args']['patch'] == {'canvasControlsExpanded': True}
+            assert not stalled_body_transports, 'Only one stalled response is permitted'
+            receipt = json.loads(response.body)
+            assert response.status == 200 and receipt['accepted'] is True
+            print(json.dumps({'canvasRendererStalledBody': {
+                'event': 'accepted', 'id': identity, 'clientId': request.headers['X-Amplifier-Client'],
+                'args': payload['args'], 'hostInstanceId': receipt['hostInstanceId'],
+                'accepted': receipt['accepted'], 'status': response.status}}), flush=True)
+            headers = response.headers.copy()
+            headers['Content-Length'] = str(len(response.body))
+            headers['X-Canvas-Renderer-Stalled-Request'] = identity
+            stream = web.StreamResponse(status=response.status, headers=headers)
+            stalled_body_transports.append(request.transport)
+            await stream.prepare(request)
+            await stream.write(response.body[:1])
+            print(json.dumps({'canvasRendererStalledBody': {
+                'event': 'headers-sent', 'id': identity, 'bodyBytesSent': 1,
+                'bodyBytesTotal': len(response.body)}}), flush=True)
+            await stalled_body_release.wait()
+            # Shutdown aborts the transport before releasing this wait. Do not
+            # send EOF or the remaining bytes and turn a stall into success.
+            raise asyncio.CancelledError
+        app.middlewares.insert(0, stall_canvas_details_body)
     if '--first-use' not in sys.argv:
         await runtime.service.dispatch('view.update', {'patch': {'setupJourney': 'done'}})
     if '--shared-work-seed-only' in sys.argv:
@@ -365,7 +404,14 @@ async def main(home):
     finally:
         try:
             release_query_gate()
+            if stalled_body_mode:
+                for transport in stalled_body_transports:
+                    transport.abort()
+                stalled_body_release.set()
             await runner.cleanup()
+            if stalled_body_mode:
+                print(json.dumps({'canvasRendererStalledBody': {
+                    'event': 'cleanup-complete', 'stalledResponses': len(stalled_body_transports)}}), flush=True)
             if '--shared-work' in sys.argv:
                 print(json.dumps({'sharedWorkCleanup': {'complete': True,
                     'at': time.monotonic(), **app['shared_work_wait_snapshot']()}}), flush=True)

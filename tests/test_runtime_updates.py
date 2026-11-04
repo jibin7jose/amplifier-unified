@@ -26,6 +26,9 @@ class Diagnostics:
 
 @pytest.fixture
 def environment(tmp_path, monkeypatch):
+    # This fixture exercises one synthetic Git dependency, independently of the
+    # real support packs installed in the interpreter running the test suite.
+    monkeypatch.setattr('amplifier_web.app_updates.installed_extras', lambda: [])
     repo = tmp_path / 'remote'
     repo.mkdir()
     git(repo, 'init', '-b', 'main')

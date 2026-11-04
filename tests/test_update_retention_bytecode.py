@@ -88,7 +88,7 @@ async def test_unknown_files_still_protect_generation(tmp_path, monkeypatch, ext
 @pytest.mark.parametrize('change', ['modified-source', 'local-commit', 'untracked-source',
                                    'symlink-cache', 'symlink-directory', 'malformed-bytecode',
                                    'backup-suffix', 'foreign-tag', 'bad-magic', 'header-only',
-                                   'truncated-code', 'appended-payload', 'different-code', 'missing-source-proof'])
+                                   'missing-source-proof'])
 async def test_bytecode_exception_requires_unchanged_verified_tracked_source(tmp_path, monkeypatch, change):
     manager, names, project, folder, source, cached = imported_generation(tmp_path, monkeypatch)
     if change == 'modified-source':
@@ -122,13 +122,6 @@ async def test_bytecode_exception_requires_unchanged_verified_tracked_source(tmp
         cached.write_bytes(b'XX\r\n' + cached.read_bytes()[4:])
     elif change == 'header-only':
         cached.write_bytes(cached.read_bytes()[:16])
-    elif change == 'truncated-code':
-        cached.write_bytes(cached.read_bytes()[:17])
-    elif change == 'appended-payload':
-        cached.write_bytes(cached.read_bytes() + b'preserve this extra data')
-    elif change == 'different-code':
-        cached.write_bytes(cached.read_bytes()[:16] + marshal.dumps(
-            compile('VALUE = 99\n', str(source / 'fixture.py'), 'exec', dont_inherit=True)))
     else:
         # A cache unrelated to the installed graph has no tracked-content
         # proof even though the real recorded graph still verifies.
@@ -276,3 +269,113 @@ async def test_timestamp_preserving_edit_at_retirement_is_quarantined(tmp_path, 
     assert len(kept) == 1 and kept[0].read_bytes() == b'VALUE = 99\n'
     assert (await retention.reclaim(manager))['removed'] == 0
     assert kept[0].exists() and project.exists()
+
+
+def receipt_only_cache(source, project, folder):
+    """A bundle can be imported without being an installed distribution."""
+    direct, = project.glob('.venv/lib/python*/site-packages/*/direct_url.json')
+    direct.unlink()
+    metadata = json.loads((source / '.amplifier_cache_meta.json').read_text())
+    metadata['commit'] = git(source, 'rev-parse', 'HEAD')
+    (source / '.amplifier_cache_meta.json').write_text(json.dumps(metadata))
+    (folder / 'runtime-installed.json').write_text(json.dumps(runtime_qualification.installed_graph(project)))
+
+
+async def test_uninstalled_bundle_bytecode_uses_recorded_source_proof(tmp_path, monkeypatch):
+    manager, names, project, folder, source, cached = imported_generation(tmp_path, monkeypatch)
+    receipt_only_cache(source, project, folder)
+    assert not retention._verified_cache(source, json.loads((folder / 'runtime-installed.json').read_text()))
+    assert [r['id'] for r in (await retention.reclaim(manager, inspect_only=True))['candidates']] == [names[3]]
+    assert cached.exists()
+    assert (await retention.reclaim(manager, selected={names[3]}))['removed'] == 1
+    assert not folder.exists()
+
+
+@pytest.mark.parametrize('change', ['assume-unchanged', 'skip-worktree', 'staged', 'wrong-commit',
+                                   'no-remote', 'local-head', 'hidden-non-python', 'executable-bit'])
+async def test_receipt_only_source_cannot_hide_user_changes(tmp_path, monkeypatch, change):
+    manager, names, project, folder, source, cached = imported_generation(tmp_path, monkeypatch)
+    if change == 'hidden-non-python':
+        (source / 'notes.txt').write_text('published notes')
+        git(source, 'add', 'notes.txt')
+        git(source, 'commit', '-qm', 'Published notes')
+        git(source, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    receipt_only_cache(source, project, folder)
+    if change in {'assume-unchanged', 'skip-worktree'}:
+        git(source, 'update-index', '--' + change, 'fixture.py')
+        (source / 'fixture.py').write_text('VALUE = 99\n')
+        assert not git(source, 'status', '--porcelain', '--untracked-files=no')
+    elif change == 'hidden-non-python':
+        git(source, 'update-index', '--assume-unchanged', 'notes.txt')
+        (source / 'notes.txt').write_text('private notes')
+    elif change in {'staged', 'local-head'}:
+        (source / 'fixture.py').write_text('VALUE = 99\n')
+        git(source, 'add', 'fixture.py')
+        if change == 'local-head':
+            git(source, 'commit', '-qm', 'Local work')
+    elif change == 'wrong-commit':
+        data = json.loads((source / '.amplifier_cache_meta.json').read_text())
+        data['commit'] = '0' * 40
+        (source / '.amplifier_cache_meta.json').write_text(json.dumps(data))
+    elif change == 'no-remote':
+        git(source, 'update-ref', '-d', 'refs/remotes/origin/main')
+    elif change == 'executable-bit':
+        if os.name == 'nt':
+            pytest.skip('POSIX executable mode')
+        git(source, 'update-index', '--assume-unchanged', 'fixture.py')
+        (source / 'fixture.py').chmod(0o755)
+    assert (await retention.reclaim(manager))['removed'] == 0
+    assert folder.exists() and cached.exists()
+
+
+def owning_interpreter(project, executable):
+    python = project / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    subprocess.run([executable, '-m', 'venv', '--without-pip', str(project / '.venv')], check=True)
+    return python
+
+
+@pytest.mark.parametrize('installed', [True, False])
+async def test_generated_cache_from_other_supported_python_is_disposable(tmp_path, monkeypatch, installed):
+    other = os.environ.get('RETENTION_OTHER_PYTHON')
+    if not other:
+        pytest.skip('Qualification supplies an independently installed second Python minor')
+    assert subprocess.check_output([other, '-I', '-S', '-c', 'import sys; print(sys.implementation.cache_tag)'],
+                                   text=True).strip() != sys.implementation.cache_tag
+    manager, names, project, folder, source, cached = imported_generation(tmp_path, monkeypatch)
+    if not installed:
+        receipt_only_cache(source, project, folder)
+    owning_interpreter(project, other)
+    cached.unlink()
+    # Real child-generated cache; its source must never execute during cleanup.
+    subprocess.run([other, '-I', '-S', '-c',
+                    'import py_compile, sys; py_compile.compile(sys.argv[1], doraise=True)',
+                    str(source / 'fixture.py')], check=True)
+    foreign, = (source / '__pycache__').glob('*.pyc')
+    assert sys.implementation.cache_tag not in foreign.name
+    preview = await retention.reclaim(manager, inspect_only=True)
+    assert [r['id'] for r in preview['candidates']] == [names[3]]
+    assert foreign.exists()
+    assert (await retention.reclaim(manager, selected={names[3]}))['removed'] == 1
+
+
+@pytest.mark.parametrize('payload', ['different-code', 'appended-payload', 'damaged-code'])
+async def test_conventional_cache_payload_is_disposable_without_execution(tmp_path, monkeypatch, payload):
+    manager, names, project, folder, source, cached = imported_generation(tmp_path, monkeypatch)
+    marker = tmp_path / 'must-not-execute'
+    if payload == 'different-code':
+        cached.write_bytes(cached.read_bytes()[:16] + marshal.dumps(
+            compile(f"from pathlib import Path; Path({str(marker)!r}).touch()", str(source / 'fixture.py'), 'exec')))
+    elif payload == 'appended-payload':
+        cached.write_bytes(cached.read_bytes() + b'hand edited cache bytes are disposable')
+    else:
+        cached.write_bytes(cached.read_bytes()[:16] + b'c')
+    assert (await retention.reclaim(manager))['removed'] == 1
+    assert not marker.exists()
+
+
+async def test_supported_cache_tag_must_match_header(tmp_path, monkeypatch):
+    manager, names, project, folder, source, cached = imported_generation(tmp_path, monkeypatch)
+    other = 'cpython-313' if sys.implementation.cache_tag != 'cpython-313' else 'cpython-314'
+    cached.rename(cached.with_name('fixture.' + other + '.pyc'))
+    assert (await retention.reclaim(manager))['removed'] == 0
+    assert folder.exists()

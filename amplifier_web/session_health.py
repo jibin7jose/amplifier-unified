@@ -215,7 +215,7 @@ def exception_details(error):
 
 def terminal_exception_failure(session, value):
     """Enrich only an exact retained terminal; never replace or redate a cause."""
-    from .support_diagnostics import terminal_exception_capture
+    from .support_diagnostics import terminal_exception_capture, terminal_request_refusal
     capture = terminal_exception_capture(value)
     existing = session.get('failure')
     if (not capture or not isinstance(existing, dict) or existing.get('exceptionChain')
@@ -233,7 +233,29 @@ def terminal_exception_failure(session, value):
             or set(latest.get('input_ids') or []) != set(capture['inputIds'])
             or set(existing.get('inputIds') or []) != set(capture['inputIds'])):
         return None
-    return {**existing, 'exceptionChain': capture['exceptionChain']}
+    refusal = terminal_request_refusal(capture['exceptionChain'])
+    detail = {}
+    if refusal:
+        causes = {
+            'bridge_timeout': 'The host did not answer the Work currentness check before its deadline.',
+            'bridge_error': 'The host could not complete the Work currentness check.',
+            'invalid_response': 'The host returned an invalid Work currentness result.',
+            'required_unavailable': 'The required Work observation is unavailable.',
+        }
+        reasons = {
+            'authority_changed': 'The current permission or required Work observation changed during preparation.',
+            'authority_unavailable': 'The required Work observation could not be verified.',
+            'native_scope_changed': 'The active input, generation, or Stop state changed during preparation.',
+            'binding_missing': 'The measured request observation was no longer retained.',
+            'binding_changed': 'The measured request observation changed.',
+            'content_changed': 'The prepared request changed after it was measured.',
+        }
+        detail = {'category': 'request_preparation', 'stage': 'context_preparation',
+            'requestFit': refusal, 'summary': 'Request preparation stopped before the model call.',
+            'guidance': causes.get(refusal.get('cause'), reasons[refusal['reason']]) +
+                ' This request was not sent. Earlier work is preserved; inspect the saved details before continuing.',
+            'retryable': False}
+    return {**existing, **detail, 'exceptionChain': capture['exceptionChain']}
 
 
 def inspection_stamp(session):

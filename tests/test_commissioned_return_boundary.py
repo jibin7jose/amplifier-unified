@@ -4,6 +4,7 @@ import copy
 
 import pytest
 
+from amplifier_operations.coordination import peer_input
 from amplifier_web.service import AppError, AppService
 from test_collaborative_workspaces import (
     Runtime, app, agent_action, finish, generation, settled,
@@ -74,9 +75,30 @@ async def test_progress_still_fences_unperformed_creation_and_initial_input(app,
     receipt_id = created['requestId'] if phase == 'preparation' else created['initialInputId']
     receipt = await settled(app, receipt_id, 'suppressed')
     assert 'requesting assignment changed' in receipt['detail']
-    assert not app.runtime.inputs
     if phase == 'preparation':
+        assert not app.runtime.inputs
         assert len(app.state['sessions']) == 2
+    else:
+        # The failed initial input is never delivered to its worker. Its exact
+        # host-attributed return to the commissioner is a separate input.
+        continuation = created['subscription']['continuationId']
+        notice = await settled(app, continuation, 'accepted')
+        assert [(sid, identity) for sid, identity, _ in app.runtime.inputs] == [(source['id'], continuation)]
+        assert continuation != created['initialInputId']
+        assert notice['requestId'] == notice['inputId'] == continuation
+        assert notice['senderSessionId'] == created['sessionId']
+        assert notice['target']['sessionId'] == source['id']
+        assert notice['origin'] == 'system' and notice['mode'] == 'auto'
+        assert notice['dependencyRequestId'] == created['initialInputId']
+        assert notice['dependencySatisfied'] is False and notice['continuationReason'] == 'failed'
+        assert notice['outcomeSnapshot']['status'] == 'observed'
+        assert notice['outcomeSnapshot']['outcome'] == 'failed' and notice['outcomeSnapshot']['qualified'] is False
+        assert notice['admission']['accepted'] is True
+        message, = [row for row in source['messages'] if row.get('inputId') == continuation]
+        assert message['peerEnvelope']['replyToRequestId'] == created['initialInputId']
+        assert message['peerEnvelope']['recipientSessionId'] == source['id']
+        assert app.runtime.inputs[0][2] == peer_input(message['peerEnvelope'], message['text'])
+        assert app.collaboration.receipt(receipt_id)['delivery'] == 'suppressed'
 
 
 async def test_return_survives_recreation_without_replaying_commissioned_work(app):

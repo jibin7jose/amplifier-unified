@@ -19,9 +19,9 @@ async def app(tmp_path):
     await service.close()
 
 
-async def call(app, name, args=None, client='one'):
+async def call(app, name, args=None, client='one', **kwargs):
     with app.clients.bind(client):
-        return await app.dispatch(name, args or {})
+        return await app.dispatch(name, args or {}, **kwargs)
 
 
 def canvas(app, client='one'):
@@ -70,24 +70,29 @@ async def test_file_versions_replace_content_storage_mode_and_survive_restart(ap
     assert row(app, identity)['revision'] == 2
     assert bool(row(app, identity).get('contentResource')) == (second == large)
     for version, expected in ((1, first), (2, second), (None, second)):
-        await call(app, 'canvas.select', {'id': identity, **({'version': version} if version else {})})
+        await call(app, 'canvas.select', {'id': identity, 'resetPreview': True, **({'version': version} if version else {})})
         assert raw_source(canvas(app), app.db) == expected
         with app.clients.bind('one'):
             assert raw_source(app.canvas_views.canvas('primary'), app.db) == expected
         inspected = (await call(app, 'canvas.versions.inspect', {'id': identity, 'version': version or 2, 'includeSource': True}))['result']
         assert inspected['source']['content'] == expected
-    await call(app, 'canvas.select', {'id': identity, 'version': 1})
+    await call(app, 'canvas.select', {'id': identity, 'version': 1, 'resetPreview': True})
     app._save()
     await app.close()
     reopened = AppService(app.data_dir, workspace=tmp_path)
     try:
         reopened.clients.attach('one')
         assert raw_source(canvas(reopened), reopened.db) == first
-        await call(reopened, 'canvas.select', {'id': identity})
+        await call(reopened, 'canvas.select', {'id': identity, 'resetPreview': True})
         assert raw_source(canvas(reopened), reopened.db) == second
         await call(reopened, 'canvas.versions.restore', {'id': identity, 'expectedRevision': 2, 'version': 1})
-        assert raw_source(canvas(reopened), reopened.db) == first
+        assert raw_source(canvas(reopened), reopened.db) == second
         assert row(reopened, identity)['revision'] == 3
+        with reopened.clients.bind('one'):
+            current = reopened.canvas_views.summary('primary')
+        await call(reopened, 'canvas.views.loadVersion', {
+            **{key: current[key] for key in ('viewId', 'resourceId', 'resourceRevision', 'generation')}, 'version': 3})
+        assert raw_source(canvas(reopened), reopened.db) == first
     finally:
         await reopened.close()
 
@@ -199,3 +204,157 @@ async def test_surface_history_retention_and_historical_state_is_read_only(app):
     assert canvas(app).get('selectedVersion') is None
     assert row(app,identity)['app']['revision'] == 24
     assert row(app,identity)['app']['state'] == {'n':2}
+
+
+def preview(app, client='one'):
+    with app.clients.bind(client):
+        return deepcopy(app.canvas_views.summary('primary'))
+
+
+def preview_target(current):
+    return {key: current[key] for key in ('viewId', 'resourceId', 'resourceRevision', 'generation')}
+
+
+@pytest.mark.parametrize('kind', ['html', 'babylon'])
+async def test_executable_latest_discovers_versions_without_replacing_running_definition(app, kind):
+    from amplifier_web.canvas_documents import raw_source
+
+    first = '<input value="saved one"><p>One</p>'
+    identity = (await call(app, 'canvas.show', {'kind': kind, 'content': first}))['result']['id']
+    original = preview(app)
+    await call(app, 'canvas.select', {'id': identity, 'version': 1}, 'two')
+    pinned = preview(app, 'two')
+    document = {'text': 'One', 'controls': [
+        {'id': 'field', 'tag': 'input', 'type': 'text', 'label': 'Note', 'value': 'unfinished', 'disabled': False}]}
+    await call(app, 'canvas.views.command', {**preview_target(original),
+        'action': 'canvas.snapshot', 'args': {'document': document}})
+    await call(app, 'view.update', {'patch': {'draft': 'Unsent composer'}})
+    for version in (2, 3):
+        await revise(app, identity, f'<input value="saved {version}"><p>{version}</p>', version - 1)
+        inspected = (await call(app, 'canvas.views.inspect'))['result']['views'][0]
+        assert inspected['selectedVersion'] is None
+        assert inspected['runningVersion'] == 1
+        assert inspected['latestVersion'] == version
+        assert inspected['previewRetained'] is True
+        assert [item['version'] for item in inspected['versions']] == list(range(1, version + 1))
+        assert preview_target(inspected) == preview_target(original)
+        assert inspected['renderIdentity'] == original['renderIdentity']
+        assert canvas(app)['revision'] == 1
+        assert raw_source(canvas(app), app.db) == first
+        with app.clients.bind('one'):
+            running = app.canvas_views.canvas('primary')
+        assert raw_source(running, app.db) == first
+        assert running['document']['controls'][0]['value'] == 'unfinished'
+    # Reattaching the same live page and Refresh are metadata reads, not Load.
+    app.clients.attach('one')
+    assert preview_target(preview(app)) == preview_target(original)
+    assert preview(app)['renderIdentity'] == original['renderIdentity']
+    assert preview(app, 'two')['selectedVersion'] == 1
+    assert preview(app, 'two')['runningVersion'] == 1
+    assert preview(app, 'two')['latestVersion'] == 3
+    assert preview(app, 'two')['previewRetained'] is False
+    assert preview_target(preview(app, 'two')) == preview_target(pinned)
+    assert app.clients.records['one']['view']['draft'] == 'Unsent composer'
+    # A new page has no inherited JS memory; Latest starts at the latest saved definition.
+    app.clients.attach('fresh', 'one')
+    assert preview(app, 'fresh')['runningVersion'] == 3
+    assert preview(app, 'fresh')['selectedVersion'] is None
+    assert preview(app, 'fresh')['previewRetained'] is False
+    assert 'document' not in canvas(app, 'fresh')
+    app.clients.attach('fresh-pinned', 'two')
+    assert preview(app, 'fresh-pinned')['runningVersion'] == 1
+    assert preview(app, 'fresh-pinned')['selectedVersion'] == 1
+
+
+@pytest.mark.parametrize('kind', ['html', 'babylon'])
+async def test_ui_load_uses_exact_saved_version_and_preserves_latest_intent_and_preferences(app, kind):
+    from amplifier_web.canvas_documents import raw_source
+
+    identity = (await call(app, 'canvas.show', {'kind': kind, 'content': '<p>One</p>'}))['result']['id']
+    original = preview(app)
+    await call(app, 'canvas.views.command', {**preview_target(original),
+        'action': 'canvas.view', 'args': {'patch': {'source': True}}})
+    await revise(app, identity, '<p>Two</p>')
+    await revise(app, identity, '<p>Three</p>', 2)
+    history = deepcopy(row(app, identity))
+    loaded = (await call(app, 'canvas.views.loadVersion', {
+        **preview_target(original), 'version': 2}, command_id='load-exact-two'))['result']
+    assert loaded['runningVersion'] == 2 and loaded['latestVersion'] == 3
+    assert loaded['selectedVersion'] is None and loaded['previewRetained'] is True
+    assert loaded['view']['source'] is True
+    assert loaded['renderer'] == original['renderer']
+    assert loaded['generation'] > original['generation']
+    assert loaded['renderIdentity'] != original['renderIdentity']
+    assert raw_source(canvas(app), app.db) == '<p>Two</p>'
+    assert row(app, identity) == history
+    replay = (await call(app, 'canvas.views.loadVersion', {
+        **preview_target(original), 'version': 2}, command_id='load-exact-two'))['result']
+    assert replay == loaded
+    assert preview_target(preview(app)) == preview_target(loaded)
+    same = (await call(app, 'canvas.views.loadVersion', {
+        **preview_target(loaded), 'version': 2}))['result']
+    assert same['renderIdentity'] == loaded['renderIdentity']
+    # Version source, copy, and downloads all address the running saved body.
+    for version, text in ((1, 'One'), (2, 'Two'), (3, 'Three')):
+        inspected = (await call(app, 'canvas.versions.inspect', {
+            'id': identity, 'version': version, 'includeSource': True}))['result']
+        assert inspected['source']['content'] == f'<p>{text}</p>'
+    for action in ('canvas.copy', 'canvas.download'):
+        response = await call(app, 'canvas.views.command', {
+            **preview_target(loaded), 'action': action, 'args': {}})
+        effect = response['effects'][0]
+        if 'url' in effect:
+            assert effect['url'].endswith('?version=2')
+        else:
+            assert effect['content'] == '<p>Two</p>'
+    assert row(app, identity)['revision'] == 3
+    await call(app, 'canvas.select', {'id': identity, 'version': 2})
+    unpinned = (await call(app, 'canvas.views.loadVersion', {
+        **preview_target(preview(app)), 'version': 2, 'followLatest': True}))['result']
+    assert unpinned['selectedVersion'] is None
+    assert unpinned['runningVersion'] == 2 and unpinned['latestVersion'] == 3
+
+
+@pytest.mark.parametrize('kind', ['html', 'babylon'])
+async def test_same_path_publication_and_restore_retain_latest_and_pinned_previews(app, tmp_path, kind):
+    from amplifier_web.canvas_documents import raw_source
+
+    path = tmp_path / 'retained.html'
+    path.write_text('<input value="One">')
+    identity = (await call(app, 'canvas.show', {'kind': kind, 'path': str(path)}))['result']['id']
+    original = preview(app)
+    await call(app, 'canvas.select', {'id': identity, 'version': 1}, 'two')
+    pinned = preview(app, 'two')
+    path.write_text('<input value="Two">')
+    published = (await call(app, 'canvas.show', {'kind': kind, 'path': str(path)}))['result']
+    assert published['id'] == identity and published['revision'] == 2
+    assert raw_source(canvas(app), app.db) == '<input value="One">'
+    assert preview_target(preview(app)) == preview_target(original)
+    # A publication in the pinned client is also not an implicit selection.
+    path.write_text('<input value="Three">')
+    await call(app, 'canvas.show', {'kind': kind, 'path': str(path)}, 'two')
+    assert preview_target(preview(app, 'two')) == preview_target(pinned)
+    assert canvas(app, 'two')['selectedVersion'] == 1
+    path.unlink()
+    before = deepcopy(row(app, identity)['versions'])
+    await call(app, 'canvas.versions.restore', {'id': identity, 'expectedRevision': 3, 'version': 2}, 'two')
+    assert row(app, identity)['revision'] == 4
+    assert row(app, identity)['versions'][:3] == before
+    assert preview_target(preview(app)) == preview_target(original)
+    assert preview_target(preview(app, 'two')) == preview_target(pinned)
+    assert preview(app)['latestVersion'] == 4 and preview(app)['previewRetained']
+    assert raw_source(canvas(app), app.db) == '<input value="One">'
+    # Persistence must use the running body's resource, never Latest's resource.
+    app._save()
+    await app.close()
+    reopened = AppService(app.data_dir, workspace=tmp_path)
+    try:
+        reopened.clients.attach('one')
+        assert raw_source(canvas(reopened), reopened.db) == '<input value="One">'
+        assert preview(reopened)['runningVersion'] == 1
+        assert preview(reopened)['latestVersion'] == 4
+        assert preview(reopened)['renderIdentity'] == original['renderIdentity']
+        inspected = (await call(reopened, 'canvas.views.inspect'))['result']['views'][0]
+        assert preview_target(inspected) == preview_target(original)
+    finally:
+        await reopened.close()

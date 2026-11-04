@@ -140,7 +140,7 @@ async def test_restart_success_clears_current_failure_and_preserves_history(tmp_
     await service.close()
 
 
-async def test_collector_receives_only_structured_event_and_owns_durable_sink(tmp_path):
+async def test_collector_and_bounded_update_journal_receive_only_sanitized_original(tmp_path):
     service=AppService(tmp_path,Runtime(),workspace=tmp_path);received=[]
     service.diagnostics.record=lambda *args:received.append(args)
     manager=UpdateManager(service);service.update_manager=manager
@@ -148,7 +148,9 @@ async def test_collector_receives_only_structured_event_and_owns_durable_sink(tm
     manager.diagnostics.record('candidate-install','failed',errorType='RuntimeError',stdout='secret')
     assert received[0][0]=='updates' and received[0][1]['event']=='update:candidate-install'
     assert 'secret' not in json.dumps(received)
-    assert not (manager.directory/'diagnostics.jsonl').exists()
+    retained=[json.loads(line) for line in (manager.directory/'diagnostics.jsonl').read_text().splitlines()]
+    assert retained == [received[0][1]['data']]
+    assert 'secret' not in json.dumps(retained)
     await service.close()
 
 

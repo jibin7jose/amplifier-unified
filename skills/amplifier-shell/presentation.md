@@ -55,9 +55,11 @@ For custom skins, use [appearance-authoring](../appearance-authoring/SKILL.md).
 Inspect the baseline CSS and actual DOM before overriding message bodies, the
 inner composer surface or logo filters; preserve outer actions and layout.
 Transcript overflow fades are a shared primitive, not theme-owned artwork:
-inherit the conditional defaults and preserve focus, forced colors, scrollbar
-gutter, navigator and composer. Do not add permanent masks or reposition children
-to accommodate them. Keep background artwork separate and away from controls.
+inherit the conditional defaults and preserve keyboard-visible focus, active
+editing, forced colors, scrollbar gutter, navigator and composer. Pointer or
+programmatic focus on a non-visible review container alone does not disable fades.
+Do not add permanent masks or reposition children to accommodate them. Keep
+background artwork separate and away from controls.
 
 Lightline is an included static architectural appearance, not a forced selection.
 Bundled additions and shared-style updates must leave saved user copies, committed

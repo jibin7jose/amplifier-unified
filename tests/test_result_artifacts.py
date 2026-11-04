@@ -73,7 +73,7 @@ async def test_malformed_local_reference_records_repair_without_read_or_success(
     source, peer, _, args = await setup(app, tmp_path)
     def forbidden(*_):
         pytest.fail('Malformed references must not acquire filesystem authority')
-    monkeypatch.setattr(result_artifacts, 'file_bytes', forbidden)
+    monkeypatch.setattr(result_artifacts.retained_files, 'capture', forbidden)
     args['references'] = [reference]
     result = (await declare(app, peer, args))['result']
     assert result['artifactVerification'] == 'incomplete'
@@ -98,7 +98,7 @@ async def test_malformed_local_reference_records_repair_without_read_or_success(
 async def test_opaque_citations_remain_valid_but_explicitly_do_not_save_files(app, tmp_path, monkeypatch, reference):
     from amplifier_web import result_artifacts
     _, peer, _, args = await setup(app, tmp_path)
-    monkeypatch.setattr(result_artifacts, 'file_bytes', lambda *_: pytest.fail('Opaque citation read a file'))
+    monkeypatch.setattr(result_artifacts.retained_files, 'capture', lambda *_: pytest.fail('Opaque citation read a file'))
     args['references'] = [reference]
     result = (await declare(app, peer, args))['result']
     assert result['artifacts'] == [] and result['artifactVerification'] == 'not_requested'
@@ -143,7 +143,7 @@ async def test_report_captures_before_first_open_and_survives_source_delete_and_
         await restarted.close()
 
 
-@pytest.mark.parametrize('failure', ['changed', 'missing', 'outside', 'symlink', 'oversize'])
+@pytest.mark.parametrize('failure', ['changed', 'missing', 'outside', 'symlink', 'changed_large'])
 async def test_invalid_exact_source_retains_report_without_accepting_dependency(app, tmp_path, failure):
     source, peer, file, args = await setup(app, tmp_path)
     if failure == 'changed':
@@ -161,7 +161,7 @@ async def test_invalid_exact_source_retains_report_without_accepting_dependency(
         file.write_bytes(b'x' * (8 * 1024 * 1024 + 1))
     declaration = (await declare(app, peer, args))['result']
     assert declaration['artifactVerification'] == 'incomplete'
-    assert declaration['artifacts'][0]['status'] == ('changed' if failure == 'changed' else 'unavailable')
+    assert declaration['artifacts'][0]['status'] == ('changed' if failure in {'changed', 'changed_large'} else 'unavailable')
     await finish(app, peer, args['requestId'])
     value = await read(app, source, args)
     assert not value['qualified'] and 'text' not in value
@@ -293,7 +293,7 @@ async def test_retained_resource_corruption_never_falls_back_to_source(app, tmp_
     assert file.read_bytes() == b'Original exact bytes'
 
 
-async def test_one_declaration_bounds_total_capture_and_deduplicates_references(app, tmp_path):
+async def test_one_declaration_retains_over_sixteen_mib_and_deduplicates_references(app, tmp_path):
     source, peer, file, args = await setup(app, tmp_path, b'x' * (6 * 1024 * 1024))
     references = args['references'][:]
     for name in ('second', 'third'):
@@ -302,9 +302,9 @@ async def test_one_declaration_bounds_total_capture_and_deduplicates_references(
         references.append(name + '.txt@sha256:' + args['references'][0].split('@sha256:')[1])
     args['references'] = [*references, references[0]]
     value = (await declare(app, peer, args))['result']
-    assert [item['status'] for item in value['artifacts']] == ['retained', 'retained', 'unavailable']
-    assert value['artifactVerification'] == 'incomplete'
-    assert app.db.execute('SELECT count(*) FROM output_records').fetchone()[0] == 2
+    assert [item['status'] for item in value['artifacts']] == ['retained', 'retained', 'retained']
+    assert value['artifactVerification'] == 'verified'
+    assert app.db.execute('SELECT count(*) FROM output_records').fetchone()[0] == 3
     assert (await read(app, source, args, limit=4))['text'] == 'xxxx'
 
 
@@ -455,3 +455,81 @@ async def test_reply_publishes_both_participants_and_no_unrelated_session(app, t
     await declare(app, peer, args)
     assert {source['id'], peer['id']} in calls
     assert all(scope <= {source['id'], peer['id']} for scope in calls)
+
+
+async def test_same_turn_correction_preserves_prior_report_and_only_seals_latest(app, tmp_path):
+    source, peer, file, args = await setup(app, tmp_path, b'First retained version')
+    first = (await declare(app, peer, args))['result']
+    file.write_bytes(b'Corrected retained version')
+    corrected = {**args, 'expectedResponseRevision': 1, 'text': 'Corrected report',
+                 'references': ['report.md@sha256:' + hashlib.sha256(file.read_bytes()).hexdigest()]}
+    second = (await agent_action(app, peer, 'coordination.reply', corrected, 'corrected-declaration'))['result']
+    assert second['status'] == 'staged' and not second['qualified']
+    prior = app.collaboration.receipt('artifact-declaration')['result']
+    assert prior['status'] == 'superseded' and not prior['qualified']
+    assert prior['supersededBy'] == 'corrected-declaration'
+    assert prior['text'] == first['text'] and prior['artifacts'] == first['artifacts']
+    with pytest.raises(AppError, match='response revision changed'):
+        await agent_action(app, peer, 'coordination.reply', corrected, 'stale-correction')
+    file.unlink()
+    await finish(app, peer, args['requestId'])
+    old = await read(app, source, args, responseRevision=1)
+    new = await read(app, source, corrected, responseRevision=2)
+    assert old['text'] == 'First retained version' and not old['qualified']
+    assert old['responseStatus'] == 'superseded'
+    assert new['text'] == 'Corrected retained version' and new['qualified']
+    retry = await agent_action(app, peer, 'coordination.reply', corrected, 'corrected-declaration')
+    assert retry['duplicate'] and retry['result']['status'] == 'sealed'
+    assert app.db.execute('SELECT count(*) FROM output_records').fetchone()[0] == 2
+
+
+async def test_staged_correction_cannot_take_over_another_generation(app, tmp_path):
+    _, peer, _, args = await setup(app, tmp_path)
+    await declare(app, peer, args)
+    await generation(app, peer, 'different-generation', ['fresh-input'])
+    with pytest.raises(AppError, match='previous report'):
+        await agent_action(app, peer, 'coordination.reply',
+                           {**args, 'expectedResponseRevision': 1}, 'different-generation-report')
+    assert app.collaboration.receipt(args['requestId'])['responseRevision'] == 1
+
+
+async def test_failed_staged_correction_keeps_original_current(app, tmp_path, monkeypatch):
+    _, peer, _, args = await setup(app, tmp_path)
+    first = (await declare(app, peer, args))['result']
+    insert = app.collaboration.insert
+    def failed(identity, *values):
+        if identity == 'failed-correction':
+            raise OSError('injected correction persistence failure')
+        return insert(identity, *values)
+    monkeypatch.setattr(app.collaboration, 'insert', failed)
+    with pytest.raises(OSError, match='correction persistence'):
+        await agent_action(app, peer, 'coordination.reply',
+                           {**args, 'expectedResponseRevision': 1, 'text': 'Correction'}, 'failed-correction')
+    assert app.collaboration.receipt(args['requestId'])['response'] == first
+    assert app.collaboration.receipt('artifact-declaration')['result'] == first
+    assert app.db.execute('SELECT count(*) FROM output_records').fetchone()[0] == 1
+
+
+async def test_incomplete_capture_can_be_corrected_to_failure_without_qualifying_work(app, tmp_path):
+    from test_coordination_revisions import subscribe
+    source, peer, _, args = await setup(app, tmp_path)
+    args['references'] = ['missing.txt@sha256:' + 'a' * 64]
+    first = (await declare(app, peer, args))['result']
+    assert first['artifactVerification'] == 'incomplete'
+    await subscribe(app, args['requestId'])
+    corrected = {**args, 'expectedResponseRevision': 1, 'outcome': 'failed',
+                 'text': 'Checks failed; the original partial evidence is retained.', 'references': []}
+    result = (await agent_action(app, peer, 'coordination.reply', corrected, 'failure-correction'))['result']
+    assert not result['qualified']
+    request = app.collaboration.receipt(args['requestId'])
+    continuation = request['subscription']['continuationId']
+    await settled(app, continuation, 'accepted')
+    await finish(app, peer, args['requestId'])
+    final = app.collaboration.receipt(args['requestId'])
+    assert final['response']['status'] == 'sealed' and not final['response']['qualified']
+    assert not app.collaboration.receipt(continuation)['dependencySatisfied']
+    assert app.collaboration.receipt('artifact-declaration')['result']['artifacts'] == first['artifacts']
+    assert app.db.execute(
+        "SELECT count(*) FROM commands WHERE json_extract(receipt,'$.dependencyRequestId')=?",
+        (args['requestId'],)).fetchone()[0] == 1
+    assert [row[1] for row in app.runtime.inputs] == [args['requestId'], continuation]

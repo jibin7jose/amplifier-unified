@@ -255,3 +255,103 @@ async def test_selected_policy_does_not_sweep_unselected_detached_payloads(app):
     original=(entry/'payload/release/validated.json').read_bytes()
     result=await retention.reclaim(app.update_manager,selected=set())
     assert result['removed']==0 and (entry/'payload/release/validated.json').read_bytes()==original
+
+
+async def test_size_target_accumulates_across_real_bounded_passes(app, monkeypatch):
+    monkeypatch.setattr(retention, 'MAX_CANDIDATES', 1)
+    directory = app.update_manager.directory / 'releases'
+    source = directory / app.names[3]
+    extras = ['5' * 32, '6' * 32]
+    import shutil
+    for identity in extras:
+        shutil.copytree(source, directory / identity)
+    size = measurement.measure([str(source)])['fileBytes']
+    settings(app, keepDays=7, maxUnusedBytes=2 * size + 1)
+    for number in range(2):
+        result = await cleanup.run(app, 'bounded-' + str(number), automatic=True)
+        assert result['removedFileBytes'] == 0
+    saved = cleanup.record(app, cleanup.OBSERVATION)
+    assert len(saved) == 2
+    # The policy receipt resumes the bounded inspection after a host restart.
+    del app.update_manager._retention_cursor
+    result = await cleanup.run(app, 'over-target', automatic=True)
+    assert result['removedFileBytes'] == size
+    assert [row['id'] for row in result['effects']] == [extras[1]]
+    assert source.exists() and (directory / extras[0]).exists()
+    assert not (directory / extras[1]).exists()
+    saved = cleanup.record(app, cleanup.OBSERVATION)
+    assert 'ecosystem:' + extras[1] not in saved
+    assert cleanup.observed_bytes(saved) == 2 * size
+    assert await cleanup.run(app, 'over-target', automatic=True) == result
+
+
+async def test_known_absent_and_newly_protected_copies_do_not_create_pressure(app):
+    settings(app, keepDays=7, maxUnusedBytes=1024)
+    cleanup.store(app, cleanup.OBSERVATION, {
+        'ecosystem:' + app.names[0]: {'unusedSince':1, 'fileBytes':10000, 'measuredAt':1},
+        'ecosystem:' + '0' * 32: {'unusedSince':1, 'fileBytes':10000, 'measuredAt':1}})
+    report = await cleanup.dispatch(app, 'storage.cleanup.preview', {}, 'ui', None)
+    value = report['result']
+    assert '_observations' not in value
+    assert value['observedUnusedFileBytes'] == value['unusedFileBytes']
+    assert value['selectedFileBytes'] == 0
+    assert 'not a complete inventory' in value['observationNote']
+    await cleanup.run(app, 'prune-observations', automatic=True)
+    saved = cleanup.record(app, cleanup.OBSERVATION)
+    assert set(saved) == {'ecosystem:' + app.names[3]}
+
+
+def test_legacy_age_and_cross_owner_measurements_remain_distinct():
+    now = 1000000
+    current = [{'kind':'ecosystem', 'id':'fresh', 'fileBytes':100}]
+    legacy = {'ecosystem:fresh':now-8*86400, 'runner:legacy':1}
+    assert cleanup.plan(current, cleanup.DEFAULTS, legacy, now)[0]['selected']
+    assert cleanup.observed_bytes(legacy) == 0
+    seen = {'runner:old':{'unusedSince':now, 'fileBytes':200, 'measuredAt':now-10},
+            'test-dependencies:old':{'unusedSince':now, 'fileBytes':200, 'measuredAt':now-20}}
+    rows = cleanup.plan(current, {**cleanup.DEFAULTS,'maxUnusedBytes':450}, seen, now)
+    assert rows[0]['selected']
+    assert cleanup.observed_bytes(seen) == 400
+
+
+async def test_pressure_does_not_override_a_new_reference_at_removal(app, monkeypatch):
+    settings(app, keepDays=7, maxUnusedBytes=1)
+    original = cleanup.preview
+    async def race(value):
+        report = await original(value)
+        assert report['selectedFileBytes'] > 0
+        value.state['referenced'] += str(value.update_manager.directory/'releases'/value.names[3])
+        return report
+    monkeypatch.setattr(cleanup, 'preview', race)
+    result = await cleanup.run(app, 'pressure-race', automatic=True)
+    assert result['removedFileBytes'] == 0 and not result['effects']
+    assert (app.update_manager.directory/'releases'/app.names[3]).exists()
+
+
+async def test_uncertain_receipt_stops_contributing_pressure_and_stays_held(app):
+    settings(app, keepDays=7, maxUnusedBytes=1024)
+    key = 'ecosystem:' + app.names[3]
+    cleanup.store(app, cleanup.OBSERVATION, {key: {'unusedSince':1, 'fileBytes':10000,'measuredAt':1}})
+    cleanup.store(app, 'storage-cleanup-run:uncertain', {
+        'status':'needs-inspection', 'effects':[{'kind':'ecosystem','id':app.names[3],'status':'attempting'}]})
+    report = await cleanup.preview(app)
+    assert not report['rows'] and report['observedUnusedFileBytes'] == 0
+    result = await cleanup.run(app, 'observe-uncertain', automatic=True)
+    assert result['removedFileBytes'] == 0
+    assert (app.update_manager.directory/'releases'/app.names[3]).exists()
+    assert cleanup.record(app, 'storage-cleanup-run:uncertain')['status'] == 'needs-inspection'
+
+
+async def test_retention_reason_survives_policy_receipt_without_exception_text(app, monkeypatch):
+    async def unavailable(*args, **kwargs):
+        raise ValueError('Private source details must never escape in the receipt')
+    monkeypatch.setattr(retention, 'verify_generation', unavailable)
+    preview = await cleanup.preview(app)
+    expected = {app.names[3]: 'unverified_generation'}
+    assert preview['retentionReasons'] == expected
+    assert next(row for row in preview['protected'] if row.get('id') == app.names[3])['reasonCode'] == 'unverified_generation'
+    result = await cleanup.run(app, 'unverified', automatic=True)
+    assert result['retentionReasons'] == expected
+    assert cleanup.read(app)['lastCleanup']['retentionReasons'] == expected
+    assert 'Private source' not in json.dumps(result)
+    assert result['effects'] == []

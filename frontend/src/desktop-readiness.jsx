@@ -1,3 +1,4 @@
+import {UIUsePanel} from './ui-use';
 import React,{useEffect,useRef,useState} from 'react';
 
 const time=value=>new Date(value*1000).toLocaleString();
@@ -38,6 +39,7 @@ export function DesktopReadiness({state,session,act,globalOnly=false}){
  }
  const openTools=(tool='',toolArgs='{}')=>act('view.update',{patch:{panel:'chat-models',settingsCanvas:false,runtimeDraft:{tab:'tools',tool,toolArgs}}});
  return <section aria-label="Desktop and browser readiness">
+  <UIUsePanel state={state} session={session} act={act}/>
   <p>Check which device and environment supply screen observation and optional computer or browser tools.</p>
   <p>Checking does not enable desktop control, capture a screen, request OS permission, start a conversation runtime or change your model.</p>
   <button className="a-soft" data-action="desktop.readiness" disabled={busy} onClick={check}>{busy?'Checking…':'Check desktop and browser setup'}</button>

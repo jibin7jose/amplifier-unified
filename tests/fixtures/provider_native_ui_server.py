@@ -13,10 +13,18 @@ service's browsing catalog is reported separately. Missing observations stay abs
 Disable automatic naming through session.naming before each chat's first send
 (or rename it through session.rename, which disables Auto). Naming calls, if any,
 are retained too, not filtered out to manufacture five calls.
-Only the provider, prepared-interpreter command selection, finite probe gate and
-owned proof sinks are fixture code. Releasing the gate executes the original
-production probe. The audit guard refuses external networking and unlisted child
+Only the provider, prepared-interpreter command selection, isolated metadata
+bootstrap, finite probe gate and owned proof sinks are fixture code. Releasing
+the gate executes the original production probe. The audit guard refuses external networking and unlisted child
 commands; it is not a replacement preparation, mount, selector or worker.
+
+The account catalog retains -I and the production credential-free environment.
+An exact-command fixture bootstrap installs the guard that -I excludes from
+sitecustomize, then executes the unchanged, hashed production helper. Metadata
+is never supplied by the fixture. Its child permits no further processes; the
+helper's original offline guard also remains active. Parent spawn/reap records,
+child origin/guard records and /proc absence join the ordinary cleanup proof.
+Both fork/exec and posix_spawn retain that same exact helper launch boundary.
 
 Installed mode: AMPLIFIER_TEST_INSTALLED=1, AMPLIFIER_TEST_INSTALLED_IDENTITY
 points to {files: {wheel-relative-path: sha256}} (all wheel entries except RECORD).
@@ -29,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextvars
 import copy
 import hashlib
 import importlib
@@ -40,6 +49,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import subprocess
 import sys
 import time
 
@@ -187,6 +197,7 @@ def package_origin(root):
         sys.path.insert(0, str(source))
         policy = {'mode': 'source', 'applicationRoot': str(application), 'sourceRoot': str(source)}
     policy['fixture'] = file_identity(__file__)
+    policy['accountCatalog'] = file_identity(application / 'decision_account_catalog.py')
     policy['providerRoot'] = str(root / 'provider')
     save(root / 'origin-policy.json', policy)
     return application, policy
@@ -245,11 +256,106 @@ def process_identity(pid):
     return {'pid': pid, 'processGroup': int(stat[2]), 'startTicks': stat[19]}
 
 
-def install_guard(root, commands=()):
+CATALOG_ENVIRONMENT = {'PATH', 'SYSTEMROOT', 'WINDIR', 'LANG', 'LC_ALL', 'TZ',
+                       'TMPDIR', 'TEMP', 'TMP'}
+
+
+def observe_account_catalog(root, policy):
+    """Instrument only the exact isolated helper; never replace its metadata."""
+    original = subprocess.Popen
+    requested = [sys.executable, '-I', policy['accountCatalog']['path']]
+    launched = [sys.executable, '-I', policy['fixture']['path'], '--account-catalog', str(root)]
+    authorized = contextvars.ContextVar('observed_account_catalog_launch', default=None)
+
+    class ObservedPopen(original):
+        def __init__(self, args, *positional, **kwargs):
+            self.catalog_process = None
+            self.catalog_reaped = False
+            catalog = isinstance(args, (list, tuple)) and list(args) == requested
+            if catalog:
+                # Preserve the production environment, pipes and isolation. A
+                # changed launch contract needs review, not a permissive fallback.
+                if (positional or set(kwargs) != {'stdout', 'stderr', 'env'}
+                        or kwargs['stdout'] != subprocess.PIPE or kwargs['stderr'] != subprocess.DEVNULL
+                        or not isinstance(kwargs['env'], dict)
+                        or not set(kwargs['env']).issubset(CATALOG_ENVIRONMENT)):
+                    raise RuntimeError('Unexpected isolated account catalog launch contract')
+                for identity in (policy['fixture'], policy['accountCatalog']):
+                    if file_identity(identity['path']) != identity:
+                        raise RuntimeError('Isolated account catalog source identity changed')
+                args = launched
+            token = authorized.set(dict(kwargs['env']) if catalog else None)
+            try:
+                super().__init__(args, *positional, **kwargs)
+            finally:
+                authorized.reset(token)
+            if catalog:
+                identity = {'pid': self.pid}
+                try:
+                    identity = process_identity(self.pid)
+                except OSError as exc:
+                    identity['identityError'] = f'{type(exc).__name__}: {exc}'
+                self.catalog_process = {**identity,
+                    'parent': process_identity(os.getpid()), 'kind': 'decision_account_catalog',
+                    'requestedCommand': requested, 'command': launched,
+                    'script': policy['accountCatalog'], 'spawnedAtNs': time.time_ns(),
+                    'environmentNames': sorted(kwargs['env'])}
+                append(root / f'account-catalog-{os.getpid()}.jsonl',
+                       {'event': 'spawned', **self.catalog_process})
+
+        def wait(self, *args, **kwargs):
+            code = super().wait(*args, **kwargs)
+            if self.catalog_process is not None and not self.catalog_reaped:
+                append(root / f'account-catalog-{os.getpid()}.jsonl',
+                       {'event': 'reaped', **self.catalog_process, 'returncode': code})
+                self.catalog_reaped = True
+            return code
+
+    subprocess.Popen = ObservedPopen
+    return tuple(launched), authorized.get
+
+
+def isolated_account_catalog(root):
+    """Explicit bootstrap because -I deliberately ignores fixture sitecustomize."""
+    import runpy
+    policy = read_json(root / 'origin-policy.json')
+    # Python itself may add LC_CTYPE while coercing an unset locale.
+    if not sys.flags.isolated or not set(os.environ).issubset(CATALOG_ENVIRONMENT | {'LC_CTYPE'}):
+        raise RuntimeError('Account catalog must retain isolated, credential-free execution')
+    for identity in (policy['fixture'], policy['accountCatalog']):
+        if file_identity(identity['path']) != identity:
+            raise RuntimeError('Isolated account catalog source identity changed')
+    helper = policy['accountCatalog']['path']
+    try:
+        check_origin('amplifier_web.decision_account_catalog', helper, policy)
+    except (OSError, RuntimeError) as exc:
+        append(root / f'origin-refused-{os.getpid()}.jsonl',
+               {'module': 'amplifier_web.decision_account_catalog', 'origin': helper, 'error': str(exc)})
+        raise
+    # Run the actual __main__ path, including its stricter no-network audit hook.
+    # No invocation-added fixture/provider paths or test environment variables
+    # enter sys.path/env. Installed site/.pth paths remain valid under -I.
+    sys.argv = [helper]
+    install_guard(root, account_catalog=True)
+    runpy.run_path(helper, run_name='__main__')
+
+
+def account_catalog_processes(root):
+    records = [row for path in sorted(root.glob('account-catalog-*.jsonl')) for row in calls_at(path)]
+    spawned = [row for row in records if row['event'] == 'spawned']
+    reaped = {(row['pid'], row.get('startTicks')): row for row in records if row['event'] == 'reaped'}
+    return [{**row, 'returncode': reaped.get((row['pid'], row.get('startTicks')), {}).get('returncode')}
+            for row in spawned]
+
+
+def install_guard(root, commands=(), *, account_catalog=False):
     """Inherited via sitecustomize; fail before any installer or remote transport."""
     allowed = {tuple(command) for command in commands}
     script_identity = file_identity(sys.argv[0])
     policy = read_json(root / 'origin-policy.json')
+    catalog_command = catalog_authorized = None
+    if not account_catalog:
+        catalog_command, catalog_authorized = observe_account_catalog(root, policy)
     if policy['mode'] == 'installed':
         if script_identity != policy['fixture']:
             check_origin('amplifier_web.__main__', script_identity['path'], policy)
@@ -277,8 +383,21 @@ def install_guard(root, commands=()):
     def audit(event, args):
         refused = False
         if event == 'subprocess.Popen':
-            refused = tuple(args[1]) not in allowed if isinstance(args[1], (tuple, list)) else True
-        elif event in {'os.system', 'os.posix_spawn', 'os.exec'}:
+            command = tuple(args[1]) if isinstance(args[1], (tuple, list)) else None
+            refused = command not in allowed
+            if command == catalog_command and catalog_authorized is not None:
+                # The bootstrap is never an independently allowed command: each
+                # invocation must retain the original launch and parent custody.
+                refused = catalog_authorized() is None
+        elif event == 'os.posix_spawn':
+            # CPython may launch the same validated Popen through posix_spawn.
+            # Admit that backend only inside its exact observed launch scope;
+            # direct calls, changed arguments/env and child spawns still fail.
+            environment = catalog_authorized() if catalog_authorized is not None else None
+            command = tuple(args[1]) if isinstance(args[1], (tuple, list)) else None
+            refused = (environment is None or command != catalog_command
+                       or args[0] != catalog_command[0] or args[2] != environment)
+        elif event in {'os.system', 'os.exec'}:
             refused = True
         elif event in {'socket.connect', 'socket.getaddrinfo'}:
             address = args[1] if event == 'socket.connect' else args[0]
@@ -296,7 +415,11 @@ def install_guard(root, commands=()):
             raise RuntimeError('Native fixture forbids external acquisition/transport or an unlisted subprocess')
     sys.addaudithook(audit)
     save(root / f'guard-ready-{os.getpid()}.json', {
-        'pid': os.getpid(), 'script': sys.argv[0], 'allowedCommands': [list(c) for c in commands]})
+        'pid': os.getpid(), 'script': sys.argv[0], 'allowedCommands': [list(c) for c in sorted(allowed)],
+        'observedAccountCatalogCommand': catalog_command,
+        'isolated': bool(sys.flags.isolated),
+        **({'bootstrap': policy['fixture'], 'environmentNames': sorted(os.environ),
+            'pythonPath': list(sys.path)} if account_catalog else {})})
     def loaded_sources():
         try:
             row = capture_loaded_sources(root, 'exit')
@@ -560,7 +683,8 @@ async def main(root):
             'fixture': file_identity(__file__), 'provider': file_identity(package / '__init__.py'),
             'sources': {name: file_identity(application / name) for name in (
                 'server.py', 'service.py', 'runtime.py', 'runtime_worker.py', 'runtime_controls.py',
-                'host/session.py', 'host/config.py', 'draft_defaults.py', 'draft_defaults_probe.py', 'provider_probe.py')},
+                'host/session.py', 'host/config.py', 'draft_defaults.py', 'draft_defaults_probe.py', 'provider_probe.py',
+                'decision_account_catalog.py')},
             'static': {str(p.relative_to(static)): file_identity(p)['sha256']
                        for p in sorted(static.rglob('*')) if p.is_file()},
             'importsReady': True, 'startupGate': 'imports-and-assets-only',
@@ -600,6 +724,7 @@ async def main(root):
                 'workers': [{**entry['identity'], 'kind': entry['kind'],
                     'command': entry['command'], 'spawnedAtNs': entry['spawnedAtNs'],
                     'returncode': entry['process'].returncode} for entry in processes],
+                'accountCatalogProcesses': account_catalog_processes(root),
                 'workerReady': ready_events, 'providerControls': control_reads,
                 'lifecycle': lifecycle, 'readiness': readiness, 'discovery': discovery,
                 'routingDiscovery': routing_reads, 'delayedProbe': copy.deepcopy(delayed),
@@ -693,6 +818,11 @@ async def main(root):
                            'loadedSources': read_json(root / f'loaded-{entry["identity"]["pid"]}.json'),
                            'procAbsent': not Path(f'/proc/{entry["identity"]["pid"]}').exists()}
                           for entry in processes]
+            identities.extend({**row,
+                'guardReady': (root / f'guard-ready-{row["pid"]}.json').is_file(),
+                'loadedSources': read_json(root / f'loaded-{row["pid"]}.json'),
+                'procAbsent': not Path(f'/proc/{row["pid"]}').exists()}
+                for row in account_catalog_processes(root))
             complete = not cleanup_errors and all(row['returncode'] is not None and row['procAbsent']
                                                   and row['guardReady'] and 'identityError' not in row
                                                   and row['loadedSources'] is not None
@@ -725,6 +855,9 @@ async def main(root):
 
 
 if __name__ == '__main__':
+    if len(sys.argv) == 3 and sys.argv[1] == '--account-catalog':
+        isolated_account_catalog(Path(sys.argv[2]).resolve(strict=True))
+        raise SystemExit(0)
     if len(sys.argv) != 2:
         raise SystemExit('Usage: provider_native_ui_server.py <new-artifact-root>')
     asyncio.run(main(Path(sys.argv[1]).expanduser().resolve()))

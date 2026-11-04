@@ -218,6 +218,12 @@ def read_removal(app, args, origin, caller, *, listing=False):
                     'riskDecisionAvailable': False,
                     'verification': _retained_verification(row, original),
                 }
+                if not legacy and row.get('environmentState') == 'stopped':
+                    from .test_environment_fresh_cleanup import binding
+                    if binding(row, original):
+                        # A passive discovery hint, not executor/physical proof
+                        # or permission to replay the original unknown effect.
+                        result['nextAction'] = 'workspace.environments.finishCleanup'
                 if len(json.dumps(result).encode()) > 4096:
                     raise ValueError('projection exceeds bound')
                 return result

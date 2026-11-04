@@ -92,7 +92,8 @@ async def test_feedback_closes_on_durable_acceptance_and_result_is_visible_elsew
         release.set()
         await asyncio.gather(*list(app.tasks))
         attention=app.get_state()['attention']
-        assert attention['sections']['feedback']==1 and attention['settingsUnread']==0
+        assert attention['sections']['feedback']==0 and attention['settingsUnread']==0
+        assert attention['badgeUnread']==0 and attention['items'][0]['informational']
         assert attention['items'][0]['url']==feedback.ISSUES_URL+'/42'
         assert app.state['view']['panel']=='settings'
         await app.dispatch('attention.read',{'ids':[attention['items'][0]['id']]},origin='agent')

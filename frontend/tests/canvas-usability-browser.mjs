@@ -40,13 +40,13 @@ try{
  await writeFile(workspace+'/actual-name.md','# File content');
  await action('canvas.show',{kind:'auto',path:workspace+'/actual-name.md',title:'Friendly file title'});
  await expect(documentTabs.getByRole('tab',{selected:true})).toHaveAttribute('title','Friendly file title');
- const filePath=panel.locator('.a-canvas-file-path');
+ const filePath=panel.locator('.a-canvas-inspector details.a-canvas-file-path');
  const details=panel.getByRole('button',{name:'Canvas details',exact:true});
  await details.click();await expect(filePath).toBeHidden();
  await details.click();await expect(filePath).toBeVisible();
- await filePath.locator('summary').click();
- await expect(filePath.locator('code')).toHaveText(workspace+'/actual-name.md');
- await expect(filePath.getByRole('button',{name:'Copy absolute path',exact:true})).toBeEnabled();
+ await filePath.getByText('File details',{exact:true}).click();
+ await expect(filePath.locator('code')).toHaveText([workspace+'/actual-name.md',workspace,'actual-name.md']);
+ await expect(filePath.getByRole('button',{name:'Copy full path',exact:true})).toBeEnabled();
  await expect(filePath.getByRole('button',{name:'Copy relative path',exact:true})).toBeEnabled();
  // A sent Markdown attachment opens a preview and retains its download.
  await action('attachment.add',{sessionId:state.selectedSessionId,name:'Review notes.md',base64:Buffer.from('# Attached review\n\nThe original text.').toString('base64')});

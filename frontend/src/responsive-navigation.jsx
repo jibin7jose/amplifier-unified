@@ -13,12 +13,14 @@ export function useNarrowScreen(query='(max-width: 760px)'){
 // Modal sheets and drawers retain their place in the app's DOM. Inert siblings
 // prevent both keyboard and assistive-technology navigation into the background.
 export function useModalFocus(ref,enabled,onClose,includeSelector=null){
- const close=useRef(onClose);close.current=onClose;
+ const close=useRef(onClose),returnFocus=useRef(null);close.current=onClose;
  // Release the old modal during the commit, before newly revealed siblings get
  // their declarative inert state. A passive cleanup can re-inert an open Canvas.
  useLayoutEffect(()=>{
+  returnFocus.current=null;
   const panel=ref.current;if(!enabled||!panel)return;
   const previous=document.activeElement,hidden=[];
+  returnFocus.current=previous;
   const included=includeSelector?[...document.querySelectorAll(includeSelector)]:[];
   const hide=sibling=>{
    if(included.includes(sibling))return;
@@ -46,7 +48,15 @@ export function useModalFocus(ref,enabled,onClose,includeSelector=null){
    else if(!event.shiftKey&&(document.activeElement===last||!list.includes(document.activeElement))){event.preventDefault();first.focus()}
   };
   document.addEventListener('keydown',key);
-  return()=>{document.removeEventListener('keydown',key);for(const el of hidden){const held=inertOwners.get(el);if(held&&!--held.count){el.inert=held.original;inertOwners.delete(el)}}if(previous?.isConnected&&!previous.closest('[inert]'))previous.focus?.({preventScroll:true})};
+  return()=>{document.removeEventListener('keydown',key);for(const el of hidden){const held=inertOwners.get(el);if(held&&!--held.count){el.inert=held.original;inertOwners.delete(el)}}};
+ },[enabled,ref,includeSelector]);
+ // React restores the pre-commit active element after layout cleanups. Return
+ // focus in passive cleanup instead, without delaying the inert-state release.
+ // Capture this modal's opener, not a subsequent render's returnFocus value.
+ useEffect(()=>{
+  if(!enabled)return;
+  const previous=returnFocus.current;
+  return()=>{if(previous?.isConnected&&!previous.closest('[inert]'))previous.focus?.({preventScroll:true})};
  },[enabled,ref,includeSelector]);
 }
 export function MobileChatTitle({state,session}){

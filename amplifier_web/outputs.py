@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import copy
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -42,7 +43,8 @@ def definitions(schema,string):
     }
 
 
-def file_bytes(root,value):
+@contextmanager
+def workspace_file(root,value):
     root=Path(root).resolve()
     path=Path(value).expanduser()
     path=(path if path.is_absolute() else root/path).resolve()
@@ -56,15 +58,22 @@ def file_bytes(root,value):
             os.close(directory);directory=child
         fd=os.open(relative.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=directory)
         with os.fdopen(fd,'rb') as stream:
-            before=os.fstat(stream.fileno())
-            if not stat.S_ISREG(before.st_mode) or before.st_size>MAX_FILE:
-                raise ValueError('Choose a regular output file up to8MB.')
-            data=stream.read(MAX_FILE+1)
-            after=os.fstat(stream.fileno())
-            if len(data)>MAX_FILE or (before.st_size,before.st_mtime_ns,before.st_ino)!=(after.st_size,after.st_mtime_ns,after.st_ino):
-                raise ValueError('The output changed while reading. Attach it again deliberately.')
-        return data,str(path),relative.name
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError('Choose a regular output file.')
+            yield stream,str(path),relative.name
     finally:os.close(directory)
+
+
+def file_bytes(root,value):
+    with workspace_file(root,value) as (stream,path,name):
+        before=os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode) or before.st_size>MAX_FILE:
+            raise ValueError('Choose a regular output file up to8MB.')
+        data=stream.read(MAX_FILE+1)
+        after=os.fstat(stream.fileno())
+        if len(data)>MAX_FILE or (before.st_size,before.st_mtime_ns,before.st_ino)!=(after.st_size,after.st_mtime_ns,after.st_ino):
+            raise ValueError('The output changed while reading. Attach it again deliberately.')
+    return data,path,name
 
 
 class Outputs:
@@ -83,6 +92,11 @@ class Outputs:
 
     def content(self,record):
         if not record.get('body'):return None
+        from . import retained_files
+        if record.get('bodyFormat') == retained_files.FORMAT:
+            from .resource_files import detach
+            chunks=retained_files.manifest(detach(self.app.db,record['body']['$resource']),record)
+            return retained_files.materialize([detach(self.app.db,row['$resource']) for row in chunks],record,MAX_FILE)
         value=self.app.state_resource(record['body']['$resource'])
         return self.decode_content(record,value)
 
@@ -103,13 +117,49 @@ class Outputs:
     async def content_async(self,record):
         """Read immutable output bytes away from the event loop and app lock."""
         if not record.get('body'):return None
+        from . import retained_files
+        if record.get('bodyFormat') == retained_files.FORMAT:
+            sources=await retained_files.plan(self.app,record)
+            return await asyncio.to_thread(retained_files.materialize,sources,record,MAX_FILE)
         from .resource_files import detach, read_detached
         async with self.app.lock:
             source=detach(self.app.db,record['body']['$resource'])
         def materialize():
-            value=read_detached(source,max_bytes=6*20*1024*1024+4096)
+            try:
+                value=read_detached(source,max_bytes=6*20*1024*1024+4096)
+            except ValueError as exc:
+                raise ValueError('Saved output content is unavailable or fails its evidence hash.') from exc
             return self.decode_content(record,value)
         return await asyncio.to_thread(materialize)
+
+    async def preview_async(self,record,offset=0,limit=4000):
+        from . import retained_files
+        if record.get('bodyFormat') == retained_files.FORMAT:
+            sources=await retained_files.plan(self.app,record)
+            return await asyncio.to_thread(retained_files.preview,sources,record,offset,limit)
+        data=await self.content_async(record)
+        if data is None:return {}
+        try:
+            text=data.decode('utf-8')
+            return {'text':text[offset:offset+limit],'offset':offset,
+                'nextOffset':offset+limit if offset+limit<len(text) else None}
+        except UnicodeDecodeError:return {'binary':True}
+
+    async def read(self,args):
+        async with self.app.lock:
+            record=self.record(args['sessionId'],args['id'])
+            if record.get('kind') == 'chat_reference':
+                return {**self.chat_references.descriptor(record),'kind':'chat_reference','linked':bool(record.get('linked'))}
+            if record.get('kind') == 'media':
+                observation=self.media.observation(record)
+                return {**self.media.descriptor(record),'saved':True,'attached':bool(record.get('linked')),
+                    'browserObservation':observation,'playback':observation.get('playback','unknown')}
+            comments=self.store.comments(record['id']);start=args.get('commentOffset',0);count=args.get('commentLimit',5)
+            result={**record,'comments':comments[start:start+count],'nextCommentOffset':start+count if start+count<len(comments) else None}
+        if record.get('body'):
+            result.update(await self.preview_async(record,args.get('offset',0),args.get('limit',4000)))
+            result['downloadUrl']='/api/outputs/'+record['id']+'/content'
+        return result
 
     def image_record(self,sid,identity,expected_hash):
         self.app._session(sid, hydrate=False)
@@ -167,14 +217,32 @@ class Outputs:
         return self.image_pair(await self._read_images(sid,identities))
 
     async def _read_images(self,sid,identities):
-        # Detach exact bodies, decode/hash/validate off-lock, then recheck every
-        # request relationship before returning any part of the ordered set.
+        # Detach the selected set once. Hash/decode/PNG/base64 work shares one
+        # worker turn, rather than queuing behind the busy app loop per image
+        # and per conversion. The database never crosses the worker boundary.
+        from . import resource_files, retained_files
         async with self.app.lock:
             records=[self.image_record(sid,item['id'],item['sha256']) for item in identities]
-        images=[]
-        for record in records:
-            data=await self.content_async(record)
-            images.append(await asyncio.to_thread(self.image_value,record,data))
+            sources=[resource_files.detach(self.app.db,record['body']['$resource']) for record in records]
+        def read_roots():
+            values=[]
+            for record,source in zip(records,sources):
+                if record.get('bodyFormat') == retained_files.FORMAT:
+                    values.append(retained_files.manifest(source,record))
+                else:
+                    value=resource_files.read_detached(source,max_bytes=6*20*1024*1024+4096)
+                    values.append(self.image_value(record,self.decode_content(record,value)))
+            return values
+        images=await asyncio.to_thread(read_roots)
+        chunked=[index for index,record in enumerate(records) if record.get('bodyFormat') == retained_files.FORMAT]
+        if chunked:
+            async with self.app.lock:
+                chunks={index:[resource_files.detach(self.app.db,item['$resource']) for item in images[index]]
+                        for index in chunked}
+            def read_chunks():
+                return {index:self.image_value(records[index],retained_files.materialize(sources,records[index],MAX_FILE))
+                        for index,sources in chunks.items()}
+            for index,value in (await asyncio.to_thread(read_chunks)).items():images[index]=value
         async with self.app.lock:
             current=[self.image_record(sid,item['id'],item['sha256']) for item in identities]
             if current!=records:
@@ -240,6 +308,8 @@ class Outputs:
                 result=await self.images_async(args['sessionId'],args['images'])
                 for image in result['images']:image.pop('_image')
                 return {'accepted':True,'result':result}
+            if action=='outputs.read':
+                return {'accepted':True,'result':await self.read(args)}
             async with self.app.lock:
                 source = self.app._session(args['sessionId'], hydrate=bool(args.get('messageId')))
                 # Output records own their bodies. Retain only the execution
@@ -248,28 +318,6 @@ class Outputs:
                            ('id', 'workspace', 'workingDirectory', 'executionRevision') if key in source}
                 if action=='outputs.list':
                     return {'accepted':True,'result':self.store.list(session['id'],include_unlinked=args.get('includeUnlinked',False),offset=args.get('offset',0),limit=args.get('limit',20))}
-                if action=='outputs.read':
-                    record=self.record(session['id'],args['id'])
-                    if record.get('kind') == 'chat_reference':
-                        return {'accepted':True,'result':{
-                            **self.chat_references.descriptor(record),
-                            'kind':'chat_reference','linked':bool(record.get('linked'))}}
-                    if record.get('kind') == 'media':
-                        observation = self.media.observation(record)
-                        return {'accepted':True,'result':{**self.media.descriptor(record),
-                            'saved':True,'attached':bool(record.get('linked')),
-                            'browserObservation':observation,
-                            'playback':observation.get('playback', 'unknown')}}
-                    data=self.content(record)
-                    comments=self.store.comments(record['id']);start=args.get('commentOffset',0);count=args.get('commentLimit',5)
-                    result={**record,'comments':comments[start:start+count],'nextCommentOffset':start+count if start+count<len(comments) else None}
-                    if data is not None:
-                        result['downloadUrl']='/api/outputs/'+record['id']+'/content'
-                        try:
-                            text=data.decode('utf-8');offset=args.get('offset',0);limit=args.get('limit',4000)
-                            result.update(text=text[offset:offset+limit],offset=offset,nextOffset=offset+limit if offset+limit<len(text) else None)
-                        except UnicodeDecodeError:result['binary']=True
-                    return {'accepted':True,'result':result}
                 portability = getattr(self.app, 'portability', None)
                 transfer_context = portability.write_context(session['id']) if portability else None
                 request=[action,args,origin];identity=command_id or uuid.uuid4().hex

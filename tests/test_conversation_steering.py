@@ -177,34 +177,71 @@ async def test_parked_worker_refuses_without_reacquiring(monkeypatch):
 
 
 async def test_worker_routes_correction_under_existing_ownership(monkeypatch):
+    import asyncio
+    from amplifier_web.shared_state import ActivationGate
+
     worker = Worker()
-    worker.session, worker.execution, worker.shared_handle = object(), object(), object()
+    coordinator = SimpleNamespace(
+        get=Mock(return_value=SimpleNamespace(pending=None, _active_jobs=Mock(return_value=[]))),
+        get_capability=Mock(side_effect=AssertionError('Active generation must not checkpoint for parking')))
+    worker.session, worker.execution = SimpleNamespace(coordinator=coordinator), object()
+    handle = worker.shared_handle = SimpleNamespace(release=Mock())
     worker.controls = SimpleNamespace(preserve_configuration=True)
-    worker.runtime, worker.activation = object(), object()
-    worker.acquire_for_mutation = AsyncMock()
-    worker.bind_activation = Mock(return_value='token')
-    worker.activation_gate = SimpleNamespace(reset=Mock())
-    worker.park = AsyncMock()
+    generation = {'id': 'generation', 'input_ids': ['original']}
+    worker.runtime = SimpleNamespace(accepted={}, queued_inputs=0, inbox=asyncio.Queue(), generation=generation)
+    worker.activation_gate = ActivationGate()
+    activation = worker.activation = worker.activation_gate.activate()
+    worker.activation_gate.reset = Mock(wraps=worker.activation_gate.reset)
+    worker.activation_gate.release = Mock(wraps=worker.activation_gate.release)
+    worker.shared_store = SimpleNamespace(acquire=Mock(side_effect=AssertionError('Do not reacquire the active owner')))
+    worker.acquire_for_mutation = AsyncMock(wraps=worker.acquire_for_mutation)
+    bind_activation, tokens = worker.bind_activation, []
+    def bind():
+        token = bind_activation()
+        tokens.append(token)
+        return token
+    worker.bind_activation = Mock(side_effect=bind)
+    worker.park = AsyncMock(wraps=worker.park)
+    assert not worker.parked and not worker.ownership.yielding
     async def adapter(controls, runtime, args, activation, stop_epoch):
         assert controls is worker.controls
         assert runtime is worker.runtime
         assert controls.preserve_configuration is False
         assert worker.command_lock.locked()
         assert activation is worker.activation
+        assert worker.activation_gate.current() is activation and worker.activation_gate.current_valid
         assert args['targetGenerationId'] == 'generation'
-        assert worker.context_bindings['correction'] == {'clientId': 'browser', 'targets': []}
+        assert runtime.generation is generation and runtime.generation['id'] == args['targetGenerationId']
+        assert worker.context_bindings['correction'] == {
+            'clientId': 'browser', 'targets': [], 'interruptionRevision': 7}
         assert stop_epoch() == 0
         return {'accepted': True, 'disposition': 'queued'}
     monkeypatch.setattr('amplifier_web.conversation_steering.submit', adapter)
     replies = []
     monkeypatch.setattr('amplifier_web.runtime_worker.publish', replies.append)
     await worker.command({'op': 'control', 'id': 'request', 'operation': 'conversation.steer',
+        'interruptionRevision': 7,
         'arguments': {'inputId': 'correction', 'targetGenerationId': 'generation',
                       'context_binding': {'clientId': 'browser', 'targets': []}}})
-    assert 'error' not in replies[0]
+    assert len(replies) == 1 and 'error' not in replies[0]
     assert replies[0]['result']['disposition'] == 'queued'
     assert worker.controls.preserve_configuration is False
-    worker.activation_gate.reset.assert_called_once_with('token')
+    worker.acquire_for_mutation.assert_awaited_once_with()
+    worker.shared_store.acquire.assert_not_called()
+    # The control epilogue requests settled parking. The real active-generation
+    # guard must retain ownership, not merely avoid calling a mocked park.
+    worker.park.assert_awaited_once_with(activation=activation)
+    coordinator.get.assert_called_once_with('orchestrator')
+    coordinator.get_capability.assert_not_called()
+    handle.release.assert_not_called()
+    worker.activation_gate.release.assert_not_called()
+    assert worker.shared_handle is handle and worker.activation is activation
+    assert not worker.parked and not worker.ownership.yielding
+    assert worker.activation_gate.current() is activation and worker.activation_gate.current_valid
+    assert worker.runtime.generation is generation
+    worker.bind_activation.assert_called_once_with()
+    assert len(tokens) == 1
+    worker.activation_gate.reset.assert_called_once_with(tokens[0])
 
 
 async def test_manager_never_starts_worker_for_stale_correction():

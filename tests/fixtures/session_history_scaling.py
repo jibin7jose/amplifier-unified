@@ -14,6 +14,7 @@ import pstats
 import sys
 import tempfile
 import time
+import uuid
 
 
 async def measure(root, output):
@@ -25,9 +26,10 @@ async def measure(root, output):
     from test_service import Runtime
 
     records = []
-    cases = ((16, 0, 0), (1024, 0, 0), (4096, 0, 0), (16, 504, 0), (16, 0, 20000))
-    for messages, workers, receipts in cases:
-        name = f'{messages}-{workers}-{receipts}'
+    cases = ((16, 0, 0, 0), (1024, 0, 0, 0), (4096, 0, 0, 0),
+             (16, 504, 0, 0), (16, 0, 20000, 0), (16, 0, 20000, 5000))
+    for messages, workers, receipts, observations in cases:
+        name = f'{messages}-{workers}-{receipts}-{observations}'
         case = root / name
         case.mkdir()
         app = AppService(case / 'state', workspace=case, runtime=Runtime())
@@ -49,13 +51,27 @@ async def measure(root, output):
                 turns=[dict(id='current', inputId='current', anchorMessageId='current',
                             phase='running', startedAt=messages)],
                 retiredUsageNodes=[dict(id=f'call-{i}', kind='llm', revision=1,
-                    producerId='native', turnId=f'old-{i}', sessionId=sid, rootSessionId=sid,
+                    producerId='native', turnId=f'old-{i // 100}', sessionId=sid, rootSessionId=sid,
                     phase='completed', provider='synthetic', model='no-provider-used',
                     startedAt=i, endedAt=i + 1, usage=dict(inputTokens=1000, outputTokens=100,
                         totalTokens=1100, costUsd=.01)) for i in range(receipts)])
+            if observations:
+                tree = owner['execution']
+                tree['turns'].extend(dict(id=f'old-{i}', phase='completed')
+                                     for i in range((receipts + 99) // 100))
+                tree['nodes'] = [dict(row, liveObservation=True)
+                                for row in tree['retiredUsageNodes'][-observations:]]
+                tree['nodes'].extend(dict(id=f'tool-{i}', kind='tool', phase='completed',
+                    turnId='current', sessionId=sid, rootSessionId=sid, tool='read_file',
+                    toolCallId=f'call-{i}', toolObservationId=str(uuid.uuid5(
+                        uuid.NAMESPACE_URL, f'history-scaling-tool-{i}')),
+                    liveObservation=True, revision=1, endedAt=i + 1)
+                    for i in range(observations * 2))
             times = []
             for step in range(4):
                 owner['streaming'] = f'Current answer {step}'
+                if observations:
+                    owner['execution']['nodes'][-1]['revision'] += 1
                 started = time.perf_counter()
                 app._publish_changes(sessions={sid}, detail_only=True)
                 times.append(time.perf_counter() - started)
@@ -76,10 +92,18 @@ async def measure(root, output):
             execution = (load(app.db, saved['_coldFields']['execution'])
                          if 'execution' in saved.get('_coldFields', {}) else saved['execution'])
             assert execution['retiredUsageNodes'] == owner['execution']['retiredUsageNodes']
+            assert execution['turns'] == owner['execution']['turns']
+            assert len(execution['nodes']) == observations * 3
+            assert [row for row in execution['nodes'] if row['kind'] == 'tool'] == [
+                row for row in owner['execution']['nodes'] if row['kind'] == 'tool']
+            if observations:
+                assert [row['usage'] for row in execution['nodes'] if row['kind'] == 'llm'] == [
+                    row['usage'] for row in owner['execution']['retiredUsageNodes'][-observations:]]
             assert owner['execution']['currentTurnId'] == 'current'
             assert not app.runtime.started and not app.runtime.sent and not app.queues
             result = dict(historicalMessages=messages, historicalWorkers=workers,
                 historicalAccountingReceipts=receipts,
+                historicalLivePlacements=observations * 3,
                 historicalTextBytes=sum(len(row['text'].encode()) for row in owner['messages']),
                 firstSaveSeconds=times[0], warmSaveSeconds=times[1:], historyPreserved=True,
                 providerCalls=0, subscribers=0)

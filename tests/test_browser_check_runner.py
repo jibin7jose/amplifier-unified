@@ -72,7 +72,7 @@ def test_uncertain_cleanup_stops_and_records_unrun_without_false_cascade(tmp_pat
 def test_cleanup_identity_details_are_bounded_without_reducing_failure_count(monkeypatch):
     identities = {-pid: '1' for pid in range(1, 41)}
     snapshots = iter([{}, identities, {}])
-    monkeypatch.setattr(runner, 'owned_members', lambda *args: next(snapshots))
+    monkeypatch.setattr(runner, 'owned_members', lambda *args, **kwargs: next(snapshots))
     cleanup = runner.retire_group(-1, 'synthetic')
     assert cleanup['terminated'] == 40 and cleanup['remaining'] == []
     assert len(cleanup['observedBeforeTermination']) == 32
@@ -231,6 +231,11 @@ def test_cli_initialization_and_execution_record_exact_source_and_plan(tmp_path)
 def test_existing_scenario_commands_environments_and_distinct_modes_are_preserved():
     plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
     rows = runner.validate_plan(plan)
+    canvas_additions = canvas_browser_additions(rows, set())
+    breadbin_addition = breadbin_browser_addition(rows, set())
+    question_fade_addition = question_fade_browser_addition(rows, set())
+    historical_rows = [row for row in rows
+                       if not (canvas_additions | breadbin_addition | question_fade_addition).intersection(row['command'])]
     # Expanded exact .149 workflow invocations, including compound npm scripts.
     # Deliberate coverage changes must update this migration oracle explicitly.
     additions = {
@@ -301,6 +306,11 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
         'history-refresh': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/history-refresh'},
         'voice-work-message': {'EVIDENCE_DIR': '{root}/output/browser-checks/voice-work-message'},
         'update-message-delivery': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/update-message-delivery'},
+        'ready': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/ready',
+                  'AMPLIFIER_TEST_PYTHON': '{root}/.venv/bin/python'},
+        'question-transcript-fade': {
+            'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/question-transcript-fade',
+            'AMPLIFIER_TEST_PYTHON': '{root}/.venv/bin/python'},
     }
     added = [row for row in rows if row['id'] in additions]
     assert len(added) == len(additions)
@@ -316,8 +326,9 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     ]
     recovery_ids = {row['id'] for row in recovery_additions}
     assert [row for row in rows if row['id'] in recovery_ids] == recovery_additions
-    original = [row for row in rows if row['id'] not in additions and row['id'] not in recovery_ids]
-    assert len(original) == 65 and len(rows) == 132
+    original = [row for row in historical_rows if row['id'] not in additions and row['id'] not in recovery_ids]
+    assert len(original) == 65 and len(historical_rows) == 132
+    assert len(rows) == 136  # Four independently validated owners are additive.
     # Existing scenarios retain their commands; only evidence ownership changes.
     evidence = {
         'bundle': {'AMPLIFIER_BUNDLE_SCREENSHOT': '{root}/output/browser-checks/bundle-mobile.png'},
@@ -558,6 +569,127 @@ def provider_browser_additions(rows, readiness_scripts):
     return scripts
 
 
+def breadbin_browser_addition(rows, readiness_scripts):
+    """One background source owner; never subtract missing/duplicate coverage."""
+    script = 'tests/ready-browser.mjs'
+    owners = [row for row in rows if script in row['command']]
+    assert owners == [{
+        'id': 'ready', 'command': ['node', script],
+        'env': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/ready',
+                'AMPLIFIER_TEST_PYTHON': '{root}/.venv/bin/python'},
+    }], f'{script}: expected one ordinary source owner and its exact environment'
+    assert script not in readiness_scripts, f'{script}: duplicate readiness owner'
+    return {script}
+
+
+@pytest.mark.parametrize('fault', ['missing', 'duplicate', 'different-command',
+                                  'missing-python', 'wrong-artifacts', 'managed-contract',
+                                  'readiness-owner'])
+def test_breadbin_browser_addition_rejects_missing_duplicate_or_wrong_environment(fault):
+    plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+    rows = plan['scenarios']
+    script = 'tests/ready-browser.mjs'
+    owner, = [row for row in rows if row['id'] == 'ready']
+    readiness_scripts = set()
+    if fault == 'missing':
+        rows.remove(owner)
+    elif fault == 'duplicate':
+        rows.append({**owner, 'id': 'ready-extra'})
+    elif fault == 'different-command':
+        owner['command'].append('--extra')
+    elif fault == 'missing-python':
+        del owner['env']['AMPLIFIER_TEST_PYTHON']
+    elif fault == 'wrong-artifacts':
+        owner['env']['AMPLIFIER_TEST_ARTIFACTS'] = '{root}/output/browser-checks/provider-native'
+    elif fault == 'managed-contract':
+        owner['env']['AMPLIFIER_TEST_CONTRACT'] = '/invented/contract.json'
+    else:
+        readiness_scripts.add(script)
+    with pytest.raises(AssertionError, match=re.escape(script)):
+        breadbin_browser_addition(rows, readiness_scripts)
+
+
+@pytest.mark.parametrize('canvas', ['canvas-refresh', 'canvas-refresh-catchup'])
+@pytest.mark.parametrize('fault', ['missing', 'duplicate', 'different-command', 'readiness-owner',
+                                 'missing-env', 'wrong-env', 'wrong-id', 'wrong-command'])
+def test_canvas_browser_additions_reject_changed_or_duplicate_ordinary_owner(canvas, fault):
+    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    script = f'tests/{canvas}-browser.mjs'
+    owner = next(row for row in rows if row['id'] == canvas)
+    readiness_scripts = set()
+    if fault == 'missing':
+        rows.remove(owner)
+    elif fault in {'duplicate', 'different-command'}:
+        rows.append({**owner, 'id': canvas + '-extra', 'command': ['node', script] +
+                     (['--extra'] if fault == 'different-command' else [])})
+    elif fault == 'readiness-owner':
+        readiness_scripts.add(script)
+    elif fault == 'missing-env':
+        owner.pop('env')
+    elif fault == 'wrong-env':
+        owner['env']['AMPLIFIER_TEST_ARTIFACTS'] = '{root}/output/browser-checks/other'
+    elif fault == 'wrong-id':
+        owner['id'] = canvas + '-renamed'
+    else:
+        owner['command'] = ['node', 'tests/canvas-dirty-browser.mjs']
+    with pytest.raises(AssertionError, match=re.escape(script)):
+        canvas_browser_additions(rows, readiness_scripts)
+
+
+def canvas_browser_additions(rows, readiness_scripts):
+    """Validate new Canvas owners before excluding them from frozen inventories."""
+    scripts = set()
+    for name in ('canvas-refresh', 'canvas-refresh-catchup'):
+        script = f'tests/{name}-browser.mjs'
+        owners = [row for row in rows if row['id'] == name or script in row['command']]
+        expected = {'id': name, 'command': ['node', script],
+                    'env': {'AMPLIFIER_TEST_ARTIFACTS': f'{{root}}/output/browser-checks/{name}'}}
+        assert owners == [expected], f'{script}: expected exactly one ordinary owner with its exact environment'
+        assert script not in readiness_scripts, f'{script}: duplicate readiness owner'
+        scripts.add(script)
+    return scripts
+
+
+def question_fade_browser_addition(rows, readiness_scripts):
+    """Validate the additive owner before excluding it from frozen coverage."""
+    script = 'tests/question-transcript-fade-browser.mjs'
+    owners = [row for row in rows if script in row['command']]
+    assert owners == [{
+        'id': 'question-transcript-fade', 'command': ['node', script],
+        'env': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/question-transcript-fade',
+                'AMPLIFIER_TEST_PYTHON': '{root}/.venv/bin/python'},
+    }], f'{script}: expected one ordinary source owner and its exact environment'
+    assert script not in readiness_scripts, f'{script}: duplicate readiness owner'
+    return {script}
+
+
+@pytest.mark.parametrize('fault', ['missing', 'duplicate', 'different-command',
+                                  'missing-python', 'wrong-artifacts', 'managed-contract',
+                                  'readiness-owner'])
+def test_question_fade_browser_addition_rejects_missing_duplicate_or_wrong_environment(fault):
+    plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+    rows = plan['scenarios']
+    script = 'tests/question-transcript-fade-browser.mjs'
+    owner, = [row for row in rows if row['id'] == 'question-transcript-fade']
+    readiness_scripts = set()
+    if fault == 'missing':
+        rows.remove(owner)
+    elif fault == 'duplicate':
+        rows.append({**owner, 'id': 'question-transcript-fade-extra'})
+    elif fault == 'different-command':
+        owner['command'].append('--extra')
+    elif fault == 'missing-python':
+        del owner['env']['AMPLIFIER_TEST_PYTHON']
+    elif fault == 'wrong-artifacts':
+        owner['env']['AMPLIFIER_TEST_ARTIFACTS'] = '{root}/output/browser-checks/provider-native'
+    elif fault == 'managed-contract':
+        owner['env']['AMPLIFIER_TEST_CONTRACT'] = '/invented/contract.json'
+    else:
+        readiness_scripts.add(script)
+    with pytest.raises(AssertionError, match=re.escape(script)):
+        question_fade_browser_addition(rows, readiness_scripts)
+
+
 def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     workflows = ROOT / '.github/workflows'
     readiness = yaml.load((workflows / 'public-readiness.yml').read_text(), Loader=yaml.BaseLoader)
@@ -655,9 +787,13 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     assert update_delivery in extended_scripts - readiness_scripts
     assert sum(row['command'] == ['node', update_delivery] for row in plan['scenarios']) == 1
     provider_additions = provider_browser_additions(plan['scenarios'], readiness_scripts)
+    breadbin_addition = breadbin_browser_addition(plan['scenarios'], readiness_scripts)
+    canvas_additions = canvas_browser_additions(plan['scenarios'], readiness_scripts)
+    question_fade_addition = question_fade_browser_addition(plan['scenarios'], readiness_scripts)
     # Freeze all three prior counts; validate each new owner before subtracting
-    # the additions so missing or duplicated provider coverage cannot disappear.
-    previous_scripts = (readiness_scripts | extended_scripts) - {state_stream, update_delivery} - provider_additions
+    # the additions so missing or duplicated coverage cannot disappear.
+    previous_scripts = ((readiness_scripts | extended_scripts) - {state_stream, update_delivery}
+                        - provider_additions - breadbin_addition - canvas_additions - question_fade_addition)
     assert len(previous_scripts - {attachment, cancellation, shared_landing, tool_details, tool_previews, attachment_experience, pin_reorder, approval, dormant, shared_work} - feature_additions - voice_additions) == 146
     assert len(previous_scripts - {shared_work, 'tests/delegate-work-stream-browser.mjs', 'tests/client-traffic-browser.mjs'} - voice_additions) == 164
     assert len(previous_scripts) == 171
@@ -1394,3 +1530,1163 @@ def test_app004_extra_timeout_is_failure_not_expected_negative(tmp_path, monkeyp
     assert row['cleanup']['remaining'] == []
     other = next(row for row in qualification['checks'] if row['id'] != timeout_at)
     assert other['status'] == 'passed'
+
+
+def bounded_execute(tmp_path, source, **kwargs):
+    return execute(tmp_path, [scenario('pytest', source)], cwd=tmp_path,
+                   log_limit=1024, interrupt_grace=.3, **kwargs)
+
+
+@pytest.mark.parametrize('exit_code', [0, 1])
+def test_python_bounded_capture_pass_or_failure_keeps_root_cwd_and_exit(tmp_path, exit_code):
+    code, report, output = bounded_execute(tmp_path,
+        f'import os;print(os.getcwd(),flush=True);raise SystemExit({exit_code})')
+    row, = report['scenarios']
+    assert code == exit_code and row['exitCode'] == exit_code
+    assert row['status'] == ('passed' if exit_code == 0 else 'failed')
+    assert row['reason'] is None and row['cleanup'] == {'remaining': [], 'terminated': 0}
+    assert (output / 'pytest.log').read_text().strip() == str(tmp_path)
+    assert row['logCapture']['eof'] and not row['logCapture']['truncated']
+
+
+def test_python_bounded_capture_flood_drains_binary_chunks_without_unbounded_log(tmp_path):
+    source = ('import os;os.write(1,b"HEAD"+bytes([255])+b"a"*250000);'
+              'os.write(1,b"z"*250000+b"TAIL"+bytes([254]))')
+    code, report, output = bounded_execute(tmp_path, source)
+    capture = report['scenarios'][0]['logCapture']
+    assert code == 0 and capture['bytesObserved'] == 500010
+    assert capture['bytesRetained'] == 1024 and capture['truncated'] and capture['eof']
+    assert capture['format'] == 'head-tail' and not capture['tailCheckpointMayLag']
+    assert (output / 'pytest.log').read_bytes() == b'HEAD\xff' + b'a'*507 + b'z'*507 + b'TAIL\xfe'
+    assert not (output / 'pytest.log.tail').exists()
+
+
+def test_python_log_ring_retains_running_head_and_cursor_then_orders_tail(tmp_path):
+    path = tmp_path / 'pytest.log'
+    log = runner.BoundedLog(path, 10)
+    try:
+        log.append(b'0123456789AB')
+        evidence = log.receipt()
+        assert path.read_bytes() == b'01234'
+        assert path.with_suffix('.log.tail').read_bytes() == b'AB789'
+        assert evidence['bytesObserved'] == 12 and evidence['tailStart'] == 2
+        assert evidence['format'] == 'head-ring-tail' and evidence['tailCheckpointMayLag']
+    finally:
+        log.close()
+    assert path.read_bytes() == b'01234789AB'
+
+
+def expire_after_progress(monkeypatch, marker):
+    # No startup race: the child installs its handler before marking progress.
+    original = runner.time.monotonic
+    monkeypatch.setattr(runner.time, 'monotonic', lambda: original() + (100 if marker.exists() else 0))
+
+
+@pytest.mark.parametrize('cancelled', [False, True])
+def test_python_progress_then_interruption_preserves_timeout_even_exit_zero(tmp_path, monkeypatch, cancelled):
+    ready = tmp_path / 'ready'
+    if not cancelled:
+        expire_after_progress(monkeypatch, ready)
+    source = f'''
+import os,signal,time
+from pathlib import Path
+def finish(*args):
+    print("interrupt finalized",flush=True)
+    raise SystemExit(0)
+signal.signal(signal.SIGINT,finish)
+print("test_one PASSED",flush=True)
+Path({str(ready)!r}).touch()
+{'os.kill(os.getppid(),signal.SIGTERM)' if cancelled else ''}
+time.sleep(60)
+'''
+    code, report, output = bounded_execute(tmp_path, source, budget=10, case_timeout=10)
+    row, = report['scenarios']
+    assert code == 1 and report['complete'] and not report['passed']
+    assert row['reason'] == ('cancelled' if cancelled else 'timeout')
+    assert row['exitCode'] == 0 and row['interrupt']['sent']
+    assert row['cleanup'] == {'remaining': [], 'terminated': 0}
+    assert row['logCapture']['eof']
+    assert 'test_one PASSED' in (output / 'pytest.log').read_text()
+    assert 'interrupt finalized' in (output / 'pytest.log').read_text()
+
+
+def test_python_ignored_interrupt_cleans_owned_descendant_not_unrelated(tmp_path, monkeypatch):
+    ready = tmp_path / 'ready'
+    expire_after_progress(monkeypatch, ready)
+    unrelated = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(60)'],
+                                  start_new_session=True)
+    source = f'''
+import os,signal,subprocess,sys,time
+from pathlib import Path
+signal.signal(signal.SIGINT,signal.SIG_IGN)
+p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],start_new_session=True)
+Path({str(ready)!r}).write_text(str(p.pid))
+print("before hang",flush=True)
+time.sleep(60)
+'''
+    try:
+        code, report, output = bounded_execute(tmp_path, source, budget=10, case_timeout=10)
+        row, = report['scenarios']
+        assert code == 1 and row['reason'] == 'timeout' and row['interrupt']['sent']
+        assert row['cleanup']['remaining'] == [] and row['cleanup']['terminated'] >= 1
+        assert unrelated.poll() is None
+        child = Path('/proc') / ready.read_text() / 'stat'
+        assert not child.exists() or child.read_text().rsplit(')', 1)[1].split()[0] == 'Z'
+        assert b'before hang' in (output / 'pytest.log').read_bytes()
+    finally:
+        unrelated.terminate()
+        unrelated.wait(timeout=2)
+
+
+def test_python_ownership_unreadable_remains_unknown_with_zero_exit(tmp_path, monkeypatch):
+    retire = runner.retire_group
+    def unavailable(*args, **kwargs):
+        assert retire(*args, **kwargs) == {'remaining': [], 'terminated': 0}
+        raise PermissionError('Synthetic unavailable ownership after child exit')
+    monkeypatch.setattr(runner, 'retire_group', unavailable)
+    code, report, _ = bounded_execute(tmp_path, 'print("finished")')
+    assert code == 1 and report['scenarios'][0]['exitCode'] == 0
+    assert report['scenarios'][0]['cleanup']['remaining'] == ['unknown']
+
+
+def test_python_interrupt_never_signals_unreadable_or_reused_identity(monkeypatch):
+    from types import SimpleNamespace
+    calls = []
+    monkeypatch.setattr(runner.os, 'pidfd_open', lambda pid: calls.append(pid))
+    def unavailable(*args):
+        raise PermissionError('No identity evidence')
+    monkeypatch.setattr(runner, 'owned_members', unavailable)
+    with pytest.raises(PermissionError):
+        runner.interrupt_owned(SimpleNamespace(pid=321), 'token', {})
+    monkeypatch.setattr(runner, 'owned_members', lambda *args: {})
+    assert not runner.interrupt_owned(SimpleNamespace(pid=321), 'token', {})
+    assert calls == []
+
+
+@pytest.mark.parametrize('shape', ['missing', 'malformed', 'oversized', 'entities', 'empty', 'passed', 'failed'])
+def test_python_junit_is_bounded_observation_not_an_invented_pass(tmp_path, shape):
+    raw, kept = tmp_path / 'junit.pending.xml', tmp_path / 'junit.xml'
+    contents = {
+        'malformed': b'<testsuite>', 'oversized': b'x'*1025,
+        'entities': b'<!DOCTYPE testsuite [<!ENTITY x "value">]><testsuite/>',
+        'empty': b'<testsuite tests="0" failures="0" errors="0" skipped="0"/>',
+        'passed': b'<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one"/></testsuite>',
+        'failed': b'<testsuite tests="1" failures="1" errors="0" skipped="0"><testcase name="one"><failure/></testcase></testsuite>',
+    }
+    if shape != 'missing':
+        raw.write_bytes(contents[shape])
+    result = runner.junit_evidence(raw, kept, limit=1024)
+    expected = {'entities': 'malformed', 'empty': 'parsed', 'passed': 'parsed', 'failed': 'parsed'}.get(shape, shape)
+    assert result['status'] == expected
+    if expected != 'parsed':
+        assert result['counts'] is None and not kept.exists()
+    else:
+        assert kept.read_bytes() == contents[shape]
+        assert result['counts']['testcases'] == (0 if shape == 'empty' else 1)
+        assert result['counts']['failure'] == int(shape == 'failed')
+
+
+@pytest.mark.parametrize('shape', ['missing', 'malformed', 'oversized', 'empty'])
+def test_python_exit_zero_cannot_invent_junit_success(tmp_path, monkeypatch, shape):
+    monkeypatch.setattr(runner, 'junit_evidence', lambda *args, **kwargs: {
+        'status': 'parsed' if shape == 'empty' else shape,
+        'counts': {'testcases': 0, 'failure': 0, 'error': 0} if shape == 'empty' else None})
+    report = {'passed': True, 'complete': True, 'scenarios': [
+        {'status': 'passed', 'exitCode': 0, 'reason': None, 'cleanup': {'remaining': [], 'terminated': 0}}]}
+    assert runner.finish_python_report(tmp_path, report) == 1
+    assert report['pytestSessionComplete'] and not report['passed']
+
+
+def test_python_early_preparation_budget_exhaustion_never_launches(tmp_path, monkeypatch):
+    output = tmp_path / 'output'
+    provenance = {'revision': 'a'*40}
+    deadline = runner.time.monotonic() + 10
+    assert runner.python_suite(tmp_path, output, provenance, deadline, initialize=True) == 0
+    monkeypatch.setattr(runner.time, 'monotonic', lambda: deadline + 1)
+    def forbidden(*args, **kwargs):
+        pytest.fail('Preparation consumed the original budget; no pytest launch')
+    monkeypatch.setattr(runner.subprocess, 'Popen', forbidden)
+    assert runner.python_suite(tmp_path, output, provenance, deadline) == 1
+    report = json.loads((output / 'results.json').read_text())
+    assert report['scenarios'][0]['status'] == 'unrun'
+    assert report['scenarios'][0]['reason'] == 'budget_exhausted_before_pytest'
+    assert report['pytestSessionStatus'] == 'not_started'
+    assert not report['complete'] and not report['pytestSessionComplete'] and not report['passed']
+    assert report['junit'] == {'status': 'missing', 'counts': None}
+    with pytest.raises(ValueError, match='no replay'):
+        # A future deadline must not be used to replay a settled preflight.
+        runner.python_suite(tmp_path, output, provenance, deadline)
+
+
+@pytest.mark.parametrize('state', ['unrun', 'running'])
+def test_python_finalize_preparation_failure_or_lost_runner_without_replay(tmp_path, monkeypatch, state):
+    output = tmp_path / 'output'
+    deadline = runner.time.monotonic() + 60
+    runner.python_suite(tmp_path, output, {}, deadline, initialize=True)
+    report = json.loads((output / 'results.json').read_text())
+    report['scenarios'][0]['status'] = state
+    runner.save(output, report)
+    monkeypatch.setattr(runner.subprocess, 'Popen', lambda *a, **k: pytest.fail('Finalize cannot execute'))
+    assert runner.python_suite(tmp_path, output, {}, deadline, finalize=True) == 1
+    report = json.loads((output / 'results.json').read_text())
+    assert report['scenarios'][0]['reason'] == ('preparation_not_completed' if state == 'unrun' else 'execution_outcome_unknown')
+    assert not report['pytestSessionComplete'] and not report['passed']
+    if state == 'running':
+        assert report['scenarios'][0]['cleanup']['remaining'] == ['unknown']
+
+
+def test_python_full_mode_requires_original_source_deadline_and_no_replay(tmp_path, monkeypatch):
+    output = tmp_path / 'output'
+    deadline = runner.time.monotonic() + 60
+    runner.python_suite(tmp_path, output, {'revision': 'original'}, deadline, initialize=True)
+    monkeypatch.setattr(runner.subprocess, 'Popen', lambda *a, **k: pytest.fail('No execution in refusal controls'))
+    with pytest.raises(ValueError, match='already exists'):
+        runner.python_suite(tmp_path, output, {'revision': 'original'}, deadline, initialize=True)
+    for source, changed_deadline in [({'revision': 'other'}, deadline), ({'revision': 'original'}, deadline + 1)]:
+        with pytest.raises(ValueError, match='changed'):
+            runner.python_suite(tmp_path, output, source, changed_deadline)
+
+
+@pytest.mark.parametrize('exit_code', [0, 1])
+def test_python_profile_keeps_initial_deadline_and_independent_completion_fields(tmp_path, monkeypatch, exit_code):
+    output = tmp_path / 'output'
+    deadline = runner.time.monotonic() + 10
+    xml = f'<testsuite tests="1" failures="{exit_code}" errors="0" skipped="0"><testcase name="one">' + ('<failure/>' if exit_code else '') + '</testcase></testsuite>'
+    command = [sys.executable, '-c', 'import sys;from pathlib import Path;'
+               f'Path(sys.argv[1].split("=",1)[1]).write_text({xml!r});'
+               f'print("one test finished",flush=True);raise SystemExit({exit_code})',
+               '--junitxml=output/python-checks/junit.pending.xml']
+    monkeypatch.setattr(runner, 'PYTHON_COMMAND', command)
+    save = runner.save
+    checkpoints = []
+    def record(folder, report):
+        checkpoints.append(json.loads(json.dumps(report)))
+        save(folder, report)
+    monkeypatch.setattr(runner, 'save', record)
+    runner.python_suite(tmp_path, output, {}, deadline, initialize=True)
+    assert runner.python_suite(tmp_path, output, {}, deadline) == exit_code
+    report = json.loads((output / 'results.json').read_text())
+    assert report['deadlineMonotonic'] == deadline
+    assert report['complete'] and report['pytestSessionComplete']
+    assert report['pytestSessionStatus'] == 'completed'
+    assert report['scenarioListComplete']
+    assert report['passed'] is (exit_code == 0)
+    assert report['junit']['counts'] == {'testcases': 1, 'failure': exit_code, 'error': 0, 'skipped': 0}
+    assert report['scenarios'][0]['command'] == command
+    assert report['scenarios'][0]['executedCommand'][-1].startswith('--junitxml=/proc/self/fd/')
+    assert report['scenarios'][0]['junitFileIdentity'] == [
+        (output / 'junit.pending.xml').stat().st_dev, (output / 'junit.pending.xml').stat().st_ino]
+    assert all(not r['passed'] for r in checkpoints if r['junit']['status'] == 'not_started')
+    assert runner.python_suite(tmp_path, output, {}, deadline, finalize=True) == exit_code
+    with pytest.raises(ValueError, match='no replay'):
+        runner.python_suite(tmp_path, output, {}, deadline)
+
+
+@pytest.mark.parametrize('name', ['pytest.log', 'pytest.log.tail', 'junit.pending.xml', 'junit.xml'])
+def test_python_initialize_refuses_stale_output_without_receipt(tmp_path, name):
+    (tmp_path / name).write_text('retained old evidence')
+    with pytest.raises(ValueError, match='already exists'):
+        runner.python_suite(tmp_path, tmp_path, {}, runner.time.monotonic() + 10, initialize=True)
+    assert (tmp_path / name).read_text() == 'retained old evidence'
+    assert not (tmp_path / 'results.json').exists()
+
+
+def test_python_tiny_real_pytest_interrupt_retains_partial_xml_not_session_completion(tmp_path, monkeypatch):
+    ready = tmp_path / 'ready'
+    expire_after_progress(monkeypatch, ready)
+    tests = tmp_path / 'test_tiny.py'
+    tests.write_text(f'''from pathlib import Path
+import time
+def test_first():
+    assert True
+def test_hangs():
+    Path({str(ready)!r}).touch()
+    time.sleep(60)
+''')
+    output = tmp_path / 'results'
+    row = {'id': 'pytest', 'command': [sys.executable, '-u', '-m', 'pytest', '-v', '--tb=short',
+           '-c', '/dev/null', str(tests), '--junitxml=output/python-checks/junit.pending.xml'],
+           'env': {'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1'}}
+    code, report, output = execute(tmp_path, [row], budget=30, case_timeout=30,
+                                  cwd=tmp_path, log_limit=16384, interrupt_grace=3,
+                                  junit_output=output / 'junit.pending.xml')
+    assert code == 1 and report['complete'] and report['scenarios'][0]['reason'] == 'timeout'
+    assert runner.finish_python_report(output, report) == 1
+    assert not report['pytestSessionComplete'] and not report['passed']
+    # Pytest may retain the interrupted setup-only reporter without a name/count.
+    # Keep that bounded XML, but never turn partial coverage into invented counts.
+    assert report['junit']['status'] in {'parsed', 'invalid'}
+    if report['junit']['status'] == 'parsed':
+        assert report['junit']['counts']['testcases'] >= 1
+    else:
+        assert report['junit']['reason'] in {'case_identity_missing', 'counter_mismatch'}
+        assert report['junit']['counts'] is None
+    assert report['pytestSessionStatus'] == 'incomplete'
+    assert b'test_first PASSED' in (output / 'pytest.log').read_bytes()
+
+
+def plant_evidence_entry(path, shape, outside):
+    if shape == 'symlink':
+        path.symlink_to(outside)
+    elif shape == 'dangling':
+        path.symlink_to(outside.with_name('missing-target'))
+    elif shape == 'hardlink':
+        os.link(outside, path)
+    else:
+        assert shape == 'fifo'
+        os.mkfifo(path)
+
+
+@pytest.mark.parametrize('shape', ['symlink', 'dangling', 'hardlink', 'fifo'])
+@pytest.mark.parametrize('reader', ['junit', 'results'])
+def test_python_evidence_reads_refuse_special_entries_without_blocking(tmp_path, shape, reader):
+    output = tmp_path / 'evidence'
+    output.mkdir()
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'private bytes never read')
+    name = 'junit.pending.xml' if reader == 'junit' else 'results.json'
+    plant_evidence_entry(output / name, shape, outside)
+    if reader == 'junit':
+        result = runner.junit_evidence(output / name, output / 'junit.xml')
+        assert result['status'] == 'unreadable' and result['counts'] is None
+    else:
+        with pytest.raises(OSError):
+            runner.read_python_report(output)
+    assert outside.read_bytes() == b'private bytes never read'
+    assert not (tmp_path / 'missing-target').exists()
+
+
+@pytest.mark.parametrize('shape', ['symlink', 'dangling', 'hardlink', 'fifo'])
+@pytest.mark.parametrize('writer', ['results', 'junit', 'head', 'tail'])
+def test_python_evidence_writers_never_clobber_external_or_special_entries(tmp_path, shape, writer):
+    output = tmp_path / 'evidence'
+    output.mkdir()
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'untouched external bytes')
+    name = {'results': 'results.json', 'junit': 'junit.xml', 'head': 'pytest.log', 'tail': 'pytest.log.tail'}[writer]
+    plant_evidence_entry(output / name, shape, outside)
+    if writer == 'results':
+        with pytest.raises(OSError):
+            runner.save(output, {'passed': False})
+    elif writer == 'junit':
+        (output / 'junit.pending.xml').write_bytes(b'<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one"/></testsuite>')
+        result = runner.junit_evidence(output / 'junit.pending.xml', output / name)
+        assert result['status'] == 'retention_failed' and result['counts'] is None
+    else:
+        with pytest.raises(OSError):
+            runner.BoundedLog(output / 'pytest.log', 1024)
+    assert outside.read_bytes() == b'untouched external bytes'
+    assert not (tmp_path / 'missing-target').exists()
+    assert not list(output.glob('.*.tmp'))
+
+
+@pytest.mark.parametrize('shape', ['symlink', 'dangling', 'hardlink', 'fifo'])
+def test_python_report_does_not_use_predictable_temporary_entry(tmp_path, shape):
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'retained')
+    output = tmp_path / 'evidence'
+    output.mkdir()
+    plant_evidence_entry(output / 'results.tmp', shape, outside)
+    runner.save(output, {'passed': False})
+    assert json.loads((output / 'results.json').read_text()) == {'passed': False}
+    assert outside.read_bytes() == b'retained'
+    assert not (tmp_path / 'missing-target').exists()
+    assert not list(output.glob('.*.tmp'))
+
+
+@pytest.mark.parametrize('shape', ['symlink', 'hardlink'])
+def test_python_report_rechecks_destination_before_atomic_publish(tmp_path, monkeypatch, shape):
+    output = tmp_path / 'evidence'
+    output.mkdir()
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'retained')
+    runner.save(output, {'passed': False})
+    original = runner.EvidenceFile.write
+    def replace_after_open(file, data):
+        size = original(file, data)
+        (output / 'results.json').unlink()
+        plant_evidence_entry(output / 'results.json', shape, outside)
+        return size
+    monkeypatch.setattr(runner.EvidenceFile, 'write', replace_after_open)
+    with pytest.raises(OSError):
+        runner.save(output, {'passed': True})
+    assert outside.read_bytes() == b'retained'
+    assert not list(output.glob('.*.tmp'))
+
+
+def test_python_evidence_read_rechecks_identity_after_open(tmp_path, monkeypatch):
+    raw = tmp_path / 'junit.pending.xml'
+    raw.write_bytes(b'<testsuite tests="0" failures="0" errors="0" skipped="0"/>')
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'untouched')
+    read = runner.EvidenceFile.read
+    def replace_after_read(file, size):
+        data = read(file, size)
+        raw.unlink()
+        raw.symlink_to(outside)
+        return data
+    monkeypatch.setattr(runner.EvidenceFile, 'read', replace_after_read)
+    result = runner.junit_evidence(raw, tmp_path / 'junit.xml')
+    assert result['status'] == 'unreadable' and result['counts'] is None
+    assert outside.read_bytes() == b'untouched'
+    assert not (tmp_path / 'junit.xml').exists()
+
+
+def test_python_atomic_publication_refuses_exclusive_temp_collision(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(runner.uuid, 'uuid4', lambda: SimpleNamespace(hex='collision'))
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'untouched')
+    (tmp_path / '.results.json.collision.tmp').symlink_to(outside)
+    with pytest.raises(OSError):
+        runner.save(tmp_path, {'passed': False})
+    assert outside.read_bytes() == b'untouched'
+    assert not (tmp_path / 'results.json').exists()
+
+
+@pytest.mark.parametrize('name', ['results.json', 'pytest.log', 'pytest.log.tail', 'junit.pending.xml', 'junit.xml'])
+def test_python_initialize_rejects_dangling_evidence(tmp_path, name):
+    (tmp_path / name).symlink_to(tmp_path / 'missing')
+    with pytest.raises(ValueError, match='already exists'):
+        runner.python_suite(tmp_path, tmp_path, {}, runner.time.monotonic() + 10, initialize=True)
+    assert not (tmp_path / 'missing').exists()
+
+
+@pytest.mark.parametrize('name', ['results.json', 'pytest.log', 'pytest.log.tail', 'junit.pending.xml'])
+@pytest.mark.parametrize('shape', ['symlink', 'hardlink', 'fifo'])
+def test_python_replacement_after_initialization_refuses_before_launch(tmp_path, monkeypatch, name, shape):
+    output = tmp_path / 'evidence'
+    deadline = runner.time.monotonic() + 10
+    runner.python_suite(tmp_path, output, {}, deadline, initialize=True)
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'do not overwrite')
+    path = output / name
+    if path.exists():
+        path.unlink()
+    plant_evidence_entry(path, shape, outside)
+    monkeypatch.setattr(runner.subprocess, 'Popen', lambda *a, **k: pytest.fail('Unsafe evidence must not launch pytest'))
+    if name == 'results.json':
+        with pytest.raises(OSError):
+            runner.python_suite(tmp_path, output, {}, deadline)
+    else:
+        assert runner.python_suite(tmp_path, output, {}, deadline) == 1
+        assert not runner.read_python_report(output)['passed']
+    assert outside.read_bytes() == b'do not overwrite'
+
+
+def test_python_evidence_directory_symlink_cannot_redirect_creation(tmp_path):
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (tmp_path / 'redirect').symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError):
+        runner.python_suite(tmp_path, tmp_path / 'redirect' / 'new', {},
+                            runner.time.monotonic() + 10, initialize=True)
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize('entry', ['pytest.log', 'pytest.log.tail'])
+def test_python_open_log_identity_replacement_is_capture_failure_not_external_write(tmp_path, entry):
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'retained')
+    output = tmp_path / 'evidence'
+    output.mkdir()
+    log = runner.BoundedLog(output / 'pytest.log', 10)
+    try:
+        (output / entry).unlink()
+        (output / entry).symlink_to(outside)
+        with pytest.raises(OSError):
+            log.append(b'0123456789')
+        log.append(b'discarded now')
+        assert log.receipt()['captureError']
+        assert log.receipt()['bytesRetained'] is None
+    finally:
+        log.close()
+    assert outside.read_bytes() == b'retained'
+
+
+def test_python_junit_expected_writer_identity_cannot_be_replaced(tmp_path):
+    raw = tmp_path / 'junit.pending.xml'
+    owned = runner.EvidenceFile(raw, create=True)
+    expected = list(owned.identity)
+    try:
+        raw.unlink()
+        raw.write_bytes(b'<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="other"/></testsuite>')
+        result = runner.junit_evidence(raw, tmp_path / 'junit.xml', expected=expected)
+        assert result['status'] == 'unreadable' and result['counts'] is None
+        assert not (tmp_path / 'junit.xml').exists()
+    finally:
+        owned.close()
+
+
+def test_python_junit_child_uses_owned_fd_after_path_replacement(tmp_path, monkeypatch):
+    output = tmp_path / 'evidence'
+    raw = output / 'junit.pending.xml'
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'external bytes')
+    xml = '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one"/></testsuite>'
+    source = ('import sys;from pathlib import Path;'
+              f'p=Path({str(raw)!r});p.unlink();p.symlink_to({str(outside)!r});'
+              f'Path(sys.argv[1].split("=",1)[1]).write_text({xml!r})')
+    monkeypatch.setattr(runner, 'PYTHON_COMMAND', [sys.executable, '-c', source,
+        '--junitxml=output/python-checks/junit.pending.xml'])
+    deadline = runner.time.monotonic() + 10
+    runner.python_suite(tmp_path, output, {}, deadline, initialize=True)
+    assert runner.python_suite(tmp_path, output, {}, deadline) == 1
+    report = runner.read_python_report(output)
+    assert report['scenarios'][0]['exitCode'] == 0
+    assert report['scenarios'][0]['reason'] == 'junit_identity_changed'
+    assert report['junit']['status'] == 'unreadable' and report['junit']['counts'] is None
+    assert outside.read_bytes() == b'external bytes'
+
+
+@pytest.mark.parametrize('child_exits', [False, True])
+def test_python_capture_disk_error_still_drains_and_retires_owned_child(tmp_path, monkeypatch, child_exits):
+    pid = tmp_path / 'owned.pid'
+    write = runner.EvidenceFile.write
+    failed = []
+    def disk_full(file, data):
+        if file.name == 'pytest.log':
+            failed.append(True)
+            raise OSError('Synthetic ENOSPC')
+        return write(file, data)
+    monkeypatch.setattr(runner.EvidenceFile, 'write', disk_full)
+    source = f'''
+import os,signal,time
+from pathlib import Path
+signal.signal(signal.SIGINT,signal.SIG_IGN)
+Path({str(pid)!r}).write_text(str(os.getpid()))
+os.write(1,b"progress")
+{'raise SystemExit(0)' if child_exits else 'while True: os.write(1,b"x"*65536)'}
+'''
+    code, report, _ = bounded_execute(tmp_path, source, budget=5, case_timeout=5)
+    row, = report['scenarios']
+    assert code == 1 and row['status'] == 'failed'
+    assert row['reason'] == 'log_capture_failed'
+    assert row['logError'] == 'OSError' and row['logCapture']['captureError'] == 'OSError'
+    assert row['logCapture']['bytesRetained'] is None and len(failed) == 1
+    assert row['cleanup']['remaining'] == []
+    if child_exits:
+        assert row['exitCode'] == 0
+    child = Path('/proc') / pid.read_text() / 'stat'
+    assert not child.exists() or child.read_text().rsplit(')', 1)[1].split()[0] == 'Z'
+
+
+def test_python_cleanup_drain_error_does_not_skip_available_identity_inspection(monkeypatch):
+    inspections = []
+    monkeypatch.setattr(runner, 'owned_members', lambda *args, **kwargs: inspections.append(True) or {})
+    def failed_drain():
+        raise OSError('Capture failed')
+    cleanup = runner.retire_group(-1, 'synthetic', drain=failed_drain)
+    assert inspections
+    assert cleanup == {'remaining': [], 'terminated': 0, 'drainError': 'OSError'}
+
+
+@pytest.mark.parametrize('xml', [
+    '<testsuite tests="2" failures="1" errors="0" skipped="0"><testcase name="one"/></testsuite>',
+    '<testsuite tests="1" failures="0" errors="1" skipped="0"><testcase name="one"/></testsuite>',
+    '<testsuite tests="-1" failures="0" errors="0" skipped="0"><testcase name="one"/></testsuite>',
+    '<testsuite tests="1" failures="-1" errors="0" skipped="0"><testcase name="one"/></testsuite>',
+    '<testsuite tests="1" failures="nan" errors="0" skipped="0"><testcase name="one"/></testsuite>',
+    '<testsuite tests="1" failures="0" errors="0"><testcase name="one"/></testsuite>',
+    '<testsuite><testcase name="one"/></testsuite>',
+    '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase/></testsuite>',
+    '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one"><failure/></testcase></testsuite>',
+    '<testsuite tests="1" failures="0" errors="0" skipped="1"><testcase name="one"/></testsuite>',
+    '<testsuite tests="1" failures="0" errors="0" skipped="0"><wrapper><testcase name="one"/></wrapper></testsuite>',
+    '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one"><testcase name="nested"/></testcase></testsuite>',
+    '<testsuites tests="2"><testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one"/></testsuite></testsuites>',
+    '<testsuites><testsuites/></testsuites>',
+])
+def test_python_exit_zero_with_contradictory_junit_cannot_pass(tmp_path, xml):
+    (tmp_path / 'junit.pending.xml').write_text(xml)
+    report = {'passed': True, 'complete': True, 'scenarios': [
+        {'status': 'passed', 'exitCode': 0, 'reason': None, 'cleanup': {'remaining': [], 'terminated': 0}}]}
+    assert runner.finish_python_report(tmp_path, report) == 1
+    assert report['junit']['status'] == 'invalid' and report['junit']['counts'] is None
+    assert report['pytestSessionComplete'] and not report['passed']
+    assert (tmp_path / 'junit.xml').read_text() == xml
+
+
+@pytest.mark.parametrize('outcomes,counts,exit_code', [
+    ('', {'testcases': 1, 'failure': 0, 'error': 0, 'skipped': 0}, 0),
+    ('<skipped type="pytest.skip"/>', {'testcases': 1, 'failure': 0, 'error': 0, 'skipped': 1}, 0),
+    ('<skipped type="pytest.xfail"/>', {'testcases': 1, 'failure': 0, 'error': 0, 'skipped': 1}, 0),
+    ('<error/><error/>', {'testcases': 1, 'failure': 0, 'error': 2, 'skipped': 0}, 1),
+    ('<skipped/><error/>', {'testcases': 1, 'failure': 0, 'error': 1, 'skipped': 1}, 1),
+])
+def test_python_junit_pytest_properties_skips_and_multiple_error_reports(tmp_path, outcomes, counts, exit_code):
+    # Matches pytest 9.1.1 LogXML's flat testsuites/testsuite/case form. Failure
+    # counts are outcome children, which can exceed testcase count on teardown.
+    xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="pytest tests"><testsuite name="pytest" tests="1"
+ failures="{counts['failure']}" errors="{counts['error']}" skipped="{counts['skipped']}" time="0.1">
+ <properties><property name="platform" value="fixture"/></properties>
+ <testcase classname="test_example" name="one" time="0.1"><properties><property name="x" value="y"/></properties>{outcomes}<system-out>captured</system-out></testcase>
+</testsuite></testsuites>'''
+    (tmp_path / 'junit.pending.xml').write_text(xml)
+    report = {'passed': exit_code == 0, 'complete': True, 'scenarios': [
+        {'status': 'passed' if exit_code == 0 else 'failed', 'exitCode': exit_code,
+         'reason': None, 'cleanup': {'remaining': [], 'terminated': 0}}]}
+    assert runner.finish_python_report(tmp_path, report) == exit_code
+    assert report['junit']['status'] == 'parsed' and report['junit']['counts'] == counts
+    assert report['pytestSessionComplete'] and report['passed'] is (exit_code == 0)
+
+
+def test_python_nested_owner_lineage_retains_ancestors_without_reusing_local_token():
+    outer = runner.child_ownership({}, '1' * 32)
+    inner = runner.child_ownership(outer, '2' * 32)
+    deepest = runner.child_ownership(inner, '3' * 32)
+    assert outer == {runner.OWNER_ENV: '1' * 32, runner.ANCESTOR_ENV: ''}
+    assert inner == {runner.OWNER_ENV: '2' * 32, runner.ANCESTOR_ENV: '1' * 32}
+    assert deepest == {runner.OWNER_ENV: '3' * 32,
+                       runner.ANCESTOR_ENV: '1' * 32 + ',' + '2' * 32}
+    encoded = lambda env: b'\0'.join((key + '=' + value).encode() for key, value in env.items())
+    assert runner.environment_owns(encoded(deepest), '1' * 32)
+    assert runner.environment_owns(encoded(deepest), '2' * 32)
+    assert runner.environment_owns(encoded(deepest), '3' * 32)
+    assert not runner.environment_owns(encoded(outer), '2' * 32)
+    assert not runner.environment_owns(encoded(inner), '3' * 32)
+    sibling = runner.child_ownership(outer, '4' * 32)
+    assert not runner.environment_owns(encoded(sibling), '2' * 32)
+    assert runner.owner_lineage({runner.OWNER_ENV: '1' * 32}) == ['1' * 32]  # Existing direct tag.
+    assert not runner.environment_owns(b'UNRELATED=value\0', '1' * 32)
+
+
+def test_python_nested_owner_limit_refuses_without_truncating_outer_owner():
+    environment = {}
+    for index in range(runner.MAX_OWNER_ANCESTORS + 1):
+        environment = runner.child_ownership(environment, f'{index:032x}')
+    assert len(environment[runner.ANCESTOR_ENV]) == runner.MAX_OWNER_ANCESTORS * 33 - 1
+    assert runner.owner_lineage(environment)[0] == '0' * 32
+    before = dict(environment)
+    with pytest.raises(OSError, match='limit reached'):
+        runner.child_ownership(environment, 'f' * 32)
+    assert environment == before
+    with pytest.raises(OSError, match='fresh local'):
+        runner.child_ownership({runner.OWNER_ENV: 'f' * 32}, 'f' * 32)
+
+
+@pytest.mark.parametrize('shape', [
+    'oversized', 'bad-token', 'empty-token', 'duplicate', 'self-ancestor',
+    'missing-owner', 'bad-owner', 'empty-owner', 'non-ascii',
+])
+def test_python_nested_owner_invalid_inheritance_refuses_before_launch(tmp_path, monkeypatch, shape):
+    fields = {runner.OWNER_ENV: 'a' * 32, runner.ANCESTOR_ENV: 'b' * 32}
+    if shape == 'oversized':
+        fields[runner.ANCESTOR_ENV] = 'b' * (runner.MAX_OWNER_ANCESTORS * 33)
+    elif shape == 'bad-token':
+        fields[runner.ANCESTOR_ENV] = '../not-an-owner'
+    elif shape == 'empty-token':
+        fields[runner.ANCESTOR_ENV] += ','
+    elif shape == 'duplicate':
+        fields[runner.ANCESTOR_ENV] += ',' + 'b' * 32
+    elif shape == 'self-ancestor':
+        fields[runner.ANCESTOR_ENV] = fields[runner.OWNER_ENV]
+    elif shape == 'missing-owner':
+        fields.pop(runner.OWNER_ENV)
+    elif shape == 'bad-owner':
+        fields[runner.OWNER_ENV] = 'not-an-owner'
+    elif shape == 'empty-owner':
+        fields[runner.OWNER_ENV] = ''
+    else:
+        fields[runner.ANCESTOR_ENV] = '\N{SNOWMAN}'
+    for name in (runner.OWNER_ENV, runner.ANCESTOR_ENV):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in fields.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(runner.subprocess, 'Popen', lambda *a, **k: pytest.fail('Invalid lineage cannot launch'))
+    # A scenario override cannot repair or hide invalid inherited ownership.
+    row = scenario('invalid-owner', 'pass')
+    row['env'] = {runner.OWNER_ENV: 'c' * 32, runner.ANCESTOR_ENV: ''}
+    code, report, _ = execute(tmp_path, [row])
+    assert code == 1 and not report['passed']
+    assert report['scenarios'][0]['executionError'] == 'OSError'
+    assert report['scenarios'][0]['cleanup'] == {'remaining': [], 'terminated': 0}
+
+
+@pytest.mark.parametrize('shape', ['duplicate-owner', 'duplicate-ancestors', 'non-ascii'])
+def test_python_nested_owner_inspection_rejects_ambiguous_fields(shape):
+    owner = (runner.OWNER_ENV + '=' + 'a' * 32).encode()
+    ancestor = (runner.ANCESTOR_ENV + '=' + 'b' * 32).encode()
+    data = {'duplicate-owner': owner + b'\0' + owner,
+            'duplicate-ancestors': owner + b'\0' + ancestor + b'\0' + ancestor,
+            'non-ascii': owner + b'\0' + runner.ANCESTOR_ENV.encode() + b'=\xff'}[shape]
+    with pytest.raises(OSError):
+        runner.environment_owns(data, 'a' * 32)
+
+
+def finish_nested_fixture_identities(paths):
+    """Fallback for these tests only: kill recorded PID/births, never token scans."""
+    identities = [json.loads(path.read_text()) for path in paths if path.exists()]
+    for identity in identities:
+        try:
+            handle = os.pidfd_open(identity['pid'])
+            try:
+                fields = Path(f'/proc/{identity["pid"]}/stat').read_text().rsplit(')', 1)[1].split()
+                if fields[19] == identity['birth'] and fields[0] != 'Z':
+                    signal.pidfd_send_signal(handle, signal.SIGKILL)
+            finally:
+                os.close(handle)
+        except (FileNotFoundError, ProcessLookupError):
+            pass
+    deadline = runner.time.monotonic() + 3
+    while True:
+        live = []
+        for identity in identities:
+            try:
+                fields = Path(f'/proc/{identity["pid"]}/stat').read_text().rsplit(')', 1)[1].split()
+                if fields[19] == identity['birth'] and fields[0] != 'Z':
+                    live.append(identity['pid'])
+            except (FileNotFoundError, ProcessLookupError):
+                pass
+        if not live:
+            return
+        assert runner.time.monotonic() < deadline, f'Fixture cleanup did not settle: {live}'
+        runner.time.sleep(.02)
+
+
+@pytest.mark.parametrize('mode', ['timeout', 'cancelled', 'unreadable'])
+def test_python_nested_detached_owner_survives_inner_loss_without_false_outer_clear(tmp_path, monkeypatch, mode):
+    leader, child, detached = [tmp_path / name for name in ('leader.json', 'child.json', 'detached.json')]
+    ready, held = tmp_path / 'ready', tmp_path / 'inner-cleanup-held'
+    record = '''
+def record(path):
+    pid = os.getpid()
+    fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()
+    temporary = Path(path).with_suffix('.pending')
+    temporary.write_text(json.dumps({'pid':pid,'birth':fields[19],
+        'group':os.getpgrp(),'owner':os.environ.get('AMPLIFIER_BROWSER_CHECK_OWNER'),
+        'ancestors':os.environ.get('AMPLIFIER_BROWSER_CHECK_ANCESTORS','')}))
+    temporary.replace(path)
+'''
+    grandchild_source = ('import os,json,signal,time;from pathlib import Path\n' + record +
+                         f'\nrecord({str(detached)!r})\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\ntime.sleep(60)')
+    child_source = f'''
+import os,json,subprocess,sys,time
+from pathlib import Path
+{record}
+record({str(child)!r})
+p = subprocess.Popen([sys.executable,'-c',{grandchild_source!r}],start_new_session=True)
+deadline = time.monotonic()+5
+while not Path({str(detached)!r}).exists():
+    assert time.monotonic()<deadline
+    time.sleep(.01)
+Path({str(ready)!r}).touch()
+time.sleep(60)
+'''
+    inner_source = f'''
+import importlib.util,os,json,signal,sys,time
+from pathlib import Path
+{record}
+record({str(leader)!r})
+spec=importlib.util.spec_from_file_location('inner_runner',{str(ROOT / 'scripts/browser_check_runner.py')!r})
+r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
+def held_cleanup(*args,**kwargs):
+    signal.signal(signal.SIGINT,signal.SIG_IGN)
+    signal.signal(signal.SIGTERM,signal.SIG_IGN)
+    Path({str(held)!r}).touch()
+    time.sleep(60)
+    raise AssertionError('Inner cleanup must not finish before forced loss')
+r.retire_group=held_cleanup
+r.run_scenarios(Path({str(tmp_path)!r}),{{'schemaVersion':1,'scenarios':[
+    {{'id':'inner','command':[sys.executable,'-c',{child_source!r}]}}]}},
+    Path({str(tmp_path / 'inner-results')!r}),cwd=Path({str(tmp_path)!r}),budget=20,case_timeout=20)
+'''
+    original_clock, original_open = runner.time.monotonic, Path.open
+    retire, popen = runner.retire_group, runner.subprocess.Popen
+    spawned, sent = [], []
+    protected_path = None
+    def outer_clock():
+        if ready.exists():
+            if mode == 'cancelled' and not sent:
+                sent.append(True)
+                os.kill(os.getpid(), signal.SIGTERM)  # Current outer handler only.
+            elif mode != 'cancelled':
+                return original_clock() + 100
+        return original_clock()
+    def track(*args, **kwargs):
+        process = popen(*args, **kwargs)
+        spawned.append(process)
+        return process
+    def protected(path, *args, **kwargs):
+        if path == protected_path:
+            raise PermissionError('Nested descendant identity unavailable')
+        return original_open(path, *args, **kwargs)
+    def inspect_after_inner_stop(*args, **kwargs):
+        nonlocal protected_path
+        until = original_clock() + 5
+        while not held.exists() and original_clock() < until:
+            runner.time.sleep(.01)
+        assert held.exists(), 'Outer interruption must reach the inner runner before forced cleanup'
+        # Inject only at cleanup, after SIGINT used readable ownership.
+        if mode == 'unreadable':
+            protected_path = Path('/proc') / str(json.loads(detached.read_text())['pid']) / 'environ'
+            monkeypatch.setattr(Path, 'open', protected)
+        return retire(*args, **kwargs)
+    unrelated = popen([sys.executable, '-c', 'import time;time.sleep(60)'], start_new_session=True)
+    try:
+        monkeypatch.setattr(runner.time, 'monotonic', outer_clock)
+        monkeypatch.setattr(runner.subprocess, 'Popen', track)
+        monkeypatch.setattr(runner, 'retire_group', inspect_after_inner_stop)
+        code, report, _ = bounded_execute(tmp_path, inner_source, budget=15, case_timeout=15)
+        row, = report['scenarios']
+        assert code == 1 and not report['passed']
+        assert row['reason'] == ('cancelled' if mode == 'cancelled' else 'timeout')
+        assert row['interrupt']['sent'] and held.exists()
+        parent, nested, orphan = [json.loads(path.read_text()) for path in (leader, child, detached)]
+        assert parent['owner'] != nested['owner'] == orphan['owner']
+        assert parent['owner'] in nested['ancestors'].split(',') == orphan['ancestors'].split(',')
+        assert parent['group'] != nested['group'] != orphan['group']
+        assert unrelated.poll() is None
+        if mode == 'unreadable':
+            assert row['cleanup']['remaining'] == ['unknown']
+        else:
+            assert row['cleanup']['remaining'] == []
+            assert orphan['pid'] in [item['pid'] for item in row['cleanup']['observedBeforeTermination']]
+            for identity in (parent, nested, orphan):
+                path = Path(f'/proc/{identity["pid"]}/stat')
+                assert not path.exists() or path.read_text().rsplit(')', 1)[1].split()[0] == 'Z'
+    finally:
+        monkeypatch.setattr(Path, 'open', original_open)
+        monkeypatch.setattr(runner.time, 'monotonic', original_clock)
+        try:
+            finish_nested_fixture_identities((leader, child, detached))
+        finally:
+            try:
+                for process in spawned:
+                    if process.poll() is None:
+                        process.kill()  # Exact owned Popen, including failure before leader record.
+                    process.wait(timeout=3)
+            finally:
+                unrelated.terminate()
+                unrelated.wait(timeout=3)
+
+
+@pytest.mark.parametrize('bounded', [False, True])
+def test_python_inner_cleanup_preserves_outer_parent_and_sibling(tmp_path, bounded):
+    sibling = tmp_path / 'sibling.json'
+    source = f'''
+import importlib.util,json,os,subprocess,sys
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('inner_runner',{str(ROOT / 'scripts/browser_check_runner.py')!r})
+r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
+outer=os.environ[r.OWNER_ENV]
+p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],start_new_session=True)
+birth=Path(f'/proc/{{p.pid}}/stat').read_text().rsplit(')',1)[1].split()[19]
+Path({str(sibling)!r}).write_text(json.dumps({{'pid':p.pid,'birth':birth}}))
+try:
+    command=[sys.executable,'-c','import os,json;print(json.dumps({{key:os.environ[key] for key in ("AMPLIFIER_BROWSER_CHECK_OWNER","AMPLIFIER_BROWSER_CHECK_ANCESTORS")}}))']
+    row={{'id':'inner','command':command,
+         'env':{{r.OWNER_ENV:'invalid-row-owner',r.ANCESTOR_ENV:''}}}}
+    output=Path({str(tmp_path / 'inner-isolation')!r})
+    code=r.run_scenarios(Path({str(tmp_path)!r}),{{'schemaVersion':1,'scenarios':[row]}},output,
+        cwd=Path({str(tmp_path)!r}),log_limit={65536 if bounded else None!r})
+    assert code==0 and p.poll() is None
+    receipt=json.loads((output/'results.json').read_text())
+    assert receipt['scenarios'][0]['cleanup']=={{'remaining':[],'terminated':0}}
+    inherited=json.loads((output/'inner.log').read_text())
+    assert inherited[r.OWNER_ENV]!=outer
+    assert inherited[r.ANCESTOR_ENV].split(',')[-1]==outer
+    baseline=r.process_identities()
+    baseline.pop(os.getpid());baseline.pop(p.pid)
+    # Also inspect these actual environments without their preexisting exemption.
+    members=r.owned_members(-1,inherited[r.OWNER_ENV],{{}},baseline)
+    assert os.getpid() not in members and p.pid not in members
+finally:
+    p.terminate();p.wait(timeout=3)
+'''
+    try:
+        code, report, _ = execute(tmp_path, [scenario('outer', source)], case_timeout=15)
+        assert code == 0 and report['passed']
+        assert report['scenarios'][0]['cleanup'] == {'remaining': [], 'terminated': 0}
+    finally:
+        finish_nested_fixture_identities((sibling,))
+
+
+@pytest.fixture
+def cleanup_processes(monkeypatch):
+    """Synthetic /proc and pidfds; no real process, scan or signal operation."""
+    import errno
+    from types import SimpleNamespace
+    originals = {name: getattr(Path, name) for name in ('iterdir', 'read_text', 'stat', 'open', 'readlink')}
+    original_close = os.close
+
+    def configure(fault, count=1, *, environment=None):
+        pids = list(range(91001, 91001 + count))
+        births = {pid: str(12300 + i) for i, pid in enumerate(pids)}
+        live, handles, denied, calls = set(pids), {}, set(), []
+        token = 'a' * 32
+        target = pids[-1]
+
+        def refusal():
+            error = PermissionError(errno.EACCES, 'SECRET exception text', '/private/SECRET/path')
+            # Exception-owned fields are not diagnostic authority.
+            error._cleanup_receipt = {'remaining': [], 'terminated': 0, 'private': 'SECRET'}
+            error._cleanup_failure = {'operation': 'SECRET', 'ownership': 'proven'}
+            return error
+
+        def operation(name, pid):
+            calls.append((name, pid))
+            if (pid == target or name == 'proc_iter') and name == fault:
+                raise refusal()
+
+        def iterdir(path):
+            if path != Path('/proc'):
+                return originals['iterdir'](path)
+            operation('proc_iter', None)
+            return iter(Path('/proc') / str(pid) for pid in pids if pid in live)
+
+        def read_text(path, *args, **kwargs):
+            if path.parent.parent != Path('/proc') or path.name != 'stat':
+                return originals['read_text'](path, *args, **kwargs)
+            pid = int(path.parent.name)
+            name = ('identity_recheck' if pid in handles.values() else
+                    'post_denial_stat' if pid in denied else 'stat')
+            operation(name, pid)
+            denied.discard(pid)
+            fields = ['0'] * 20
+            fields[0], fields[1], fields[2], fields[19] = 'S', '1', '88001', births[pid]
+            return f'{pid} (SECRET command) ' + ' '.join(fields)
+
+        def uid_stat(path, *args, **kwargs):
+            if path.parent != Path('/proc') or not path.name.isdigit():
+                return originals['stat'](path, *args, **kwargs)
+            operation('uid_stat', int(path.name))
+            return SimpleNamespace(st_uid=os.geteuid())
+
+        def open_environ(path, *args, **kwargs):
+            if path.parent.parent != Path('/proc') or path.name != 'environ':
+                return originals['open'](path, *args, **kwargs)
+            pid = int(path.parent.name)
+            try:
+                operation('environ_open', pid)
+                if fault == 'post_denial_stat' and pid == target:
+                    raise refusal()
+            except PermissionError:
+                denied.add(pid)
+                raise
+            class Stream:
+                def __enter__(self):
+                    return self
+                def read(self, size):
+                    assert size == 1024 * 1024 + 1
+                    try:
+                        operation('environ_read', pid)
+                    except PermissionError:
+                        denied.add(pid)
+                        raise
+                    owner = token if environment is None else environment[runner.OWNER_ENV]
+                    return (runner.OWNER_ENV + '=' + owner + '\0PRIVATE=SECRET\0').encode()
+                def __exit__(self, *args):
+                    try:
+                        operation('environ_close', pid)
+                    except PermissionError:
+                        denied.add(pid)
+                        raise
+            return Stream()
+
+        def readlink(path):
+            if path.parent.parent == Path('/proc') and path.name == 'exe':
+                return Path('/private/SECRET/python')
+            return originals['readlink'](path)
+
+        def pidfd_open(pid):
+            assert pid in pids  # Never pass through to the host.
+            operation('pidfd_open', pid)
+            handle = pid + 100000
+            handles[handle] = pid
+            return handle
+
+        def send_signal(handle, sig):
+            assert handle in handles and sig in (signal.SIGTERM, signal.SIGKILL)
+            pid = handles[handle]
+            operation('signal', pid)
+            live.discard(pid)  # Simulated disappearance on the next existing scan.
+
+        def close(handle):
+            if handle not in handles:
+                # run_scenarios writes its test-owned evidence using real FDs.
+                # Only the explicitly fake pidfds above are syscall-injected.
+                return original_close(handle)
+            pid = handles.pop(handle)
+            operation('pidfd_close', pid)
+
+        for name, func in [('iterdir', iterdir), ('read_text', read_text), ('stat', uid_stat),
+                           ('open', open_environ), ('readlink', readlink)]:
+            monkeypatch.setattr(Path, name, func)
+        monkeypatch.setattr(runner.os, 'pidfd_open', pidfd_open)
+        monkeypatch.setattr(runner.signal, 'pidfd_send_signal', send_signal)
+        monkeypatch.setattr(runner.os, 'close', close)
+        ticks = iter(range(10000))
+        monkeypatch.setattr(runner.time, 'monotonic', lambda: next(ticks))
+        monkeypatch.setattr(runner.time, 'sleep', lambda seconds: None)
+        return SimpleNamespace(pids=pids, births=births, live=live, calls=calls,
+                               token=token, group=88000, handles=handles)
+    return configure
+
+
+@pytest.mark.parametrize('operation', [
+    'proc_iter', 'stat', 'uid_stat', 'environ_open', 'environ_read', 'environ_close',
+    'post_denial_stat', 'pidfd_open', 'identity_recheck', 'signal', 'pidfd_close',
+])
+def test_cleanup_failure_receipt_identifies_exact_denied_operation(cleanup_processes, operation):
+    import errno
+    fixture = cleanup_processes(operation)
+    receipt = runner.retire_group(fixture.group, fixture.token, {})
+    owned = operation in {'pidfd_open', 'identity_recheck', 'signal', 'pidfd_close'}
+    expected = {'phase': 'termination' if owned else 'grace', 'operation': operation,
+                'errorType': 'PermissionError', 'errno': errno.EACCES,
+                'ownership': 'proven' if owned else 'unknown'}
+    if operation != 'proc_iter':
+        expected['pid'] = fixture.pids[0]
+    if operation not in {'stat', 'proc_iter'}:
+        expected['startTime'] = fixture.births[fixture.pids[0]]
+    assert receipt['failure'] == expected
+    assert receipt['remaining'] == ['unknown']
+    assert receipt['terminated'] == (1 if owned else None)
+    attempts = receipt['signalAttempts']
+    assert attempts['attempted'] == int(operation in {'signal', 'pidfd_close'})
+    assert attempts['returned'] == int(operation == 'pidfd_close')
+    assert attempts['failed'] == int(operation == 'signal')
+    assert attempts['disappeared'] == attempts['omitted'] == 0
+    assert fixture.calls.count((operation, None if operation == 'proc_iter' else fixture.pids[0])) == 1
+    if operation in {'environ_open', 'environ_read', 'environ_close', 'post_denial_stat'}:
+        assert fixture.calls.count(('post_denial_stat', fixture.pids[0])) == 1
+        assert fixture.calls.count(('environ_open', fixture.pids[0])) == 1
+    if operation in {'identity_recheck', 'signal', 'pidfd_close'}:
+        assert fixture.calls.count(('pidfd_close', fixture.pids[0])) == 1
+    assert not fixture.handles
+    encoded = json.dumps(receipt)
+    assert 'SECRET' not in encoded and '/private' not in encoded and '/proc' not in encoded
+    assert fixture.token not in encoded and runner.OWNER_ENV not in encoded
+
+
+@pytest.mark.parametrize('drain_failed', [False, True])
+def test_cleanup_failure_receipt_keeps_prior_signal_and_capture_error(cleanup_processes, drain_failed):
+    fixture = cleanup_processes('signal', count=2)
+    def drain():
+        if drain_failed:
+            raise OSError('SECRET disk failure')
+    receipt = runner.retire_group(fixture.group, fixture.token, {}, drain=drain)
+    assert receipt['remaining'] == ['unknown'] and receipt['terminated'] == 2
+    assert receipt['failure']['pid'] == fixture.pids[1]
+    assert receipt['signalAttempts'] == {
+        'attempted': 2, 'returned': 1, 'failed': 1, 'disappeared': 0, 'omitted': 0,
+        'items': [{'pid': pid, 'startTime': fixture.births[pid], 'signal': 'SIGTERM',
+                   'outcome': 'returned' if index == 0 else 'failed'}
+                  for index, pid in enumerate(fixture.pids)]}
+    assert receipt.get('drainError') == ('OSError' if drain_failed else None)
+    assert len(receipt['observedBeforeTermination']) == 2
+    assert fixture.live == {fixture.pids[1]}
+    assert 'SECRET' not in json.dumps(receipt)
+
+
+def test_cleanup_failure_receipt_bounds_signal_details_without_losing_counts(cleanup_processes):
+    fixture = cleanup_processes('signal', count=41)
+    receipt = runner.retire_group(fixture.group, fixture.token, {})
+    assert receipt['terminated'] == 41 and receipt['remaining'] == ['unknown']
+    assert receipt['signalAttempts']['attempted'] == 41
+    assert receipt['signalAttempts']['returned'] == 40 and receipt['signalAttempts']['failed'] == 1
+    assert len(receipt['signalAttempts']['items']) == 32 and receipt['signalAttempts']['omitted'] == 9
+    assert len(receipt['observedBeforeTermination']) == 32 and receipt['omittedProcessDetails'] == 9
+    assert receipt['failure']['pid'] == fixture.pids[-1]
+    assert len(json.dumps(receipt)) < 12000
+
+
+def test_cleanup_failure_receipt_success_uses_existing_scan_and_signal_sequence(cleanup_processes):
+    fixture = cleanup_processes(None)
+    receipt = runner.retire_group(fixture.group, fixture.token, {})
+    assert receipt['remaining'] == [] and receipt['terminated'] == 1
+    assert 'failure' not in receipt
+    assert receipt['signalAttempts'] == {
+        'attempted': 1, 'returned': 1, 'failed': 0, 'disappeared': 0, 'omitted': 0,
+        'items': [{'pid': fixture.pids[0], 'startTime': fixture.births[fixture.pids[0]],
+                   'signal': 'SIGTERM', 'outcome': 'returned'}]}
+    assert [op for op, _ in fixture.calls] == [
+        'proc_iter', 'stat', 'uid_stat', 'environ_open', 'environ_read', 'environ_close',
+        'proc_iter', 'stat', 'stat', 'stat',  # initial scan + two existing metadata checks
+        'proc_iter', 'stat', 'pidfd_open', 'identity_recheck', 'signal', 'pidfd_close',
+        'proc_iter', 'proc_iter']  # post-TERM wait and pre-KILL check; no extra scan
+    assert not fixture.live and not fixture.handles
+
+
+@pytest.mark.parametrize('operation', ['stat', 'signal', 'pidfd_close'])
+def test_cleanup_failure_receipt_keeps_next_scenario_unrun(tmp_path, monkeypatch, cleanup_processes, operation):
+    from types import SimpleNamespace
+    environment = {}
+    fixture = cleanup_processes(operation, environment=environment)
+    monkeypatch.setattr(runner, 'process_identities', lambda: {})
+    launches = []
+    def wait(*, timeout):
+        pytest.fail('Injected unsafe cleanup must not reach process.wait')
+    def popen(*args, **kwargs):
+        assert not launches and kwargs['start_new_session'] is True
+        # Detached fake descendants inherit this launch's real owner token.
+        # Keep only that field in memory, not the caller's whole environment.
+        owner = kwargs['env'][runner.OWNER_ENV]
+        assert re.fullmatch(r'[0-9a-f]{32}', owner)
+        environment[runner.OWNER_ENV] = owner
+        launches.append(args[0])
+        return SimpleNamespace(pid=fixture.group, poll=lambda: 0, wait=wait, returncode=0)
+    monkeypatch.setattr(runner.subprocess, 'Popen', popen)
+    code, report, output = execute(tmp_path, [scenario('first', 'pass'), scenario('later', 'pass')])
+    first, later = report['scenarios']
+    assert set(environment) == {runner.OWNER_ENV} and len(launches) == 1
+    assert fixture.calls.count((operation, fixture.pids[0])) == 1
+    assert code == 1 and not report['passed'] and not report['complete']
+    assert first['status'] == 'failed' and first['exitCode'] == 0
+    assert first['cleanup']['remaining'] == ['unknown']
+    assert first['cleanup']['failure']['operation'] == operation
+    owned = operation != 'stat'
+    assert first['cleanup']['failure']['ownership'] == ('proven' if owned else 'unknown')
+    assert first['cleanup']['terminated'] == (1 if owned else None)
+    attempts = first['cleanup']['signalAttempts']
+    assert attempts['attempted'] == int(owned)
+    assert attempts['returned'] == int(operation == 'pidfd_close')
+    assert attempts['failed'] == int(operation == 'signal')
+    if owned:
+        assert fixture.calls.count(('environ_read', fixture.pids[0])) == 1
+        assert first['cleanup']['observedBeforeTermination'][0]['processGroup'] == 88001
+        assert fixture.group == 88000  # Ownership came from the token, not the group.
+    assert not fixture.handles
+    assert later['status'] == 'unrun' and later['reason'] == 'unsafe_cleanup'
+    assert len(launches) == 1 and not (output / 'later.log').exists()
+    assert 'SECRET' not in json.dumps(first['cleanup'])
+    assert all(value not in json.dumps(report) for value in environment.values())
+
+
+def test_cleanup_failure_receipt_fallback_does_not_trust_exception_payload():
+    error = PermissionError(13, 'SECRET', '/private/SECRET')
+    error._cleanup_receipt = {'remaining': [], 'terminated': 0, 'secret': 'SECRET'}
+    error._cleanup_failure = {'phase': 'SECRET', 'ownership': 'proven'}
+    receipt = runner.unknown_cleanup(error)
+    assert receipt == {'remaining': ['unknown'], 'terminated': None, 'signalAttempts': None,
+        'error': 'PermissionError', 'failure': {'phase': 'unknown', 'operation': 'retire_group',
+        'errorType': 'PermissionError', 'errno': 13, 'ownership': 'unknown'}}
+    assert runner.cleanup_failure(error, 'SECRET', 'SECRET', pid=-1, birth='SECRET',
+                                  ownership='SECRET') == {
+        'phase': 'unknown', 'operation': 'unknown', 'errorType': 'PermissionError',
+        'errno': 13, 'ownership': 'unknown'}
+
+
+def test_cleanup_failure_receipt_wait_timeout_preserves_signal_progress(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    progress = {'remaining': [], 'terminated': 1, 'drainError': 'OSError',
+                'signalAttempts': {'attempted': 1, 'returned': 1, 'failed': 0,
+                                  'disappeared': 0, 'omitted': 0, 'items': []}}
+    def wait(*, timeout):
+        assert timeout == 2
+        raise subprocess.TimeoutExpired(['/private/SECRET/command'], timeout)
+    monkeypatch.setattr(runner, 'process_identities', lambda: {})
+    monkeypatch.setattr(runner.subprocess, 'Popen', lambda *a, **kw:
+                        SimpleNamespace(pid=91000, poll=lambda: 0, wait=wait, returncode=0))
+    monkeypatch.setattr(runner, 'retire_group', lambda *a, **kw: dict(progress))
+    code, report, _ = execute(tmp_path, [scenario('first', 'pass'), scenario('later', 'pass')])
+    receipt = report['scenarios'][0]['cleanup']
+    assert code == 1 and receipt['remaining'] == ['unknown']
+    assert receipt['terminated'] == 1 and receipt['signalAttempts'] == progress['signalAttempts']
+    assert receipt['drainError'] == 'OSError' and receipt['error'] == 'WaitTimeout'
+    assert receipt['failure'] == {'phase': 'wait', 'operation': 'process_wait',
+                                 'errorType': 'TimeoutExpired', 'pid': 91000, 'ownership': 'unknown'}
+    assert report['scenarios'][1]['reason'] == 'unsafe_cleanup'
+    assert 'SECRET' not in json.dumps(receipt)

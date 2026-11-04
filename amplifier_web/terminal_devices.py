@@ -71,16 +71,21 @@ class TerminalDevices:
         return {'id': device_id, 'token': token}
 
     def identify(self, token):
-        if not re.fullmatch(r'(?:amt|amc)_[a-f0-9]{32}\.[A-Za-z0-9_-]{64}', token):
+        if not re.fullmatch(r'(?:amt|amc|amd)_[a-f0-9]{32}\.[A-Za-z0-9_-]{64}', token):
             return None
         identity = token[4:].split('.')[0]
         row = self.read()['devices'].get(identity)
         # Distinct token families keep restricted credentials fail-closed on older hosts.
-        expected_scope = 'companion-v1' if token.startswith('amc_') else None
-        return identity if row and row.get('scope') == expected_scope and hmac.compare_digest(row['digest'], digest(token)) else None
+        expected_scope = {'amc_': 'companion-v1', 'amd_': 'device-v1'}.get(token[:4])
+        if not row or row.get('scope') != expected_scope:
+            return None
+        current = hmac.compare_digest(row['digest'], digest(token))
+        previous = (expected_scope == 'device-v1' and row.get('previousUntil', 0) > time.time()
+                    and hmac.compare_digest(row.get('previousDigest', ''), digest(token)))
+        return identity if current or previous else None
 
     def listing(self):
-        return [{k: row[k] for k in ('id', 'name', 'createdAt', 'setupId', 'setupExpiresAt', 'scope') if k in row}
+        return [{k: row[k] for k in ('id', 'name', 'createdAt', 'setupId', 'setupExpiresAt', 'scope', 'appId', 'grants') if k in row}
                 for row in self.read()['devices'].values()]
 
     def revoke(self, identity):

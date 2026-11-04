@@ -60,10 +60,12 @@ artwork lines away from controls. Optional logo filters must reset in forced
 colors with selectors at least as specific as every light/dark filter rule.
 
 Let the host own transcript overflow cues, focus handling and scrollbar clearance.
-Omit fade tokens to inherit the shared defaults; use documented optional tokens
-only after checking installed support. Do not add unconditional masks, overlay
-fades, scroll listeners or child-positioning workarounds. Keep background artwork
-separate from the transcript mask.
+Keyboard-visible focus and active editing controls keep the transcript unmasked;
+pointer/programmatic focus on a non-visible container alone does not disable its
+fades. Omit fade tokens to inherit the shared defaults; use documented optional
+tokens only after checking installed support. Do not add unconditional masks,
+overlay fades, scroll listeners or child-positioning workarounds. Keep background
+artwork separate from the transcript mask.
 
 Use neutral, IP-independent names and only authorized, self-contained assets.
 For a reference-inspired appearance, ground both schemes in the reference.

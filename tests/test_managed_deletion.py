@@ -1,6 +1,10 @@
+import asyncio
+from contextlib import contextmanager
 import copy
 import json
 from pathlib import Path
+import threading
+from types import SimpleNamespace
 import uuid
 
 import pytest
@@ -132,6 +136,451 @@ async def test_children_are_owned_and_unrelated_history_refuses(app):
     shutil.rmtree(amplifier_home()/'projects'/project_slug(files)/'sessions'/foreign)
     value=await preview(app,row['id']);await delete(app,value)
     assert not (amplifier_home()/'projects'/project_slug(files)/'sessions'/child).exists()
+
+
+def worker_history(row):
+    files = Path(row['workspace'])
+    root = native_session(files, row['id'])
+    child = '0000000000000000-123456789abcdef0_self'
+    nested = '123456789abcdef0-abcdef0123456789_self'
+    return {
+        row['id']: root,
+        child: native_session(files, child, metadata={'parent_id': row['id']}),
+        nested: native_session(files, nested, metadata={'parent_id': child}),
+    }
+
+
+@contextmanager
+def shared_lease(store, **diagnostics):
+    held = store.acquire(**diagnostics)
+    try:
+        yield held
+    finally:
+        held.release()
+
+
+@pytest.mark.parametrize('client', ['web', 'agent'])
+async def test_native_workers_preview_and_confirm_keep_complete_scope(app, tmp_path, monkeypatch, client):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    row = await create(app); sid = row['id']; files = Path(row['workspace'])
+    owned = worker_history(row)
+    legacy = str(uuid.uuid4())
+    owned[legacy] = native_session(files, legacy, metadata={'parent_id': sid})
+    store = SharedSessionStore(files, legacy)
+    with shared_lease(store, app='synthetic-legacy-worker') as lease:
+        lease.write([{'role': 'user', 'content': 'Legacy worker checkpoint'}], bundle='work')
+    # Relocated captures and runtime records still belong to native-only workers.
+    captures = tmp_path/'captures'/project_slug(files)/'sessions'
+    monkeypatch.setenv('AMPLIFIER_CONTEXT_INTELLIGENCE_BASE_PATH', str(tmp_path/'captures'))
+    for identity in owned:
+        capture = captures/identity
+        capture.mkdir(parents=True)
+        (capture/'events.jsonl').write_text('synthetic capture')
+        runtime = app.data_dir/'sessions'/identity
+        runtime.mkdir(parents=True, exist_ok=True)
+        (runtime/'configuration.json').write_text('{}')
+    other = await create(app)
+    (Path(other['workspace'])/'keep.txt').write_text('Unrelated chat')
+    before = {path: path.read_bytes() for directory in owned.values() for path in directory.rglob('*') if path.is_file()}
+    value = await preview(app, sid, client)
+    assert value['summary']['workerCount'] == 3 and value['summary']['conversationCount'] == 1
+    assert all(path.read_bytes() == content for path, content in before.items())
+    plan = json.loads(app.db.execute('SELECT value FROM managed_deletions WHERE id=?', (sid,)).fetchone()[0])
+    assert set(plan['nativeIds']) == set(owned) <= set(plan['ids'])
+    assert set(plan['sharedIds']) == {sid, legacy}
+    assert len(plan['coordinationLocks']) == 2 and len(plan['metadataLocks']) == 4
+    expected_paths = {*owned.values(), *(captures/identity for identity in owned), *(app.data_dir/'sessions'/identity for identity in owned), store.checkpoint_path}
+    assert expected_paths <= {Path(entry['path']) for entry in plan['paths']}
+    assert (await delete(app, value, client))['result'] == {'id': sid, 'deleted': True, 'cleanupPending': False}
+    assert not files.parent.exists() and not store.checkpoint_path.exists()
+    assert all(not path.exists() for path in expected_paths)
+    assert (Path(other['workspace'])/'keep.txt').read_text() == 'Unrelated chat'
+    assert all(managed_deletion.removed(app.db, identity) for identity in owned)
+    assert not app.runtime.started and not app.runtime.sent
+    # Native metadata coordination remains stable after history is gone.
+    assert all(Path(path).is_file() for path in plan['metadataLocks'])
+    assert (await delete(app, value, client))['result']['deleted']
+    await app.close()
+    restored = AppService(app.data_dir, Runtime(), workspace=tmp_path)
+    try:
+        await restored.history.refresh()
+        assert all(managed_deletion.removed(restored.db, identity) for identity in owned)
+        assert not files.parent.exists()
+        assert not restored.runtime.started and not restored.runtime.sent
+        assert (Path(other['workspace'])/'keep.txt').exists()
+    finally:
+        await restored.close()
+
+
+@pytest.mark.parametrize('change', ['ancestry', 'transcript', 'new-worker', 'checkpoint'])
+async def test_native_worker_changes_after_preview_preserve_files(app, change):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    row = await create(app); files = Path(row['workspace']); owned = worker_history(row)
+    child = next(identity for identity in owned if identity != row['id'])
+    value = await preview(app, row['id'])
+    if change == 'ancestry':
+        metadata = owned[child]/'metadata.json'
+        metadata.write_text(json.dumps({**json.loads(metadata.read_text()), 'parent_id': child}))
+    elif change == 'transcript':
+        (owned[child]/'transcript.jsonl').write_text('Unreviewed transcript')
+    elif change == 'new-worker':
+        native_session(files, '0000000000000000-abcdef0123456789_self', metadata={'parent_id': row['id']})
+    else:
+        store = SharedSessionStore(files, row['id'])
+        with shared_lease(store, app='synthetic-checkpoint-change') as lease:
+            lease.write([], bundle='work')
+    with pytest.raises(AppError, match='changed|Unrelated history'):
+        await delete(app, value)
+    assert files.exists() and all(path.exists() for path in owned.values())
+    assert app.db.execute('SELECT phase FROM managed_deletions WHERE id=?', (row['id'],)).fetchone()[0] == 'preview'
+
+
+@pytest.mark.parametrize('fault', ['foreign', 'cycle', 'missing-metadata', 'link', 'capture', 'fence'])
+async def test_native_worker_ownership_faults_refuse_preview(app, tmp_path, monkeypatch, fault):
+    row = await create(app); files = Path(row['workspace']); owned = worker_history(row)
+    child = next(identity for identity in owned if identity != row['id'])
+    if fault in {'foreign', 'cycle'}:
+        metadata = owned[child]/'metadata.json'
+        metadata.write_text(json.dumps({**json.loads(metadata.read_text()), 'parent_id': child if fault == 'cycle' else 'foreign-root'}))
+    elif fault == 'missing-metadata':
+        (owned[child]/'metadata.json').unlink()
+    elif fault == 'link':
+        (owned[child]/'outside').symlink_to(tmp_path/'not-owned')
+    elif fault == 'fence':
+        (owned[child]/'transfer-fence.json').write_text('Synthetic uncertain fence')
+    else:
+        capture = tmp_path/'captures'/project_slug(files)/'sessions'/'foreign-worker'
+        capture.mkdir(parents=True)
+        monkeypatch.setenv('AMPLIFIER_CONTEXT_INTELLIGENCE_BASE_PATH', str(tmp_path/'captures'))
+    with pytest.raises(AppError, match='Unrelated history|ownership|symbolic|Unexpected capture|transfer fence'):
+        await preview(app, row['id'])
+    assert files.exists() and all(path.exists() for path in owned.values())
+
+
+@pytest.mark.parametrize(('owner', 'refusal'), [
+    pytest.param('root', 'Another application owns this conversation. Close it there before deleting this chat.', id='root'),
+    pytest.param('metadata', 'Another application owns this conversation. Close it there before deleting this chat.', id='metadata'),
+    pytest.param('transfer', 'This task is fenced for transfer; it cannot change or start work here.', id='transfer'),
+])
+async def test_native_workers_cannot_bypass_execution_or_metadata_ownership(app, owner, refusal):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    from filelock import FileLock
+    row = await create(app); files = Path(row['workspace']); owned = worker_history(row)
+    store = SharedSessionStore(files, row['id'])
+    held = None
+    if owner in {'root', 'transfer'}:
+        held = store.acquire(app='synthetic-other-host')
+        if owner == 'transfer':
+            held.fence_transfer('synthetic-transfer', 'synthetic-destination')
+            held.release(); held = None
+    else:
+        child = next(path for identity, path in owned.items() if identity != row['id'])
+        held = FileLock(child.parent/f'.{child.name}.metadata.lock')
+        held.acquire(timeout=0)
+    before = {path: path.read_bytes() for directory in owned.values() for path in directory.rglob('*') if path.is_file()}
+    value = await preview(app, row['id'])
+    try:
+        # A root transfer fence is rejected by the service write boundary before
+        # deletion acquires locks; ownership conflicts reach deletion's lock check.
+        with pytest.raises(AppError) as caught:
+            await delete(app, value)
+        assert str(caught.value) == refusal
+        assert all(path.exists() for path in owned.values()) and files.exists()
+        assert not store.checkpoint_path.exists()  # execution lock is required even without a checkpoint
+        assert all(path.read_bytes() == content for path, content in before.items())
+        assert app.db.execute('SELECT phase FROM managed_deletions WHERE id=?', (row['id'],)).fetchone()[0] == 'preview'
+        assert not managed_deletion.removed(app.db, row['id']) and not row.get('_deleting')
+        if owner == 'transfer':
+            assert store.transfer_fence_path in before
+            assert store.transfer_fence_path.read_bytes() == before[store.transfer_fence_path]
+    finally:
+        if held is not None:
+            held.release()
+    if owner == 'metadata':
+        # Failed metadata acquisition must release the earlier shared root lease.
+        with shared_lease(store, app='synthetic-lock-recheck'):
+            pass
+
+
+@pytest.mark.parametrize('owner', ['lease', 'transfer'])
+async def test_uuid_worker_without_checkpoint_still_requires_its_lease(app, owner):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    row = await create(app); files = Path(row['workspace']); owned = worker_history(row)
+    legacy = str(uuid.uuid4())
+    directory = native_session(files, legacy, metadata={'parent_id': row['id']})
+    store = SharedSessionStore(files, legacy)
+    held = store.acquire(app='synthetic-legacy-owner')
+    try:
+        if owner == 'transfer':
+            held.fence_transfer('synthetic-transfer', 'synthetic-destination')
+            held.release(); held = None
+        value = await preview(app, row['id'])
+        with pytest.raises(AppError, match='Another application owns'):
+            await delete(app, value)
+        assert not store.checkpoint_path.exists()
+        assert directory.exists() and all(path.exists() for path in owned.values())
+        with shared_lease(SharedSessionStore(files, row['id']), app='synthetic-root-release-recheck'):
+            pass
+    finally:
+        if held is not None:
+            held.release()
+
+
+async def test_metadata_protocol_survives_cross_thread_release(tmp_path):
+    from amplifier_foundation.session.metadata import metadata_lock
+    from filelock import FileLock, Timeout
+    directory = tmp_path/'root_worker'; directory.mkdir()
+    path = directory.parent/f'.{directory.name}.metadata.lock'
+    with metadata_lock(directory):
+        inode = path.stat().st_ino
+        with pytest.raises(ValueError, match='Another application owns'):
+            await asyncio.to_thread(managed_deletion._hold, {'nativeIds': [], 'metadataLocks': [str(path)]})
+    held = await asyncio.to_thread(managed_deletion._hold, {'nativeIds': [], 'metadataLocks': [str(path)]})
+    try:
+        with pytest.raises(Timeout):
+            with FileLock(path, timeout=0):
+                pass
+    finally:
+        for handle in reversed(held):
+            handle.release()
+    with metadata_lock(directory):
+        assert path.stat().st_ino == inode
+
+
+def test_partial_shared_acquisition_releases_earlier_lease(tmp_path):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    first = SharedSessionStore(tmp_path, 'a-root')
+    last = SharedSessionStore(tmp_path, 'z-worker')
+    blocker = last.acquire(app='synthetic-blocker')
+    try:
+        with pytest.raises(ValueError, match='Another application owns'):
+            managed_deletion._hold({'workspace': str(tmp_path), 'nativeIds': ['a-root', 'z-worker'], 'sharedIds': ['a-root', 'z-worker']})
+        with shared_lease(first, app='synthetic-release-recheck'):
+            pass
+    finally:
+        blocker.release()
+
+
+def fail_release_diagnostics(monkeypatch, store):
+    """Fail the real HeldSession diagnostic write, not its finally/unlock."""
+    from amplifier_foundation.session import shared_state
+    original = shared_state._atomic_json
+    attempts = []
+    def write(path, value):
+        if Path(path) == store.checkpoint_path.with_name('owner.json') and value.get('active') is False:
+            attempts.append(path)
+            raise OSError('Synthetic owner diagnostics failure')
+        return original(path, value)
+    monkeypatch.setattr(shared_state, '_atomic_json', write)
+    return attempts
+
+
+def two_shared_stores(workspace):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    return [SharedSessionStore(workspace, str(uuid.UUID(int=value))) for value in (1, 2)]
+
+
+def test_release_error_is_reported_after_all_shared_handles_are_attempted(tmp_path, monkeypatch):
+    first, second = two_shared_stores(tmp_path)
+    handles = [first.acquire(app='synthetic-root'), second.acquire(app='synthetic-UUID-worker')]
+    with monkeypatch.context() as patcher:
+        attempts = fail_release_diagnostics(patcher, second)
+        with pytest.raises(ExceptionGroup, match='Conversation lock release failed') as caught:
+            managed_deletion._release_all(handles)
+        assert attempts and len(caught.value.exceptions) == 1
+        assert str(caught.value.exceptions[0]) == 'Synthetic owner diagnostics failure'
+    for store in (first, second):
+        with shared_lease(store, app='synthetic-all-release-recheck'):
+            pass
+
+
+def test_partial_rollback_keeps_acquisition_cause_and_releases_all(tmp_path, monkeypatch, caplog):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    first, second = two_shared_stores(tmp_path)
+    blocked = SharedSessionStore(tmp_path, 'z-blocked')
+    blocker = blocked.acquire(app='synthetic-blocker')
+    try:
+        with monkeypatch.context() as patcher:
+            attempts = fail_release_diagnostics(patcher, second)
+            with pytest.raises(ValueError, match='Another application owns') as caught:
+                managed_deletion._hold({
+                    'workspace': str(tmp_path),
+                    'nativeIds': [store.session_id for store in (first, second, blocked)],
+                })
+            assert attempts and caught.value.__cause__ is not None
+            assert any('cleanup also failed' in note for note in caught.value.__cause__.__notes__)
+            assert 'Synthetic owner diagnostics failure' in caplog.text
+        for store in (first, second):
+            with shared_lease(store, app='synthetic-rollback-recheck'):
+                pass
+    finally:
+        blocker.release()
+
+
+async def test_cancel_late_result_releases_two_real_leases_despite_diagnostics_error(tmp_path, monkeypatch, caplog):
+    from amplifier_foundation.session.metadata import metadata_lock
+    first, second = two_shared_stores(tmp_path)
+    native = tmp_path/'synthetic_worker'; native.mkdir()
+    lock = native.parent/f'.{native.name}.metadata.lock'
+    with metadata_lock(native):
+        inode = lock.stat().st_ino
+    loop = asyncio.get_running_loop()
+    acquired, cleaned = asyncio.Event(), asyncio.Event()
+    finish = threading.Event()
+    original_hold, original_release = managed_deletion._hold, managed_deletion._release_all
+    causes = []
+    def delayed(plan):
+        handles = original_hold(plan)
+        loop.call_soon_threadsafe(acquired.set)
+        if not finish.wait(5):
+            original_release(handles)
+            raise TimeoutError('Synthetic late-result gate timed out')
+        return handles  # the callback receives two actual HeldSessions and a metadata flock
+    def observe_release(handles, *, cause=None):
+        causes.append(cause)
+        try:
+            return original_release(handles, cause=cause)
+        finally:
+            cleaned.set()
+    with monkeypatch.context() as patcher:
+        attempts = fail_release_diagnostics(patcher, second)
+        patcher.setattr(managed_deletion, '_hold', delayed)
+        patcher.setattr(managed_deletion, '_release_all', observe_release)
+        task = asyncio.create_task(managed_deletion._acquire({
+            'workspace': str(tmp_path), 'nativeIds': [first.session_id, second.session_id],
+            'metadataLocks': [str(lock)],
+        }))
+        try:
+            await asyncio.wait_for(acquired.wait(), 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await task
+        finally:
+            finish.set()
+        await asyncio.wait_for(cleaned.wait(), 5)
+        assert attempts and causes == [caught.value]
+        assert any('cleanup also failed' in note for note in caught.value.__notes__)
+        assert 'Synthetic owner diagnostics failure' in caplog.text
+    for store in (first, second):
+        with shared_lease(store, app='synthetic-cancel-two-lease-recheck'):
+            pass
+    with metadata_lock(native):
+        assert lock.stat().st_ino == inode
+
+
+async def test_dispatch_final_cleanup_does_not_mask_primary_failure_or_leak_root(app, monkeypatch, caplog):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    row = await create(app); files = Path(row['workspace'])
+    worker_history(row)
+    worker_id = str(uuid.uuid4())
+    native_session(files, worker_id, metadata={'parent_id': row['id']})
+    root, worker = (SharedSessionStore(files, identity) for identity in (row['id'], worker_id))
+    value = await preview(app, row['id'])
+    original_hold, original_inventory = managed_deletion._hold, managed_deletion._inventory
+    def hold(plan):
+        # Put the worker last to reproduce root starvation on reverse release.
+        return original_hold({**plan, 'sharedIds': [row['id'], worker_id]})
+    def changed(path):
+        raise ValueError('Synthetic primary inventory failure')
+    with monkeypatch.context() as patcher:
+        attempts = fail_release_diagnostics(patcher, worker)
+        patcher.setattr(managed_deletion, '_hold', hold)
+        # Plan enumeration must finish before failing the post-acquisition check.
+        async def acquire(plan):
+            handles = await asyncio.to_thread(hold, plan)
+            patcher.setattr(managed_deletion, '_inventory', changed)
+            return handles
+        patcher.setattr(managed_deletion, '_acquire', acquire)
+        with pytest.raises(AppError, match='Synthetic primary inventory failure') as caught:
+            await delete(app, value)
+        assert attempts and any('cleanup also failed' in note for note in caught.value.__notes__)
+        assert 'Synthetic owner diagnostics failure' in caplog.text
+    assert managed_deletion._inventory is original_inventory and files.exists()
+    for store in (root, worker):
+        with shared_lease(store, app='synthetic-final-cleanup-recheck'):
+            pass
+
+
+async def test_cancelled_acquisition_releases_handles_that_finish_late(tmp_path, monkeypatch):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    from amplifier_foundation.session.metadata import metadata_lock
+    loop = asyncio.get_running_loop()
+    acquired, released = asyncio.Event(), asyncio.Event()
+    finish = threading.Event()
+    original = managed_deletion._hold
+    def delayed(plan):
+        handles = original(plan)
+        loop.call_soon_threadsafe(acquired.set)
+        try:
+            if not finish.wait(5):
+                raise TimeoutError('Synthetic acquisition gate timed out')
+        except BaseException:
+            for handle in reversed(handles):
+                handle.release()
+            raise
+        def release():
+            for handle in reversed(handles):
+                handle.release()
+            released.set()
+        return [SimpleNamespace(release=release)]
+    monkeypatch.setattr(managed_deletion, '_hold', delayed)
+    native = tmp_path/'synthetic-root_worker'; native.mkdir()
+    lock = native.parent/f'.{native.name}.metadata.lock'
+    with metadata_lock(native):
+        inode = lock.stat().st_ino
+    task = asyncio.create_task(managed_deletion._acquire({
+        'workspace': str(tmp_path), 'nativeIds': ['synthetic-root'], 'metadataLocks': [str(lock)]}))
+    try:
+        await asyncio.wait_for(acquired.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        finish.set()
+    await asyncio.wait_for(released.wait(), 5)
+    with shared_lease(SharedSessionStore(tmp_path, 'synthetic-root'), app='synthetic-cancel-recheck'):
+        pass
+    with metadata_lock(native):
+        assert lock.stat().st_ino == inode
+
+
+@pytest.mark.parametrize('identity', ['root_worker', 'root.worker', 'a'*129])
+def test_native_identity_support_does_not_relax_shared_root_contract(tmp_path, identity):
+    from amplifier_foundation.session.shared_state import SharedSessionStore
+    assert not managed_deletion.shared_identity(identity)
+    with pytest.raises(ValueError, match='session_id must'):
+        SharedSessionStore(tmp_path, identity)
+
+
+async def test_native_worker_cleanup_recovers_with_stable_lock_inodes(app, tmp_path, monkeypatch):
+    row = await create(app); files = Path(row['workspace']); owned = worker_history(row)
+    value = await preview(app, row['id'])
+    original = managed_deletion._purge
+    monkeypatch.setattr(managed_deletion, '_purge', lambda *args: (_ for _ in ()).throw(OSError('Synthetic cleanup interruption')))
+    assert (await delete(app, value))['result']['cleanupPending']
+    saved = json.loads(app.db.execute('SELECT value FROM managed_deletions WHERE id=?', (row['id'],)).fetchone()[0])
+    locks = {Path(path): Path(path).stat().st_ino for path in [*saved['coordinationLocks'], *saved['metadataLocks']]}
+    assert not files.exists()
+    await app.close()
+    monkeypatch.setattr(managed_deletion, '_purge', original)
+    restored = AppService(app.data_dir, Runtime(), workspace=tmp_path)
+    try:
+        assert restored.db.execute('SELECT phase FROM managed_deletions WHERE id=?', (row['id'],)).fetchone()[0] == 'done'
+        assert not files.parent.exists() and all(not path.exists() for path in owned.values())
+        assert all(path.stat().st_ino == inode for path, inode in locks.items())
+        assert all(managed_deletion.removed(restored.db, identity) for identity in owned)
+    finally:
+        await restored.close()
+
+
+async def test_old_preview_requires_review_instead_of_reusing_old_lock_scope(app):
+    row = await create(app); value = await preview(app, row['id'])
+    saved = json.loads(app.db.execute('SELECT value FROM managed_deletions WHERE id=?', (row['id'],)).fetchone()[0])
+    saved.pop('sharedIds'); saved.pop('metadataLocks')
+    app.db.execute('UPDATE managed_deletions SET value=? WHERE id=?', (json.dumps(saved), row['id'])); app.db.commit()
+    with pytest.raises(AppError, match='changed since'):
+        await delete(app, value)
+    assert Path(row['workspace']).exists()
 
 
 async def test_preserves_shared_attachments_and_artifact_bodies_revokes_share(app):

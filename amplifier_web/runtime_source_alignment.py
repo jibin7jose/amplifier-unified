@@ -31,7 +31,10 @@ def verify_checked_selection(checked, selection, *, exact=False):
                 or any(not source.get(field) for field in ('url', 'ref', 'revision'))
                 or source_key(source['url'], source['ref']) != source_key(policy['url'], policy['ref'])
                 or source.get('subdirectory', '') != policy.get('subdirectory', '')):
-            raise ProtectedRuntimeSource(name)
+            reason = {'unbound': 'runtime-source-unbound',
+                      'conflicting': 'runtime-source-conflict'}.get(
+                          source.get('status'), 'protected-runtime-source')
+            raise ProtectedRuntimeSource(name, reason)
         if (exact or source['status'] == 'explicit-pin') and source['revision'] != policy['revision']:
             raise ValueError('A selected module differs from its checked revision before installation.')
 

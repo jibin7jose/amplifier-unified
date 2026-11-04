@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Amplifier Connect Preview",
+  "version": "0.2.3",
+  "description": "Connect a selected browser document or explicitly enable tasks across pages in one chosen tab.",
+  "minimum_chrome_version": "120",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsHreB5TRC0ip9RmyT6yXOhzkq3oPUIji/OongYBgxO9wGX5ZyewWnEmjppCeUX5/vq/BsrednC6PF4l5CWYoXOazeRunUdmm5AGGekkyfGzDZVFyoDtQ35SPu1FCEE9oqN7kvT9sC10xAyDkg6D7nMbTX/fFVzma7dfYTnYTq3zQTvv2Hf5+bHvyRDySipp0hFSdNXkDhsemFNQ2rPo8ZlahPuGSi504d1ew/KYsvRA4ku1jjBAaDIgo9xmJgBWY9pEPo2+mgeEkLDVDrNNPfvAEjmTg4K3m8tdRvnOowguH6b5r1wlYiNZP4ssh4mVBVepAy6sNyimlLUyzER1weQIDAQAB",
+  "permissions": [
+    "storage",
+    "alarms",
+    "scripting",
+    "activeTab",
+    "debugger"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Amplifier Connect",
+    "default_popup": "popup.html"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      }
+    }
+  },
+  "externally_connectable": {
+    "matches": [
+      "https://*/*",
+      "http://localhost/*",
+      "http://127.0.0.1/*"
+    ]
+  }
+}

@@ -4,6 +4,7 @@ import base64
 import copy
 import hashlib
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -93,16 +94,16 @@ async def test_off_lock_pair_read_rechecks_all_relationships_before_any_pixels(a
     (tmp_path/'own.png').write_bytes(png(4, 2))
     own = (await app.dispatch('outputs.attach', {'sessionId': source['id'], 'kind': 'file',
         'title': 'Own image', 'path': 'own.png'}))['result']
-    entered, release = asyncio.Event(), asyncio.Event()
-    original = app.outputs.content_async
-    async def read(record):
-        value = await original(record)
+    entered, release = threading.Event(), threading.Event()
+    original = app.outputs.image_value
+    def read(record, data):
+        value = original(record, data)
         if record['id'] == own['id']:
-            entered.set();await release.wait()
+            entered.set();assert release.wait(5)
         return value
-    monkeypatch.setattr(app.outputs, 'content_async', read)
+    monkeypatch.setattr(app.outputs, 'image_value', read)
     task = asyncio.create_task(app.app_bridge('outputs.images.read', {'images': identities([row, own])}, source['id']))
-    await asyncio.wait_for(entered.wait(), 2)
+    assert await asyncio.to_thread(entered.wait, 2)
     # Neither I/O nor PNG validation holds the app lock. Changes to the first
     # artifact while reading the second must invalidate the entire pair.
     async with asyncio.timeout(2):
@@ -141,11 +142,16 @@ async def test_existing_full_access_reader_is_rechecked_after_io(app, tmp_path, 
     await access('full')
     value = await app.app_bridge('outputs.image.read', identities([row])[0], reader['id'])
     assert base64.b64decode(value['_image']) == data
-    original = app.outputs.content_async
-    async def read(record):
-        value = await original(record)
-        await access('ask')
+    entered, release = threading.Event(), threading.Event()
+    original = app.outputs.image_value
+    def read(record, data):
+        value = original(record, data)
+        entered.set();assert release.wait(5)
         return value
-    monkeypatch.setattr(app.outputs, 'content_async', read)
+    monkeypatch.setattr(app.outputs, 'image_value', read)
+    task = asyncio.create_task(app.app_bridge('outputs.image.read', identities([row])[0], reader['id']))
+    assert await asyncio.to_thread(entered.wait, 2)
+    await access('ask')
+    release.set()
     with pytest.raises(AppError, match='request and workspace'):
-        await app.app_bridge('outputs.image.read', identities([row])[0], reader['id'])
+        await task
