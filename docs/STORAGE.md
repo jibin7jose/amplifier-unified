@@ -418,6 +418,10 @@ the app loop under the existing environment lock; no archive bodies are read
 during inspection. The existing cleanup attempt records preserve uncertainty
 across interruption instead of replaying an unlink.
 
+Automatic verification protects any individual retained file over 8 GiB, or a
+file whose verification takes over 60 seconds. Those copies require explicit
+inspection; this policy does not promise automatic expiry of every large archive.
+
 Original `source.tar`, `artifacts.tar`, removal receipts and historical hashes
 remain. A separate expiry field reports current workspace availability; it does
 not rewrite the original successful preservation receipt or pretend its original
