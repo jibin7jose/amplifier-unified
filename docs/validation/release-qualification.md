@@ -91,15 +91,34 @@ checkout-local path. New launchers should use `fixturePython` from
 `frontend/tests/fixture-python.mjs`. This chooses only the interpreter; readiness,
 fixture arguments, browser installation and product assertions stay separate.
 
-The frontend embeds the package version from `pyproject.toml` in both its
-JavaScript bundle and `static/build.json`. After updating the Python package
-versions (including the local `amplifier-unified` entry in `uv.lock`) and release
-notes, verify `uv sync --locked --dry-run --group dev --group artifacts` in the
-owned environment. Reuse installed dependencies that match the current lockfiles
-and toolchain; run `npm ci --prefix frontend` only when that preparation is missing
-or stale. Build once with `npm run build --prefix frontend` and include all
-resulting `amplifier_web/static` changes in the release commit: a version-only
-edit still changes generated bundle hashes.
+Choose the version and author one complete release-entry JSON object (the same
+`version`, `title`, `changes` and optional `notices` fields used in
+`amplifier_web/release-notes.json`). Then use the maintained preparation command:
+
+```sh
+python scripts/release.py prepare --version X.Y.Z --notes-file /path/to/authored-entry.json
+```
+
+It validates the notes and three version owners before changing them, preserves
+unrelated edits and historical notice identities, and refuses conflicting notes
+already saved for that version. An identical retry changes nothing. It neither
+installs dependencies nor commits, tags or publishes. Run with `--build` in the
+owned prepared DTU to perform the single canonical frontend build in that same
+invocation; otherwise its output gives the build command for the environment
+owner. A failed build retains the prepared metadata: fix the reported build
+failure and rerun that build, rather than reconstructing the candidate by hand.
+
+The frontend embeds the package version in both its JavaScript bundle and
+`static/build.json`. Verify `uv sync --locked --dry-run --group dev --group artifacts`
+in the owned environment. Reuse installed dependencies that match the current
+lockfiles and toolchain; run `npm ci --prefix frontend` only when preparation is
+missing or stale. Include the four prepared metadata files and all resulting
+`amplifier_web/static` changes in the release commit: a version-only edit still
+changes generated bundle hashes. The command does not replace review of the
+authored release scope or the normal unused-version check.
+Automatic publication watches the dedicated `amplifier_web/__init__.py` version
+owner. Dependency or release-tool edits alone do not start a publisher; explicit
+manual dispatch remains available with the same immutable identity checks.
 
 Reuse focused behavior evidence for unchanged tested inputs. Do not add a local
 full frontend suite or a second manual build solely for a version change.

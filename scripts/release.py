@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tarfile
+import time
 import tomllib
 import zipfile
 
@@ -37,6 +38,81 @@ def version_at(root, ref=None):
     def read(path):
         return run("git", "show", f"{ref}:{path}", cwd=root) if ref else (root / path).read_text()
     return package_version(read("pyproject.toml"), read("amplifier_web/__init__.py"))
+
+
+def notes_module(root):
+    spec = importlib.util.spec_from_file_location('release_history', root / 'amplifier_web/release_notes.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def replace_version(text, field, old, new):
+    pattern = rf'(?m)^([ \t]*{re.escape(field)}[ \t]*=[ \t]*)([\"\']){re.escape(old)}\2([ \t]*(?:#[^\n]*)?)$'
+    updated, count = re.subn(pattern, lambda match: match[1] + match[2] + new + match[2] + match[3], text)
+    if count != 1:
+        raise ValueError(f'Expected one unambiguous {field} assignment; source left unchanged')
+    return updated
+
+
+def prepare(root, version, notes_file, build=False):
+    """Prepare local candidate files; no dependency installation or publication."""
+    if not isinstance(version, str) or not VERSION.fullmatch(version):
+        raise ValueError('Choose a stable release version')
+    names = ['pyproject.toml', 'amplifier_web/__init__.py', 'uv.lock', 'amplifier_web/release-notes.json']
+    original = {name: (root / name).read_text() for name in names}
+    old = package_version(original[names[0]], original[names[1]])
+    if tuple(map(int, version.split('.'))) < tuple(map(int, old.split('.'))):
+        raise ValueError('Release preparation cannot downgrade the current version')
+    if tomllib.loads(original[names[0]])['project'].get('name') != 'amplifier-unified':
+        raise ValueError('Release preparation requires the amplifier-unified project')
+    tomllib.loads(original['uv.lock'])
+
+    # Update only the local root package, never an unrelated dependency with
+    # the same version. Keep comments and all other manifest bytes unchanged.
+    blocks = list(re.finditer(r'(?ms)^\[\[package\]\][ \t]*\n.*?(?=^\[\[package\]\]|\Z)', original['uv.lock']))
+    roots = [block for block in blocks if (row := tomllib.loads(block[0])['package'][0]).get('name') == 'amplifier-unified'
+             and row.get('source') in ({'editable': '.'}, {'virtual': '.'})]
+    if len(roots) != 1 or tomllib.loads(roots[0][0])['package'][0].get('version') != old:
+        raise ValueError('Release requires one local uv.lock root matching the package version')
+    project = re.search(r'(?ms)^\[project\][ \t]*\n.*?(?=^\[|\Z)', original[names[0]])
+    if project is None:
+        raise ValueError('Release preparation requires an explicit project table')
+    updated = dict(original)
+    for name, block in ((names[0], project), ('uv.lock', roots[0])):
+        updated[name] = original[name][:block.start()] + replace_version(block[0], 'version', old, version) + original[name][block.end():]
+    updated[names[1]] = replace_version(original[names[1]], '__version__', old, version)
+
+    validator = notes_module(root)
+    history = json.loads(original[names[3]])
+    validator.parse(original[names[3]])
+    entry = json.loads(notes_file.read_text())
+    if not isinstance(entry, dict) or entry.get('version') != version:
+        raise ValueError('Authored notes must be one release entry for the chosen version')
+    existing = next((item for item in history['releases'] if item['version'] == version), None)
+    if existing is not None and existing != entry:
+        raise ValueError('Different notes already exist for this version; review them explicitly')
+    if existing is None:
+        history['releases'].insert(0, entry)
+        updated[names[3]] = '{\n  "schemaVersion": 1,\n  "releases": [\n    ' + ',\n    '.join(
+            json.dumps(item, ensure_ascii=False, separators=(',', ':')) for item in history['releases']) + '\n  ]\n}\n'
+    validator.parse(updated[names[3]], version)
+
+    changed = [name for name in names if updated[name] != original[name]]
+    for name in changed:
+        (root / name).write_text(updated[name])
+    command = ['npm', 'run', 'build', '--prefix', 'frontend']
+    result = {'version': version, 'changedFiles': changed, 'buildCommand': command, 'buildStatus': 'not-run'}
+    if build:
+        started = time.monotonic()
+        completed = subprocess.run(command, cwd=root)
+        if completed.returncode:
+            raise ValueError(f'Frontend build failed (exit {completed.returncode}); prepared metadata retained. Fix the build issue and rerun the build command.')
+        identity = json.loads((root / 'amplifier_web/static/build.json').read_text())
+        if identity.get('version') != version:
+            raise ValueError('Built frontend version does not match the prepared candidate')
+        result.update(buildStatus='passed', build=identity, buildSeconds=round(time.monotonic() - started, 3))
+    return result
 
 
 def plan(root, selected_revision=None):
@@ -122,9 +198,7 @@ def release_notes(root, expected):
         return None
     if not path.is_file():
         raise ValueError('Release notes module is required')
-    spec = importlib.util.spec_from_file_location('release_history', path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = notes_module(root)
     entries = module.parse((root / 'amplifier_web/release-notes.json').read_text(), expected)
     return module.markdown(entries, expected)
 
@@ -177,16 +251,22 @@ def publish(root, repository, tag, revision, dist):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["plan", "verify", "publish"])
+    parser.add_argument("command", choices=["prepare", "plan", "verify", "publish"])
     parser.add_argument("--dist", type=Path, default=Path("dist"))
     parser.add_argument("--version")
+    parser.add_argument("--notes-file", type=Path, help="One authored release entry as JSON (prepare only)")
+    parser.add_argument("--build", action="store_true", help="Run the canonical frontend build in the current prepared environment (prepare only)")
     parser.add_argument("--tag")
     parser.add_argument("--revision")
     parser.add_argument("--repository")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     root = Path.cwd()
-    if args.command == "plan":
+    if args.command == "prepare":
+        if not args.version or not args.notes_file:
+            parser.error('prepare requires --version and --notes-file')
+        print(json.dumps(prepare(root, args.version, args.notes_file, args.build)))
+    elif args.command == "plan":
         result = plan(root, args.revision)
         if args.output:
             with args.output.open("a") as output:

@@ -2,13 +2,10 @@ name: Publish application release
 on:
   push:
     branches: [main]
+    # Only the dedicated version owner starts automatic publication. Dependency
+    # and release-tool edits do not create a new immutable application version.
     paths:
-      - pyproject.toml
       - amplifier_web/__init__.py
-      - .github/workflows/release.yml
-      - scripts/release.py
-      - scripts/release_qualification.py
-      - scripts/qualify_host_dependencies.py
   workflow_dispatch:
     inputs:
       release_revision:
