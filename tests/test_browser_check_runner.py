@@ -1,5 +1,6 @@
 """Background failures must not conceal independent checks or leak fixtures."""
 import hashlib
+import gzip
 import importlib.util
 import json
 import os
@@ -1676,7 +1677,8 @@ def test_python_junit_is_bounded_observation_not_an_invented_pass(tmp_path, shap
     if shape != 'missing':
         raw.write_bytes(contents[shape])
     result = runner.junit_evidence(raw, kept, limit=1024)
-    expected = {'entities': 'malformed', 'empty': 'parsed', 'passed': 'parsed', 'failed': 'parsed'}.get(shape, shape)
+    expected = {'entities': 'malformed', 'oversized': 'malformed', 'empty': 'parsed',
+                'passed': 'parsed', 'failed': 'parsed'}.get(shape, shape)
     assert result['status'] == expected
     if expected != 'parsed':
         assert result['counts'] is None and not kept.exists()
@@ -1684,6 +1686,280 @@ def test_python_junit_is_bounded_observation_not_an_invented_pass(tmp_path, shap
         assert kept.read_bytes() == contents[shape]
         assert result['counts']['testcases'] == (0 if shape == 'empty' else 1)
         assert result['counts']['failure'] == int(shape == 'failed')
+
+
+@pytest.mark.parametrize('payload', ['identity', 'diagnostic'])
+def test_python_oversized_junit_retains_exact_xml_not_a_count_only_summary(tmp_path, payload):
+    # Representative shape, not the unavailable original oversized CI XML.
+    # CI's retained log contains a 5.3 MB parameterized name. Diagnostic bodies
+    # can independently exceed the retention budget even with short identities.
+    large = 'x' * 100_000
+    name = large if payload == 'identity' else 'case[param]'
+    diagnostic = large if payload == 'diagnostic' else 'original assertion'
+    xml = (f'<testsuites><testsuite tests="2" failures="1" errors="2" skipped="1">'
+           f'<testcase classname="tests.example" name="{name}"><failure message="failed">'
+           f'{diagnostic}</failure><error message="teardown"/></testcase>'
+           f'<testcase classname="tests.example" name="{name}"><skipped/><error/>'
+           '</testcase></testsuite></testsuites>').encode()
+    raw, kept = tmp_path / 'junit.pending.xml', tmp_path / 'junit.xml'
+    raw.write_bytes(xml)
+    result = runner.junit_evidence(raw, kept, limit=1024)
+    assert result['status'] == 'parsed'
+    assert result['counts'] == {'testcases': 2, 'failure': 1, 'error': 2, 'skipped': 1}
+    compressed = tmp_path / 'junit.xml.gz'
+    assert not kept.exists() and compressed.stat().st_size <= 1024
+    assert gzip.decompress(compressed.read_bytes()) == raw.read_bytes() == xml
+    assert result['file'] == compressed.name and result['encoding'] == 'gzip'
+    assert result['contentComplete'] is True
+    assert result['sourceBytes'] == len(xml)
+    assert result['sourceSha256'] == hashlib.sha256(xml).hexdigest()
+    assert result['sha256'] == hashlib.sha256(compressed.read_bytes()).hexdigest()
+
+
+def test_python_oversized_junit_representative_identity_workload(tmp_path, monkeypatch):
+    # This is synthetic, not reconstructed original CI XML. Preserve CI-shaped
+    # identities while varying ordinary case count enough to cross the old cap.
+    names = ['a' * 5_333_333, '#amp-one{' + '--large:a;' * 100_000]
+    cases = [f'<testcase classname="tests.synthetic" name="{name}" time="0.01"/>'
+             for name in names]
+    cases.extend(f'<testcase classname="tests.synthetic.representative.parameters.module" name="test_case_{i:05d}" time="0.01"/>'
+                 for i in range(20_000))
+    cases.append('<testcase classname="tests.synthetic" name="failed"><failure message="assertion">'
+                 'original diagnostic &amp; traceback</failure></testcase>')
+    xml = ('<testsuites><testsuite tests="20003" failures="1" errors="0" skipped="0">'
+           + ''.join(cases) + '</testsuite></testsuites>').encode()
+    assert len(xml) > runner.PYTHON_JUNIT_BYTES
+    raw = tmp_path / 'junit.pending.xml'
+    raw.write_bytes(xml)
+    read = runner.EvidenceFile.read
+    sizes = []
+    def bounded(file, size):
+        sizes.append(size)
+        assert size <= 65536
+        return read(file, size)
+    monkeypatch.setattr(runner.EvidenceFile, 'read', bounded)
+    result = runner.junit_evidence(raw, tmp_path / 'junit.xml')
+    assert result['status'] == 'parsed' and result['counts']['testcases'] == 20003
+    assert result['counts']['failure'] == 1 and sizes
+    kept = tmp_path / result['file']
+    assert kept.stat().st_size < runner.PYTHON_JUNIT_BYTES
+    assert gzip.decompress(kept.read_bytes()) == xml
+    print(json.dumps({'syntheticSourceBytes': len(xml), 'retainedBytes': kept.stat().st_size,
+                      'readCalls': len(sizes), 'largestRead': max(sizes)}))
+
+
+@pytest.mark.parametrize('shape,status', [
+    ('truncated', 'malformed'), ('trailing', 'malformed'), ('doctype', 'malformed'),
+    ('entity', 'malformed'), ('nul', 'malformed'), ('namespace', 'invalid'),
+    ('counter', 'invalid'), ('nested', 'invalid'), ('missing-name', 'invalid'),
+    ('root-counter', 'invalid'), ('empty-suites', 'invalid'),
+])
+def test_python_oversized_junit_rejects_invalid_whole_document(tmp_path, shape, status):
+    prefix = b'<?xml version="1.0"?>' + b' ' * 65500
+    xml = b'<testsuites><testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one"/></testsuite></testsuites>'
+    if shape == 'truncated':
+        xml = xml[:-5]
+    elif shape == 'trailing':
+        xml += b'garbage'
+    elif shape == 'doctype':
+        # Split across the parser's 64 KiB reads.
+        prefix = b' ' * 65532 + b'<!DOCTYPE testsuites>'
+    elif shape == 'entity':
+        prefix += b'<!DOCTYPE testsuites [<!ENTITY x SYSTEM "file:///private">]>'
+    elif shape == 'nul':
+        xml += b'\0'
+    elif shape == 'namespace':
+        xml = xml.replace(b'<testsuites>', b'<testsuites xmlns="private">')
+    elif shape == 'counter':
+        xml = xml.replace(b'tests="1"', b'tests="2"')
+    elif shape == 'nested':
+        xml = xml.replace(b'<testcase name="one"/>', b'<system-out><testcase name="one"/></system-out>')
+    elif shape == 'missing-name':
+        xml = xml.replace(b' name="one"', b'')
+    elif shape == 'root-counter':
+        xml = xml.replace(b'<testsuites>', b'<testsuites tests="2">')
+    elif shape == 'empty-suites':
+        xml = b'<testsuites/>'
+    raw = tmp_path / 'junit.pending.xml'
+    raw.write_bytes(prefix + xml)
+    result = runner.junit_evidence(raw, tmp_path / 'junit.xml', limit=1024)
+    assert result['status'] == status and result['counts'] is None
+    assert not list(tmp_path.glob('junit.xml*')) and not list(tmp_path.glob('.*.tmp'))
+
+
+@pytest.mark.parametrize('bound', ['scan', 'token', 'compressed', 'time'])
+def test_python_oversized_junit_limits_do_not_publish_partial_counts(tmp_path, monkeypatch, bound):
+    raw = tmp_path / 'junit.pending.xml'
+    text = 'x' * 200_000
+    if bound == 'compressed':
+        text = ''.join(hashlib.sha256(str(i).encode()).hexdigest() for i in range(3000))
+    xml = ('<testsuite tests="1" failures="0" errors="0" skipped="0">'
+           '<testcase name="one"><system-out>' + text + '</system-out></testcase></testsuite>')
+    raw.write_text(xml)
+    if bound == 'scan':
+        monkeypatch.setattr(runner, 'PYTHON_JUNIT_SCAN_BYTES', 2000)
+    elif bound == 'token':
+        raw.write_text('<testsuite name="' + 'x' * 200_000)
+        monkeypatch.setattr(runner, 'PYTHON_JUNIT_BYTES', 65536)
+    elif bound == 'time':
+        monkeypatch.setattr(runner, 'PYTHON_JUNIT_SCAN_SECONDS', 0)
+    result = runner.junit_evidence(raw, tmp_path / 'junit.xml', limit=1024)
+    assert result['status'] == 'oversized' and result['counts'] is None
+    assert result['reason'] == {'scan': 'scan_limit', 'token': 'token_limit',
+                                'compressed': 'compressed_limit', 'time': 'scan_timeout'}[bound]
+    assert not list(tmp_path.glob('junit.xml*')) and not list(tmp_path.glob('.*.tmp'))
+
+
+@pytest.mark.parametrize('shape', ['symlink', 'dangling', 'hardlink', 'fifo'])
+def test_python_oversized_junit_uses_secure_atomic_retention(tmp_path, shape):
+    raw = tmp_path / 'junit.pending.xml'
+    raw.write_text('<testsuite tests="1" failures="0" errors="0" skipped="0">'
+                   '<testcase name="one"><system-out>' + 'x' * 100_000 +
+                   '</system-out></testcase></testsuite>')
+    outside = tmp_path / 'outside'
+    outside.write_text('untouched')
+    plant_evidence_entry(tmp_path / 'junit.xml.gz', shape, outside)
+    result = runner.junit_evidence(raw, tmp_path / 'junit.xml', limit=1024)
+    assert result['status'] == 'retention_failed' and result['counts'] is None
+    assert outside.read_text() == 'untouched' and not list(tmp_path.glob('.*.tmp'))
+
+
+@pytest.mark.parametrize('mutation', ['replace', 'grow', 'disk-error'])
+def test_python_oversized_junit_source_and_retention_faults(tmp_path, monkeypatch, mutation):
+    raw = tmp_path / 'junit.pending.xml'
+    raw.write_text('<testsuite tests="1" failures="0" errors="0" skipped="0">'
+                   '<testcase name="one"><system-out>' + 'x' * 100_000 +
+                   '</system-out></testcase></testsuite>')
+    original = runner.EvidenceFile.read
+    changed = False
+    def read(file, size):
+        nonlocal changed
+        data = original(file, size)
+        if not changed and mutation != 'disk-error':
+            changed = True
+            if mutation == 'replace':
+                raw.unlink()
+                raw.write_text('replacement')
+            else:
+                # Same size, different timestamp: valid bytes are not sufficient.
+                os.utime(raw, ns=(1, 1))
+        return data
+    monkeypatch.setattr(runner.EvidenceFile, 'read', read)
+    if mutation == 'disk-error':
+        def fail(*args):
+            raise OSError('ENOSPC')
+        monkeypatch.setattr(runner.EvidenceFile, 'write', fail)
+    result = runner.junit_evidence(raw, tmp_path / 'junit.xml', limit=1024)
+    assert result['status'] == ('retention_failed' if mutation == 'disk-error' else 'unreadable')
+    assert result['counts'] is None and not list(tmp_path.glob('junit.xml*'))
+    assert not list(tmp_path.glob('.*.tmp'))
+
+
+@pytest.mark.parametrize('exit_code,reason,complete', [(0, None, True), (1, None, True),
+                                                       (2, None, False), (0, 'timeout', False)])
+def test_python_compressed_junit_does_not_change_execution_verdict(tmp_path, monkeypatch, exit_code, reason, complete):
+    raw = tmp_path / 'junit.pending.xml'
+    raw.write_text('<testsuite tests="1" failures="0" errors="0" skipped="0">'
+                   '<testcase name="one"><system-out>' + 'x' * 100_000 +
+                   '</system-out></testcase></testsuite>')
+    original = runner.junit_evidence
+    monkeypatch.setattr(runner, 'junit_evidence', lambda *args, **kw: original(*args, limit=1024, **kw))
+    report = {'complete': True, 'scenarios': [{'status': 'passed' if exit_code == 0 else 'failed',
+              'exitCode': exit_code, 'reason': reason, 'cleanup': {'remaining': [], 'terminated': 0}}]}
+    assert runner.finish_python_report(tmp_path, report) == (0 if exit_code == 0 and not reason else 1)
+    assert report['pytestSessionComplete'] is complete
+    assert report['junit']['status'] == 'parsed' and report['junit']['encoding'] == 'gzip'
+    first = (tmp_path / 'junit.xml.gz').read_bytes()
+    runner.finish_python_report(tmp_path, report)
+    assert (tmp_path / 'junit.xml.gz').read_bytes() == first
+
+
+def test_python_compressed_junit_is_stale_evidence_and_cannot_be_reset(tmp_path):
+    (tmp_path / 'junit.xml.gz').write_bytes(b'old')
+    with pytest.raises(ValueError, match='already exists'):
+        runner.python_suite(tmp_path, tmp_path, {}, runner.time.monotonic() + 10, initialize=True)
+    assert (tmp_path / 'junit.xml.gz').read_bytes() == b'old'
+
+
+@pytest.mark.parametrize('padding', [0, 100_000])
+def test_python_junit_unknown_encoding_saves_nonpassing_receipt(tmp_path, monkeypatch, padding):
+    (tmp_path / 'junit.pending.xml').write_bytes(
+        b'<?xml version="1.0" encoding="not-an-encoding"?>' + b' ' * padding +
+        b'<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one"/></testsuite>')
+    original = runner.junit_evidence
+    monkeypatch.setattr(runner, 'junit_evidence', lambda *a, **kw: original(*a, limit=1024, **kw))
+    report = {'complete': True, 'scenarios': [{'status': 'passed', 'exitCode': 0, 'reason': None,
+              'cleanup': {'remaining': [], 'terminated': 0}}]}
+    assert runner.finish_python_report(tmp_path, report) == 1
+    saved = runner.read_python_report(tmp_path)
+    assert saved['junit'] == {'status': 'malformed', 'counts': None}
+    assert saved['pytestSessionComplete'] and not saved['passed']
+    assert not list(tmp_path.glob('junit.xml*'))
+
+
+@pytest.mark.parametrize('compressed', [False, True])
+def test_python_junit_refuses_conflicting_retained_representation(tmp_path, compressed):
+    raw = tmp_path / 'junit.pending.xml'
+    raw.write_text('<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one">'
+                   '<system-out>' + 'x' * (100_000 if compressed else 0) +
+                   '</system-out></testcase></testsuite>')
+    previous = tmp_path / ('junit.xml' if compressed else 'junit.xml.gz')
+    previous.write_bytes(b'prior exact evidence')
+    result = runner.junit_evidence(raw, tmp_path / 'junit.xml', limit=1024)
+    assert result['status'] == 'retention_failed' and result['counts'] is None
+    assert previous.read_bytes() == b'prior exact evidence'
+    assert len(list(tmp_path.glob('junit.xml*'))) == 1
+
+
+@pytest.mark.parametrize('excess', [0, 1])
+def test_python_junit_scan_limit_exact_boundary(tmp_path, monkeypatch, excess):
+    raw = tmp_path / 'junit.pending.xml'
+    xml = (b'<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one">'
+           b'<system-out>' + b'x' * 100_000 + b'</system-out></testcase></testsuite>')
+    raw.write_bytes(xml)
+    monkeypatch.setattr(runner, 'PYTHON_JUNIT_SCAN_BYTES', len(xml) - excess)
+    result = runner.junit_evidence(raw, tmp_path / 'junit.xml', limit=1024)
+    assert result['status'] == ('oversized' if excess else 'parsed')
+    assert (tmp_path / 'junit.xml.gz').exists() is (not excess)
+
+
+@pytest.mark.parametrize('token', ['<!--', '<?long ', '<testsuite name="'])
+def test_python_junit_unfinished_tokens_are_bounded(tmp_path, monkeypatch, token):
+    (tmp_path / 'junit.pending.xml').write_text(token + 'x' * 200_000)
+    monkeypatch.setattr(runner, 'PYTHON_JUNIT_BYTES', 65536)
+    result = runner.junit_evidence(tmp_path / 'junit.pending.xml', tmp_path / 'junit.xml', limit=1024)
+    assert result['status'] == 'oversized' and result['reason'] == 'token_limit'
+    assert result['counts'] is None and not list(tmp_path.glob('junit.xml*'))
+
+
+def test_python_tiny_real_pytest_oversized_emission_keeps_failure_and_identities(tmp_path):
+    tests = tmp_path / 'test_emission.py'
+    tests.write_text('''import pytest
+@pytest.mark.parametrize("value", [1, 2], ids=["a"*5333333, "b"*1000000])
+def test_large_identity(value):
+    assert value
+def test_failure():
+    raise AssertionError("diagnostic-"*250000)
+''')
+    output = tmp_path / 'results'
+    row = {'id': 'pytest', 'command': [sys.executable, '-u', '-m', 'pytest', '-q', '--tb=short',
+           '-c', '/dev/null', str(tests), '--junitxml=output/python-checks/junit.pending.xml'],
+           'env': {'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1'}}
+    code, report, _ = execute(tmp_path, [row], budget=30, case_timeout=30, cwd=tmp_path,
+                             log_limit=16384, junit_output=output / 'junit.pending.xml')
+    raw = (output / 'junit.pending.xml').read_bytes()
+    assert len(raw) > runner.PYTHON_JUNIT_BYTES
+    assert code == 1 and runner.finish_python_report(output, report) == 1
+    assert report['scenarios'][0]['exitCode'] == 1 and report['pytestSessionComplete']
+    assert report['scenarios'][0]['cleanup'] == {'remaining': [], 'terminated': 0}
+    assert not report['passed'] and report['junit']['status'] == 'parsed'
+    assert report['junit']['counts'] == {'testcases': 3, 'failure': 1, 'error': 0, 'skipped': 0}
+    assert gzip.decompress((output / 'junit.xml.gz').read_bytes()) == raw
+    tree = runner.ET.fromstring(raw)
+    names = [case.get('name') for case in tree.iter('testcase')]
+    assert names == ['test_large_identity[' + 'a'*5333333 + ']',
+                     'test_large_identity[' + 'b'*1000000 + ']', 'test_failure']
+    assert 'diagnostic-' in tree.find('.//failure').text
 
 
 @pytest.mark.parametrize('shape', ['missing', 'malformed', 'oversized', 'empty'])

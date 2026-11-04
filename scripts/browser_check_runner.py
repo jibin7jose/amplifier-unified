@@ -19,6 +19,8 @@ import subprocess
 import time
 import uuid
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
+import zlib
 
 
 def digest(path):
@@ -961,6 +963,11 @@ def run_scenarios(root, plan, output, *, budget=1500, case_timeout=300, provenan
 PYTHON_BUDGET_SECONDS = 75 * 60
 PYTHON_LOG_BYTES = 16 * 1024 * 1024
 PYTHON_JUNIT_BYTES = 8 * 1024 * 1024
+# Oversized XML is retained losslessly, not admitted to a larger in-memory tree.
+# 32 MiB covers the observed multi-MB parameter identities plus ~19k cases.
+# These bound finalization only, not pytest's pre-existing raw XML producer.
+PYTHON_JUNIT_SCAN_BYTES = 32 * 1024 * 1024
+PYTHON_JUNIT_SCAN_SECONDS = 5
 PYTHON_COMMAND = ['.venv/bin/python', '-u', '-m', 'pytest', '-v', '--tb=short',
                   '--junitxml=output/python-checks/junit.pending.xml']
 
@@ -970,18 +977,22 @@ def python_plan():
     return {'schemaVersion': 1, 'scenarios': [{'id': 'pytest', 'command': PYTHON_COMMAND}]}
 
 
-def junit_counts(root):
-    """Validate pytest's flat JUnit suites, not arbitrary nested XML summaries.
+class JunitCounter:
+    """Flat pytest JUnit grammar; constant state, no identities/text accumulated.
 
-    Pytest can emit multiple outcome children (e.g. setup/teardown errors) for
-    one case. Count those children, not truthiness; declared tests counts cases.
-    Properties and captured output are data, never extra testcases.
+    Multiple outcome children and duplicate identities are not deduplicated.
+    Identity bytes remain in the retained XML, not a count-only replacement.
     """
     counter_names = {'tests': 'testcases', 'failures': 'failure', 'errors': 'error', 'skipped': 'skipped'}
 
-    def declared(element, counts, *, required):
-        for key, count in counter_names.items():
-            value = element.get(key)
+    def __init__(self):
+        self.stack = []
+        self.total = dict.fromkeys(self.counter_names.values(), 0)
+        self.suites = 0
+
+    def declared(self, attributes, counts, *, required):
+        for key, count in self.counter_names.items():
+            value = attributes.get(key)
             if value is None and not required:
                 continue
             if value is None or not re.fullmatch(r'[0-9]{1,10}', value):
@@ -989,63 +1000,169 @@ def junit_counts(root):
             if int(value) != counts[count]:
                 raise ValueError('counter_mismatch')
 
-    def auxiliary(element):
-        if element.tag == 'properties':
-            if any(child.tag != 'property' or len(child) for child in element):
-                raise ValueError('invalid_properties')
-        elif element.tag in {'system-out', 'system-err'}:
-            if len(element):
-                raise ValueError('nested_output')
-        else:
-            raise ValueError('unexpected_structure')
-
-    if root.tag == 'testsuite':
-        suites = [root]
-    elif root.tag == 'testsuites' and len(root) and all(child.tag == 'testsuite' for child in root):
-        suites = list(root)
-    else:
-        raise ValueError('unsupported_junit_root')
-    total = dict.fromkeys(counter_names.values(), 0)
-    for suite in suites:
-        counts = dict.fromkeys(total, 0)
-        for case in suite:
-            if case.tag != 'testcase':
-                auxiliary(case)
-                continue
-            if not case.get('name'):
+    def start(self, tag, attributes):
+        parent = self.stack[-1][0] if self.stack else None
+        allowed = {
+            None: {'testsuites', 'testsuite'}, 'testsuites': {'testsuite'},
+            'testsuite': {'testcase', 'properties', 'system-out', 'system-err'},
+            'testcase': {'failure', 'error', 'skipped', 'properties', 'system-out', 'system-err'},
+            'properties': {'property'},
+        }
+        if tag not in allowed.get(parent, set()):
+            reason = {None: 'unsupported_junit_root', 'testsuites': 'unsupported_junit_root',
+                      'properties': 'invalid_properties', 'property': 'invalid_properties',
+                      'system-out': 'nested_output', 'system-err': 'nested_output',
+                      'failure': 'nested_outcome', 'error': 'nested_outcome',
+                      'skipped': 'nested_outcome'}.get(parent, 'unexpected_structure')
+            raise ValueError(reason)
+        # Retain only four declared counters, never an unbounded name/message.
+        counters = ({key: attributes[key] for key in self.counter_names if key in attributes}
+                    if tag in {'testsuite', 'testsuites'} else {})
+        if any(not re.fullmatch(r'[0-9]{1,10}', value) for value in counters.values()):
+            raise ValueError('missing_or_invalid_counter')
+        if tag == 'testsuite':
+            self.counts = dict.fromkeys(self.total, 0)
+            self.suites += 1
+        elif tag == 'testcase':
+            if not attributes.get('name'):
                 raise ValueError('case_identity_missing')
-            counts['testcases'] += 1
-            for item in case:
-                if item.tag in {'failure', 'error', 'skipped'}:
-                    if len(item):
-                        raise ValueError('nested_outcome')
-                    counts[item.tag] += 1
-                else:
-                    auxiliary(item)
-        declared(suite, counts, required=True)
-        for key in total:
-            total[key] += counts[key]
-    if root.tag == 'testsuites':
-        declared(root, total, required=False)
-    return total
+            self.counts['testcases'] += 1
+        elif tag in {'failure', 'error', 'skipped'}:
+            self.counts[tag] += 1
+        self.stack.append((tag, counters))
+
+    def end(self, tag):
+        _, attributes = self.stack.pop()
+        if tag == 'testsuite':
+            self.declared(attributes, self.counts, required=True)
+            for key in self.total:
+                self.total[key] += self.counts[key]
+        elif tag == 'testsuites':
+            if not self.suites:
+                raise ValueError('unsupported_junit_root')
+            self.declared(attributes, self.total, required=False)
+
+
+def junit_counts(root):
+    counter = JunitCounter()
+
+    def visit(element):
+        counter.start(element.tag, element.attrib)
+        for child in element:
+            visit(child)
+        counter.end(element.tag)
+
+    visit(root)
+    return counter.total
+
+
+def compressed_junit_evidence(path, retained, *, limit, expected):
+    """Validate to EOF and gzip exact bytes with separate scan/retention bounds."""
+    def oversized(reason):
+        return {'status': 'oversized', 'reason': reason, 'limitBytes': limit,
+                'scanLimitBytes': PYTHON_JUNIT_SCAN_BYTES, 'counts': None}
+
+    def forbidden(*args):
+        raise ET.ParseError('Forbidden XML declaration')
+
+    counter = JunitCounter()
+    parser = expat.ParserCreate(namespace_separator='}')
+    # Without Expat's large-token deferral, chunking an enormous attribute can
+    # cause quadratic reparsing. Never silently use that unbounded work path.
+    if not hasattr(parser, 'SetReparseDeferralEnabled'):
+        return oversized('bounded_parser_unavailable')
+    parser.SetReparseDeferralEnabled(True)
+    parser.StartElementHandler = counter.start
+    parser.EndElementHandler = counter.end
+    parser.StartDoctypeDeclHandler = forbidden
+    parser.EntityDeclHandler = forbidden
+    parser.ExternalEntityRefHandler = forbidden
+    compressor = zlib.compressobj(level=6, wbits=31)
+    compressed = bytearray()
+    source_hash = hashlib.sha256()
+    observed = 0
+    deadline = time.monotonic() + PYTHON_JUNIT_SCAN_SECONDS
+    try:
+        with EvidenceFile(path) as file:
+            before = file.check()
+            if expected is not None and list(file.identity) != expected:
+                raise OSError('Evidence does not match the owned writer')
+            if before.st_size > PYTHON_JUNIT_SCAN_BYTES:
+                return oversized('scan_limit')
+            while True:
+                if time.monotonic() >= deadline:
+                    return oversized('scan_timeout')
+                data = file.read(min(65536, PYTHON_JUNIT_SCAN_BYTES - observed + 1))
+                observed += len(data)
+                if observed > PYTHON_JUNIT_SCAN_BYTES:
+                    return oversized('scan_limit')
+                if b'\0' in data:
+                    raise ET.ParseError('NUL in XML')
+                parser.Parse(data, not data)
+                # Expat retains unfinished tokens (attributes/comments/etc.).
+                # Allow the same 8 MiB token bound, plus at most one read chunk.
+                if observed - parser.CurrentByteIndex > PYTHON_JUNIT_BYTES:
+                    return oversized('token_limit')
+                compressed.extend(compressor.compress(data) if data else compressor.flush())
+                if len(compressed) > limit:
+                    return oversized('compressed_limit')
+                source_hash.update(data)
+                if not data:
+                    break
+            after = file.check()
+            if ((before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    != (after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+                raise OSError('Evidence changed during bounded scan')
+    except OSError as exc:
+        return {'status': 'unreadable', 'error': type(exc).__name__, 'counts': None}
+    except (expat.ExpatError, ET.ParseError, LookupError):
+        return {'status': 'malformed', 'counts': None}
+    except ValueError as exc:
+        return {'status': 'invalid', 'reason': str(exc), 'counts': None}
+    if time.monotonic() >= deadline:
+        return oversized('scan_timeout')
+    target = retained.with_name(retained.name + '.gz')
+    try:
+        directory = evidence_directory(retained.parent)
+        try:
+            if evidence_entry(directory, retained.name) is not None:
+                raise OSError('A different retained XML representation already exists')
+        finally:
+            os.close(directory)
+        publish_evidence(target, compressed)
+    except OSError as exc:
+        return {'status': 'retention_failed', 'error': type(exc).__name__, 'counts': None}
+    return {'status': 'parsed', 'counts': counter.total, 'file': target.name, 'encoding': 'gzip',
+            'contentComplete': True, 'bytes': len(compressed),
+            'sha256': hashlib.sha256(compressed).hexdigest(), 'sourceBytes': observed,
+            'sourceSha256': source_hash.hexdigest(),
+            'coverage': 'exact XML retained; validated declared/observed counts only; exit and interruption govern completion'}
 
 
 def junit_evidence(path, retained, *, limit=PYTHON_JUNIT_BYTES, expected=None):
     """Bound input before parsing; counts describe observed XML, not completion."""
     try:
+        with EvidenceFile(path) as file:
+            info = file.check()
+            if expected is not None and list(file.identity) != expected:
+                raise OSError('Evidence does not match the owned writer')
+            expected = list(file.identity)
+        if info.st_size > limit:
+            return compressed_junit_evidence(path, retained, limit=limit, expected=expected)
         data = read_evidence(path, limit, expected=expected)
     except FileNotFoundError:
         return {'status': 'missing', 'counts': None}
     except OSError as exc:
         return {'status': 'unreadable', 'error': type(exc).__name__, 'counts': None}
     if len(data) > limit:
-        return {'status': 'oversized', 'limitBytes': limit, 'counts': None}
+        del data
+        return compressed_junit_evidence(path, retained, limit=limit, expected=expected)
     # No entity expansion or external definitions from test-owned output.
     if b'<!DOCTYPE' in data or b'<!ENTITY' in data or b'\0' in data:
         return {'status': 'malformed', 'counts': None}
     try:
         root = ET.fromstring(data)
-    except ET.ParseError:
+    except (ET.ParseError, LookupError):
         return {'status': 'malformed', 'counts': None}
     try:
         counts = junit_counts(root)
@@ -1053,10 +1170,17 @@ def junit_evidence(path, retained, *, limit=PYTHON_JUNIT_BYTES, expected=None):
     except ValueError as exc:
         validation = {'status': 'invalid', 'reason': str(exc), 'counts': None}
     try:
+        directory = evidence_directory(retained.parent)
+        try:
+            if evidence_entry(directory, retained.name + '.gz') is not None:
+                raise OSError('A different retained XML representation already exists')
+        finally:
+            os.close(directory)
         publish_evidence(retained, data)
     except OSError as exc:
         return {'status': 'retention_failed', 'error': type(exc).__name__, 'counts': None}
-    return {**validation, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+    return {**validation, 'file': retained.name, 'encoding': 'xml', 'contentComplete': True,
+            'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
             'coverage': 'validated declared/observed counts only; exit and interruption govern completion'}
 
 
@@ -1097,12 +1221,14 @@ def python_suite(root, output, provenance, deadline, *, initialize=False, finali
                    pytestSessionStatus='not_started',
                    junit={'status': 'not_started', 'counts': None},
                    retentionLimits={'logBytes': PYTHON_LOG_BYTES, 'junitBytes': PYTHON_JUNIT_BYTES,
+                                    'junitScanBytes': PYTHON_JUNIT_SCAN_BYTES,
+                                    'junitScanSeconds': PYTHON_JUNIT_SCAN_SECONDS,
                                     'interruptGraceSeconds': 30},
                    limits='Runner loss, disk failure, stuck preparation or external hard kill can prevent finalization/upload. The remaining job time is a reserve, not an enforced upload timeout. Evidence paths require caller-owned directories without concurrent hostile same-UID mutation.')
     if initialize:
         directory = evidence_directory(output)
         try:
-            for name in ('results.json', 'pytest.log', 'pytest.log.tail', 'junit.pending.xml', 'junit.xml'):
+            for name in ('results.json', 'pytest.log', 'pytest.log.tail', 'junit.pending.xml', 'junit.xml', 'junit.xml.gz'):
                 try:
                     os.stat(name, dir_fd=directory, follow_symlinks=False)
                 except FileNotFoundError:
