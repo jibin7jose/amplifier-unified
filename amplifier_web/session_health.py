@@ -255,7 +255,8 @@ def terminal_exception_failure(session, value):
             'guidance': causes.get(refusal.get('cause'), reasons[refusal['reason']]) +
                 ' This request was not sent. Earlier work is preserved; inspect the saved details before continuing.',
             'retryable': False}
-    return {**existing, **detail, 'exceptionChain': capture['exceptionChain']}
+    return {**existing, **detail, 'exceptionChain': capture['exceptionChain'],
+            **({'secondaryFailure': capture['secondaryFailure']} if 'secondaryFailure' in capture else {})}
 
 
 def inspection_stamp(session):

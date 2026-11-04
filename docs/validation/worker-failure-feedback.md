@@ -14,6 +14,29 @@ the family vision's truthful recovery principle and the shared clients'
 
 ## Maintained checks
 
+Terminal support diagnostics use the existing worker and session-health owners.
+The exact failed generation, input IDs, runtime owner and Stop revision bind a
+supplement; a replacement generation or cancellation cannot acquire its cause.
+A genuine `OSError` may contribute bounded numeric `errno` and `winerror`, never
+its message, filename or local variables. These are diagnostic facts, not retry
+authority or proof that a particular earlier operation failed.
+
+If loop teardown raises while the exact `ManagerTurnError` remains in its actual
+exception chain, preserve the primary manager failure and a separate bounded
+`secondaryFailure` at stage `loop_exit`. Do not overwrite, redate or replay the
+original failure, infer a cause from text, or classify the later history conflict
+as proof of an external writer. The loop clears its current generation after
+publishing the terminal event; the worker retains that exact observation only
+until a new generation or terminal outcome replaces it.
+
+- `tests/test_manager_exception_boundary.py` drives an actual Core/loop session
+  through a synthetic post-provider `OSError`, then a real native-history guard
+  conflict during teardown. The existing runtime reader, service, inspection
+  export and application reopen retain both causes and the OS error number.
+  Cancellation, Stop, replacement runtime/generation/input, foreign wrapper and
+  private-message controls retain their original behavior. This does not prove
+  a historical live disk failure or authorize recovery of an unknown write.
+
 - `tests/test_feedback_diagnostics.py` delivers typed failures through the real
   runtime-event owner, then checks the on-demand browser/agent diagnostic action,
   frozen submission, mocked issue body, and saved receipt after application

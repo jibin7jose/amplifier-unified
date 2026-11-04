@@ -33,6 +33,11 @@ def exception_chain(error):
                    'line': frame.lineno, 'function': frame.name[:160]}
                   for frame in traceback.extract_tb(error.__traceback__)[-12:]]
         item = {'errorType': type(error).__name__, 'frames': frames}
+        if isinstance(error, OSError):
+            for key in ('errno', 'winerror'):
+                value = getattr(error, key, None)
+                if type(value) is int and 0 <= value <= 0xFFFFFFFF:
+                    item[key] = value
         from .request_refit import RequestFitChanged
         if isinstance(error, RequestFitChanged) and error.local_refusal:
             item['requestFit'] = {'reason': error.reason, 'components': list(error.components),
@@ -64,6 +69,10 @@ def public_exception_chain(value):
                     and type(line) is int and 0 < line <= 10_000_000):
                 safe.append({'file': file, 'function': function, 'line': line})
         row = {'errorType': kind, 'frames': safe}
+        for key in ('errno', 'winerror'):
+            value = item.get(key)
+            if type(value) is int and 0 <= value <= 0xFFFFFFFF:
+                row[key] = value
         if kind == 'RequestFitChanged':
             from .request_refit import public_refusal
             refusal = public_refusal(item.get('requestFit'))
@@ -92,8 +101,14 @@ def terminal_exception_capture(value):
             or not isinstance(kind, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_.]{0,99}', kind)
             or not chain or not (local_refit or any(item['errorType'] == kind for item in chain))):
         return None
-    return {'generationId': generation, 'inputIds': list(inputs),
-            'errorType': kind, 'exceptionChain': chain}
+    result = {'generationId': generation, 'inputIds': list(inputs),
+              'errorType': kind, 'exceptionChain': chain}
+    secondary = value.get('secondaryFailure')
+    if isinstance(secondary, dict) and secondary.get('stage') == 'loop_exit':
+        secondary_chain = public_exception_chain(secondary.get('exceptionChain'))
+        if secondary_chain:
+            result['secondaryFailure'] = {'stage': 'loop_exit', 'exceptionChain': secondary_chain}
+    return result
 
 
 def terminal_request_refusal(chain):
