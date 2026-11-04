@@ -301,14 +301,16 @@ def test_workflows_keep_full_fallback_and_fresh_package_runtime():
     steps = fast['jobs']['integration']['steps']
     names = [s.get('name') for s in steps]
     assert [name for name in names if name in module.STEPS] == list(module.STEPS)
-    frontend = release['jobs']['frontend']['steps']
+    frontend = release['jobs']['prepare']['steps']
     fallback = next(s for s in frontend if s.get('name') == 'Validate frontend and committed assets')
     assert fallback['if'] == "steps.frontend-proof.outputs.reused != 'true'"
     for command in ('npm ci', 'npm test', 'npm run build', 'git diff --exit-code'):
         assert command in fallback['run']
-    assert release['jobs']['release']['needs'] == ['prepare', 'package', 'frontend', 'runtime']
-    for lane in ('package', 'runtime'):
-        assert 'frontend-proof' not in json.dumps(release['jobs'][lane])
+    assert release['jobs']['release']['needs'] == 'prepare'
+    for name in ('Build and verify distributions', 'Verify surface context and recipe children through Core and loop-live',
+                 'Require native goal and peer continuation regressions without skips'):
+        check = next(s for s in frontend if s.get('name') == name)
+        assert 'if' not in check  # Reusing frontend proof never skips package/native checks.
     receipt = next(s for s in frontend if s.get('name') == 'Record frontend qualification for this candidate')
     assert 'if' not in receipt and 'verify' in receipt['run'] and '--candidate' in receipt['run']
 

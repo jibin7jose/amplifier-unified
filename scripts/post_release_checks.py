@@ -217,6 +217,13 @@ def build_report(results, repository, run_id, publication_id, scope='broad'):
         raise ValueError('Unknown verification scope')
     expected = SMOKE_CHECKS if scope == 'smoke' else CHECKS
     outputs = results.get('resolve', {}).get('outputs', {})
+    # Identity resolution and installation now share one read-only job. Keep
+    # their individual outcomes in reports, including a failed/skipped install.
+    if 'install_result' in outputs:
+        results = {**results,
+                   'resolve': {'result': outputs.get('identity_result'), 'outputs': outputs},
+                   'installed-package': {'result': (outputs['install_result']
+                       if outputs['install_result'] != 'success' else results['resolve'].get('result'))}}
     publication_id = str(positive_id(publication_id)) if publication_id else ''
     tag = outputs.get('tag') or (
         f'publication-run-{publication_id}' if publication_id else f'verification-run-{run_id}')
@@ -267,7 +274,9 @@ def main():
     download = commands.add_parser('download')
     download.add_argument('--version', required=True)
     download.add_argument('--destination', type=Path, required=True)
-    commands.add_parser('report')
+    report = commands.add_parser('report')
+    report.add_argument('--summary-only', action='store_true',
+                        help='Write the run summary without issue-write API calls')
     args = parser.parse_args()
     repository = os.environ['GITHUB_REPOSITORY']
     if args.command == 'resolve':
@@ -306,7 +315,8 @@ def main():
                               os.environ.get('VERIFICATION_SCOPE', 'broad'))
         with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:
             stream.write(report['body'] + '\n')
-        track_report(repository, report)
+        if not args.summary_only:
+            track_report(repository, report)
         if report['failed']:
             raise SystemExit(1)
 

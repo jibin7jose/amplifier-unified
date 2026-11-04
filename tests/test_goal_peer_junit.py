@@ -31,7 +31,7 @@ def test_exact_native_cases_pass(tmp_path):
 def test_release_workflow_requires_and_retains_native_evidence():
     import yaml
     root = Path(__file__).parents[1]
-    steps = yaml.safe_load((root / ".github/workflows/release.yml").read_text())["jobs"]["runtime"]["steps"]
+    steps = yaml.safe_load((root / ".github/workflows/release.yml").read_text())["jobs"]["prepare"]["steps"]
     gate = next(step for step in steps if step.get("name") == "Require native goal and peer continuation regressions without skips")
     assert 'tests/test_goal_peer_continuation.py tests/test_task_goal_runtime.py' in gate["run"]
     assert 'scripts/check_goal_peer_junit.py "$RUNNER_TEMP/goal-peer/results.xml"' in gate["run"]

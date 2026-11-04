@@ -51,8 +51,10 @@ release. Run affected checks when inputs
 change, with specific checks for material risks such as migrations or authority
 changes. Do not repeat full suites for version-only preparation.
 
-Keep the existing short package/frontend/native-runtime publication graph and one
-published-asset checksum/install probe. Broad Python, readiness, browser and
+Run package/frontend/native-runtime qualification together on one read-only runner,
+then publish on an isolated write-enabled runner. Keep one published-asset
+checksum/install probe; successful automatic smoke finishes on its read-only
+runner without another reporting queue. Broad Python, readiness, browser and
 integration coverage runs **once nightly around 01:00 America/Los_Angeles**, or by
 explicit manual investigation. Do not launch broad campaigns or model-powered
 monitor sessions for every release. The scheduled workflow owns reporting;

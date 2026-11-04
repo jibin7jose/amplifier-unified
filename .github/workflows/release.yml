@@ -21,6 +21,9 @@ jobs:
   prepare:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       revision: ${{ steps.release.outputs.revision }}
       version: ${{ steps.release.outputs.version }}
@@ -61,46 +64,14 @@ jobs:
           name: release-tools
           path: ${{ runner.temp }}/release-tools
           if-no-files-found: error
-      - name: Retain selected candidate and qualified host dependency evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: host-source-resolution
-          path: ${{ runner.temp }}/host-resolution
-          if-no-files-found: ignore
-  package:
-    needs: prepare
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_CANDIDATE: ${{ needs.prepare.outputs.candidate }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ needs.prepare.outputs.revision }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.13'
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
-        with:
-          enable-cache: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: release-tools
-          path: ${{ runner.temp }}/release-tools
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: host-source-resolution
-          path: ${{ runner.temp }}/host-resolution
-      - name: Restore and verify the exact candidate host graph
-        run: |
-          python "$RUNNER_TEMP/release-tools/release_qualification.py" verify-candidate --evidence "$RUNNER_TEMP/host-resolution" --candidate "$RELEASE_CANDIDATE"
-          uv sync --locked --group dev --group artifacts
-          uv pip install --python .venv/bin/python --overrides "$RUNNER_TEMP/host-resolution/qualified-overrides.txt" --requirements "$RUNNER_TEMP/host-resolution/qualified-overrides.txt"
-          uv run --no-sync python scripts/qualify_host_dependencies.py --verify --evidence "$RUNNER_TEMP/host-resolution"
+      - name: Export the bound candidate for all qualification checks
+        env:
+          RELEASE_CANDIDATE: ${{ steps.candidate.outputs.candidate }}
+        run: echo "RELEASE_CANDIDATE=$RELEASE_CANDIDATE" >> "$GITHUB_ENV"
       # Full Python coverage runs locally or in python-checks.yml on demand.
       - name: Build and verify distributions
         env:
-          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           uv run --no-sync python scripts/qualify_host_dependencies.py --verify --evidence "$RUNNER_TEMP/host-resolution"
           uv build
@@ -121,38 +92,6 @@ jobs:
           name: package-qualification
           path: ${{ runner.temp }}/package.json
           if-no-files-found: error
-  frontend:
-    needs: prepare
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-    env:
-      RELEASE_CANDIDATE: ${{ needs.prepare.outputs.candidate }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ needs.prepare.outputs.revision }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.13'
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
-        with:
-          enable-cache: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: release-tools
-          path: ${{ runner.temp }}/release-tools
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: host-source-resolution
-          path: ${{ runner.temp }}/host-resolution
-      - name: Restore and verify the exact candidate host graph
-        run: |
-          python "$RUNNER_TEMP/release-tools/release_qualification.py" verify-candidate --evidence "$RUNNER_TEMP/host-resolution" --candidate "$RELEASE_CANDIDATE"
-          uv sync --locked --group dev --group artifacts
-          uv pip install --python .venv/bin/python --overrides "$RUNNER_TEMP/host-resolution/qualified-overrides.txt" --requirements "$RUNNER_TEMP/host-resolution/qualified-overrides.txt"
-          uv run --no-sync python scripts/qualify_host_dependencies.py --verify --evidence "$RUNNER_TEMP/host-resolution"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
@@ -184,35 +123,6 @@ jobs:
           name: frontend-qualification
           path: ${{ runner.temp }}/frontend.json
           if-no-files-found: error
-  runtime:
-    needs: prepare
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_CANDIDATE: ${{ needs.prepare.outputs.candidate }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ needs.prepare.outputs.revision }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.13'
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
-        with:
-          enable-cache: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: release-tools
-          path: ${{ runner.temp }}/release-tools
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: host-source-resolution
-          path: ${{ runner.temp }}/host-resolution
-      - name: Restore and verify the exact candidate host graph
-        run: |
-          python "$RUNNER_TEMP/release-tools/release_qualification.py" verify-candidate --evidence "$RUNNER_TEMP/host-resolution" --candidate "$RELEASE_CANDIDATE"
-          uv sync --locked --group dev --group artifacts
-          uv pip install --python .venv/bin/python --overrides "$RUNNER_TEMP/host-resolution/qualified-overrides.txt" --requirements "$RUNNER_TEMP/host-resolution/qualified-overrides.txt"
-          uv run --no-sync python scripts/qualify_host_dependencies.py --verify --evidence "$RUNNER_TEMP/host-resolution"
       - name: Resolve declared private runtime dependency
         id: runtime-dependency
         run: |
@@ -309,8 +219,15 @@ jobs:
             ${{ runner.temp }}/surface-runtime/build-constraints.txt
             ${{ runner.temp }}/surface-runtime/build-identity.json
           if-no-files-found: ignore
+      - name: Retain selected candidate and qualified host dependency evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: host-source-resolution
+          path: ${{ runner.temp }}/host-resolution
+          if-no-files-found: ignore
   release:
-    needs: [prepare, package, frontend, runtime]
+    needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: write

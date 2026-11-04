@@ -472,6 +472,60 @@ def test_smoke_requires_actual_installed_package_success(outcome):
     assert checks.build_report(value, 'owner/app', '12', '11', scope='smoke')['failed'] == ['installed-package']
 
 
+def test_broad_report_preserves_independent_success_after_install_failure():
+    value = results()
+    del value['installed-package']
+    value['resolve'] = {'result': 'failure', 'outputs': {
+        'tag': 'v1.2.3', 'revision': 'a' * 40,
+        'identity_result': 'success', 'install_result': 'failure'}}
+    report = checks.build_report(value, 'owner/app', '12', '11', scope='broad')
+    assert report['failed'] == ['installed-package']
+    assert '- resolve: success' in report['body']
+    assert '- browser: success' in report['body']
+
+
 def test_unknown_scope_cannot_downgrade_required_checks():
     with pytest.raises(ValueError, match='scope'):
         checks.build_report(results(), 'owner/app', '12', '11', scope='typo')
+
+
+@pytest.mark.parametrize('identity,install,job,failed', [
+    ('success', 'success', 'success', []),
+    ('success', 'failure', 'failure', ['installed-package']),
+    ('success', 'cancelled', 'cancelled', ['installed-package']),
+    ('success', 'skipped', 'failure', ['installed-package']),
+    ('failure', 'skipped', 'failure', ['resolve', 'installed-package']),
+    ('success', 'success', 'failure', ['installed-package']),  # Artifact/summary failure.
+])
+def test_combined_smoke_job_preserves_each_outcome(identity, install, job, failed):
+    value = results()
+    del value['installed-package']
+    value['resolve'] = {'result': job, 'outputs': {
+        'tag': 'v1.2.3', 'revision': 'a' * 40,
+        'identity_result': identity, 'install_result': install}}
+    report = checks.build_report(value, 'owner/app', '12', '11', scope='smoke')
+    assert report['failed'] == failed
+    assert f'- resolve: {identity}' in report['body']
+    assert 'v1.2.3' in report['body']
+
+
+@pytest.mark.parametrize('outcome', ['success', 'failure', 'cancelled', 'skipped'])
+def test_read_only_summary_never_calls_issue_api_but_keeps_failures(monkeypatch, tmp_path, outcome):
+    value = results()
+    value['installed-package']['result'] = outcome
+    for key, content in {'GITHUB_REPOSITORY': 'owner/app', 'GITHUB_RUN_ID': '12',
+                         'RELEASE_RUN_ID': '11', 'RELEASE_RESULTS': json.dumps(value),
+                         'VERIFICATION_SCOPE': 'smoke',
+                         'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary')}.items():
+        monkeypatch.setenv(key, content)
+    monkeypatch.setattr(sys, 'argv', ['post_release_checks.py', 'report', '--summary-only'])
+    monkeypatch.setattr(checks, 'gh', lambda *a, **k: pytest.fail('Read-only summary called GitHub'))
+    if outcome == 'success':
+        checks.main()
+    else:
+        with pytest.raises(SystemExit) as stopped:
+            checks.main()
+        assert stopped.value.code == 1
+    summary = (tmp_path / 'summary').read_text()
+    assert f'- installed-package: {outcome}' in summary
+    assert 'Broad suites were not run' in summary

@@ -328,8 +328,9 @@ boundaries when a change affects them.
 GitHub's required **Fast release checks** runs on every PR. It checks release
 identity/reporting contracts, frontend unit tests, the build and committed assets.
 Path-scoped contract workflows remain available for affected components. The
-publication graph retains only prepare, package, frontend, native runtime and
-publish. Matching candidate/dependency receipts, fresh installed-wheel probing,
+publication graph uses one read-only qualification runner for preparation, package,
+frontend and native-runtime checks, then an isolated write-enabled publisher.
+Matching candidate/dependency receipts, fresh installed-wheel probing,
 immutable tags, checksums and the short real-runtime regression suite still gate
 publication. The exhaustive readiness suite no longer runs on PRs or main pushes.
 
@@ -337,7 +338,16 @@ publication. The exhaustive readiness suite no longer runs on PRs or main pushes
 `GITHUB_TOKEN`. It verifies that run's retained candidate and actual published
 stable tag. The installed-package lane downloads both distributions, verifies
 checksums, then installs and probes the wheel outside the source checkout. These
-are the only automatic per-release checks after publication.
+are the only automatic per-release checks after publication. Identity resolution
+and installation share one read-only runner. Successful automatic smoke writes
+its summary there and finishes; issue reporting gets a separate write-enabled
+runner only for failures or explicit manual/nightly verification. Manual smoke
+can resolve a previously reported smoke failure; broad and smoke failures remain
+separate.
+
+Nightly/manual broad lanes require the verified immutable release identity, not
+successful installation. They can diagnose an install failure independently;
+cancelled or unresolved runs stay skipped and unverified in the report.
 
 **Nightly verification** freezes the latest actual published release and verifies
 the latest successful canonical publisher's candidate/attempt against it. A
@@ -446,11 +456,14 @@ other review, deletion and history protections remain separate and unchanged.
 
 `prepare` selects the same immutable merged application commit as before,
 resolves current host dependencies once, and records their exact requirements.
-Package, frontend, and runtime jobs then run independently against that commit
-and restored host graph. Each verifies the graph before and after its checks.
-The publication job requires all three jobs to succeed and checks their
-candidate identifiers plus the original wheel/source/checksum bytes before
-calling the existing immutable-tag publication implementation.
+Package, frontend and runtime checks share this read-only runner and host graph,
+retaining separate candidate-bound receipts. Package bytes are built and recorded
+before native checks prepare their separate environment; later source or dependency
+changes still fail receipt verification. The isolated publication job requires
+qualification to succeed and checks all three receipts plus the original
+wheel/source/checksum bytes before immutable-tag publication. Build/test code
+never receives repository-write credentials. This removes repeated runner queues
+and host installation without removing checks or changing branch protection.
 
 Qualification tools come from the workflow revision, copied before selecting a
 historical application commit. They are transferred as an artifact within this

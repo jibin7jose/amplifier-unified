@@ -463,8 +463,9 @@ def test_workflow_keeps_independent_artifacts_and_one_full_python_owner():
     caller = post['jobs']['python']
     assert caller['uses'] == './.github/workflows/python-checks.yml'
     assert caller['with'] == {'revision': '${{ needs.resolve.outputs.revision }}'}
-    assert caller['if'] == ("github.event_name == 'schedule' || "
-                            "(github.event_name == 'workflow_dispatch' && inputs.broad)")
+    assert ' '.join(caller['if'].split()) == (
+        "${{ !cancelled() && needs.resolve.outputs.identity_result == 'success' && "
+        "(github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.broad)) }}")
     python = yaml.load((workflows / 'python-checks.yml').read_text(), Loader=yaml.BaseLoader)
     job = python['jobs']['python']
     assert job['env']['CHECK_SUITE'] == "${{ inputs.suite || 'full' }}"

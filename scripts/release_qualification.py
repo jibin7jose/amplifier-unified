@@ -1,4 +1,4 @@
-"""Bind parallel release jobs to one candidate and cache only resolved builds.
+"""Bind release checks to one candidate and cache only resolved builds.
 
 This file is copied from the workflow checkout before selecting a historical
 application revision. All application paths are relative to the working tree.
