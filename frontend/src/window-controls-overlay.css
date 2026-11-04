@@ -2,7 +2,8 @@
    !important is limited to geometry/drag safety so a saved skin cannot place app
    controls underneath native window buttons. No display-mode-only activation. */
 #amp-one[data-window-controls-overlay=true]{
-  padding-top:var(--wco-safe-top)!important;
+  --wco-decoration-height:clamp(0px,var(--a-header-decoration-height,0px),24px);
+  padding-top:calc(var(--wco-safe-top) + var(--wco-decoration-height))!important;
   box-sizing:border-box!important;
 }
 /* Native chrome cannot carry artwork. Preserve the root's original background
@@ -21,8 +22,8 @@
 #amp-one[data-window-controls-overlay=true] .a-work-header{
   position:fixed!important;top:var(--wco-y)!important;left:0!important;right:auto!important;bottom:auto!important;
   width:100%!important;max-width:100%!important;min-width:0!important;
-  height:calc(var(--wco-safe-top) - var(--wco-y))!important;min-height:calc(var(--wco-safe-top) - var(--wco-y))!important;
-  margin:0!important;padding:0 calc(100% - var(--wco-x) - var(--wco-width) + 8px) calc(var(--wco-safe-top) - var(--wco-y) - var(--wco-height)) calc(var(--wco-x) + 8px)!important;box-sizing:border-box!important;transform:none!important;
+  height:calc(var(--wco-safe-top) - var(--wco-y) + var(--wco-decoration-height))!important;min-height:calc(var(--wco-safe-top) - var(--wco-y) + var(--wco-decoration-height))!important;
+  margin:0!important;padding:0 calc(100% - var(--wco-x) - var(--wco-width) + 8px) calc(var(--wco-safe-top) - var(--wco-y) - var(--wco-height) + var(--wco-decoration-height)) calc(var(--wco-x) + 8px)!important;box-sizing:border-box!important;transform:none!important;
   align-items:center!important;
   border-bottom:0!important;
   z-index:80!important;
@@ -38,6 +39,14 @@
 #amp-one[data-window-controls-overlay=true][data-window-controls-overlay-stacked=true] .a-work-header{
   position:relative!important;inset:auto!important;width:100%!important;max-width:100%!important;
   height:auto!important;min-height:48px!important;padding:4px 8px!important;
+}
+#amp-one[data-window-controls-overlay=true][data-window-controls-overlay-stacked=true]{
+  /* The ordinary header is already below the native strip in stacked mode. */
+  padding-top:var(--wco-safe-top)!important;
+}
+#amp-one[data-window-controls-overlay=true][data-window-controls-overlay-stacked=true] .a-work-header{
+  min-height:calc(48px + var(--wco-decoration-height))!important;
+  padding-bottom:calc(4px + var(--wco-decoration-height))!important;
 }
 /* Focused Canvas retains the actual header visibility toggle. Other background
    header controls remain inert; native window-button clearance is unchanged. */

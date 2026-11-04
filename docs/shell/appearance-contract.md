@@ -77,8 +77,12 @@ and backend idempotency remain separate concerns.
 
 ## Visual rules
 
-- No animated region background tint, traveling top-edge stripe, or page-wide
+- No shared busy-region background tint, traveling top-edge stripe, or page-wide
   pulse. Pending regions retain their authored background, border and shadow.
+  An explicitly selected decorative appearance may use a restrained activity
+  scanner, separate from essential feedback; it must stop with reduced motion,
+  disappear with decorations off/forced colors, and go dark when activity is
+  idle or unknown. It may not obscure native controls or imply authorization.
 - Preserve the dimensions of existing icon slots. Labels and accessible names
   remain meaningful. Do not inject generic DOM text into React-owned labels.
 - Busy icons inherit the control foreground; reduced motion uses a static broken
@@ -112,6 +116,33 @@ coverage across all surfaces. Custom CSS remains capable of overriding host
 styles; schema validation alone does not prove visual/accessibility compliance.
 A richer versioned interaction-token schema and an app-level motion preference
 are future work, not options the current UI already offers.
+
+### Global presentation hooks
+
+The bundled root `#amp-one` exposes host-observed presentation facts. These
+classes/attributes never start, authorize, disable or acknowledge work:
+
+| Hook | Meaning |
+| --- | --- |
+| `.a-app-active` / `data-app-activity="active"` | At least one admitted, non-internal chat/delegate is executing, preparing or loading history, or a canonical long operation is pending. This is app-wide, independent of selected chat, workspace, navigation pages and mounted transcript. |
+| `.a-app-idle` / `data-app-activity="idle"` | The connected host currently reports none of that activity. A saved unfinished/blocked task alone is not active execution. |
+| `.a-app-activity-unknown` / `data-app-activity="unknown"` | Activity is unavailable, the live state stream is disconnected, or this connection has not yet supplied its authoritative baseline. An open socket alone does not make retained activity current. Do not turn an old positive snapshot into current motion, or call an old negative snapshot verified idle. |
+| `.a-app-attention` / `data-app-attention="unread"` | The canonical global attention projection has unreviewed items (including notices/completions). This does **not** mean every item requires approval. Reviewing a notice is not resolving a decision. `"none"` means no unread items in that projection. |
+| `.a-app-disconnected` / `data-app-connection="disconnected"` | The browser's existing host state stream is disconnected; it says nothing about internet reachability or provider credentials. |
+
+`appActivity` uses the existing incrementally maintained live-session index and
+canonical `actionStatus`; it does not hydrate dormant history, scan browser DOM,
+poll activity endpoints, or regard theme/metadata reads as work. Normal stream
+revision/authentication fences apply. Internal bookkeeping and routine refresh
+traffic do not animate an appearance. Attention remains the existing global
+unread owner; no new status store or acknowledgement path is introduced.
+
+`--a-header-decoration-height` reserves an optional strip below native PWA
+controls (clamped to 0–24px; default 0). The host owns usable titlebar geometry
+and keeps controls centered in that geometry. An appearance paints its header
+pseudo-element inside the extra strip, and sets the token to zero when its
+decoration is disabled. This does not simulate macOS traffic lights or prove
+native OS dragging; browser tests simulate only the published geometry API.
 
 ## Acceptance
 

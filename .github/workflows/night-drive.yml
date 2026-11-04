@@ -1,0 +1,73 @@
+name: Focused Night Drive activity
+# Affected development smoke only; not a broad or required publication gate.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'examples/appearances/night-drive.amplifier.css'
+      - 'amplifier_web/appearance_activity.py'
+      - 'amplifier_web/browser_state.py'
+      - 'frontend/src/app-appearance-state.js'
+      - 'frontend/src/window-controls-overlay.css'
+      - 'frontend/tests/night-drive-browser.mjs'
+      - 'frontend/tests/app-appearance-state.test.mjs'
+      - 'tests/test_appearance_activity.py'
+      - '.github/workflows/night-drive.yml'
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      - run: uv sync --locked --group dev --group artifacts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - name: Focused lifecycle and root-state checks
+        run: |
+          uv run --no-sync pytest -q tests/test_appearance_activity.py tests/test_browser_state.py::test_large_catalog_bounded_receipts_publications_and_complete_agent_access tests/test_browser_state.py::test_offpage_error_and_approval_still_produce_attention tests/test_browser_state.py::test_stream_publications_coalesce_but_final_response_flushes
+          node --test frontend/tests/app-appearance-state.test.mjs frontend/tests/window-controls-overlay.test.mjs
+      - run: npm run build --prefix frontend
+      - name: Prepare Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Verify actual applied theme and unchanged native geometry controls
+        run: |
+          uv run --no-sync python - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          from scripts.browser_check_runner import run_scenarios
+          root = Path.cwd()
+          output = root / 'output/night-drive'
+          output.mkdir(parents=True, exist_ok=True)
+          env = {'AMPLIFIER_TEST_PYTHON': sys.executable}
+          plan = {'schemaVersion': 1, 'scenarios': [
+            {'id': 'night-drive', 'command': ['node', 'tests/night-drive-browser.mjs'],
+             'env': {**env, 'AMPLIFIER_TEST_ARTIFACTS': str(output / 'theme')}},
+            {'id': 'native-geometry', 'command': ['node', 'tests/window-controls-overlay-browser.mjs', '--header-clearance-only'],
+             'env': {**env, 'AMPLIFIER_TEST_ARTIFACTS': str(output / 'native-geometry')}},
+          ]}
+          (output / 'plan.json').write_text(json.dumps(plan, indent=2))
+          raise SystemExit(run_scenarios(root, plan, output / 'runner', budget=240, case_timeout=120,
+            provenance={'revision': os.environ['GITHUB_SHA'], 'runId': os.environ['GITHUB_RUN_ID'],
+                        'runAttempt': os.environ['GITHUB_RUN_ATTEMPT']}))
+          PY
+      - name: Retain exact applied-theme evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: night-drive-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            output/night-drive/
+            amplifier_web/static/build.json
+          include-hidden-files: true
+          if-no-files-found: error

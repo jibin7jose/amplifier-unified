@@ -192,6 +192,18 @@ async def main(home):
             "workerCount": len(getattr(runtime, 'workers', {})), "started": getattr(runtime, "started", []), "stopped": getattr(runtime, "stopped", [])})
 
     app.router.add_get("/fixture", inspect)
+    if '--appearance-states' in sys.argv:
+        async def appearance_status(request):
+            # Synthetic lifecycle input to the real publication/projection path.
+            # Never start a runtime or send a provider request for appearance QA.
+            if request.headers.get('Authorization') != 'Bearer fixture-browser-control-token':
+                raise web.HTTPForbidden()
+            data = await request.json()
+            if set(data) != {'sessionId', 'status'} or data['status'] not in {'idle', 'working', 'starting', 'stopping'}:
+                raise web.HTTPBadRequest()
+            await app['service'].on_runtime_event('runtime.status', data)
+            return web.json_response({'ok': True})
+        app.router.add_post('/fixture/appearance-status', appearance_status)
     if hasattr(runtime, 'provider_scenario'):
         runtime.provider_scenario.routes(app)
     if '--navigation-history' in sys.argv:

@@ -1,0 +1,235 @@
+/* amplifier-appearance: {"name": "Night Drive", "description": "A quiet charcoal cockpit by night, silver-blue dawn by day. An eight-second scanner follows host activity and goes dark at rest. Requires app activity presentation hooks. Native focus and reduced-motion support."} */
+/* Original Knight Rider-inspired presentation. Native host behavior stays native. */
+#amp-one {
+  color-scheme: light dark;
+  --a-bg: light-dark(#dce2e7, #08090b);
+  --a-surface: light-dark(#f3f4f5, #101216);
+  --a-soft: light-dark(#e5eaee, #191c22);
+  --a-ink: light-dark(#25303a, #eeeef0);
+  --a-muted: light-dark(#53616d, #adb2bd);
+  --a-line: light-dark(#7d8992, #747b88);
+  --a-accent: light-dark(#853c40, #ff8b8e);
+  --a-accent-ink: light-dark(#fff8f8, #26090e);
+  --a-on-accent: var(--a-accent-ink);
+  --a-tint: light-dark(#e9dfe2, #3b2026);
+  --a-green: light-dark(#286044, #a3d6bd);
+  --a-danger: light-dark(#a12d37, #ffb3a6);
+  --a-warning: light-dark(#7c5116, #efc070);
+  --nd-case: light-dark(#cbd3db, #13161b);
+  --nd-user: light-dark(#e9dfe2, #24202a);
+  --nd-user-ink: light-dark(#492b34, #ffe4e5);
+  --nd-user-edge: light-dark(#853c40, #e18d99);
+  --nd-code: light-dark(#e0e6eb, #090b0e);
+  --nd-code-ink: light-dark(#35434f, #ffd3c0);
+  --a-header-decoration-height: 16px;
+  --nd-scanner-height: 6px;
+  --nd-scanner-off: light-dark(#56616b, #170a0d);
+  --nd-scanner-gap: light-dark(#cbd3db, #08090b);
+  --nd-scanner-low: light-dark(#895758, #631c24);
+  --nd-scanner-hot: light-dark(#bd7770, #d0574d);
+  --nd-scanner-light: linear-gradient(transparent, transparent);
+  --nd-key-depth: light-dark(#52444922, #0008);
+  --nd-key-light: light-dark(#ffffff88, #ffffff12);
+  --nd-header-paint: var(--nd-case);
+  --nd-bevel: inset 0 1px var(--nd-key-light), 0 2px 0 var(--nd-key-depth);
+  --nd-ui: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --nd-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --a-font: var(--nd-ui);
+  --a-chrome-bg: var(--nd-case);
+  --a-chrome-ink: var(--a-ink);
+  --a-radius: 5px;
+  --a-panel-radius: 5px;
+  --a-card-radius: 5px;
+  --a-control-radius: 4px;
+  --a-composer-radius: 5px;
+  --a-message-radius: 5px;
+  --a-panel-line: var(--a-line);
+  --a-card-line: var(--a-line);
+  --a-composer-line: var(--a-line);
+  --a-panel-shadow: none;
+  --a-surface-shadow: none;
+  --a-navigation-art: none;
+  --a-conversation-art: none;
+  --a-canvas-art: none;
+  color: var(--a-ink);
+  background: var(--a-bg);
+  font-family: var(--nd-ui);
+}
+#amp-one[data-theme-scheme="light"] { color-scheme: light; --nd-scanner-height: 4px; }
+#amp-one[data-theme-scheme="dark"] { color-scheme: dark; }
+
+/* The scanner has its own reserved edge below real header controls. */
+#amp-one.a-chat-shell.a-approachable-shell [data-part="header"] {
+  position: relative;
+  padding-bottom: 20px;
+  background: var(--nd-header-paint);
+  color: var(--a-ink);
+  border-bottom-color: var(--a-line);
+  box-shadow: var(--nd-bevel);
+}
+#amp-one.a-chat-shell.a-approachable-shell [data-part="header"]::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 2px;
+  height: var(--nd-scanner-height);
+  pointer-events: none;
+  border: 1px solid var(--nd-scanner-off);
+  border-radius: 2px;
+  background-color: var(--nd-scanner-off);
+  background-image:
+    repeating-linear-gradient(90deg, transparent 0 calc(12.5% - 3px), var(--nd-scanner-gap) calc(12.5% - 3px) 12.5%),
+    var(--nd-scanner-light, linear-gradient(transparent,transparent));
+  background-size: 100% 100%, 200% 100%;
+  background-position: left center, 56.25% center;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 1px 2px light-dark(#35434f33, #0008);
+  animation: none;
+}
+#amp-one.a-app-active {
+  --nd-scanner-light: linear-gradient(90deg, transparent 43.75%, var(--nd-scanner-low) 46%, var(--nd-scanner-hot) 49%, var(--nd-scanner-hot) 51%, var(--nd-scanner-low) 54%, transparent 56.25%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  #amp-one.a-chat-shell.a-approachable-shell:where(.a-app-active) [data-part="header"]::after {
+    animation: night-drive-scanner 8s cubic-bezier(.45,0,.55,1) infinite alternate;
+  }
+  @keyframes night-drive-scanner {
+    from { background-position: left center, 93.75% center; }
+    to { background-position: left center, 6.25% center; }
+  }
+}
+@media (max-width: 760px) {
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="header"] { padding-bottom: 16px; }
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="header"]::after { left: 4px; right: 4px; height: 4px; }
+}
+
+/* Color the painted rail, not its potentially zero-width outer slot. */
+#amp-one.a-chat-shell.a-approachable-shell [data-part="navigation"] > .a-nav-rail {
+  background: var(--nd-case);
+  color: var(--a-ink);
+  border-color: var(--a-line);
+}
+#amp-one.a-chat-shell.a-approachable-shell [data-part="navigation"] :is(.a-nav-chat:not(.a-nav-chat-rename), .a-workspace-row) {
+  box-sizing: border-box;
+  padding-inline-start: 8px;
+  padding-inline-end: 4px;
+}
+#amp-one.a-chat-shell.a-approachable-shell [data-part="navigation"] :is(.a-nav-chat.is-selected, .a-workspace-row.is-selected) {
+  color: var(--a-accent);
+  background: var(--a-tint);
+  box-shadow: inset 3px 0 var(--a-accent);
+  border-radius: var(--a-control-radius);
+}
+#amp-one.a-chat-shell.a-approachable-shell :is(.a-nav-eyebrow, .a-nav-conversations, .a-workspace-explorer-heading) {
+  color: var(--a-muted);
+  font-family: var(--nd-ui);
+  letter-spacing: .02em;
+  text-transform: none;
+}
+#amp-one.a-chat-shell.a-approachable-shell [data-part="conversation"] {
+  color: var(--a-ink);
+  background: var(--a-surface);
+  border-color: var(--a-line);
+  box-shadow: none;
+}
+#amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] {
+  background: transparent;
+  scrollbar-color: var(--a-line) var(--a-surface);
+}
+#amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] :is(.a-message, .a-markdown) {
+  font-family: var(--nd-mono);
+  font-variant-ligatures: none;
+  line-height: 1.7;
+  letter-spacing: 0;
+}
+#amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] :is(.a-message, .a-markdown) :is(p, li, span, strong, em, blockquote, td, th, h1, h2, h3, h4, h5, h6, summary, pre, code) {
+  font-family: var(--nd-mono) !important;
+  letter-spacing: 0;
+}
+/* Message bodies own the surface. Their native action footers stay outside. */
+#amp-one.a-chat-shell.a-approachable-shell :is(.a-message.a-user, .a-message.a-assistant) {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+#amp-one.a-chat-shell.a-approachable-shell .a-message.a-assistant > .a-message-body {
+  box-sizing: border-box;
+  background: var(--a-surface);
+  color: var(--a-ink);
+  border: 1px solid var(--a-line);
+  border-radius: var(--a-message-radius);
+  padding: 16px 20px;
+}
+#amp-one.a-chat-shell.a-approachable-shell .a-message.a-user > .a-message-body {
+  box-sizing: border-box;
+  background: var(--nd-user);
+  color: var(--nd-user-ink);
+  border: 1px solid var(--a-line);
+  border-radius: var(--a-message-radius);
+  box-shadow: inset 3px 0 var(--nd-user-edge);
+  padding: 11px 16px;
+}
+@container conversation (max-width: 520px) {
+  #amp-one.a-chat-shell.a-approachable-shell .a-message.a-assistant > .a-message-body { padding: 12px; }
+  #amp-one.a-chat-shell.a-approachable-shell .a-message.a-user > .a-message-body { padding: 9px 12px; }
+}
+#amp-one.a-chat-shell.a-approachable-shell [data-part="messages"] .a-markdown :is(pre, :not(pre) > code) {
+  background: var(--nd-code);
+  color: var(--nd-code-ink);
+  border-color: var(--a-line);
+  border-radius: var(--a-control-radius);
+}
+#amp-one.a-chat-shell.a-approachable-shell .a-markdown a { color: var(--a-accent); text-decoration: underline; text-underline-offset: 3px; }
+#amp-one.a-chat-shell.a-approachable-shell .a-markdown blockquote { border-left-color: var(--a-warning); }
+#amp-one.a-chat-shell.a-approachable-shell [data-part="composer-surface"] {
+  background: var(--a-surface);
+  border-color: var(--a-composer-line);
+  border-radius: var(--a-composer-radius);
+  box-shadow: var(--nd-bevel);
+}
+#amp-one.a-chat-shell.a-approachable-shell [data-part="composer-surface"]:focus-within { border-color: var(--a-accent); }
+#amp-one.a-chat-shell.a-approachable-shell [data-part="composer-surface"] [role="textbox"][contenteditable="true"] {
+  color: var(--a-ink);
+  caret-color: var(--a-accent);
+}
+#amp-one.a-chat-shell.a-approachable-shell :is(.a-primary, .a-send) {
+  background: var(--a-accent);
+  color: var(--a-on-accent);
+  border-color: var(--a-accent);
+  box-shadow: var(--nd-bevel);
+}
+#amp-one.a-chat-shell.a-approachable-shell :is(a, button, input, select, textarea, summary, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="switch"], [role="tab"], [role="textbox"]):focus-visible {
+  outline: 2px solid var(--a-accent);
+  outline-offset: 3px;
+}
+/* Only the redundant inner editor ring is removed. Shared outer ring stays. */
+#amp-one.a-chat-shell.a-approachable-shell [data-part="composer-surface"] [role="textbox"][contenteditable="true"]:focus-visible { outline: none; }
+#amp-one.a-chat-shell.a-approachable-shell [data-part="work-browser"] { background: var(--a-bg); color: var(--a-ink); }
+#amp-one ::selection { background-color: var(--a-accent); color: var(--a-on-accent); }
+
+/* Artwork is optional; native focus, semantic states and transcript fades are not. */
+#amp-one[data-decorations="off"] { --nd-header-paint: var(--nd-case); --nd-bevel: none; --a-header-decoration-height: 0px; }
+#amp-one.a-chat-shell.a-approachable-shell[data-decorations="off"] [data-part="header"]::after { content: none; display: none; animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="header"]::after { animation: none; }
+}
+@media (forced-colors: active) {
+  #amp-one {
+    --a-bg: Canvas; --a-surface: Canvas; --a-soft: Canvas; --a-ink: CanvasText;
+    --a-muted: CanvasText; --a-line: ButtonBorder; --a-accent: Highlight;
+    --a-accent-ink: HighlightText; --a-on-accent: HighlightText; --a-tint: Canvas;
+    --a-green: CanvasText; --a-danger: CanvasText; --a-warning: CanvasText;
+    --nd-case: Canvas; --nd-user: Canvas; --nd-user-ink: CanvasText; --nd-user-edge: Highlight;
+    --nd-code: Canvas; --nd-code-ink: CanvasText; --nd-header-paint: Canvas; --nd-bevel: none;
+    --a-chrome-bg: Canvas; --a-chrome-ink: CanvasText; --a-header-decoration-height: 0px;
+  }
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="header"]::after { content: none; display: none; animation: none; }
+  #amp-one.a-chat-shell.a-approachable-shell :is(.a-primary, .a-send) { background: ButtonFace; color: ButtonText; border-color: ButtonBorder; }
+  #amp-one.a-chat-shell.a-approachable-shell [data-part="navigation"] :is(.a-nav-chat.is-selected, .a-workspace-row.is-selected) {
+    background: Canvas; color: CanvasText; box-shadow: inset 3px 0 Highlight; outline: 1px solid Highlight; outline-offset: -2px;
+  }
+  #amp-one ::selection { background-color: Highlight; color: HighlightText; }
+}
