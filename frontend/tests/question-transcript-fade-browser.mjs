@@ -648,6 +648,9 @@ try{
  try{
   await htmlReview.getByRole('button',{name:/^Preview here:/}).click();
   await reviewBoundary.snapshot('click-resolved');
+  // Preview bodies load only near the transcript viewport. Revealing the
+  // compact header does not ensure its newly expanded body is visible.
+  await htmlReview.locator(`[data-full-artifact-preview="${reviewFixture.html.id}"]`).scrollIntoViewIfNeeded();
   reviewBoundary.waiting();
   await expect(iframe).toHaveAttribute('sandbox','allow-scripts');
   await expect(inner.getByRole('heading',{name:'HTML mockup v1',exact:true})).toBeVisible();
