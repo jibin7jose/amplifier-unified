@@ -213,7 +213,7 @@ def test_workflow_requires_parallel_lanes_before_write_permission():
     assert verify < publish
 
 
-def test_exhaustive_checks_follow_publication_at_the_exact_released_source():
+def test_broad_checks_are_nightly_or_explicit_and_keep_distinct_package_boundaries():
     workflows = ROOT / '.github/workflows'
     manual = yaml.load((workflows / 'browser-checks.yml').read_text(), Loader=yaml.BaseLoader)
     assert set(manual['on']) == {'workflow_dispatch', 'workflow_call'}
@@ -232,23 +232,42 @@ def test_exhaustive_checks_follow_publication_at_the_exact_released_source():
     steps = critical['jobs']['critical']['steps']
     assert steps[0]['with']['ref'] == '${{ inputs.revision || github.sha }}'
     commands = '\n'.join(step.get('run', '') for step in steps)
-    for check in ('pytest', 'test_bundle_selection.py', 'test_service.py', 'test_browser_detail.py',
-                  'npm test', 'recovery-group-browser.mjs', 'chat-menu-browser.mjs', 'public-first-chat-browser.mjs'):
+    # Unit subsets duplicate the full Python lane / qualified frontend graph.
+    assert 'pytest' not in commands and 'npm test' not in commands
+    for check in ('recovery-group-browser.mjs', 'chat-menu-browser.mjs', 'public-first-chat-browser.mjs',
+                  'inline-media-browser.mjs', 'uv pip install'):
         assert check in commands
+    installed_media = next(step for step in steps if step.get('name') == 'Check retained inline media in installed package')
+    assert installed_media['env']['INLINE_MEDIA_MODE'] == 'installed'
     release = yaml.load((workflows / 'release.yml').read_text(), Loader=yaml.BaseLoader)
     assert 'public-readiness' not in release['jobs']
     post = yaml.load((workflows / 'post-release.yml').read_text(), Loader=yaml.BaseLoader)
-    assert set(post['on']) == {'workflow_run', 'workflow_dispatch'}
+    assert set(post['on']) == {'workflow_run', 'workflow_dispatch', 'schedule'}
+    assert post['on']['schedule'] == [{'cron': '0 1 * * *', 'timezone': 'America/Los_Angeles'}]
+    # One broad schedule; unrelated maintenance schedules remain permitted.
+    broad_owners = {'public-readiness.yml', 'python-checks.yml', 'browser-checks.yml', 'integration-checks.yml'}
+    scheduled = []
+    for path in workflows.glob('*.yml'):
+        workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+        callees = {Path(job.get('uses', '')).name for job in workflow.get('jobs', {}).values()}
+        if 'schedule' in workflow.get('on', {}) and (path.name in broad_owners or callees & broad_owners):
+            scheduled.append(path.name)
+    assert scheduled == ['post-release.yml']
     assert post['on']['workflow_run'] == {'workflows': ['Publish application release'], 'types': ['completed']}
     assert post['on']['workflow_dispatch']['inputs'] == {'publication_run_id': {
         'description': 'Successful main publisher run whose existing release will be verified',
-        'required': 'true', 'type': 'string'}}
+        'required': 'true', 'type': 'string'}, 'broad': {
+        'description': 'Explicit broad investigation; ordinary releases run installed-package smoke only',
+        'required': 'false', 'type': 'boolean', 'default': 'false'}}
     assert post['permissions'] == {'contents': 'read'}
-    for lane in ('readiness', 'python', 'browser'):
+    for lane in ('readiness', 'python', 'browser', 'integrations'):
+        assert post['jobs'][lane]['if'] == (
+            "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.broad)")
         assert post['jobs'][lane]['needs'] == 'resolve'
         assert post['jobs'][lane]['with']['revision'] == '${{ needs.resolve.outputs.revision }}'
-        if lane == 'python':
-            assert post['jobs'][lane]['permissions'] == {'contents': 'read', 'actions': 'read'}
+        if lane in ('python', 'integrations'):
+            if lane == 'python':
+                assert post['jobs'][lane]['permissions'] == {'contents': 'read', 'actions': 'read'}
             assert post['jobs'][lane]['secrets'] == {
                 'LOOP_LIVE_CI_READ_KEY': '${{ secrets.LOOP_LIVE_CI_READ_KEY }}'}
         else:
@@ -299,16 +318,19 @@ def test_post_release_manual_guard_and_report_share_verified_identity():
                  "github.event.workflow_run.head_branch == 'main' && "
                  "github.event.workflow_run.head_repository.full_name == github.repository")
     manual = "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
-    assert ' '.join(resolve['if'].split()) == f'({manual}) || ({automatic})'
-    assert ' '.join(report['if'].split()) == f'always() && (({manual}) || ({automatic}))'
+    nightly = "github.event_name == 'schedule' && github.ref == 'refs/heads/main'"
+    assert ' '.join(resolve['if'].split()) == f'({nightly}) || ({manual}) || ({automatic})'
+    assert ' '.join(report['if'].split()) == f'always() && (({nightly}) || ({manual}) || ({automatic}))'
     assert resolve['outputs'] == {
         name: '${{ steps.release.outputs.' + name + ' }}'
         for name in ('publication_run_id', 'publication_run_attempt', 'revision', 'tag', 'version')}
     assert post['concurrency'] == {
-        'group': 'post-release-${{ github.event.workflow_run.id || github.run_id }}', 'cancel-in-progress': 'false'}
+        'group': "post-release-${{ github.event_name == 'schedule' && 'nightly' || github.event.workflow_run.id || github.run_id }}", 'cancel-in-progress': 'false'}
     assert report['concurrency'] == {
         'group': 'post-release-report-${{ needs.resolve.outputs.tag || needs.resolve.outputs.publication_run_id || github.run_id }}',
         'cancel-in-progress': 'false'}
+    assert report['steps'][-1]['env']['VERIFICATION_SCOPE'] == (
+        "${{ (github.event_name == 'schedule' || inputs.broad) && 'broad' || 'smoke' }}")
     assert report['steps'][-1]['env']['RELEASE_RUN_ID'] == '${{ needs.resolve.outputs.publication_run_id }}'
     assert report['steps'][-1]['env']['RELEASE_RESULTS'] == '${{ toJSON(needs) }}'
     assert report['steps'][-1]['run'] == 'python scripts/post_release_checks.py report'

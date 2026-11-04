@@ -136,7 +136,7 @@ CPU time. These checks do not establish a bound on unrelated host persistence wo
 
 ## Keep qualification proportional to risk
 
-Follow the [fast publication policy](release-qualification.md#local-first-fast-publication-policy-updated-october-14-2026).
+Follow the [fast publication policy](release-qualification.md#local-first-fast-publication-policy-updated-november-4-2026).
 Run the affected regression and changed user flow; use installed built assets when
 the claim depends on packaging or browser/server integration. Reuse exact applicable
 receipts rather than repeating unrelated suites. Broad post-release checks remain
