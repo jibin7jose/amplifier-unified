@@ -124,7 +124,7 @@ def process_references(home):
     return "\n".join(line for line in result.stdout.splitlines() if root in line)
 
 
-def configuration_references(manager):
+def configuration_paths(manager):
     # Settings paths, registry receipts and worker locks may explicitly select
     # an older local source. A display "usage unknown" must never delete it.
     from .session_files import amplifier_home
@@ -139,8 +139,12 @@ def configuration_references(manager):
             for name in ("settings.yaml", "settings.local.yaml")
         )
     paths.extend((shared / "projects").glob("*/sessions/*/settings.yaml"))
+    return set(paths)
+
+
+def configuration_references(manager):
     text = []
-    for path in set(paths):
+    for path in configuration_paths(manager):
         if path.exists():
             text.append(path.read_text())
     return "\n".join(text)
@@ -390,25 +394,81 @@ def retire(manager, folder, project, *, remove_project, measurement=None):
     return entry
 
 
-async def remove_retired(manager, entry, *, timeout):
+def retire_runtime(manager, project, measurement):
+    """Detach only an orphan's generated venv; leave source and receipts intact."""
+    from .deployment import write_private
+    from .runtime_environment_retention import KIND
+
+    root = Path(manager.directory) / 'retired'
+    if root.is_symlink():
+        raise ValueError('Unknown retirement storage')
+    root.mkdir(exist_ok=True)
+    entry = root / uuid.uuid4().hex
+    entry.mkdir(mode=0o700)
+    payload = entry / 'payload'
+    payload.mkdir()
+    record = {'schema': 1, 'phase': 'retiring', 'kind': KIND, 'project': project.name,
+              'stamp': measurement['stamp']}
+    write_private(entry / 'retirement.json', json.dumps(record))
+    (project / '.venv').rename(payload / 'runtime')
+    return entry
+
+
+async def finish_runtime_retirement(entry, *, timeout):
+    """Full inventory runs after detach, outside runtime admission."""
+    from .deployment import write_private
+    record = json.loads((entry / 'retirement.json').read_text())
+    measured = await _probe('measure', {'paths': [str(entry / 'payload/runtime')]}, timeout=timeout)
+    if measured['stamp'] != record['stamp']:
+        raise ValueError('Runtime files changed during retirement; detached evidence kept')
+    record['phase'] = 'retired'
+    write_private(entry / 'retirement.json', json.dumps(record))
+
+
+async def remove_retired(manager, entry, *, timeout, resolved=None):
     """Reclaim only a completed, owned retirement; resume interrupted removal."""
     root = Path(manager.directory) / 'retired'
     if (root.is_symlink() or entry.parent != root or entry.is_symlink()
             or not re.fullmatch('[a-f0-9]{32}', entry.name)):
         raise ValueError('Unknown retirement storage')
     record = json.loads((entry / 'retirement.json').read_text())
-    if (record.get('schema') != 1 or record.get('phase') != 'retired'
-            or not re.fullmatch('[a-f0-9]{32}', record.get('generation', ''))
-            or (record.get('project') is not None and not re.fullmatch(
-                '(?:q-[a-f0-9]{32}(?:-[a-f0-9]{8})?|[a-f0-9]{16})', record['project']))):
+    from .runtime_environment_retention import KIND, PROJECT
+    orphan = record.get('kind') == KIND
+    if (record.get('schema') != 1 or record.get('phase') not in ({'retiring', 'retired'} if orphan else {'retired'})
+            or (orphan and (not PROJECT.fullmatch(record.get('project', '')) or record.get('generation') is not None))
+            or (not orphan and (not re.fullmatch('[a-f0-9]{32}', record.get('generation', ''))
+                or (record.get('project') is not None and not re.fullmatch(
+                    '(?:q-[a-f0-9]{32}(?:-[a-f0-9]{8})?|[a-f0-9]{16})', record['project']))))):
         raise ValueError('Incomplete retirement retained')
     payload = entry / 'payload'
     if payload.is_symlink():
         raise ValueError('Unknown retirement storage')
+    disposition = record.get('disposition', 'removed')
     if payload.exists():
-        if any(row.name not in {'release', 'runtime'} or row.is_symlink() for row in payload.iterdir()):
+        if any(row.name not in ({'runtime'} if orphan else {'release', 'runtime'}) or row.is_symlink() for row in payload.iterdir()):
             raise ValueError('Unknown retirement storage')
+        if orphan and record['phase'] == 'retiring':
+            if not re.fullmatch('[a-f0-9]{64}', record.get('stamp', '')):
+                raise ValueError('Unknown retirement identity retained')
+            if (payload / 'runtime').exists():
+                # A cancelled inventory can resume only this detached payload.
+                # It never reads or renames a recreated live .venv.
+                await finish_runtime_retirement(entry, timeout=timeout)
+            else:
+                # The receipt was saved before rename. Settle this empty
+                # attempt; a future policy pass must independently inspect any
+                # still-live environment rather than replaying the rename.
+                disposition = 'not-detached'
+                # Persist settlement before removing the empty payload. A
+                # cancellation or failed receipt callback can safely resume it.
+                from .deployment import write_private
+                record.update(phase='retired', disposition=disposition)
+                write_private(entry / 'retirement.json', json.dumps(record))
         await _probe('remove', {'path': str(payload)}, timeout=timeout)
+    elif orphan and record['phase'] == 'retiring':
+        raise ValueError('Incomplete retirement storage retained')
+    if orphan and resolved:
+        resolved({**record, 'retirementId': entry.name, 'disposition': disposition})
     # Keep the receipt outside recursive removal so a cancelled subprocess is
     # safely resumable on a later pass or restart.
     (entry / 'retirement.json').unlink()
@@ -445,7 +505,7 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
     retired = Path(manager.directory) / 'retired'
     if retired.is_symlink():
         return result('Unknown retirement storage was kept.')
-    entries = sorted(retired.iterdir()) if retired.exists() and not inspect_only and selected is None else []
+    entries = sorted(retired.iterdir()) if retired.exists() and not inspect_only else []
     cursor = getattr(manager, '_retired_cursor', prior.get('retiredCursor', ''))
     entries = [p for p in entries if p.name > cursor] + [p for p in entries if p.name <= cursor]
     for entry in entries:
@@ -459,8 +519,18 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
             break
         checked += 1
         manager._retired_cursor = entry.name
+        if selected is not None:
+            # Preserve ordinary generation selection semantics. Orphan venv
+            # recovery only settles an already-authorized exact retirement;
+            # it does not sweep unselected generation payloads.
+            try:
+                if json.loads((entry / 'retirement.json').read_text()).get('kind') != 'runtime-environment':
+                    continue
+            except (OSError, ValueError, TypeError):
+                continue
         try:
-            await remove_retired(manager, entry, timeout=remaining(INSPECTION_SECONDS))
+            await remove_retired(manager, entry, timeout=remaining(INSPECTION_SECONDS),
+                **({'resolved': lambda row: evidence('reconciled', row)} if evidence else {}))
             removed += 1
         except (OSError, ValueError, TypeError, TimeoutError):
             retained += 1
@@ -635,6 +705,13 @@ if __name__ == '__main__':
         manager = SimpleNamespace(home=values['home'], service=SimpleNamespace(state={
             'sessions': [{'workspace': value} for value in values['workspaces']]}))
         print(json.dumps(process_references(manager.home) + configuration_references(manager)))
+    elif sys.argv[1] == 'runtime-references':
+        from .runtime_environment_retention import reference_snapshot
+        print(json.dumps(reference_snapshot(values['home'], values['workspaces'])))
+    elif sys.argv[1] in {'runtime-payload', 'runtime-identity'}:
+        from .runtime_environment_retention import inspect_payload, payload_identity
+        operation = inspect_payload if sys.argv[1] == 'runtime-payload' else payload_identity
+        print(json.dumps(operation(values['project'])))
     elif sys.argv[1] == 'generation':
         from .runtime_qualification import verify_recorded
         verify_recorded(Path(values['project']), Path(values['folder']))
