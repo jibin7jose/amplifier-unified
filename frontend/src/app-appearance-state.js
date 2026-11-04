@@ -1,7 +1,8 @@
 // Presentation only. These classes never authorize, disable, focus or start work.
 // Unknown/disconnected activity is not an assertion that the host is idle.
-export function appAppearanceState(state,connected){
- const known=connected===true&&typeof state?.appActivity?.active==='boolean';
+// An open transport alone does not qualify the retained snapshot as current.
+export function appAppearanceState(state,connected,baselineReady){
+ const known=connected===true&&baselineReady===true&&typeof state?.appActivity?.active==='boolean';
  const activity=known?(state.appActivity.active?'active':'idle'):'unknown';
  const attention=Number.isInteger(state?.attention?.unread)?state.attention.unread>0:false;
  return {

@@ -12,7 +12,7 @@ const expect=assertions.configure({timeout:10000}),root=fileURLToPath(new URL('.
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||root+'output/night-drive';
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',[root+'tests/fixtures/empty_host_ui_server.py','--appearance-states'],{stdio:['ignore','pipe','inherit']});
 const stop=ownFixture(fixture,{label:'Night Drive fixture'});
-const report={status:'running',phase:'fixture',measurements:[],screenshots:[],limits:{successScreenshots:8,failureScreenshots:1},platform:'Linux Chromium; native titlebar geometry is simulated, not macOS OS acceptance'};
+const report={status:'running',phase:'fixture',measurements:[],reconnects:[],screenshots:[],limits:{successScreenshots:8,failureScreenshots:1},platform:'Linux Chromium; native titlebar geometry is simulated, not macOS OS acceptance'};
 let browser,page,failure;
 const hash=value=>createHash('sha256').update(value).digest('hex');
 try{
@@ -21,6 +21,18 @@ try{
  const url=await new Promise((resolve,reject)=>{let text='';const timer=setTimeout(()=>reject(Error('Fixture timeout')),20000);fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exited '+code))});fixture.stdout.on('data',chunk=>{text+=chunk;for(const line of text.split('\n'))try{const value=JSON.parse(line);if(value.url){clearTimeout(timer);resolve(value.url)}}catch{}})});
  browser=await chromium.launch({headless:true});
  const context=await browser.newContext({viewport:{width:1440,height:1000},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'},reducedMotion:'no-preference',colorScheme:'light'});
+ // Forward actual authenticated WebSocket frames, holding only delivery for
+ // the reconnect proof. Never fabricate a baseline or mutate browser state.
+ const sockets=[];let holdFrames=false;
+ await context.routeWebSocket('**/api/events/ws?*',socket=>{
+  const server=socket.connectToServer(),entry={socket,server,frames:[],closed:false};sockets.push(entry);
+  server.onMessage(message=>{
+   if(holdFrames){
+    assert.ok(entry.frames.length<128,'Bounded held state frames');
+    entry.frames.push(message);
+   }else socket.send(message);
+  });
+ });
  await context.addInitScript(()=>{
   const overlay=new EventTarget();let rect={x:80,y:0,width:1200,height:38};overlay.visible=false;overlay.getTitlebarAreaRect=()=>rect;
   Object.defineProperty(navigator,'windowControlsOverlay',{configurable:true,value:overlay});
@@ -65,6 +77,38 @@ try{
  assert.equal((await state()).selectedSessionId,selected,'Other chat activity must not navigate');
  let active=await measure('off-screen work');assert.equal(active.animation,'night-drive-scanner');assert.equal(active.duration,'8s');
  const position=active.position;await expect.poll(async()=>(await scanner()).position).not.toBe(position);
+ report.phase='reconnect open before authoritative baseline';
+ for(const prior of ['working','idle']){
+  await status(other,prior);
+  const previousActivity=prior==='working'?'active':'idle',next=prior==='working'?'idle':'working';
+  await expect(app).toHaveAttribute('data-app-activity',previousActivity);
+  const previousSocket=sockets.at(-1);assert.ok(previousSocket,'Real state WebSocket is used');
+  holdFrames=true;
+  try{
+   // Server state changes while the old browser snapshot is retained. The
+   // replacement connection must not claim that old active OR idle is current.
+   await status(other,next);
+   previousSocket.closed=true;previousSocket.socket.close({code:1001});previousSocket.server.close({code:1001});
+   await expect(app).toHaveAttribute('data-app-connection','disconnected');
+   const count=sockets.length;
+   await page.evaluate(()=>window.dispatchEvent(new Event('online')));
+   await expect.poll(()=>sockets.length).toBeGreaterThan(count);
+   const current=sockets.at(-1);
+   await expect(app).toHaveAttribute('data-app-connection','connected');
+   await expect.poll(()=>current.frames.some(message=>JSON.parse(String(message)).event==='state')).toBe(true);
+   await expect(app).toHaveAttribute('data-app-activity','unknown');
+   assert.equal((await state()).appActivity.active,prior==='working','Old snapshot remains retained until baseline delivery');
+   const unready=await measure('reconnect open after '+previousActivity);
+   assert.equal(unready.animation,'none');assert.ok(!unready.image.includes('rgb(189, 119, 112)'),'Unknown has no active hotspot');
+   const held=current.frames.splice(0);holdFrames=false;
+   for(const message of held)current.socket.send(message);
+   const expected=next==='working'?'active':'idle';
+   await expect(app).toHaveAttribute('data-app-activity',expected);
+   assert.equal((await state()).appActivity.active,next==='working');
+   report.reconnects.push({prior:previousActivity,transportOpen:true,baselineHeld:true,
+    during:'unknown',animation:unready.animation,heldFrames:held.length,after:expected});
+  }finally{holdFrames=false}
+ }
  // Local attention remains a native notice; decoration never acknowledges it.
  const created=await action('question.create',{sessionId:other,prompt:'Synthetic optional design check',required:false,dependency:'Synthetic appearance attention check'});
  await expect(app).toHaveClass(/a-app-attention/);

@@ -126,7 +126,7 @@ classes/attributes never start, authorize, disable or acknowledge work:
 | --- | --- |
 | `.a-app-active` / `data-app-activity="active"` | At least one admitted, non-internal chat/delegate is executing, preparing or loading history, or a canonical long operation is pending. This is app-wide, independent of selected chat, workspace, navigation pages and mounted transcript. |
 | `.a-app-idle` / `data-app-activity="idle"` | The connected host currently reports none of that activity. A saved unfinished/blocked task alone is not active execution. |
-| `.a-app-activity-unknown` / `data-app-activity="unknown"` | Activity is unavailable or the live state stream is disconnected. Do not turn an old positive snapshot into current motion, or call this verified idle. |
+| `.a-app-activity-unknown` / `data-app-activity="unknown"` | Activity is unavailable, the live state stream is disconnected, or this connection has not yet supplied its authoritative baseline. An open socket alone does not make retained activity current. Do not turn an old positive snapshot into current motion, or call an old negative snapshot verified idle. |
 | `.a-app-attention` / `data-app-attention="unread"` | The canonical global attention projection has unreviewed items (including notices/completions). This does **not** mean every item requires approval. Reviewing a notice is not resolving a decision. `"none"` means no unread items in that projection. |
 | `.a-app-disconnected` / `data-app-connection="disconnected"` | The browser's existing host state stream is disconnected; it says nothing about internet reachability or provider credentials. |
 

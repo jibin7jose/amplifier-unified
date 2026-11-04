@@ -38,6 +38,36 @@ def test_canonical_operation_phase_not_saved_task_or_read_traffic(phase, active)
     assert snapshot(state, SessionIndex(state))['active'] is active
 
 
+@pytest.mark.parametrize('action', [
+    'providers.list', 'bundles.list', 'providers.credentials', 'providers.schema',
+    'providers.models', 'providers.imageModels', 'providers.decisionModels',
+    'routing.list', 'routing.show', 'configuration.defaults', 'bundle.preview',
+])
+@pytest.mark.parametrize('phase', ['queued', 'working'])
+def test_routine_metadata_progress_stays_quiet_without_hiding_real_work(action, phase):
+    state = {'sessions': [], 'actionStatus': {action: {'phase': phase}}}
+    index = SessionIndex(state)
+    assert snapshot(state, index)['operations'] is False
+    assert snapshot(state, index)['active'] is False
+    state['actionStatus']['providers.save'] = {'phase': 'working'}
+    assert snapshot(state, index)['operations'] is True
+    assert snapshot(state, index)['active'] is True
+    state['actionStatus']['providers.save']['phase'] = 'ready'
+    assert snapshot(state, index)['active'] is False
+
+
+@pytest.mark.parametrize('action,target,active', [
+    ('runtime.control', {'operation': 'configuration.catalog'}, False),
+    ('runtime.control', {'operation': 'configuration.apply'}, True),
+    ('providers.test', {}, True),
+    ('providers.testMessage', {}, True),
+    ('bundle.switch', {}, True),
+])
+def test_read_exclusion_is_not_a_provider_or_runtime_prefix_waiver(action, target, active):
+    state = {'sessions': [], 'actionStatus': {action: {'phase': 'working', 'target': target}}}
+    assert snapshot(state, SessionIndex(state))['active'] is active
+
+
 def test_internal_bookkeeping_does_not_light_the_scanner():
     state = {'sessions': [{'id': 'internal', 'sessionKind': 'internal', 'status': 'working'}]}
     assert snapshot(state, SessionIndex(state))['active'] is False
