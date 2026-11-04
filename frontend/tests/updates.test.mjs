@@ -559,3 +559,26 @@ test('authored constraint names the source check without claiming local edits',(
  const receipt=JSON.parse(diagnosticReceipt(diagnostics));
  assert.equal(receipt.lastFailure.reason,'runtime-source-constraint');
 });
+
+
+test('unresolved component attention opens details consistently without downgrading the installed app',()=>{
+ const initial=state({phase:'checked',sequence:{stage:'complete'}});
+ initial.attention={items:[{id:'updates:failure:old',page:'updates',actionRequired:true,read:true,
+  title:'Component update needs attention',detail:'A saved component failure is unresolved.'}]};
+ const html=renderToStaticMarkup(React.createElement(UpdateSettings,{state:initial,act:()=>{}}));
+ assert.match(html,/data-part="ecosystem-update-details" open=""/);
+ assert.match(html,/Advanced details · review issue/);
+ assert.match(html,/Component update needs attention/);
+ assert.match(html,/Latest release installed/);
+ assert.doesNotMatch(html,/You’re up to date|Ready for new work/);
+});
+test('batch presentation bounds full recovery scopes without altering the canonical receipt',()=>{
+ const components=Array.from({length:8},(_,i)=>`component-${i+1}`);
+ const batch={attemptId:'batch',kind:'ecosystem',tier:'other',components,componentCount:8,startedAt:1};
+ const updates={phase:'validating',sequence:{stage:'other'},diagnostics:{attemptId:'batch',batch,
+  completedBatches:[{...batch,attemptId:'complete',completedAt:2}]}};
+ const before=JSON.stringify(updates),html=render(updates);
+ assert.match(html,/component-1, component-2, component-3, component-4, component-5 and 3 more/);
+ assert.doesNotMatch(html,/component-6|component-7|component-8/);
+ assert.equal(JSON.stringify(updates),before);
+});

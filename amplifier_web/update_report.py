@@ -81,6 +81,11 @@ def event(row):
         result['timedOut'] = row['timedOut']
     if isinstance(row.get('probe'), dict):
         result['probe'] = probe_record(PROBE_PREFIX + json.dumps(row['probe']))
+    if row.get('phase') == 'ecosystem-reconcile' and isinstance(row.get('recoveries'), list):
+        result['recoveries'] = [{key: event({name: value for name, value in original.items() if name != 'recoveries'})
+                                for key, original in recovery.items()
+                                if key in {'firstFailure', 'latestFailure'} and isinstance(original, dict)}
+                               for recovery in row['recoveries'][:32] if isinstance(recovery, dict)]
     return result
 
 

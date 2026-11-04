@@ -1,6 +1,6 @@
 [project]
 name = "amplifier-unified"
-version = "0.52.1"
+version = "0.52.2"
 description = "A local voice-first Amplifier workspace with a shared user and agent interface"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -67,11 +67,6 @@ exclude = ["/.ci/**"]
 [tool.uv]
 # Core publishes native wheels; never compile it while installing this app.
 no-build-package = ["amplifier-core"]
-# Keep the existing test context implementation when context-managed declares
-# its branch-policy dependency. This does not override mounted runtime sources.
-override-dependencies = [
-    "amplifier-module-context-simple @ git+https://github.com/microsoft/amplifier-module-context-simple@db641363013ff906b656f49498a87ab01f5c506f",
-]
 
 [[tool.uv.index]]
 url = "https://pypi.org/simple"
@@ -82,7 +77,9 @@ dev = [
     "pytest>=8", "pytest-asyncio>=0.25", "pytest-aiohttp>=1.1", "hatchling>=1.27",
     # Offline native-input fixtures use the real loop/context, not a fake mount.
     "amplifier-module-loop-live @ git+https://github.com/microsoft/amplifier-module-loop-live@670f405f711658c3c38e81dbd50a35d3d8c2ac3c",
-    "amplifier-module-context-simple @ git+https://github.com/microsoft/amplifier-module-context-simple@db641363013ff906b656f49498a87ab01f5c506f",
+    # Match context-managed's authored source; uv.lock records the exact test
+    # revision without imposing a resolver-global runtime source override.
+    "amplifier-module-context-simple @ git+https://github.com/microsoft/amplifier-module-context-simple@main",
     # Qualified upstream recovery API; provider stays on the existing locked
     # source shared with the optional decisions extra.
     "amplifier-module-context-managed @ git+https://github.com/microsoft/amplifier-bundle-context-managed@12166f8effb5e26737bb5f9f7885cbb9bd4cdf43#subdirectory=modules/context-managed",

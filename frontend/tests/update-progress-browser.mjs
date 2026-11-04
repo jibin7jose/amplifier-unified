@@ -108,9 +108,9 @@ try{
  const confirmedAppText=await overview.locator('[data-part="confirmed-application-result"]').innerText();
  assert.equal(confirmedAppResult.phase,'restart-ack');
  await stage('component-source-changed');
- // Persistent attention owns the heading; confirmed app success is independent.
- await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');
- await expect(overview.locator('#update-action-status')).toHaveText('runtime-source-changed. Current components remain active. Open Updates to review details and recovery options.');
+ // The exact current batch owns the heading; older unresolved episodes stay visible.
+ await expect(overview.getByRole('heading',{level:4})).toHaveText('Some components were not updated');
+ await expect(overview.locator('#update-action-status')).toContainText('Check for updates again before retrying');
  await expect(overview.locator('[data-part="confirmed-application-result"]')).toHaveText(confirmedAppText);
  const changedFailure=await page.evaluate(()=>{
   const {updates,attention}=window.amplifier.getState();
@@ -129,8 +129,8 @@ try{
  await page.reload();await page.waitForSelector('#amp-one');
  if(!await overview.isVisible())await openSettingsPage(page,'updates');
  await expect(overview.locator('[data-part="confirmed-application-result"]')).toHaveText(confirmedAppText);
- await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');
- await expect(overview.locator('#update-action-status')).toContainText('runtime-source-changed');
+ await expect(overview.getByRole('heading',{level:4})).toHaveText('Some components were not updated');
+ await expect(overview.locator('#update-action-status')).toContainText('Affected batch: amplifier-foundation');
  assert.deepEqual(await page.evaluate(()=>window.amplifier.getState().updates.applicationResult),confirmedAppResult);
  assert.deepEqual(await page.evaluate(()=>window.amplifier.getState().updates.diagnostics.lastFailure),changedFailure.lastFailure);
  await page.setViewportSize({width:320,height:844});
@@ -150,9 +150,9 @@ try{
  });
  const assertConstraint=async()=>{
   await expect.poll(async()=>(await constraintState()).lastFailure?.reason).toBe('runtime-source-constraint');
-  await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');
+  await expect(overview.getByRole('heading',{level:4})).toHaveText('Some components were not updated');
   await expect(overview.locator('[data-part="confirmed-application-result"]')).toHaveText(confirmedAppText);
-  await expect(overview.locator('#update-action-status')).toContainText('runtime-source-constraint. Current components remain active.');
+  await expect(overview.locator('#update-action-status')).toContainText('Review the component issue below before trying again');
   await expect(overview).not.toContainText('You’re up to date');
   await expect(check).toBeEnabled();
   await expect(overview.locator('.a-progress-spinner')).toHaveCount(0);
@@ -213,7 +213,7 @@ try{
  result.constraintFailure.noUpdateEffects=true;
  await stage('app-result-stale');
  await expect(overview).not.toContainText('Application updated successfully');
- await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');
+ await expect(overview.getByRole('heading',{level:4})).toHaveText('Updates need attention');
  await stage('application-confirmed');await stage('unconfirmed-restart');
  await expect(overview).toContainText('Waiting for restart confirmation');
  await expect(overview).not.toContainText('Application updated successfully');
@@ -304,8 +304,35 @@ try{
  await expect(automatic).toBeChecked();await expect(frequency).toHaveValue('24');
  // Explicit checks carry their own outcome; a successful lookup cannot clear
  // a retained component failure without matching recovery.
- await check.click();await expect(overview.getByRole('heading',{level:4})).toHaveText('Update needs attention');await expect(updates).toContainText('Synthetic update lookup failed. Check again.');assert.equal((await observations()).calls.check,1);
+ await check.click();await expect(overview.getByRole('heading',{level:4})).toHaveText('Updates need attention');await expect(updates).toContainText('Synthetic update lookup failed. Check again.');assert.equal((await observations()).calls.check,1);
  await check.click();await expect(overview.getByRole('heading',{level:4})).toHaveText('Component update needs attention');await expect(overview.locator('#update-action-status')).toContainText('runtime-source-constraint');await expect(overview).not.toContainText('You’re up to date');await expect(updates.getByText('Synthetic update lookup failed. Check again.',{exact:true})).toHaveCount(0);assert.deepEqual((await observations()).calls,{check:2,install:0,rollback:0});
+ // One status projection governs headline, details and retry state, including
+ // reload. A check alone left attention above; only the captured covered batch
+ // is settled by this fixture's synthetic activation receipt.
+ const priorIssues=await page.evaluate(()=>window.amplifier.getState().attention.items.filter(item=>item.page==='updates'&&item.actionRequired).map(item=>item.id));
+ assert.ok(priorIssues.length);
+ await expect(advanced).toHaveAttribute('open','');
+ await stage('covered-retry');
+ await expect(overview).toContainText('Updating other components');
+ await expect(check).toBeDisabled();
+ assert.deepEqual(await page.evaluate(()=>window.amplifier.getState().attention.items.filter(item=>item.page==='updates'&&item.actionRequired).map(item=>item.id)),priorIssues);
+ await page.reload();await openSettingsPage(page,'updates');
+ await expect(overview).toContainText('Updating other components');
+ await expect(check).toBeDisabled();
+ if(!await advanced.evaluate(element=>element.open))await advanced.locator('summary').first().click();
+ await expect(updates.locator('[data-part="update-batch"]')).toContainText('and 3 more');
+ await expect(updates.locator('[data-part="update-batch"]')).not.toContainText('fixture-component-5');
+ assert.equal(await page.evaluate(()=>window.amplifier.getState().updates.diagnostics.batch.components.length),8);
+ await stage('covered-activation');
+ await expect(overview.getByRole('heading',{level:4})).toHaveText('You’re up to date');
+ await expect(check).toBeEnabled();
+ await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().attention.items.filter(item=>item.page==='updates'&&item.actionRequired).length)).toBe(0);
+ await page.reload();await openSettingsPage(page,'updates');
+ await expect(overview.getByRole('heading',{level:4})).toHaveText('You’re up to date');
+ await expect(advanced.locator('summary').first()).toHaveText('Advanced details');
+ assert.ok(await page.evaluate(()=>window.amplifier.getState().updates.diagnostics.events.some(event=>event.status==='failed')));
+ assert.deepEqual((await observations()).calls,{check:2,install:0,rollback:0});
+ result.statusProjection={retryKeepsAttention:true,currentOperationOwnsHeading:true,fullScopeRetained:true,boundedBatchPreview:true,coveredActivationSettles:true,reloadConsistent:true,failedHistoryPreserved:true};
  assert.deepEqual(errors,[]);result.status='passed';result.checks={progress:true,componentIdentity:true,completedMilestones:true,partialSuccess:true,partialSuccessReload:true,staleAppResultExcluded:true,unconfirmedRestartExcluded:true,savedPreferences:true,unknownIntervalPreserved:true,explicitCheckFailureRetry:true,noInstallEffects:true,noPrematureActivation:true,waitingDistinct:true,activationBusy:true,duplicateInstallDisabled:true,reducedMotion:true,retryAfterFailure:true,completionRestoresControls:true,failureDistinct:true,reload:true,mobileOverflow:false};result.browserErrors=errors;result.browserVersion=browser.version();
 }catch(error){result.status='failed';result.error=String(error);if(page)await page.screenshot({path:output+'-failed.png'});throw error}
 finally{try{await browser?.close()}finally{fixture.kill('SIGTERM');await new Promise(resolve=>{if(fixture.exitCode!==null)return resolve();const timer=setTimeout(()=>{fixture.kill('SIGKILL');resolve()},10000);fixture.once('exit',()=>{clearTimeout(timer);resolve()})});result.fixtureLog=log;await writeFile(output+'.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result));}}
