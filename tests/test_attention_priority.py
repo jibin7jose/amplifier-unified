@@ -284,6 +284,8 @@ def test_original_public_cause_survives_a_metadata_only_collector(tmp_path):
 def test_unknown_or_truncated_scope_cannot_claim_recovery(tmp_path, components):
     state, diagnostics = fixture(tmp_path)
     diagnostics.begin('ecosystem', components=components)
+    # Legacy receipts retained only the first five component names.
+    diagnostics.state['batch']['components'] = components[:5]
     diagnostics.record('ecosystem-validation', 'failed', errorType='ValueError')
     diagnostics.begin('ecosystem', components=components)
     diagnostics.record('ecosystem-activation', 'succeeded')

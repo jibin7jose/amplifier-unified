@@ -215,7 +215,17 @@ do not block chat or the update page while settings are inspected.
 
 ## Update diagnostics
 
-Each application update now has an attempt ID and a separate receipt for candidate installation, candidate probe, installed-tool discovery, runtime shutdown, tool replacement, installed-package probe/version comparison, and restart. Ecosystem copying, fetching, checkout, compatibility probes and activation use the same receipt format. Failed phases remain visible in `updates.diagnostics.lastFailure`; successful staging or restart clears the current failure while retaining recent history. The user and agent read the same state.
+Each application update has an attempt ID and separate receipts for candidate installation, candidate probe, installed-tool discovery, runtime shutdown, tool replacement, installed-package probe/version comparison, and restart. Ecosystem copying, fetching, checkout, compatibility probes and activation use the same receipt format. Failure history remains available independently of present installation health. Staging, checking, or dismissing a notice does not establish recovery. The user and agent read the same state.
+
+For component source-policy failures, recovery follows the qualified active
+generation, including after reload. Its exact activation receipt, validation and
+installed dependency graph must cover the older failure's complete component
+scope and update tier. A dependency package need not share its parent bundle's
+name. The existing diagnostic journal records which original occurrences were
+resolved; no install or conversation work is repeated to clear the warning.
+Unknown, truncated legacy scope, unrelated activations and newer failures remain
+unresolved. Keep full component scope in canonical receipts; truncate only the
+displayed preview, never the data used to decide recovery.
 
 The main update card identifies the current component batch and shows successful
 configuration checks out of the total admitted for that attempt. Preparation and

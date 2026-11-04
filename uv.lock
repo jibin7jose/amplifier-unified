@@ -1,13 +1,10 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.14'",
     "python_full_version < '3.14'",
 ]
-
-[manifest]
-overrides = [{ name = "amplifier-module-context-simple", git = "https://github.com/microsoft/amplifier-module-context-simple?rev=db641363013ff906b656f49498a87ab01f5c506f" }]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -242,7 +239,7 @@ dependencies = [
 [[package]]
 name = "amplifier-module-context-simple"
 version = "1.0.0"
-source = { git = "https://github.com/microsoft/amplifier-module-context-simple?rev=db641363013ff906b656f49498a87ab01f5c506f#db641363013ff906b656f49498a87ab01f5c506f" }
+source = { git = "https://github.com/microsoft/amplifier-module-context-simple?rev=main#550af35c5b8e7648c73a4c5be7c850affecc96ee" }
 
 [[package]]
 name = "amplifier-module-hook-context-intelligence"
@@ -347,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "amplifier-unified"
-version = "0.52.1"
+version = "0.52.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -459,7 +456,7 @@ artifacts = [
 ]
 dev = [
     { name = "amplifier-module-context-managed", git = "https://github.com/microsoft/amplifier-bundle-context-managed?subdirectory=modules%2Fcontext-managed&rev=12166f8effb5e26737bb5f9f7885cbb9bd4cdf43" },
-    { name = "amplifier-module-context-simple", git = "https://github.com/microsoft/amplifier-module-context-simple?rev=db641363013ff906b656f49498a87ab01f5c506f" },
+    { name = "amplifier-module-context-simple", git = "https://github.com/microsoft/amplifier-module-context-simple?rev=main" },
     { name = "amplifier-module-hook-context-intelligence", git = "https://github.com/microsoft/amplifier-bundle-context-intelligence?subdirectory=modules%2Fhook-context-intelligence&rev=a80ce69d0e96e9a343501f238dcd867350dd9aa2" },
     { name = "amplifier-module-loop-live", git = "https://github.com/microsoft/amplifier-module-loop-live?rev=670f405f711658c3c38e81dbd50a35d3d8c2ac3c" },
     { name = "amplifier-module-provider-openai", git = "https://github.com/microsoft/amplifier-module-provider-openai?rev=main" },

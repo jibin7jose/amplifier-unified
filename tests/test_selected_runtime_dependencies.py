@@ -117,6 +117,9 @@ async def test_real_selected_dependency_only_recovers_after_exact_branch_proof(t
     base_manifest = tmp_path / 'app-runtime.toml'
     base_manifest.write_bytes(baseline)
     monkeypatch.setattr(runtime, 'manifest_path', lambda: base_manifest)
+    # This resolver fixture owns its one-package graph. Optional support packs
+    # installed in the test runner must not enter the later freeze manifest.
+    monkeypatch.setattr(runtime, 'declared_manifest', lambda **_: baseline)
     content = runtime.augmented_manifest(baseline, [{'kind':'runtime dependency', 'package':NAME,
                                                    'url':url,'ref':old}])
     project = runtime.prepare_project(home, generation, content=content)

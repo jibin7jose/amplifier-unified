@@ -1,0 +1,121 @@
+{
+  "description": "Structurally equivalent sanitized captured recovery receipts. Private paths, source URLs, unrelated batches/packages and installed origin metadata omitted. Identifiers consistently replaced; timestamps shifted by one fixed offset, retaining equality/order relationships.",
+  "active": {
+    "current": "5b23609a7c88ef3d795e30fa5a5bdfbf",
+    "previous": "727c1077c94c2f1ff9199469130f23b5",
+    "at": 793767610.4587512
+  },
+  "diagnostics": {
+    "kind": "ecosystem",
+    "revision": "5b23609a7c88ef3d795e30fa5a5bdfbf",
+    "attemptId": "bd71889013372029488189d2237316a9",
+    "batch": {
+      "attemptId": "bd71889013372029488189d2237316a9",
+      "kind": "ecosystem",
+      "tier": "other",
+      "startedAt": 793767559.6546733,
+      "components": [
+        "amplifier-bundle-context-managed",
+        "amplifier-bundle-dot-runner"
+      ],
+      "componentCount": 2,
+      "recoveringFailures": {}
+    },
+    "lastFailure": null,
+    "activeFailures": {
+      "ecosystem:8a6e7635a7e18d62a5fc90ffbfa12063b7bcb95552f1cbe3b7eee8af8181567c": {
+        "id": "77b59767a722b4bc22b018756f92b84d",
+        "cause": "8a6e7635a7e18d62a5fc90ffbfa12063b7bcb95552f1cbe3b7eee8af8181567c",
+        "kind": "ecosystem",
+        "tier": "other",
+        "components": [
+          "amplifier-bundle-dot-runner"
+        ],
+        "componentCount": 1,
+        "first": {
+          "id": "77b59767a722b4bc22b018756f92b84d",
+          "at": 793765126.9548142,
+          "attemptId": "2d33c8126a168ebbdb284335eecb5e63",
+          "kind": "ecosystem",
+          "phase": "ecosystem-source-preflight",
+          "status": "failed",
+          "revision": "b9985de112cb1f481f5f7863748ee4a5",
+          "reason": "runtime-source-constraint",
+          "package": "amplifier-module-context-simple",
+          "durationMs": 1,
+          "errorType": "ProtectedRuntimeSource",
+          "failureLocation": "amplifier_web.runtime_source_alignment:verify_checked_selection:29",
+          "commandId": "27e7c18640c2615e640bca87a2a23297"
+        },
+        "latest": {
+          "id": "77b59767a722b4bc22b018756f92b84d",
+          "at": 793765126.9548142,
+          "attemptId": "2d33c8126a168ebbdb284335eecb5e63",
+          "kind": "ecosystem",
+          "phase": "ecosystem-source-preflight",
+          "status": "failed",
+          "revision": "b9985de112cb1f481f5f7863748ee4a5",
+          "reason": "runtime-source-constraint",
+          "package": "amplifier-module-context-simple",
+          "durationMs": 1,
+          "errorType": "ProtectedRuntimeSource",
+          "failureLocation": "amplifier_web.runtime_source_alignment:verify_checked_selection:29",
+          "commandId": "27e7c18640c2615e640bca87a2a23297"
+        },
+        "occurrences": 1
+      }
+    },
+    "completedBatches": [
+      {
+        "attemptId": "bd71889013372029488189d2237316a9",
+        "kind": "ecosystem",
+        "tier": "other",
+        "startedAt": 793767559.6546733,
+        "components": [
+          "amplifier-bundle-context-managed",
+          "amplifier-bundle-dot-runner"
+        ],
+        "componentCount": 2,
+        "recoveringFailures": {},
+        "completedAt": 793767610.4942734,
+        "phase": "ecosystem-activation"
+      }
+    ],
+    "events": [
+      {
+        "id": "73113fb4f9a84ae44c3eba7ef00a032d",
+        "at": 793767610.4942734,
+        "attemptId": "bd71889013372029488189d2237316a9",
+        "revision": "5b23609a7c88ef3d795e30fa5a5bdfbf",
+        "phase": "ecosystem-activation",
+        "status": "succeeded",
+        "kind": "ecosystem"
+      }
+    ]
+  },
+  "receipts": {
+    "plan.json": {
+      "schema": 1,
+      "mode": "worker",
+      "workerProtocol": 1
+    },
+    "validated.json": {
+      "sources": 2,
+      "generationSchema": 1,
+      "workerProtocol": 1,
+      "createdAt": 793767610.3599775,
+      "hostVersion": "0.52.1",
+      "updateTier": "other"
+    },
+    "runtime-installed.json": [
+      {
+        "name": "amplifier-module-context-managed",
+        "version": "0.1.0"
+      },
+      {
+        "name": "amplifier-module-context-simple",
+        "version": "1.0.0"
+      }
+    ]
+  }
+}

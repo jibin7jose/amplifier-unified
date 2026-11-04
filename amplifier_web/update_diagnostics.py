@@ -24,6 +24,9 @@ STORAGE_REASONS = {getattr(errno, name): reason for name, reason in {
     'EACCES': 'storage-permission-denied', 'EPERM': 'storage-permission-denied',
     'EROFS': 'read-only-storage'}.items() if hasattr(errno, name)}
 RECOVERY_REASONS = {'smart-tool-startup-failed', 'smart-tool-update-failed', 'missing-configured-environment', 'incompatible-conversation-loop', 'protected-runtime-source', 'runtime-source-constraint', 'runtime-source-unbound', 'runtime-source-conflict', 'runtime-source-changed', 'runtime-resolution-mismatch', 'runtime-installed-source-mismatch', *PREPARATION_REASONS.values(), *STORAGE_REASONS.values()}
+RUNTIME_SOURCE_REASONS = {'protected-runtime-source', 'runtime-source-constraint', 'runtime-source-unbound',
+                        'runtime-source-conflict', 'runtime-source-changed', 'runtime-resolution-mismatch',
+                        'runtime-installed-source-mismatch'}
 RESOLUTION_FIELDS = {'source', 'repository', 'ref', 'subdirectory', 'revision'}
 PROBE_STAGES = {'imports','package','assets','login','terminal','complete','prepare','prepared','capabilities','cleanup','worker-imports'}
 
@@ -202,6 +205,79 @@ class UpdateDiagnostics:
             if failure and not recovered:
                 self._track_failure(failure)
         self._pending_failure = None
+        self.reconcile_runtime()
+
+    def reconcile_runtime(self):
+        """Settle dependency failures from an already qualified, active generation.
+
+        Repository labels are not package identities. Use the installed graph,
+        complete batch scope and exact activation receipt, including on reload;
+        checking for updates or reusing a catalog-only runtime proves none of this.
+        """
+        active = self.state.get('activeFailures', {})
+        if not active:
+            return
+        from .updates import active_release
+        try:
+            pointer = active_release(self.manager.directory.parent)
+            generation = pointer.get('current')
+            if not generation:
+                return
+            batch = None
+            for candidate in reversed(self.state.get('completedBatches', [])):
+                if candidate.get('kind') != 'ecosystem' or candidate.get('phase') != 'ecosystem-activation':
+                    continue
+                revision = candidate.get('revision')
+                if revision is None:  # Older batches retained identity in their event.
+                    revision = next((row.get('revision') for row in self.state['events']
+                        if row.get('kind') == 'ecosystem' and row.get('phase') == 'ecosystem-activation'
+                        and row.get('status') == 'succeeded' and row.get('attemptId') == candidate.get('attemptId')
+                        and row.get('at') == candidate.get('completedAt')), None)
+                if revision == generation:
+                    batch = candidate
+                    break
+            if not batch:
+                return
+            stage = self.manager.directory / 'releases' / generation
+            plan = json.loads((stage / 'plan.json').read_text())
+            marker = json.loads((stage / 'validated.json').read_text())
+            if (plan.get('mode') != 'worker' or marker.get('generationSchema') != 1
+                    or marker.get('workerProtocol') != 1 or marker.get('updateTier') != batch.get('tier')
+                    or not (0 < batch['startedAt'] <= marker['createdAt'] <= pointer['at'] <= batch['completedAt'])):
+                return
+            installed = json.loads((stage / 'runtime-installed.json').read_text())
+            if not isinstance(installed, list) or any(not isinstance(row, dict) or not isinstance(row.get('name'), str) for row in installed):
+                return
+            packages = {row['name'] for row in installed}
+            scope = set(batch.get('components', []))
+            if not scope or len(scope) != batch.get('componentCount'):
+                return
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            return  # Missing or uncertain proof retains the original failure.
+        recovered = {}
+        for key, group in active.items():
+            failure = group['latest']
+            package = failure.get('package') or failure.get('probe', {}).get('package')
+            reason = failure.get('reason') or failure.get('probe', {}).get('reason')
+            prior_scope = set(group.get('components', []))
+            if (group['kind'] == 'ecosystem' and group.get('tier') == batch.get('tier')
+                    and reason in RUNTIME_SOURCE_REASONS and package in packages
+                    and prior_scope and len(prior_scope) == group.get('componentCount') and prior_scope <= scope
+                    and failure.get('id') and 0 < failure.get('at', 0) < batch['startedAt']):
+                recovered[key] = {'firstFailure': group.get('first', failure), 'latestFailure': failure}
+        if not recovered:
+            return
+        receipt = {'id': uuid.uuid4().hex, 'at': time.time(), 'kind': 'ecosystem',
+                   'phase': 'ecosystem-reconcile', 'status': 'succeeded',
+                   'attemptId': batch['attemptId'], 'revision': generation,
+                   'recoveries': list(recovered.values())}
+        # Preserve original occurrences in the existing journal, not a new
+        # status registry or an invented user acknowledgement of uncertainty.
+        self.state['events'] = (self.state['events'] + [receipt])[-50:]
+        self.state['latest'] = receipt
+        for key in recovered:
+            del active[key]
+        self._retain(receipt)
 
     def _track_failure(self, event):
         phase = event.get('phase', '')
@@ -341,8 +417,9 @@ class UpdateDiagnostics:
         names=sorted({name for name in components if isinstance(name,str) and
                       re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}',name)})
         previous_batch = self.state.get('batch', {})
+        # Recovery needs the complete scope. Only the UI preview truncates names.
         self.state['batch']={'attemptId':identity,'kind':kind,'tier':tier if tier in {'included','other'} else kind,
-                             'startedAt':time.time(),'components':names[:5],'componentCount':len(names)}
+                             'startedAt':time.time(),'components':names,'componentCount':len(names)}
         extras = sanitized_application_extras(application_extras) if kind == 'application' else None
         if extras is not None:
             self.state['batch']['applicationExtras'] = extras
@@ -418,6 +495,8 @@ class UpdateDiagnostics:
             batch=self.state.get('batch',{})
             if batch.get('attemptId')==event['attemptId']:
                 completed={**batch,'completedAt':event['at'],'phase':phase}
+                if event.get('revision'):
+                    completed['revision'] = event['revision']
                 if phase in {'smart-tools-complete','smart-tools-partial'}:
                     activated=batch.get('activatedComponents',[])
                     completed.update(components=activated[:5],componentCount=len(activated))
@@ -433,6 +512,8 @@ class UpdateDiagnostics:
         elif status == 'succeeded':
             self._settle_failure(phase)
         self._retain(event)
+        if phase == 'ecosystem-activation' and status == 'succeeded':
+            self.reconcile_runtime()
         return event
 
     def _retain(self, event):

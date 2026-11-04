@@ -49,6 +49,15 @@ alongside its existing progress/preferences/no-install-effects checks. Readiness
 tests cover actual result creation and service reload after diagnostic retention
 has advanced beyond the app batch.
 
+`tests/test_update_dependency_recovery.py` covers component source failures whose
+package is a transitive dependency of an updated bundle. It checks activation
+and reload against the existing active pointer, qualified worker generation,
+installed graph and complete batch scope, including a sanitized observed receipt.
+More than five components retain full recovery scope while the UI keeps its
+bounded preview. Unrelated generations, data-only reuse, missing qualification,
+legacy truncated scope and newer failure occurrences cannot establish recovery.
+Original failure evidence remains in the existing journal after settlement.
+
 Validation covers app-first early return, empty-tier progression, included-check
 failures, explicit install intent after a verified restart, missing-source
 revision validation, read-only inventory, preserved source policies, and a
