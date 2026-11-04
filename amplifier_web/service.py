@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 import hashlib
 import json
 import logging
@@ -22,7 +22,7 @@ from .execution import ensure_turn, ingest as ingest_execution, finish as finish
 from .updates import CHECK_INTERVAL_HOURS, DEFAULT_CHECK_INTERVAL_HOURS, work_paused
 from .managed_chats import LOCATION
 from .attachments import MAX_ENCODED_BYTES
-from .performance_diagnostics import PerformanceDiagnostics, measured, TimedLock
+from .performance_diagnostics import PerformanceDiagnostics, measure, measured, TimedLock
 from .action_schema import schema, string
 
 
@@ -2359,11 +2359,13 @@ class AppService:
                 checked_session = sid
                 implicit_session = not (args.get('sessionId') or (args.get('id') if action in {'session.fork', 'session.recover', 'session.takeover', 'session.naming', 'configuration.inspect', 'configuration.apply'} else None))
                 try:
-                    await self.history.ensure_loaded(sid)
+                    with measure(self, 'input.history', session_id=sid) if action in {'conversation.send', 'conversation.retry'} else nullcontext():
+                        await self.history.ensure_loaded(sid)
                 except ValueError as exc:
                     raise AppError(str(exc), 409) from None
                 if action in {'conversation.send','conversation.retry','worker.spawn','call.start','runtime.control','configuration.inspect','configuration.apply','bundle.save','bundle.export','bundle.preview','bundle.switch','bundle.fork'}:
-                    await self.refresh_configuration(sid)
+                    with measure(self, 'input.configuration', session_id=sid) if action in {'conversation.send', 'conversation.retry'} else nullcontext():
+                        await self.refresh_configuration(sid)
                     current=self._session(sid)
                     if current.get('configurationPending') and current.get('configurationRefresh',{}).get('phase')=='error':
                         raise AppError(current['configurationRefresh']['error'],409)
@@ -4392,17 +4394,18 @@ class AppService:
                     'error': 'Message delivery could not be confirmed. The conversation worker is unavailable. Work was not automatically replayed.',
                 })
             raise
-        async with self.lock:
-            current = self._session(session["id"])
-            self._delivery(current, input_id, 'accepted')
-            sent = next((row for row in session["messages"] if row.get("inputId") == input_id), {})
-            self._clear_sent_draft(current, sent, text, preserve_draft)
-            current.pop("lockOwner", None)
-            # A bound client's draft/reply/attachments are saved by clients.save,
-            # not the shared legacy view. Delivery changes only this owner unless
-            # the existing save guard finds changed status/navigation/attention.
-            self._publish_changes(sessions={session['id']}, detail_only=True,
-                                  globals={'view'} if self.clients.record() is None else ())
+        with measure(self, 'input.delivery.publish', session_id=session['id']):
+            async with self.lock:
+                current = self._session(session["id"])
+                self._delivery(current, input_id, 'accepted')
+                sent = next((row for row in session["messages"] if row.get("inputId") == input_id), {})
+                self._clear_sent_draft(current, sent, text, preserve_draft)
+                current.pop("lockOwner", None)
+                # A bound client's draft/reply/attachments are saved by clients.save,
+                # not the shared legacy view. Delivery changes only this owner unless
+                # the existing save guard finds changed status/navigation/attention.
+                self._publish_changes(sessions={session['id']}, detail_only=True,
+                                      globals={'view'} if self.clients.record() is None else ())
         return send_result
 
     def _clear_sent_draft(self, current, sent, text, preserve_draft):
