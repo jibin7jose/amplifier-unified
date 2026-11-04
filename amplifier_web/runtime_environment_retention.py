@@ -299,10 +299,11 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
                         entry = retention.retire_runtime(manager, project, measured)
                 await retention.finish_runtime_retirement(entry, timeout=remaining())
                 # Recursive deletion does not hold runtime admission or uv.
-                await retention.remove_retired(manager, entry, timeout=remaining())
+                # Save completion before discarding the retirement receipt so
+                # a failed evidence write can reconcile on a later policy pass.
+                await retention.remove_retired(manager, entry, timeout=remaining(),
+                    resolved=(lambda _: evidence('completed', {'kind': KIND, 'id': project.name})) if evidence else None)
                 result['removed'] += 1
-                if evidence:
-                    evidence('completed', {'kind': KIND, 'id': project.name})
         except (OSError, ValueError, TypeError, KeyError, TimeoutError, Timeout, ImportError):
             protected.append(project.name)
     if getattr(manager, '_runtime_environment_retention_cursor', None):

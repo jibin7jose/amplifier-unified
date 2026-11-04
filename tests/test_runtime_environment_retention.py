@@ -322,6 +322,38 @@ async def test_empty_retirement_receipt_callback_failure_can_retry(app):
     assert not entry.exists() and (project / '.venv').exists()
 
 
+async def test_completed_evidence_failure_recovers_on_later_policy_pass(app, monkeypatch):
+    project = orphan(app)
+    settings(app, keepDays=0)
+    store = cleanup.store
+    def unavailable(app, key, result):
+        if any(row.get('kind') == 'runtime-environment' and row.get('status') == 'completed'
+               for row in result.get('effects', [])):
+            raise OSError('completion receipt store unavailable')
+        return store(app, key, result)
+    monkeypatch.setattr(cleanup, 'store', unavailable)
+    with pytest.raises(OSError, match='completion receipt'):
+        await cleanup.run(app, 'failed-completion-receipt', automatic=True)
+    assert not (project / '.venv').exists()
+    prior = cleanup.record(app, 'storage-cleanup-run:failed-completion-receipt')
+    effect = next(row for row in prior['effects'] if row['kind'] == 'runtime-environment')
+    assert effect['status'] == 'attempting'
+    entries = list((app.update_manager.directory / 'retired').iterdir())
+    assert len(entries) == 1 and (entries[0] / 'retirement.json').is_file()
+    assert not (entries[0] / 'payload').exists()
+    replacement = project / '.venv'
+    replacement.mkdir()
+    (replacement / 'new-work').write_text('new installation must survive')
+    monkeypatch.setattr(cleanup, 'store', store)
+    result = await cleanup.run(app, 'recover-completion-receipt', automatic=True)
+    assert result['status'] == 'completed' and not entries[0].exists()
+    assert (replacement / 'new-work').read_text() == 'new installation must survive'
+    recovered = cleanup.record(app, 'storage-cleanup-run:failed-completion-receipt')
+    old = next(row for row in recovered['effects'] if row['kind'] == 'runtime-environment')
+    assert old['status'] == 'attempting' and old['recovery']['disposition'] == 'removed'
+    assert old['stamp'] == effect['stamp'] and not cleanup.unresolved(app)
+
+
 async def test_bounded_pass_advances_past_modified_orphan(app, monkeypatch):
     from amplifier_web import runtime_environment_retention as environments
     bad = orphan(app, 'a' * 16)
