@@ -17,9 +17,22 @@ from test_task_environments import backend, scope
 from test_test_queue import drive, queue, record, submit
 
 
+class BoundaryTransport(Transport):
+    """Opt-in no-effect busy boundary; busy alone permits automatic returns."""
+    def __init__(self):
+        super().__init__()
+        self.unavailable_boundaries = set()
+
+    async def collaboration_input(self, session, arguments, guard, emit):
+        if (session['id'] in self.unavailable_boundaries
+                and session.get('status') in {'working', 'ready', 'starting'}):
+            return {'accepted': False, 'effect': 'none', 'waitingForBoundary': True}
+        return await super().collaboration_input(session, arguments, guard, emit)
+
+
 @pytest.fixture(autouse=True)
 def transport(app):
-    runtime = Transport()
+    runtime = BoundaryTransport()
     runtime.app = app
     app.runtime = runtime
     return runtime
@@ -94,6 +107,7 @@ async def test_busy_root_keeps_result_queued_then_admits_after_idle(
         app, queue, backend, transport):
     source = app.state['sessions'][0]
     source['status'] = 'working'
+    transport.unavailable_boundaries.add(source['id'])
     await submit(app, notify=True)
     await drive(queue)
     request = record(queue, app)
@@ -107,11 +121,26 @@ async def test_busy_root_keeps_result_queued_then_admits_after_idle(
     assert [action for action, _ in backend].count('execute') == 1
 
 
+async def test_busy_root_accepts_automatic_result_at_available_boundary(
+        app, queue, backend, transport):
+    source = app.state['sessions'][0]
+    source['status'] = 'working'
+    await submit(app, notify=True)
+    await drive(queue)
+    request = record(queue, app)
+    notification = await delivered(app, request)
+    assert notification['mode'] == 'auto'
+    assert source['status'] == 'working'
+    assert_single_notification(app, request, transport)
+    assert [action for action, _ in backend].count('execute') == 1
+
+
 @pytest.mark.parametrize('failure', ['before', 'after'])
 async def test_notification_commit_failure_retries_durably_without_reexecuting(
         app, queue, backend, transport, monkeypatch, failure):
     source = app.state['sessions'][0]
     source['status'] = 'working'
+    transport.unavailable_boundaries.add(source['id'])
     await submit(app, notify=True)
     request = record(queue, app)
     identity = request['subscription']['continuationId']
@@ -235,6 +264,7 @@ async def test_control_after_result_before_admission_suppresses_queued_notificat
         app, queue, backend, transport, control):
     source = app.state['sessions'][0]
     source['status'] = 'working'
+    transport.unavailable_boundaries.add(source['id'])
     if control == 'assignment-stop':
         await app.dispatch('assignment.start', {'sessionId': source['id']}, command_id='assignment')
     await submit(app, notify=True)

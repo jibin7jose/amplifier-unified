@@ -103,7 +103,7 @@ async def test_actual_worker_overwrites_claimed_input_provenance_and_freezes_chi
         capabilities = {}
         return SimpleNamespace(session_id=session_id, get_capability=capabilities.get,
                                register_capability=capabilities.__setitem__)
-    worker=Worker.__new__(Worker)
+    worker=Worker()
     worker.session=SimpleNamespace(coordinator=coordinator('actual-root'))
     worker.runtime=SimpleNamespace(generation={'id':'generation-1','input_ids':['original-input']})
     worker.context_inputs=['original-input']

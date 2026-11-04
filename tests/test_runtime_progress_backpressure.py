@@ -61,6 +61,7 @@ async def test_buffered_worker_events_yield_to_bridge_without_reordering_events(
     order, replies = [], []
 
     async def bridge(operation, args, sid):
+        assert args['_runtimeOwnerId'] == 'fixture-owner'
         order.append('bridge')
         return {'accepted': True}
 
@@ -84,7 +85,7 @@ async def test_buffered_worker_events_yield_to_bridge_without_reordering_events(
     ready = asyncio.get_running_loop().create_future()
     ready.set_result({})
     row = {'process': process, 'emit': emit, 'closing': False, 'pending': {}, 'ready': ready,
-           'runtime_id': 'session',
+           'runtime_id': 'session', 'runtimeOwnerId': 'fixture-owner',
            'inputId': 'input', 'bridge_tasks': set(), 'backgroundCalls': set()}
     manager = RuntimeManager(bridge)
     manager.workers['session'] = row
@@ -260,6 +261,7 @@ async def test_host_bridge_timing_never_awaits_sink_or_inherits_task(fault, monk
     async def forbidden_sink(*args):
         raise AssertionError('Private host timing must not call the event sink')
     async def bridge(operation, args, sid):
+        assert args['_runtimeOwnerId'] == 'fixture-owner'
         timing = active_bridge()
         assert bool(timing) == (fault != 'malformed')
         async def child():
@@ -270,7 +272,8 @@ async def test_host_bridge_timing_never_awaits_sink_or_inherits_task(fault, monk
             raise asyncio.CancelledError()
         return {'exact': True}
     manager = RuntimeManager(bridge, performance_diagnostics=diagnostics)
-    row = {'process': SimpleNamespace(returncode=None), 'emit': forbidden_sink}
+    row = {'process': SimpleNamespace(returncode=None), 'emit': forbidden_sink,
+           'runtimeOwnerId': 'fixture-owner'}
     manager.workers['s'] = row
     async def write(row, value):
         if fault == 'serialize' and 'result' in value:

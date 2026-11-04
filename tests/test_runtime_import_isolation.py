@@ -21,11 +21,11 @@ def test_apply_settings_does_not_require_server_dependencies():
         assert importlib.util.find_spec('aiohttp') is None
         from amplifier_web.host.session import _apply_settings
         config = SimpleNamespace(settings={}, providers=[])
-        ordinary = SimpleNamespace(tools=[], providers=[], hooks=[], session={})
+        ordinary = SimpleNamespace(tools=[], providers=[], hooks=[], session={}, agents={})
         assert _apply_settings(ordinary, config).tools == []
         configured = SimpleNamespace(
             tools=[{'module': 'tool-ui-use'}, {'module': 'tool-computer-use'}],
-            providers=[], hooks=[], session={},
+            providers=[], hooks=[], session={}, agents={},
         )
         result = _apply_settings(configured, config)
         assert result.tools[0]['config']['browser']['host_adapter'] is True

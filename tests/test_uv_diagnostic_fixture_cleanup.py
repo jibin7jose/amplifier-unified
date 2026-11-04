@@ -70,3 +70,28 @@ def test_actual_unsupported_startup_rejects_without_leaking_process_guards():
     assert probe("actual-startup") == {
         "failure": "SystemExit", "guarded": False, "restored": True,
     }
+
+
+@pytest.mark.parametrize('code,report', [
+    (1, '\nRan 1 test in 0.01s\n\nFAILED (failures=1)\n'),
+    (0, '\nRan 0 tests in 0.01s\n\nOK\n'),
+    (0, '\nRan 1 test in 0.01s\n\nOK (skipped=1)\n'),
+])
+def test_pytest_adapter_rejects_failed_empty_or_skipped_child(monkeypatch, code, report):
+    from types import SimpleNamespace
+    import test_uv_diagnostic_forms as fixture
+
+    calls = []
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=code, stdout='', stderr=report)
+    monkeypatch.setattr(fixture.subprocess, 'run', run)
+    case = fixture.ParseFormTests('test_complete_conflict_with_optional_single_final_lf')
+    with pytest.raises(AssertionError):
+        case._callTestMethod(lambda: pytest.fail('Parent must not execute the test body'))
+    command, kwargs = calls[0]
+    assert Path(command[0]).is_absolute()
+    assert command[1:4] == ['-I', '-S', '-B']
+    assert command[-1] == 'ParseFormTests.test_complete_conflict_with_optional_single_final_lf'
+    assert kwargs['env'] == {
+        'PATH': str(Path(command[0]).parent) + ':/usr/bin:/bin', 'LANG': 'C.UTF-8'}

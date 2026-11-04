@@ -55,6 +55,24 @@ def test_runtime_projection_roundtrips_without_persisting_secrets_or_tokens():
     assert original == fixture_plan()
 
 
+@pytest.mark.parametrize("selection", ["none", ["worker"]])
+def test_logical_plan_preserves_child_inheritance_selectors(selection):
+    overlay = {"agents": selection}
+    before = copy.deepcopy(overlay)
+    result = accounts.logical_plan(overlay)
+    assert result == overlay == before
+    assert result is not overlay
+
+
+def test_nested_agent_projection_still_validates_exact_binding():
+    child = project(fixture_plan()).plan
+    nested = {"agents": {"child": child}}
+    assert accounts.logical_plan(nested)["agents"]["child"] == fixture_plan()
+    child["hooks"][1]["config"][accounts.ENVELOPE]["binding_id"] = "forged"
+    with pytest.raises(ValueError, match="binding"):
+        accounts.logical_plan(nested)
+
+
 @pytest.mark.parametrize("change", ["source", "instance", "module", "missing", "disabled", "duplicate"])
 def test_saved_projected_account_cannot_borrow_another_authorized_identity(change):
     original = fixture_plan()
