@@ -193,11 +193,20 @@ agent reads or model context. Measure those boundaries separately.
 
 `tests/fixtures/execution_publication_scaling.py` keeps three large owners active
 in one actual service. It distinguishes cold saves, scalar/token saves, nested
-execution changes and worker-report updates, checks exact durable readback and
+execution changes, current-placement changes with unchanged retired accounting,
+and worker-report updates, checks exact durable readback and
 records wall/CPU time plus the existing preparation budgets. Run it inside an
 owned DTU with `python tests/fixtures/execution_publication_scaling.py --output DIR`;
 `--source PATH` selects a frozen comparison checkout. A single-owner cache hit
 cannot qualify concurrent-owner behavior or hide eviction churn.
+Use `--reservation-bytes 512` to exceed a single accounting witness's size with
+synthetic retained assignment details, and vary `--owners 1` through `--owners 3`
+separately. This is a stress shape, not a measured live receipt schema. Keep the
+same total preparation budgets in both runs: a larger history becoming cacheable
+can still make concurrent owners slower through eviction and repeated bookkeeping.
+Measure cold misses, current-placement changes and nested accounting changes;
+unchanged whole-execution reuse alone would hide those costs. Retain rejected
+comparisons when a proposed cache change improves one owner but regresses several.
 
 Unchanged execution may reuse its existing committed projection only after the
 original content, owner and resource evidence match; input digests and pending
