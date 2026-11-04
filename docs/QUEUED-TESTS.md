@@ -388,3 +388,14 @@ If a recorded reusable image is absent, unavailable or malformed at native
 observation, the check uses ordinary cold preparation without modifying or
 rebuilding that uncertain cache entry. Saved owner/receipt corruption still
 requires inspection.
+
+### Temporary workspace retention
+
+New queued checks can inherit Storage's optional temporary-workspace expiry.
+The returned `workspaceArchivePolicy` is captured at submission and survives
+restart; later policy changes do not shorten that promise. Export useful patches,
+reports and generated results to `/artifacts` before finishing, or submit
+`keepWorkspace: true` when the full workspace remains needed. There is no extra
+approval round. Initial source and results remain retained after workspace expiry.
+Keep dependency installations and large pytest basetemp fixtures outside
+`/artifacts`; copy only useful reports there. See [Storage](STORAGE.md#temporary-queued-test-workspace-copies).

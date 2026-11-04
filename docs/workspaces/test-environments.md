@@ -362,3 +362,9 @@ are byte-verified, never extracted on the host, and ownership/stopped state is
 rechecked before deletion. Insufficient disk space, invalid archives or an
 uncertain removal retain the environment. Older receipts retain their original
 policy and existing `finishCleanup` recovery path.
+
+Routine queued checks may explicitly inherit the global Storage temporary-workspace
+policy at submission. Their full local workspace export can expire only after
+confirmed removal and the captured duration; initial source, results and receipts
+stay. Manual environments, legacy records, `keepWorkspace` checks and uncertain
+cleanup remain protected. See [temporary workspace retention](../STORAGE.md#temporary-queued-test-workspace-copies).

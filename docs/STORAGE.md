@@ -394,4 +394,45 @@ existing ledger, opened read-only, with a query deadline. It never reads archive
 contents, recursively measures directories, loads chat history, starts a worker,
 connects to another machine, changes retention, or deletes files. Recorded file
 bytes are historical evidence, not current allocated disk space or an estimate
-of reclaimable storage. Automatic cleanup continues to protect these files.
+of reclaimable storage. Source and result archives stay protected. An explicitly temporary final workspace may expire under the policy below; its original size remains historical accounting.
+
+### Temporary queued-test workspace copies
+
+**Expire temporary test workspace copies** is an optional Storage policy, off
+until enabled. Seven days is recommended. It applies only to checks newly
+submitted through `workspace.tests.submit`; the duration is captured in the
+existing job/allocation receipt. `keepWorkspace: true` preserves a check's full
+workspace, for example when it contains final edits not exported as results.
+Manual environments and existing records without that explicit temporary
+choice remain protected. This is one standing policy, not a model approval per
+archive. Disabling it pauses expiry; extending the duration also extends earlier
+promises, while shortening it applies only to new checks.
+
+The existing Storage maintenance pass inspects at most eight allocation records
+and expires at most two exact local `workspace.tar` copies per pass after the
+captured duration following confirmed environment removal. Cache size pressure
+cannot shorten this duration. Unresolved removal, active preparation, remote
+custody, combined full-environment archives, changed/missing source or results,
+and incomplete receipts remain protected. Final custody verification runs off
+the app loop under the existing environment lock; no archive bodies are read
+during inspection. The existing cleanup attempt records preserve uncertainty
+across interruption instead of replaying an unlink.
+
+Automatic verification protects any individual retained file over 8 GiB, or a
+file whose verification takes over 60 seconds. Those copies require explicit
+inspection; this policy does not promise automatic expiry of every large archive.
+
+Original `source.tar`, `artifacts.tar`, removal receipts and historical hashes
+remain. A separate expiry field reports current workspace availability; it does
+not rewrite the original successful preservation receipt or pretend its original
+byte count is current disk usage. Obsolete legacy full copies may still be
+removed by a separately authorized, ownership-checked cleanup; their age alone
+is not the new policy's authorization.
+
+Test preparation should keep installed dependencies and pytest `--basetemp`
+outside `/artifacts`, and outside the source checkout where practical. Put useful
+reports, patches and outputs in `/artifacts`, not entire test installations,
+large synthetic archive fixtures or copies of previous evidence directories.
+Do not bundle earlier `workspace-resources`, qualification archives or `output`
+packets into a new source snapshot. Source exports must continue to respect Git
+ignore rules; do not blanket-filter tracked files or potential final edits.

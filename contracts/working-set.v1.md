@@ -115,3 +115,9 @@ Which directory freshness policy handles offline mounts without noisy catalog ch
 | 2026-10-29 | Clarify current-state/history projection and accountable full-history work in WS3/WS5. | [Performance validation](../docs/validation/performance.md); user-requested guardrails. |
 | 2026-10-02 | Ratified for implementation; exclude amplifier-agent as the native backend. | User approval of the plan and direction; implementation evidence remains separate. |
 | 2026-10-02 | Initial WS1–6. | [Scale requirements and measurements](../docs/architecture/evidence.md). |
+
+The separately authorized Storage temporary-test retention policy may expire a
+new queued check's explicitly disposable, retired local workspace export. It
+uses bounded ledger inspection and the existing cleanup/ownership boundary; it
+does not authorize source/results/history deletion or apply retroactively to
+legacy records. See [temporary test workspace copies](../docs/STORAGE.md#temporary-queued-test-workspace-copies).

@@ -413,3 +413,25 @@ async def test_owner_recheck_failure_does_not_admit_cleanup_continuation(app, qu
     await drive(queue)
     assert record(queue, app)['job']['status'] == 'unknown'
     assert [action for action, _ in backend] == ['prepare', 'start', 'execute', 'stop', 'remove']
+
+
+async def test_workspace_expiry_intent_is_captured_once_and_keep_is_explicit(app, queue, backend):
+    from amplifier_web import storage_cleanup
+    storage_cleanup.store(app, storage_cleanup.POLICY,
+        {**storage_cleanup.DEFAULTS, 'revision': 1, 'workspaceArchiveKeepDays': 7})
+    await submit(app, 'temporary')
+    await submit(app, 'retained', keepWorkspace=True)
+    # Later policy edits cannot silently opt an already queued job in or shorten
+    # its saved duration. Restart/receipt reuse retains the same admission choice.
+    storage_cleanup.store(app, storage_cleanup.POLICY,
+        {**storage_cleanup.DEFAULTS, 'revision': 2, 'workspaceArchiveKeepDays': 1})
+    await drive(queue)
+    receipt = record(queue, app, 'temporary')
+    row = environments.get(app.data_dir, scope(app)['sessionId'], receipt['job']['resourceId'])
+    assert row['workspaceArchivePolicy'] == {'version': 1, 'disposition': 'temporary', 'keepDays': 7, 'policyRevision': 1}
+    assert (await submit(app, 'temporary'))['duplicate']
+    await drive(queue)
+    kept = record(queue, app, 'retained')
+    assert kept['job']['workspaceArchivePolicy'] is None
+    row = environments.get(app.data_dir, scope(app)['sessionId'], kept['job']['resourceId'])
+    assert row.get('workspaceArchivePolicy') is None

@@ -120,9 +120,11 @@ try{
  const size=section.getByLabel('Size target for unused copies (GiB)',{exact:true});
  const save=section.getByRole('button',{name:'Save cleanup settings',exact:true});
  await expect(days).toHaveValue('7');await expect(size).toHaveValue('10');
+ await section.getByLabel('Expire temporary test workspace copies',{exact:true}).check();
+ await expect(section.getByLabel('Keep temporary test workspaces for days',{exact:true})).toHaveValue('7');
  await days.fill('3');await size.fill('0');await save.click();
  await expect(section.getByRole('status').filter({hasText:'saved for all workspaces'})).toBeVisible();
- assert.deepEqual((await observe()).policy,{revision:1,enabled:true,keepDays:3,maxUnusedBytes:0});
+ assert.deepEqual((await observe()).policy,{revision:1,enabled:true,keepDays:3,maxUnusedBytes:0,workspaceArchiveKeepDays:7});
  await days.fill('4');
  const other=await context.newPage();await other.goto(base);await other.waitForSelector('#amp-one');
  const concurrent=await other.request.post(base+'/fixture/storage-cleanup-concurrent-save',{data:{keepDays:2}});
@@ -133,6 +135,7 @@ try{
  await expect(days).toHaveValue('4');await expect(save).toBeDisabled();
  await section.getByRole('button',{name:'Discard edits and use saved settings',exact:true}).click();
  await expect(days).toHaveValue('2');await other.close();
+ await expect(section.getByLabel('Keep temporary test workspaces for days',{exact:true})).toHaveValue('7');
  const attempts=[];let lose=true;
  await page.route('**/api/actions',async route=>{
   const body=route.request().postDataJSON();
