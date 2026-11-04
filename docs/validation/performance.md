@@ -352,3 +352,14 @@ The additive Extended browser registration runs after publication. The separate
 runs; it is not a required status or a publication dependency. Run it locally in
 the owned test environment with the production client built. Its synthetic runtime
 does not qualify native recovery, model calls or installed-package provenance.
+
+For nested programmatic tools, retain a large-row history work-count regression
+(at least 36,000 rows, seven child completions): no full history read, native
+store save or continuity export for verified inner completion, while each
+control/writer check still runs. Qualify the actual Core/Live dispatcher and
+ordered parent append, failed child results, context mutation, compaction and
+Stop during a nested call. Untrusted or unavailable dispatch attribution takes
+the full-save path. Ordinary direct-tool full-save counts must match the baseline;
+do not add a second durable-append callback that doubles their persistence work.
+This reduces nested completion work without eliminating the remaining enclosing
+transcript persistence cost or adding a stronger crash-recovery guarantee.
