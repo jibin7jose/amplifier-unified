@@ -14,7 +14,7 @@ import re
 import tomllib
 
 VERSION = 1
-SELECTION_VERSION = 3
+SELECTION_VERSION = 4
 RECEIPT = 'runtime-policy-reconciliation.json'
 
 
@@ -200,7 +200,7 @@ class Collector:
             sibling_runtime = selected_runtime_sibling_sources(content, source, root, data, batch.names)
             from .runtime_source_policy import constraint_declarations
             for dependency, declarations in constraint_declarations(
-                    content, prepared_local_sources=sibling_runtime).items():
+                    content, prepared_local_sources=sibling_runtime, runtime_batch=True).items():
                 if dependency in sibling_dev:
                     continue  # --no-sources does not activate this selected sibling's dev edge.
                 constraints.setdefault(dependency, []).extend(declarations)
@@ -400,7 +400,7 @@ def selected_runtime_sibling_sources(content, source, root, metadata, selected):
     return result
 
 
-def authored_constraints(content):
+def authored_constraints(content, *, runtime_batch=False):
     """Selected source manifests may pin another package despite a module URI.
 
     Unknown/conditional source declarations only restrict recovery here. They
@@ -412,10 +412,15 @@ def authored_constraints(content):
     data = tomllib.loads(content.decode())
     project, uv = data.get('project', {}), data.get('tool', {}).get('uv', {})
     values = list(project.get('dependencies', []))
-    for groups in (project.get('optional-dependencies', {}), data.get('dependency-groups', {})):
+    groups_to_read = [project.get('optional-dependencies', {})]
+    if not runtime_batch:
+        groups_to_read.append(data.get('dependency-groups', {}))
+    for groups in groups_to_read:
         for group in groups.values():
             values.extend(group)
     for key in ('override-dependencies', 'constraint-dependencies', 'build-constraint-dependencies', 'dev-dependencies'):
+        if runtime_batch and key == 'dev-dependencies':
+            continue
         values.extend(uv.get(key, []))
     names = {package_name(name) for name in uv.get('sources', {})}
     for value in values:
@@ -427,7 +432,7 @@ def authored_constraints(content):
             continue
         if requirement.url and requirement.url.startswith('git+'):
             names.add(package_name(requirement.name))
-    declared = declarations(content)
+    declared = declarations(content, runtime_batch=runtime_batch)
     return {name: declared.get(name) for name in names}
 
 

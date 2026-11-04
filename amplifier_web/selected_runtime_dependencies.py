@@ -56,7 +56,7 @@ def selected(manifests, *, distributions=None, environment=None):
             continue
         roots[name] = values
         queue.append((name, frozenset()))
-        for dependency, declaration in authored_constraints(content).items():
+        for dependency, declaration in authored_constraints(content, runtime_batch=True).items():
             if dependency in constraints and constraints[dependency] != declaration:
                 constraints[dependency] = None
             else:
