@@ -9,7 +9,7 @@ _ENVIRONMENT = {
     'PATH': '/opt/unified-prepared/venv/bin:/opt/unified-prepared/node-runtime/bin:/usr/local/bin:/usr/bin:/bin',
     'PYTHONPATH': '/workspace', 'PYTHONDONTWRITEBYTECODE': '1',
     'PLAYWRIGHT_BROWSERS_PATH': '/opt/unified-prepared/browsers',
-    'HOME': '/artifacts/home', 'XDG_CACHE_HOME': '/artifacts/cache',
+    'HOME': '/tmp/unified-test/home', 'XDG_CACHE_HOME': '/tmp/unified-test/cache',
     'AMPLIFIER_TEST_ARTIFACTS': '/artifacts',
     'AMPLIFIER_TEST_PYTHON': '/opt/unified-prepared/venv/bin/python',
     'AMPLIFIER_TEST_CONTRACT': '/opt/unified-prepared/execution-contract.json',

@@ -61,7 +61,6 @@ def initialize_command(prepared=False):
     # No followed symlinks, including source-controlled links outside workspace.
     script = """import os
 from pathlib import Path
-Path('/artifacts/home').mkdir(exist_ok=True)
 Path('/var/lib/unified-jobs').mkdir(mode=0o700, parents=True, exist_ok=True)
 os.chmod('/var/lib/unified-jobs', 0o700)
 for root in ('/workspace', '/artifacts'):
