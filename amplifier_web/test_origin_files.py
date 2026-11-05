@@ -242,8 +242,18 @@ class PinnedDirectory:
     def readlink(self, name):
         return os.readlink(self.argument(name), dir_fd=self.fd)
 
+    @contextmanager
+    def open(self, name, *, private=False):
+        """Open a regular file relative to this pinned, no-follow directory."""
+        descriptor = (_windows_handle(self.argument(name), private=private)[0] if self.fd is None else
+                      os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self.fd))
+        with os.fdopen(descriptor, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError('The selected path is not a regular file.')
+            yield stream
+
     def create(self, name):
-        return os.open(self.argument(name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600, dir_fd=self.fd)
+        return os.open(self.argument(name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0), 0o600, dir_fd=self.fd)
 
     def unlink(self, name):
         os.unlink(self.argument(name), dir_fd=self.fd)

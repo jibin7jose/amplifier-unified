@@ -58,6 +58,17 @@ Root bundles are selected through the shared bundle actions. bundle.preview {ses
 CANVAS_GUIDANCE += '\n' + READ_GUIDANCE + '\n' + PLANNING_GUIDANCE + '\n'
 
 CANVAS_GUIDANCE += '''
+To consume an exact retained peer file, discover coordination.artifact.save.
+Supply your sessionId, its requestId, responseRevision and reference, and a
+relative path inside your current working folder with an existing parent.
+This explicitly saves verified large binary bytes under current write policy;
+coordination.artifact stays a passive bounded read. Do not use peer outputs.read
+or fetch authenticated URLs as a bypass. Different existing bytes are refused;
+identical bytes may be verified and reused. Inspect the destination after an
+unknown return; byte identity does not qualify the producer's work.
+'''
+
+CANVAS_GUIDANCE += '''
 When queued work in an existing root needs a result, use coordination.send with
 returnNotification:true. The host commits the request and its return subscription
 together before admission; inspect returnState in the receipt. Do not add a
