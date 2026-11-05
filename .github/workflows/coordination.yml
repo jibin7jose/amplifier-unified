@@ -266,7 +266,7 @@ jobs:
           import xml.etree.ElementTree as ET
           rows = ET.parse('output/pretransport-refit-native.xml').getroot().findall('.//testcase')
           assert Counter(row.get('classname') for row in rows) == {
-              'tests.test_pretransport_refit_native': 38,
+              'tests.test_pretransport_refit_native': 40,
               'tests.test_full_refit_authority': 23,
           }
           assert all(not any(row.find(tag) is not None for tag in ('failure', 'error', 'skipped')) for row in rows)

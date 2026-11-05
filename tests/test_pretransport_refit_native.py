@@ -74,8 +74,6 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
             state.preparations += 1
             if mode.startswith('pair_refit_observation_unavailable') and state.preparations == 3:
                 return {'status': 'unavailable'}
-            if mode == 'scope_during_refit' and state.preparations == 3:
-                scope['generationId'] = 'changed-generation'
             # Real bridge responses cross JSON IPC; saved observations cannot
             # share mutable dictionaries with the current host owner.
             return {'work': {'available': True, 'discovery': empty_discovery(),
@@ -116,7 +114,7 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
             assert output_pair is not None
             assert args == {'images': identities(output_pair.rows)}
             state.image_reads += 1
-            if state.image_reads == 2:
+            if state.image_reads == 2 or (mode == 'pair_refit_unavailable_again' and state.image_reads == 5):
                 started = time.monotonic()
                 try:
                     # Use the production two-second wait_for in revalidate;
@@ -190,6 +188,12 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
                     scope['inputIds'] = ['original-input', 'later-input']
                 elif mode == 'binding_missing' and len(state.measurements) == 2:
                     work.requests.clear()
+            if len(state.measurements) == 2 and mode.startswith('pair_refit_observation_unavailable'):
+                # Exercise the separate binding-loss path, which must obtain
+                # a fresh observation rather than reuse a retained reduction.
+                work.requests.clear()
+            if len(state.measurements) == 3 and mode == 'scope_during_refit':
+                scope['generationId'] = 'changed-generation'
             if len(state.measurements) == 3 and mode == 'pair_refit_budget_work_changed':
                 change_work('d' * 64)
             if len(state.measurements) == 3 and mode in {
@@ -291,14 +295,14 @@ async def test_context_refit_cancels_pending_authority_check_without_sending(pai
 
 
 @pytest.mark.parametrize('mode, measurements, transports, reason', [
-    ('authority_changed', 2, 1, 'authority_changed'),
+    ('authority_changed', 3, 1, 'authority_changed'),
     ('authority_unavailable', 2, 1, 'authority_unavailable'),
     ('authority_typed_error', 2, 1, 'authority_unavailable'),
     ('currentness_changed', 2, 1, 'authority_changed'),
     ('stop', 2, 1, 'native_scope_changed'),
     ('new_generation', 2, 1, 'native_scope_changed'),
     ('new_input', 2, 1, 'native_scope_changed'),
-    ('scope_during_refit', 2, 1, 'native_scope_changed'),
+    ('scope_during_refit', 3, 1, 'native_scope_changed'),
     ('repeated_change', 3, 1, 'content_changed'),
     ('oversized_refit', 3, 1, 'content_changed'),
     ('provider_error', 2, 2, 'bytes changed'),
@@ -351,7 +355,8 @@ async def test_output_pair_deadline_refits_real_retained_selection_once(pair, mo
             reason = 'authority_changed' if mode == 'pair_work_changed' else 'native_scope_changed'
             with pytest.raises(RuntimeError, match=reason):
                 await execution
-            assert len(state.measurements) == 2 and len(state.transports) == 1
+            assert len(state.measurements) == (3 if mode == 'pair_work_changed' else 2)
+            assert len(state.transports) == 1
         else:
             assert await execution == 'Done'
             assert len(state.measurements) == 3 and len(state.transports) == 2
@@ -368,14 +373,12 @@ async def test_output_pair_deadline_refits_real_retained_selection_once(pair, mo
             manifest = status(sent)
             assert manifest['toolCallId'] == 'read-once'
             assert manifest['requested'] == identities(pair.rows)
-            if mode == 'pair_timeout':
-                assert pixels(sent) == pair.data
-                assert manifest['comparisonReady'] is True
-                assert manifest['delivered'] == identities(pair.rows)
-            else:
-                assert pixels(sent) == []
-                assert manifest['comparisonReady'] is False and manifest['delivered'] == []
-                assert {row['reasonCode'] for row in manifest['omitted']} == {'image_read_unavailable'}
+            # The retry measures the already-reduced request. It does not
+            # reacquire pixels after their first pre-send timeout.
+            assert pixels(sent) == []
+            assert manifest['comparisonReady'] is False and manifest['delivered'] == []
+            assert {row['reasonCode'] for row in manifest['omitted']} == {'image_read_timeout'}
+            assert state.image_reads == 2
         assert state.timeout_cancelled is True and state.timeout_elapsed >= 1.9
         assert state.tools == 1 and len(state.bound) == 1
         assert state.bound[0]['tool_name'] == 'app_control'
@@ -406,6 +409,26 @@ async def test_pair_refit_does_not_repeat_the_original_context_snapshot(pair):
         assert state.transports[-1] == state.measurements[-1]
         assert state.context_snapshots == 2  # One for each actual model request.
         assert state.timeout_cancelled and not state.context_timeout_cancelled
+    finally:
+        await session.cleanup()
+
+
+@pytest.mark.parametrize('full_access', [False, True])
+async def test_image_removed_before_transport_stays_removed_for_same_refit(pair, full_access):
+    session, state = await native_case('pair_refit_unavailable_again', output_pair=pair,
+        selected=True, preparation_context=True, full_access=full_access)
+    try:
+        assert await session.execute('Compare the saved images once, then finish.') == 'Done'
+        assert state.tools == 1 and len(state.bound) == 1
+        assert len(state.measurements) == 3 and len(state.transports) == 2
+        assert state.transports[-1] == state.measurements[-1]
+        sent = ChatRequest.model_validate_json(state.transports[-1])
+        assert pixels(sent) == []
+        assert status(sent)['comparisonReady'] is False
+        assert {row['reasonCode'] for row in status(sent)['omitted']} == {'image_read_timeout'}
+        assert state.image_reads == 2
+        assert state.context_snapshots == 2
+        assert state.delivery.output_selection() == identities(pair.rows)
     finally:
         await session.cleanup()
 
