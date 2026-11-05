@@ -1,27 +1,18 @@
 {
   "date": "2026-11-05",
-  "timeZone": "America/Los_Angeles",
   "sourceBase": "424d8f4bce53de03451091bdb1488a525c267cda",
-  "ownerSession": "03d04f75-8de1-5410-9c9f-5653b599e6a7",
-  "workspaceId": "5cea3de2aee7530fa59b483733af4e05",
+  "qualifiedCandidateCommit": "98405a94ec80dbae2fa891e1f5af7248335102c2",
+  "publicEvidence": "Sanitized projection of privately retained original receipts. Host, workspace, session, resource and operation identities, private archive metadata and absolute paths are omitted. Measurements and test outcomes are unchanged.",
   "normalRunnerPreflight": {
-    "observedIntervalPST": "09:50:39–09:54:26",
-    "source": "Read-only DTU specialist, session 0000000000000000-43519ec8707348f4_digital-twin-universe-dtu-profile-builder",
-    "route": "spark-2 / Incus local / project default",
-    "daemonFingerprint": "623f6990a8695ceb37aa8139795c151f3b94cac9d8af6d9ded2dcc5aec9989d2",
-    "approvedImage": "2712816095c8141221a5d7d9b950781ac152a1714543a34aacc8b43baa292ada",
-    "imageObservation": "Image not found; both incus image info and exact GET exited 1",
-    "runningInstances": 20,
-    "runningDtuInstances": 19,
-    "capacityLimitQualification": "Observed occupancy only; no reconciliation of unknown reservations or route-specific limit overrides",
+    "imageObservation": "Required image was unavailable on the normal isolated runner; read-only checks exited 1.",
     "launched": 0,
-    "fallbackReason": "Missing exact approved image; task-authorized existing managed Docker fallback"
+    "fallbackReason": "Used the already-authorized configured managed Docker fallback without changing host settings or limits."
   },
   "runner": {
     "profile": "python-project",
     "backend": "Docker",
-    "daemon": "182d808c-bbb9-42b2-9f12-c73871f53a7f",
     "python": "3.13.16",
+    "architecture": "aarch64",
     "cpus": 2,
     "memoryMiB": 4096,
     "maxTaskOwnedActiveEnvironments": 1,
@@ -33,21 +24,23 @@
     "providerCalls": 0,
     "scope": "Source AppService in a copied isolated checkout; no native runtime rebuild or installed-wheel claim. Only private Python preparation changed; packaging and native adapter inputs unchanged."
   },
-  "checkIds": [
-    "historical-projection-baseline-424d8f4b-v1",
-    "historical-projection-candidate-simple-v1",
-    "historical-projection-candidate-chunks-v1",
-    "historical-projection-matched-final-v1",
-    "historical-projection-final-owner-only-v1",
-    "historical-projection-final-after-lock-refusal-v2"
-  ],
+  "reproduction": {
+    "benchmark": "python tests/fixtures/execution_publication_scaling.py --source SOURCE --cycles 4 --output DIR",
+    "variants": ["--size small", "--reservation-bytes 512 --cycles 2", "--owners 1", "--profile (separate instrumented run)"],
+    "tests": "python -m pytest -q tests/test_execution_preparation.py tests/test_execution_references.py tests/test_accounting_projection_copy.py tests/test_accounting_canonical.py tests/test_cold_execution_compaction.py",
+    "finalTestResult": "104 passed in 6.16s",
+    "repetitions": "Three fresh processes per main comparison workload; predecessor then candidate per repetition; one-owner diagnostic has one repetition."
+  },
   "retainedFailure": {
-    "check": "historical-projection-final-owner-only-v1",
-    "request": "0a65d47a-2c52-57b9-bbb6-aa9f0f2e4e66:execute",
     "status": "outcome_unknown",
     "operationResultStatus": "not-started",
     "reason": "Environment file lock could not be acquired before admission",
-    "reconciliation": "operations.request reported not-started; workspace.environments.read confirmed exact environment removed and zero task-owned environments. No test output existed. The original outcome remains unknown; a new qualification check was admitted after this evidence."
+    "reconciliation": "The exact saved admission receipt reported not-started; cleanup confirmed removal and zero task-owned environments. No test output existed. The original outcome remains unknown; a fresh qualification check was admitted after this evidence."
+  },
+  "cleanup": {
+    "removedEnvironments": 6,
+    "retainedExportsVerified": true,
+    "remainingOwnedEnvironments": 0
   },
   "limits": [
     "Synthetic synchronous publications, not provider/action admission/browser or simultaneous execution latency",
