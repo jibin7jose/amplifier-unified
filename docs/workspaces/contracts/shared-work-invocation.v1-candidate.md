@@ -272,6 +272,13 @@ must not introduce an additional Work-assurance gate under Full. Refitting still
 retains the same native input/generation/Stop scope, measures the actual revised
 bytes, and never retries a sent or uncertain provider request. Ask revalidates
 its required Work version after all awaited preparation and measurement.
+If pre-send validation removes unavailable optional images or saved context,
+the one local refit measures that already-reduced request. It must not rebuild
+the same optional observations and oscillate between available and unavailable.
+The retained native binding and unchanged fitted input are required for reuse;
+new input, Stop, permission changes and final authority checks still apply.
+Omitted evidence stays explicitly unavailable; later model requests may observe
+it again through the normal preparation path.
 An actual native call already present in the adapter's consumed-call set cannot
 execute again, independently of coverage completeness. A new native call may
 inspect or exactly retry an app command through that command's canonical receipt.

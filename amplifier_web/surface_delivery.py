@@ -239,9 +239,18 @@ class SurfaceProvider:
                 if isinstance(error, RequestFitChanged):
                     error.local_refusal = True
                 self.prepared = [row for row in self.prepared if row[0] is not request]
-                if hasattr(self.delivery, "discard_work"):
+                # Revalidation can remove unavailable optional observations.
+                # Refit that reduced request rather than reintroducing the
+                # same pixels/memory and racing their checks a second time.
+                # Only reuse this adapter's unchanged fitted input and exact
+                # binding; arbitrary provider/budget mutations still rebuild.
+                reduced = (cached if isinstance(error, RequestFitChanged)
+                           and error.reason == 'content_changed' and binding
+                           and self.delivery.work_request(cached) is binding
+                           and entry[1].model_dump_json() == fitted else None)
+                if reduced is None and hasattr(self.delivery, "discard_work"):
                     self.delivery.discard_work(binding)
-                self.refused.append((request, error, binding))
+                self.refused.append((request, error, binding, reduced))
                 if len(self.refused) > 16:
                     self.refused.pop(0)
                     self.refusal_overflow = True
@@ -284,7 +293,12 @@ class SurfaceProvider:
             return None
         try:
             self.delivery.check_execution_scope(binding['executionScope'])
-            cached = await self._prepare(request, explicit_budget=True, refit_binding=binding)
+            cached = row[3]
+            if cached is not None and self.delivery.work_request(cached) is binding:
+                self.prepared = (self.prepared + [(request, cached, cached.model_dump_json(), binding)])[-4:]
+                self.refused = [item for item in self.refused if item[0] is not request]
+            else:
+                cached = await self._prepare(request, explicit_budget=True, refit_binding=binding)
         except RequestFitChanged as error:
             error.local_refusal = True
             raise
