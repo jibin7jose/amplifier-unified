@@ -25,11 +25,15 @@ _KNOWN = {
 }
 _MISSING = object()
 _LIMIT = 512
-_GUIDANCE = (' Existing files must be read with read_file in this worker before '
-             'changing or deleting them. If file_source_stale or file_source_unread '
+_GUIDANCE = (' Before changing or deleting existing files with this tool, read them '
+             'with read_file in this worker. If file_source_stale or file_source_unread '
              'is returned, read the file again and reconsider the change. New files '
-             'and move destinations must be absent. Do not bypass a conflict with '
-             'a shell command or another writer.')
+             'and move destinations must be absent. Builds and verified generated-output '
+             'imports use their source/build checks; they do not require reading every '
+             'generated file into model context. Preserve local changes and verify '
+             'inputs and output hashes through the established build workflow. '
+             'Do not bypass an actual source conflict with a shell command, build '
+             'or another writer.')
 
 
 class SourceConflict(Exception):
