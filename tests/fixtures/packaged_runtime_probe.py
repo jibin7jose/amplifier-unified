@@ -256,6 +256,10 @@ async def exercise(args, result):
     package = origin / "amplifier_module_hook_context_intelligence"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text(HOOK)
+    # The real Git resolver rejects repositories without a supported marker.
+    # This source-only fixture needs no Python build or dependency installation.
+    (origin / "bundle.md").write_text(
+        "---\nbundle:\n  name: packaged-probe-hook\n  version: '1.0'\n---\n")
     (origin / "payload.txt").write_bytes(b"exact shared source bytes\n")
     (origin / "executable.sh").write_text("#!/bin/sh\nexit 0\n")
     (origin / "executable.sh").chmod(0o755)
