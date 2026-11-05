@@ -111,6 +111,13 @@ merely because a different manager received the result. A failed focused check
 needs correction, not a new approval to repair it. Send one concrete correction
 request to the same owner when necessary; preserve earlier failed evidence.
 
+When a completed review unblocks another manager and you continue unrelated
+work, send that decision now through `coordination.send` in auto mode. Reference
+the exact reviewed source and evidence, optionally linking the incoming request
+with `replyToRequestId`. Do not wait for your whole turn to end. This attributed
+handoff does not seal a staged result or grant new authority; the recipient still
+applies its acceptance criteria and standing scope.
+
 After accepting a member's exact contribution, use `assignment.task.read` then
 `assignment.task.complete` with current revisions and completion evidence. The
 worker does not need another model turn to acknowledge acceptance or shipment.
