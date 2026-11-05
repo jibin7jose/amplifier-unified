@@ -291,3 +291,161 @@ async def test_queued_send_behind_retirement_reports_shutdown_not_task_cancellat
         assert not manager.workers
     finally:
         await service.close()
+
+
+async def test_shutdown_settles_dead_worker_after_reader_error_preserving_unknown_input(tmp_path, caplog):
+    manager = RuntimeManager(command=[sys.executable, '-c', SCRIPT])
+    manager.retention.wake = lambda: None
+    service = AppService(tmp_path, runtime=manager, workspace=tmp_path)
+    await service.dispatch('session.create', {})
+    session = service._session()
+    sid = session['id']
+    fail_reporting = False
+    async def emit(kind, data):
+        if fail_reporting and kind == 'runtime.error':
+            raise OSError('retained reader publication failure')
+        await service.on_runtime_event(kind, data)
+    await manager.start(session, emit)
+    row = manager.workers[sid]
+    sending = asyncio.create_task(service.dispatch('conversation.send', {
+        'sessionId': sid, 'text': 'Do not replay this input'}, command_id='unknown-input'))
+    async def admitted():
+        while not row.get('sendInputs'):
+            await asyncio.sleep(.001)
+    try:
+        await asyncio.wait_for(admitted(), 3)
+        row['emit'] = emit
+        await service.on_runtime_event('runtime.error', {
+            'sessionId': sid, 'error': 'Original saved failure'})
+        fail_reporting = True
+        row['process'].terminate()
+        await asyncio.wait_for(row['process'].wait(), 3)
+        with pytest.raises(OSError, match='retained reader publication failure'):
+            await row['reader']
+        with pytest.raises(RuntimeError):
+            await sending
+        reader_failure = row['reader'].exception()
+        await manager.close()
+        assert not manager.workers
+        assert row['executionEnded'] and row['reader'].exception() is reader_failure
+        assert not row['generation_lease'].exists()
+        assert 'retained reader publication failure' in caplog.text
+        assert session['status'] == 'error' and session['error'] == 'Original saved failure'
+        assert len(session['messages']) == 1
+        assert session['messages'][0]['delivery']['status'] == 'unknown'
+    finally:
+        fail_reporting = False
+        await service.close()
+        await asyncio.gather(sending, return_exceptions=True)
+
+
+@pytest.mark.parametrize('failed_event', ['runtime.ended', 'runtime.warmth'])
+async def test_failed_stop_retries_only_dead_worker_settlement(tmp_path, failed_event, caplog):
+    events = []
+    fail_publication = False
+    async def emit(kind, data):
+        if fail_publication and kind == failed_event:
+            raise OSError('retained settlement publication failure')
+        events.append((kind, data))
+    manager = RuntimeManager(command=[sys.executable, '-c', SCRIPT])
+    manager.retention.wake = lambda: None
+    await manager.start({'id': 'owned', 'workspace': str(tmp_path)}, emit)
+    row = manager.workers['owned']
+    lease = row['generation_lease']
+    fail_publication = True
+    try:
+        row['process'].terminate()
+        await asyncio.wait_for(row['process'].wait(), 3)
+        await asyncio.gather(row['reader'], return_exceptions=True)
+        with pytest.raises(OSError, match='retained settlement publication failure'):
+            await manager.stop('owned', reason='shutdown')
+        first_stop = row['stop_task']
+        assert manager.workers['owned'] is row and lease.exists()
+        assert row.get('executionEnded', False) is (failed_event == 'runtime.warmth')
+        await manager.close()
+        assert manager.workers['owned'] is row and lease.exists()
+        fail_publication = False
+        await manager.close()
+        assert not manager.workers and not lease.exists()
+        assert isinstance(first_stop.exception(), OSError)
+        assert 'retained settlement publication failure' in caplog.text
+        ended = [data for kind, data in events if kind == 'runtime.ended']
+        assert len(ended) == 1 and ended[0]['runtimeOwnerId'] == row['runtimeOwnerId']
+    finally:
+        fail_publication = False
+        await manager.close()
+
+
+@pytest.mark.parametrize('cancelled', [False, True])
+async def test_failed_stop_does_not_retry_or_clear_unconfirmed_process(tmp_path, monkeypatch, cancelled):
+    events = []
+    async def emit(kind, data): events.append((kind, data))
+    manager = RuntimeManager(command=[sys.executable, '-c', SCRIPT])
+    manager.retention.wake = lambda: None
+    await manager.start({'id': 'owned', 'workspace': str(tmp_path)}, emit)
+    row = manager.workers['owned']
+    writes = []
+    async def failed_write(*args):
+        writes.append(args)
+        raise asyncio.CancelledError() if cancelled else OSError('stop transport unavailable')
+    monkeypatch.setattr(manager, '_write', failed_write)
+    try:
+        with pytest.raises(asyncio.CancelledError if cancelled else OSError):
+            await manager.stop('owned', reason='shutdown')
+        first_stop = row['stop_task']
+        await manager.close()
+        assert row['process'].returncode is None
+        assert manager.workers['owned'] is row and row['stop_task'] is first_stop
+        assert len(writes) == 1 and row['generation_lease'].exists()
+        assert not row.get('executionEnded')
+        row['process'].terminate()
+        await asyncio.wait_for(row['process'].wait(), 3)
+        await manager.close()
+        assert not manager.workers and len(writes) == 1
+        assert first_stop.cancelled() if cancelled else isinstance(first_stop.exception(), OSError)
+    finally:
+        if row['process'].returncode is None:
+            row['process'].kill()
+            await row['process'].wait()
+        await manager.close()
+
+
+@pytest.mark.parametrize('cancel_target', ['caller', 'stop_task', 'reader'])
+async def test_dead_worker_settlement_preserves_caller_cancellation(tmp_path, cancel_target):
+    entered, release = asyncio.Event(), asyncio.Event()
+    events = []
+    async def emit(kind, data):
+        if kind == 'runtime.error':
+            entered.set()
+            await release.wait()
+        events.append((kind, data))
+    manager = RuntimeManager(command=[sys.executable, '-c', SCRIPT])
+    manager.retention.wake = lambda: None
+    await manager.start({'id': 'owned', 'workspace': str(tmp_path)}, emit)
+    row = manager.workers['owned']
+    caller = None
+    try:
+        row['process'].terminate()
+        await asyncio.wait_for(row['process'].wait(), 3)
+        await asyncio.wait_for(entered.wait(), 3)
+        caller = asyncio.create_task(manager.stop('owned', reason='shutdown'))
+        while not row.get('stop_task'):
+            await asyncio.sleep(.001)
+        if cancel_target == 'reader':
+            row['reader'].cancel()
+            await asyncio.wait_for(caller, 3)
+        else:
+            (caller if cancel_target == 'caller' else row['stop_task']).cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+            assert manager.workers['owned'] is row and row['generation_lease'].exists()
+            assert not row.get('executionEnded') and not row['reader'].done()
+            release.set()
+            await asyncio.wait_for(manager.stop('owned', reason='shutdown'), 3)
+        assert not manager.workers and not row['generation_lease'].exists()
+        assert len([kind for kind, _ in events if kind == 'runtime.ended']) == 1
+    finally:
+        release.set()
+        if caller:
+            await asyncio.gather(caller, return_exceptions=True)
+        await manager.close()

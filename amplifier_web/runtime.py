@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, contextmanager, nullcontext
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -21,6 +22,7 @@ from .runtime_protocol import MAX_MESSAGE_BYTES, encode_message
 from .performance_diagnostics import measure, measured
 
 _CURRENT_GENERATION = object()
+_LOG = logging.getLogger(__name__)
 
 Emitter = Callable[[str, dict], Awaitable[None]]
 
@@ -1603,6 +1605,16 @@ class RuntimeManager:
         if retirement and retirement is not asyncio.current_task() and not retirement.done():
             retirement.cancel()
             await asyncio.gather(retirement, return_exceptions=True)
+        previous = row.get('stop_task')
+        if previous and previous.done() and row['process'].returncode is not None:
+            failure = None if previous.cancelled() else previous.exception()
+            if previous.cancelled() or failure is not None:
+                # Retry only settlement for this confirmed-dead process, never
+                # another stop/input against a process whose outcome is unknown.
+                _LOG.warning('Retrying stopped worker settlement for %s after %s', session_id,
+                             'cancellation' if previous.cancelled() else 'failure',
+                             exc_info=(type(failure), failure, failure.__traceback__) if failure else None)
+                row.pop('stop_task')
         if "stop_task" not in row:
             row["stop_task"] = asyncio.create_task(self._stop_row(session_id, row))
         await asyncio.shield(row["stop_task"])
@@ -1611,7 +1623,17 @@ class RuntimeManager:
         # An exit already observed before the shutdown boundary is still a
         # crash. Let its reader record that evidence before cancelling readers.
         if row['process'].returncode is not None and not row['closing']:
-            await asyncio.shield(row['reader'])
+            try:
+                await asyncio.shield(row['reader'])
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    raise
+                _LOG.warning('Settling exited worker %s after its reader was cancelled', session_id)
+            except Exception:
+                # A failed reader (including failed error publication) cannot
+                # keep a reaped process mounted forever. Preserve its exception
+                # and still require successful owner-bound settlement below.
+                _LOG.warning('Settling exited worker %s after reader failure', session_id, exc_info=True)
         row["closing"] = True
         if not row["ready"].done():
             row["ready"].cancel()

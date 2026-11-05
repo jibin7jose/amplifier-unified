@@ -593,6 +593,13 @@ exits and worker-reported failures remain errors. Generated systemd units signal
 the host first, retaining bounded final process-group cleanup; existing custom
 units require an explicit reviewed replacement to adopt that policy.
 
+A failed reader or earlier shutdown task does not permanently retain an already
+reaped worker. A later explicit Stop or host shutdown may retry its owner-bound
+settlement only after that exact process's exit is confirmed. Original failures
+remain diagnostic evidence; successful settlement publication precedes worker
+and generation-lease removal. Caller cancellation still propagates. This does
+not retry input, resolve unknown external effects, or infer exit from an error.
+
 The current adapter cannot interrupt or account for only one request inside an
 independent peer's mixed conversation. Stop reports that limitation and suppresses
 pending assignment input without substituting a whole-conversation interruption.
