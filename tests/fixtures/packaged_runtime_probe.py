@@ -50,6 +50,8 @@ async def mount(coordinator, config=None):
         "app": str(Path(amplifier_web.__file__).resolve()),
         "worker": str(Path(sys.modules["__main__"].__file__).resolve()),
         "hooks": [row["module"] for row in coordinator.config.get("hooks", [])],
+        "rootSessionId": coordinator.config.get("root_session_id"),
+        "coordinatorType": type(coordinator).__module__ + "." + type(coordinator).__qualname__,
     }
     with Path(config["records"]).open("a") as stream:
         stream.write(json.dumps(record) + "\\n")
@@ -169,6 +171,14 @@ def verify_lifecycle(events, calls):
     require(not any(event.get("event", "").startswith("generation.") for event in events),
             "Generation unexpectedly started")
     require(not calls.exists(), "Unexpected model call, including during shutdown")
+
+
+def select_worker_record(records, pid, session_id):
+    # Core validates the hook by calling mount with a MockCoordinator before
+    # mounting it on the real session. Validation is not runtime adoption proof.
+    mounted = [row for row in records if row["pid"] == pid and row.get("rootSessionId") == session_id]
+    require(len(mounted) == 1, "Expected exactly one session-bound hook mount for this worker")
+    return mounted[0]
 
 
 def inspect_object(root, origin, revision):
@@ -323,8 +333,8 @@ async def exercise(args, result):
             report = row["ready"].result()
             require(bool(report["resumed"]) == resumed, "Incorrect new/resumed readiness")
             hook_records = [json.loads(line) for line in records.read_text().splitlines()]
-            require(len(hook_records) == len(processes), "Unexpected duplicate/missing hook mount")
-            identity = hook_records[-1]
+            save(output / "hook-mount-records.json", hook_records)
+            identity = select_worker_record(hook_records, row["native_worker_pid"], sid)
             save(output / ("resumed-worker.json" if resumed else "fresh-worker.json"), identity)
             require(identity["pid"] == row["native_worker_pid"], "Hook not from IPC-ready worker")
             require(identity["pid"] != os.getpid(), "Worker was not a separate process")

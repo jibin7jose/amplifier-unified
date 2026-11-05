@@ -72,6 +72,14 @@ class PackagedProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "hash differs"):
             probe.verify_wheel_origin({**direct, "archive_info": {"hashes": {"sha256": "bad"}}}, wheel)
 
+    def test_validation_hook_call_does_not_qualify_real_worker_mount(self):
+        validation = {"pid": 42, "rootSessionId": None}
+        mounted = {"pid": 42, "rootSessionId": "saved-session"}
+        self.assertEqual(probe.select_worker_record([validation, mounted], 42, "saved-session"), mounted)
+        for records, pid in (([validation], 42), ([mounted, mounted], 42), ([mounted], 43)):
+            with self.assertRaisesRegex(AssertionError, "exactly one session-bound"):
+                probe.select_worker_record(records, pid, "saved-session")
+
     def test_late_runtime_error_generation_or_cleanup_call_cannot_pass(self):
         with tempfile.TemporaryDirectory() as tmp:
             sentinel = Path(tmp) / "calls"
