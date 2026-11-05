@@ -228,7 +228,7 @@ jobs:
           uv run --no-sync python - <<'PYCODE'
           import xml.etree.ElementTree as ET
           rows = ET.parse('output/completed-peer-native.xml').getroot().findall('.//testcase')
-          assert len(rows) == 5
+          assert len(rows) == 8
           assert all(not any(row.find(tag) is not None for tag in ('failure', 'error', 'skipped')) for row in rows)
           PYCODE
       - name: Verify cooperative update yield through the native boundary
