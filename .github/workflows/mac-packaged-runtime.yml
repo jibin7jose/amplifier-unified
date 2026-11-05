@@ -1,0 +1,140 @@
+name: Mac packaged runtime acceptance
+
+# This qualifies the published 0.55.0 wheel with accepted Foundation inputs,
+# not future runtime source changes. It is not a release gate or broad suite.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/mac-packaged-runtime.yml
+      - tests/fixtures/packaged_runtime_probe.py
+      - tests/test_packaged_runtime_probe.py
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      LOOP_LIVE_CI_READ_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  mac-packaged-runtime:
+    name: Packaged 0.55.0 on macOS (same-repo only; forks skip)
+    # Never use pull_request_target: private source is available only to trusted
+    # same-repository PRs or an explicit dispatch in the canonical repository.
+    if: >-
+      github.repository == 'microsoft/amplifier-unified' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: macos-26
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the acceptance harness without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Record the tested harness tree and runner identity
+        run: |
+          python -I - <<'PY'
+          import hashlib, json, os, platform, subprocess
+          from pathlib import Path
+          paths = ['.github/workflows/mac-packaged-runtime.yml',
+                   'tests/fixtures/packaged_runtime_probe.py', 'tests/test_packaged_runtime_probe.py']
+          value = {
+              'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'tree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+              'files': {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},
+              'runner': {k: os.environ.get(k) for k in
+                         ['ImageOS', 'ImageVersion', 'RUNNER_ARCH', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT']},
+              'platform': platform.platform(),
+          }
+          Path(os.environ['RUNNER_TEMP'], 'mac-source.json').write_text(json.dumps(value, indent=2) + '\n')
+          print(json.dumps(value))
+          PY
+      - name: Check the probe with standard-library tests
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -p test_packaged_runtime_probe.py -v \
+            2>&1 | tee "$RUNNER_TEMP/mac-probe-unit.log"
+      - name: Check out the exact private loop input
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: microsoft/amplifier-module-loop-live
+          ref: 670f405f711658c3c38e81dbd50a35d3d8c2ac3c
+          path: .ci/mac-loop
+          fetch-depth: 0
+          ssh-key: ${{ secrets.LOOP_LIVE_CI_READ_KEY }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: false
+      - name: Download and verify the published 0.55.0 assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/post_release_checks.py download \
+            --version 0.55.0 --destination "$RUNNER_TEMP/published-assets"
+      - name: Require the accepted immutable wheel bytes
+        run: |
+          python -I - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          wheel = Path(os.environ['RUNNER_TEMP']) / 'published-assets/amplifier_unified-0.55.0-py3-none-any.whl'
+          expected = '11501f2c9718663c2bd4a4bfee6e0e08d182537c65341b9707d653e116d8bee1'
+          with wheel.open('rb') as stream:
+              actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+          if actual != expected:
+              raise SystemExit(f'Accepted wheel SHA-256 mismatch: {actual}')
+          print(f'Accepted 0.55.0 wheel SHA-256: {actual}')
+          PY
+      - name: Install the published host noneditably outside the checkout
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          test ! -e "$RUNNER_TEMP/mac-host"
+          cat > "$RUNNER_TEMP/mac-host-overrides.txt" <<'EOF'
+          amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation@8834b895b74ff5ed047a9fd39e52b3506b06c2fa
+          amplifier-module-hooks-session-naming @ git+https://github.com/microsoft/amplifier-foundation@8834b895b74ff5ed047a9fd39e52b3506b06c2fa#subdirectory=modules/hooks-session-naming
+          EOF
+          uv venv --no-config --python "$(command -v python)" "$RUNNER_TEMP/mac-host"
+          uv pip install --no-config --python "$RUNNER_TEMP/mac-host/bin/python" \
+            --only-binary amplifier-core \
+            --override "$RUNNER_TEMP/mac-host-overrides.txt" \
+            "$RUNNER_TEMP/published-assets/amplifier_unified-0.55.0-py3-none-any.whl"
+      - name: Exercise packaged start, readiness and resume from an isolated directory
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/mac-probe"
+          cp "$GITHUB_WORKSPACE/tests/fixtures/packaged_runtime_probe.py" "$RUNNER_TEMP/mac-probe/packaged_runtime_probe.py"
+          cd "$RUNNER_TEMP/mac-probe"
+          # The probe owns the sanitized environment, worker manifest pin,
+          # production RuntimeManager command and fresh runtime homes/caches.
+          # uv remains on PATH; no repository or provider credential is passed.
+          "$RUNNER_TEMP/mac-host/bin/python" -I packaged_runtime_probe.py \
+            --work "$RUNNER_TEMP/mac-runtime" \
+            --output "$RUNNER_TEMP/mac-evidence" \
+            --wheel "$RUNNER_TEMP/published-assets/amplifier_unified-0.55.0-py3-none-any.whl" \
+            --loop-source "$GITHUB_WORKSPACE/.ci/mac-loop" \
+            --checkout "$GITHUB_WORKSPACE" \
+            2>&1 | tee "$RUNNER_TEMP/mac-packaged-runtime.log"
+      - name: Retain bounded evidence, never private source or runtime state
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mac-packaged-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/mac-evidence/
+            ${{ runner.temp }}/mac-packaged-runtime.log
+            ${{ runner.temp }}/mac-probe-unit.log
+            ${{ runner.temp }}/mac-source.json
+            ${{ runner.temp }}/published-assets/verification.json
+          if-no-files-found: warn

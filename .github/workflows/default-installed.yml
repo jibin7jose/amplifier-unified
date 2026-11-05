@@ -2,6 +2,10 @@ name: Installed default capability qualification
 on:
   workflow_dispatch:
     inputs:
+      mac_packaged:
+        description: Run only the published 0.55.0 Mac shared-source acceptance
+        type: boolean
+        default: false
       desktop_safety:
         description: Run the separate fixed 22+3 desktop proof instead of the IC-13 baseline
         type: boolean
@@ -16,6 +20,9 @@ on:
         default: false
   workflow_call:
     inputs:
+      mac_packaged:
+        type: boolean
+        default: false
       desktop_safety:
         type: boolean
         default: false
@@ -31,7 +38,13 @@ on:
 permissions:
   contents: read
 jobs:
+  mac-packaged:
+    if: inputs.mac_packaged
+    uses: ./.github/workflows/mac-packaged-runtime.yml
+    secrets:
+      LOOP_LIVE_CI_READ_KEY: ${{ secrets.LOOP_LIVE_CI_READ_KEY }}
   default-installed:
+    if: ${{ !inputs.mac_packaged }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
