@@ -409,6 +409,125 @@ async def test_cleanup_failure_keeps_original_error_and_names_owned_staging(app,
     assert len(retained) == 1 and retained[0].read_bytes() == b'partial'
 
 
+def fence_artifact_writer(app, source, tmp_path, monkeypatch, kind):
+    """Change canonical authority without updating the session projection."""
+    if kind == 'context':
+        monkeypatch.setattr(app.portability, 'write_context', lambda sid: 'later-transfer')
+    elif kind == 'native':
+        import uuid
+        from amplifier_foundation.session import SharedSessionStore
+        store = SharedSessionStore(source['workspace'], source['id'])
+        held = store.acquire(app='artifact-save-fence-test')
+        try:
+            held.fence_transfer(str(uuid.uuid4()), app.portability.node.identity['id'], role='source')
+        finally:
+            held.release()
+        assert store.transfer_fence() is not None
+    else:
+        from amplifier_portability import TransferNode
+        from amplifier_worktrees.git import atomic
+        peer = TransferNode(tmp_path / 'transfer-peer', 'synthetic-peer')
+        atomic(app.portability.node.directory / 'peers.json', {peer.identity['id']: peer.identity})
+        row = app.portability.node.begin(source['id'], peer.identity['id'], 'artifact-save-transfer', {})
+        assert row['phase'] == 'preparing' and app.portability.node.fenced(source['id'])
+
+
+async def test_canonical_transfer_fence_refuses_initial_artifact_save(app, tmp_path, writable, monkeypatch):
+    source, peer, original, args = await setup(app, tmp_path)
+    await declare(app, peer, args)
+    fence_artifact_writer(app, source, tmp_path, monkeypatch, 'node')
+    assert not source.get('ownership') and not source.get('configurationBusy')
+    with pytest.raises(AppError, match='fenced for transfer'):
+        await save(app, source, args)
+    assert not (tmp_path / 'saved.bin').exists()
+    assert not list(tmp_path.glob('.artifact-*'))
+    assert original.read_bytes() == b'Original exact bytes'
+
+
+@pytest.mark.parametrize('kind', ['node', 'native', 'context'])
+@pytest.mark.parametrize('reuse', [False, True])
+async def test_canonical_transfer_fence_rechecked_before_save_or_reuse(app, tmp_path, writable, monkeypatch, kind, reuse):
+    from amplifier_web import result_artifact_save
+    source, peer, original, args = await setup(app, tmp_path, b'\x00\xff' * 600000)
+    await declare(app, peer, args)
+    target = tmp_path / 'saved.bin'
+    if reuse:
+        target.write_bytes(original.read_bytes())
+    previous = result_artifact_save.identity(target.stat()) if reuse else None
+    expected = digest(original)
+    captured = copy.deepcopy({key: source.get(key) for key in (
+        'ownership', 'workspace', 'workingDirectory', 'executionRevision', 'interruptionRevision', 'collaborationGeneration')})
+    entered, release = threading.Event(), threading.Event()
+    function = 'existing' if reuse else 'write_verified'
+    operation = getattr(result_artifact_save, function)
+    def blocked(*values):
+        result = operation(*values)
+        entered.set()
+        assert release.wait(10)
+        return result
+    monkeypatch.setattr(result_artifact_save, function, blocked)
+    if reuse:
+        monkeypatch.setattr(result_artifact_save, 'write_verified', lambda *_: pytest.fail('Reuse transferred bytes'))
+        monkeypatch.setattr(result_artifact_save.retained_files, 'plan', lambda *_: pytest.fail('Reuse planned a transfer'))
+        monkeypatch.setattr(app.outputs, 'content_async', lambda *_: pytest.fail('Reuse loaded retained bytes'))
+    task = asyncio.create_task(save(app, source, args))
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        async with app.lock:
+            fence_artifact_writer(app, source, tmp_path, monkeypatch, kind)
+            assert captured == {key: source.get(key) for key in captured}
+        release.set()
+        with pytest.raises(AppError, match='fenced for transfer|transfer.*changed'):
+            await task
+        assert not list(tmp_path.glob('.artifact-*'))
+        if reuse:
+            assert result_artifact_save.identity(target.stat()) == previous and digest(target) == expected
+        else:
+            assert not target.exists()
+        assert digest(original) == expected
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize('primary', [None, 'verification', 'cancelled'])
+async def test_published_artifact_cleanup_failure_reports_both_paths(app, tmp_path, writable, monkeypatch, primary):
+    from amplifier_web import test_origin_files
+    source, peer, original, args = await setup(app, tmp_path, b'\x00\xff\n' * 1000)
+    await declare(app, peer, args)
+    expected = digest(original)
+    target = tmp_path / 'saved.bin'
+    cleanup_error = OSError(13, 'final staging unlink refused')
+    def refuse(parent, name):
+        assert name.startswith('.artifact-'), 'Never delete the public destination'
+        assert target.exists()
+        raise cleanup_error
+    monkeypatch.setattr(test_origin_files.PinnedDirectory, 'unlink', refuse)
+    if primary:
+        def fail_sync(parent):
+            if primary == 'cancelled':
+                raise asyncio.CancelledError('post-link cancellation')
+            raise OSError(5, 'post-link sync failure')
+        monkeypatch.setattr(test_origin_files.PinnedDirectory, 'sync', fail_sync)
+    error_type = asyncio.CancelledError if primary == 'cancelled' else AppError
+    with pytest.raises(error_type) as caught:
+        await save(app, source, args)
+    staging, = list(tmp_path.glob('.artifact-*'))
+    assert target.stat().st_nlink == 2 and staging.stat().st_ino == target.stat().st_ino
+    assert digest(target) == digest(staging) == digest(original) == expected
+    message = str(caught.value)
+    assert str(target) in message and str(staging) in message
+    assert 'Publication may have occurred' in message and 'inspect' in message and 'before retrying' in message
+    assert 'final staging unlink refused' in message
+    if primary:
+        assert ('post-link cancellation' if primary == 'cancelled' else 'post-link sync failure') in message
+    else:
+        assert caught.value.__cause__.__cause__ is cleanup_error
+    assert (await read(app, source, args))['sha256'] == expected
+
+
 def test_existing_verification_is_bounded_even_when_file_grows(tmp_path, monkeypatch):
     from contextlib import contextmanager
     from amplifier_web import result_artifact_save, test_origin_files

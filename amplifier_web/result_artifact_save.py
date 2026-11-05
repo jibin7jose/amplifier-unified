@@ -91,6 +91,12 @@ def cleanup(parent, name, owned, error):
         error.args = (str(error) + ' ' + detail,)
 
 
+def publication_warning(error, target):
+    detail = f'Publication may have occurred at {target}; inspect it before retrying. No public file was removed.'
+    error.add_note(detail)
+    error.args = (str(error) + ' ' + detail,)
+
+
 async def save(collaboration, source, args, origin, caller, *, admission_check=None):
     """Stage outside the app lock; recheck authority before atomic no-clobber link.
 
@@ -125,6 +131,8 @@ async def save(collaboration, source, args, origin, caller, *, admission_check=N
                 collaboration.error(reason, 409)
         if current.get('ownership', {}).get('status') in {'blocked', 'yielding', 'yielded', 'yield-failed', 'taking-over'}:
             collaboration.error('Continue this chat here before saving an artifact.', 409)
+        if app.portability.write_context(sid) != transfer_context:
+            collaboration.error('The task transfer context changed while saving the artifact.', 409)
         work_guard(app, 'coordination.artifact.save', args, origin, caller, final=True)
         if resolve() != proof:
             collaboration.error('The exact result changed while saving its retained version.', 409)
@@ -136,6 +144,7 @@ async def save(collaboration, source, args, origin, caller, *, admission_check=N
 
     try:
         async with app.lock:
+            transfer_context = app.portability.write_context(sid)
             proof = resolve()
             item, record, response = proof
             guard()
@@ -153,6 +162,7 @@ async def save(collaboration, source, args, origin, caller, *, admission_check=N
             if os.name != 'nt' and any(directory.stat().st_uid != os.getuid() for directory in (root_directory, parent)):
                 raise ValueError('The destination folder must belong to the current account.')
             owned = None
+            published = False
             try:
                 prior = await settle_worker(existing, parent, target.name, record)
                 if prior is None:
@@ -185,6 +195,7 @@ async def save(collaboration, source, args, origin, caller, *, admission_check=N
                         # no atomic unlink-if-inode; rollback could delete a racing
                         # writer's replacement. Post-link failures remain explicit.
                         parent.link(temporary, target.name)
+                        published = True
                         try:
                             parent.sync()
                             guard()
@@ -194,9 +205,7 @@ async def save(collaboration, source, args, origin, caller, *, admission_check=N
                             if (linked.st_dev, linked.st_ino, linked.st_size, linked.st_mtime_ns) != staged[:4]:
                                 raise ValueError('Artifact publication identity changed; inspect the destination before retrying.')
                         except BaseException as exc:
-                            detail = f'Publication may have occurred at {target}; inspect it before retrying. No public file was removed.'
-                            exc.add_note(detail)
-                            exc.args = (str(exc) + ' ' + detail,)
+                            publication_warning(exc, target)
                             raise
                         status = 'saved'
                     return {'status': status, 'path': str(target), 'bytes': record['bytes'], 'sha256': record['sha256'],
@@ -207,7 +216,12 @@ async def save(collaboration, source, args, origin, caller, *, admission_check=N
                             'executionRevision': source.get('executionRevision', 0)}
             finally:
                 if owned:
-                    cleanup(parent, temporary, owned, sys.exc_info()[1])
+                    try:
+                        cleanup(parent, temporary, owned, sys.exc_info()[1])
+                    except BaseException as exc:
+                        if published:
+                            publication_warning(exc, target)
+                        raise
     except (OSError, ValueError) as exc:
         message = str(exc)
         for note in getattr(exc, '__notes__', ()):
