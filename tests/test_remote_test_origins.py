@@ -22,6 +22,21 @@ def git(source, *args):
     return subprocess.check_output(['git', '-C', str(source), *args])
 
 
+def test_pinned_binary_publication_and_no_clobber(tmp_path):
+    payload = bytes(range(256)) * 4096 + b'\r\n\x1a\x00\xff'
+    with files.directory(tmp_path, private=os.name == 'nt') as parent:
+        with os.fdopen(parent.create('staging.bin'), 'wb') as stream:
+            stream.write(payload)
+        parent.link('staging.bin', 'saved.bin')
+        with pytest.raises(FileExistsError):
+            parent.link('staging.bin', 'saved.bin')
+        parent.unlink('staging.bin')
+        with parent.open('saved.bin', private=os.name == 'nt') as stream:
+            assert stream.read() == payload
+        parent.assert_current()
+    assert (tmp_path / 'saved.bin').read_bytes() == payload
+
+
 @pytest.fixture(autouse=True)
 def windows_fixture_permissions(tmp_path):
     if os.name == 'nt':

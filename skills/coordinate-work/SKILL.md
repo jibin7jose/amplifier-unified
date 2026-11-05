@@ -97,6 +97,15 @@ merely because a different manager received the result. A failed focused check
 needs correction, not a new approval to repair it. Send one concrete correction
 request to the same owner when necessary; preserve earlier failed evidence.
 
+Use passive `coordination.artifact` for bounded inspection. To consume the actual
+file, discover `coordination.artifact.save` and supply your `sessionId`, the exact
+`requestId`, `responseRevision` and `reference`, plus a relative destination `path`
+inside your current working folder. Its parent must exist. The host streams and
+verifies large binary files without credentials or peer-library access. Current
+write restrictions still apply; different existing bytes are never overwritten.
+Verify returned size/hash and provenance. After an uncertain return, inspect the
+destination before another explicit save; saved bytes are not test qualification.
+
 After accepting a member's exact contribution, use `assignment.task.read` then
 `assignment.task.complete` with current revisions and completion evidence. The
 worker does not need another model turn to acknowledge acceptance or shipment.

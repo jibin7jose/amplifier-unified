@@ -154,6 +154,10 @@ def definitions(schema, string):
         "coordination.artifact": ("Read an exact retained file as an original request participant or Full-access observer, even after its source disappears. Current delegated Full-access reviewers may use this passive read. Observers use workspace/all read scope. Bounded text and download identity; no peer output-library access or work admission. Retained bytes are not proof of correctness.", schema({**sid,
             "requestId": string(200), "reference": string(2000), "scope": {"enum": ["workspace", "all"]}, "responseRevision": {"type": "integer", "minimum": 1}, "offset": {"type": "integer", "minimum": 0},
             "limit": {"type": "integer", "minimum": 1, "maximum": 4000}}, ["sessionId", "requestId", "reference"])),
+        "coordination.artifact.save": ("Explicitly save one exact request-authorized retained file, including large binaries, into your current working folder. Supply the responseRevision and reference from coordination.result, and a relative path using / separators with an existing parent folder. Requires current mounted file-write access. Streams verified bytes without HTTP or peer-library access; refuses links, escapes and different existing bytes. Identical existing bytes are hash-verified and reused. After an unknown return inspect the destination; this is not a durable exactly-once operation or correctness qualification.", schema({**sid,
+            "requestId": string(200), "reference": string(2000), "scope": {"enum": ["workspace", "all"]},
+            "responseRevision": {"type": "integer", "minimum": 1}, "path": {**string(2000), "minLength": 1}},
+            ["sessionId", "requestId", "reference", "responseRevision", "path"])),
         "coordination.reply": ("Record a typed reply to your exact delivered request. Optional messageIds name your current-generation assistant output, never the incoming request messageId; omit them when unknown. Retain files using path@sha256:<64 lowercase hex digits> in references. Before ending the turn, check artifactVerification and each artifacts[].status: bytes are saved before this reply is acknowledged; later terminal sealing only qualifies the report. Correct a staged report in the same current generation, or reply from a later current generation after it settles, using expectedResponseRevision from coordination.result. Questions/deferrals stay open; reports are unqualified until separately proven terminal. Exact command IDs deduplicate retries. Meaningful revisions retain the original request identity without a lifetime count limit.", schema({
             "requestId": string(200), "kind": {"enum": ["result", "ack", "defer", "decline", "question", "conflict"]},
             "expectedResponseRevision": {"type": "integer", "minimum": 0},
@@ -1795,7 +1799,7 @@ class Collaboration:
             self.error("A user must explicitly perform peer mutations outside a collaboration send grant.")
         return None
 
-    async def dispatch(self, action, args, origin, command_id, caller):
+    async def dispatch(self, action, args, origin, command_id, caller, *, admission_check=None):
         if action in {'coordination.recap', 'coordination.diagnostics'}:
             from .collaboration_observations import read
             return {'accepted': True, 'result': await read(self, action, args, origin, caller)}
@@ -1804,6 +1808,7 @@ class Collaboration:
         if action in {"coordination.grant", "coordination.decide", "coordination.revoke"}:
             self.error("Coordination approval APIs are retired. Historical records are read-only.", 410)
         source = (self.result_source(args, origin, caller) if action == 'coordination.artifact'
+                  else self.source(args, origin, caller, hydrate=False) if action == 'coordination.artifact.save'
                   else self.source(args, origin, caller) if action not in {"coordination.result", "coordination.read"} else None)
         if action == 'coordination.acknowledge':
             from .outcome_acknowledgement import acknowledge
@@ -1811,6 +1816,9 @@ class Collaboration:
         if action == 'coordination.cancel':
             from .request_cancellation import cancel
             return await cancel(self, source, args, origin, command_id)
+        if action == 'coordination.artifact.save':
+            from .result_artifact_save import save
+            return {'accepted': True, 'result': await save(self, source, args, origin, caller, admission_check=admission_check)}
         if action == 'coordination.artifact':
             if source['id'] != args['sessionId']:
                 self.error('Read a retained result from the calling conversation.')

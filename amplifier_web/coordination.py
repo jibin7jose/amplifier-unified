@@ -207,14 +207,15 @@ class Coordination:
             return {"targets": results, "errors": errors, "changed": bool(errors or any(row["changed"] for row in results))}
         return await self.signal.wait(read, wait_ms=args.get("waitMs", 0))
 
-    async def dispatch(self, action, args, origin, command_id, include_state, caller_session_id):
+    async def dispatch(self, action, args, origin, command_id, include_state, caller_session_id, *, admission_check=None):
         from .service import AppError
         if action == "coordination.review":
             from .workspace_review import review
             async with self.service.lock:
                 return {"accepted": True, "result": review(self.service, args, origin, caller_session_id)}
         if action not in definitions():
-            return await self.service.collaboration.dispatch(action, args, origin, command_id, caller_session_id)
+            return await self.service.collaboration.dispatch(action, args, origin, command_id, caller_session_id,
+                                                              admission_check=admission_check)
         if action in {"coordination.list", "coordination.wait"}:
             if origin not in {'ui', 'user'} and not caller_session_id:
                 raise AppError('History reads require a registered calling conversation.', 403)

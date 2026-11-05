@@ -280,6 +280,29 @@ a download. Source editing, deletion or removal of the original working copy
 does not change the result. Old replies retain their prior digest-checked source
 fallback; they are not relabeled as snapshots.
 
+`coordination.artifact.save` is the explicit consumption operation. It reuses the
+same exact request/response/reference resolver and retained chunk verifier, with
+no HTTP credential transfer or general peer output-library access. The root caller
+names a portable relative path under its current execution folder; parent folders
+must exist. Its current mounted file policy must confirm both destination and
+staging writes. Delegated children cannot borrow the root's write authority.
+
+The operation pins no-follow directories, verifies bytes into exclusive staging,
+then rechecks request authority, Stop, execution placement and permissions before
+atomic no-clobber publication. Identical existing regular files are hash-verified
+and reused without a retained-byte transfer. Other existing files and links are
+preserved. Cancellation settles the owned writer before staging cleanup; cleanup
+failures retain the original error and identify the owned path. Reads and retained
+source resources remain unchanged. Work is linear in the selected file bytes;
+memory follows the existing chunk-reader bound plus per-chunk manifest metadata.
+This is not a cross-filesystem transaction or durable exactly-once promise:
+inspect the exact destination after an uncertain return. A late external parent
+replacement or post-link I/O failure can leave the already-published file; the
+operation reports uncertainty and never deletes a public path to roll it back.
+These cooperative checks do not fence arbitrary same-account external writers.
+A save proves byte
+identity, not semantic correctness, integration or independent qualification.
+
 Qualification after combining with assignment control: 418 focused Python
 checks, including real dispatch/bridge/HTTP routes, rollback/lost acknowledgment,
 restart, deletion before first open, foreign-reader rejection, stale generation,

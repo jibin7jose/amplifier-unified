@@ -2271,7 +2271,8 @@ class AppService:
                         **({'state': self.browser_state()} if include_state else {})}
         if action.startswith("coordination."):
             try:
-                return await self.coordination.dispatch(action, args, origin, command_id, include_state, caller_session_id)
+                return await self.coordination.dispatch(action, args, origin, command_id, include_state, caller_session_id,
+                                                        admission_check=admission_check)
             except ValueError as exc:
                 raise AppError(str(exc)) from None
         if action.startswith(('recall.', 'memory.')):
