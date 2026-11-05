@@ -24,7 +24,8 @@ def mounted_host(tmp_path, monkeypatch):
     monkeypatch.chdir(workspace)  # Also restore cwd after prepare_manager changes it.
     config = SimpleNamespace(workspace=workspace, home=home, registry_home=home,
         resolve_source=lambda value: value, registrations={}, active_bundle="anchors",
-        app_bundles=[], settings={}, module_sources={}, config_home=None, settings_file=home/"settings.yaml")
+        app_bundles=[], settings={}, module_sources={}, config_home=None, settings_file=home/"settings.yaml",
+        image_intent_sources=())
     monkeypatch.setattr(host, "load_config", lambda _, **kwargs: config)
     runtime = SimpleNamespace(session_id="native-root", observer=None)
     context = SimpleNamespace(messages=[])

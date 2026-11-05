@@ -15,7 +15,6 @@ export function AdvancedSettings({sections,navigate,state}){
  const contributed=sections.flatMap(section=>section.pages).filter(([id])=>id.startsWith('shell:'));
  const groups=[
   {title:'Model rules',description:'Routing profiles, roles, and model preference.',page:'routing'},
-  {title:'Image generation',description:'Automatic provider priority, image models, and optional overrides.',page:'image-generation'},
   {title:'Provider configuration',description:'Instance names, credentials, and custom providers.',page:'providers'},
   {title:'Bundles & modules',description:'Composition, discovery, defaults, and registries.',pages:['app-bundles','add-bundles','defaults','registries']},
   {title:'Tool connections',description:'MCP connections, installation sources, and authentication.',page:'tool-connections'},

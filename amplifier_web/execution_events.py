@@ -27,12 +27,21 @@ class AdmittedProviderCall:
     session_id: str
     guarded: bool
 
+class _ImageOperationResult(Exception):
+    def __init__(self, result):
+        super().__init__("Image operation did not complete.")
+        self.result = result
+
 
 def public_usage(value):
     if hasattr(value, "model_dump"):
         value = value.model_dump()
     if not isinstance(value, dict):
         return {"costType": "unavailable"}
+    if "normalized" in value and "provider" in value:
+        # Optional image operations separate normalized evidence from native
+        # usage. Do not infer costs from another modality's model price.
+        value = value.get("normalized") or {}
     result = {}
     for source, target in (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"),
                            ("cache_read_tokens", "cacheReadTokens"), ("cache_write_tokens", "cacheWriteTokens"),
@@ -209,6 +218,23 @@ class ExecutionEvents:
             if purpose_token is not None:
                 CALL_PURPOSE.reset(purpose_token)
 
+    async def image_backend_call(self, sid, backend, arguments, *, run_id=None):
+        """Keep retained explicit backend effects inside host admission too."""
+        from types import SimpleNamespace
+        descriptor = backend.describe()
+        provider = SimpleNamespace(get_info=lambda: {
+            "id": descriptor.get("provider", "legacy-image"),
+            "defaults": {"model": descriptor.get("model")},
+        })
+        request = SimpleNamespace(model=descriptor.get("model"), metadata={})
+        purpose = CALL_PURPOSE.set({**(CALL_PURPOSE.get() or {}),
+                                   "label": "Image generation", "purpose": "image_generation"})
+        try:
+            return await self.provider_call(sid, provider, request,
+                lambda: backend.generate(**arguments), label="Image generation", run_id=run_id)
+        finally:
+            CALL_PURPOSE.reset(purpose)
+
     async def _observed_provider_call(self, sid, provider, request, invoke, *, label=None, run_id=None):
         row = await self._begin_provider_call(sid, provider, request, label=label, run_id=run_id)
         token = CURRENT_CALL.set(row["id"])
@@ -224,6 +250,10 @@ class ExecutionEvents:
         except BaseException as exc:
             from .session_health import exception_details
             failure = {} if isinstance(exc, asyncio.CancelledError) else {'failure': exception_details(exc)}
+            if isinstance(exc, _ImageOperationResult):
+                # A received unsuccessful artifact can still report paid usage.
+                # Retain only normalized public evidence, never its payload.
+                failure['usage'] = public_usage(exc.result.get("usage"))
             self.publish({**row, "phase": "cancelled" if isinstance(exc, asyncio.CancelledError) else "error", "endedAt": time.time(), **failure})
             raise
         finally:
@@ -255,6 +285,30 @@ class ExecutionEvents:
         async def compact_context(request, **kwargs):
             return await self.provider_call(sid, provider, request,
                 lambda: original_compact(request, **kwargs), label="Context compaction", run_id=run_id)
+
+        original_image = getattr(provider, "generate_image", None)
+        async def generate_image(request, *, plan):
+            from types import SimpleNamespace
+            # Use the image model, not the conversation default, for admission
+            # identity. No prompt, image bytes or opaque continuation is logged.
+            observed = SimpleNamespace(model=plan.get("model"), metadata={})
+            purpose = CALL_PURPOSE.set({**(CALL_PURPOSE.get() or {}),
+                                       "label": "Image generation", "purpose": "image_generation"})
+            try:
+                async def invoke():
+                    result = await original_image(request, plan=plan)
+                    if result.get("status") != "completed":
+                        # The method returned evidence but did not complete the
+                        # requested artifact; the event must not paint success.
+                        raise _ImageOperationResult(result)
+                    return result
+                try:
+                    return await self.provider_call(sid, provider, observed, invoke,
+                        label="Image generation", run_id=run_id)
+                except _ImageOperationResult as exc:
+                    return exc.result
+            finally:
+                CALL_PURPOSE.reset(purpose)
 
         original_stream = getattr(provider, "stream", None)
         async def stream(request, **kwargs):
@@ -321,6 +375,8 @@ class ExecutionEvents:
             provider.complete = complete
             if callable(original_compact):
                 provider.compact_context = compact_context
+            if callable(original_image):
+                provider.generate_image = generate_image
             if callable(original_stream):
                 provider.stream = stream
             provider._amplifier_web_observed = True
@@ -335,6 +391,8 @@ class ExecutionEvents:
             wrapper.complete = complete
             if callable(original_compact):
                 wrapper.compact_context = compact_context
+            if callable(original_image):
+                wrapper.generate_image = generate_image
             if callable(original_stream):
                 wrapper.stream = stream
             self.provider_wrappers[id(provider)] = wrapper

@@ -727,6 +727,9 @@ class Worker:
             return not CALL_PURPOSE.get()
         coordinator.register_capability("live.public_stream", public_stream)
         if self.telemetry:
+            coordinator.register_capability('image.backend_invoke',
+                lambda backend, arguments: self.telemetry.image_backend_call(
+                    coordinator.session_id, backend, arguments, run_id=activity_run_id))
             coordinator.register_capability('web.provider_observe', lambda provider: self.telemetry.instrument_provider(coordinator.session_id, provider, run_id=activity_run_id))
             coordinator.register_capability('web.provider_call', lambda provider, request, invoke, **kwargs: self.telemetry.provider_call(coordinator.session_id, provider, request, invoke, run_id=activity_run_id, **kwargs))
             registry = coordinator.get_capability("live.children")

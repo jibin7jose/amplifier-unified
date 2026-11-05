@@ -2,7 +2,10 @@
 import copy
 import re
 from importlib.metadata import entry_points
-from .image_setup import row_id
+
+
+def row_id(row):
+    return row.get('id') or row.get('instance_id') or row['module'].removeprefix('provider-')
 
 
 def catalogs():

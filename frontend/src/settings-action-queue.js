@@ -1,7 +1,7 @@
 // Only complete, replaceable editor snapshots may collapse while waiting.
 // Saves, chat drafts, navigation and caller-assigned command identities are
 // barriers: their ordering and individual receipts must remain unchanged.
-const editors=new Set(['aiConnectionEditor','imageSettingsEditor','providerEditor','composerModel','composerBundle','bundleDefaultsDraft']);
+const editors=new Set(['aiConnectionEditor','providerEditor','composerModel','composerBundle','bundleDefaultsDraft']);
 // Draft defaults are scoped reads: a stalled receipt must not serialize edits
 // or a retry for another draft. They still observe preceding writes.
 export const isDraftDefaultsRead=(action,meta={})=>action==='configuration.defaults'&&meta.expectedRevision===undefined;

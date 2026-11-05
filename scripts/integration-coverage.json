@@ -119,7 +119,7 @@
         "tests/test_default_export_literals.py",
         "amplifier_web/provider_isolation.py",
         "amplifier_web/provider_environment.py",
-        "amplifier_web/image_defaults.py",
+        "amplifier_web/image_migration.py",
         "tests/test_provider_isolation.py",
         "tests/fixtures/provider_isolation_native.py",
         "amplifier_web/worktrees.py",

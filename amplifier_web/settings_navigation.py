@@ -5,6 +5,8 @@ CHAT_PAGES = {'conversation': 'session-details', 'runtime': 'chat-advanced',
 def route_legacy(state, patch):
     if patch.get('panel', state.get('view', {}).get('panel')) not in {'settings', 'appearance'}:
         return patch
+    if 'image-generation' in patch.get('settingsExpanded', []):
+        patch = {**patch, 'settingsExpanded': ['ai-connections']}
     page = next((p for p in patch.get('settingsExpanded', []) if p in CHAT_PAGES or p in {'outputs', 'publishing'}), None)
     if page in CHAT_PAGES:
         return {**patch, 'panel': CHAT_PAGES[page], 'settingsExpanded': [], 'settingsCanvas': False}
@@ -22,7 +24,7 @@ GLOBAL_PAGES = {
     'app-bundles':'Configured bundles', 'add-bundles':'Discover bundles', 'defaults':'Conversation defaults',
     'registries':'Module & source registries', 'tool-connections':'Tool connections',
     'custom-appearance':'Custom appearance', 'repair':'Backup & repair', 'reset':'Advanced recovery',
-    'image-generation':'Image generation', 'ready-conversations':'Ready conversations', 'automation':'Terminal & automation', 'install-app':'Install app'}
+    'ready-conversations':'Ready conversations', 'automation':'Terminal & automation', 'install-app':'Install app'}
 
 def settings_state(state):
     view = state.get('view', {})

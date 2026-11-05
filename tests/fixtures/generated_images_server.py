@@ -10,7 +10,8 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+if os.environ.get("AMPLIFIER_TEST_INSTALLED_STATIC") != "1":
+    sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tests'))
 from aiohttp import web
 from amplifier_web import auth, execution

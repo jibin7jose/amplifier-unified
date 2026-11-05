@@ -119,7 +119,7 @@ def project(result):
     if page not in {'smart-tools', 'tool-connections'}:
         result['smartTools'] = {'servers': [pick(row, ('id', 'name', 'status', 'capabilities'))
                                          for row in smart.get('servers', [])]}
-    catalog_settings = page in {'ai-connections', 'overview', 'image-generation', 'providers', 'routing', 'voice', 'defaults', 'desktop'}
+    catalog_settings = page in {'ai-connections', 'overview', 'providers', 'routing', 'voice', 'defaults', 'desktop'}
     from .model_catalogs import project as project_models
     project_models(result, settings=catalog_settings, runtime=runtime)
     # Setup operation receipts, matrices and diagnostic metadata are page resources.
@@ -146,7 +146,7 @@ def project(result):
             for sid, control in result.get('runtimeControl', {}).items()}
     if page != 'history':
         result['sharedHistory'] = {key: value for key, value in result.get('sharedHistory', {}).items() if key != 'issues'}
-    resources = {'registry': {'registries'}, 'bundleDiscovery': {'add-bundles'},
+    resources = {'registry': {'registries', 'ai-connections'}, 'bundleDiscovery': {'add-bundles'},
                  'workspaceStarters': {'workspace-starters', 'workspaces'},
                  'diagnostics': {'diagnostics'}, 'maintenance': {'repair', 'reset'},
                  'feedback': set()}

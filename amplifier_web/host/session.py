@@ -402,11 +402,27 @@ def _apply_settings(bundle, config):
     from .ui_use_config import configure_bundle
     configure_bundle(bundle)
     overrides = settings.get("overrides", {})
+    unavailable_image_providers = []
     for kind in ("providers", "tools", "hooks"):
         values = []
         for row in getattr(bundle, kind):
             override = merge(overrides.get(row.get("module"), {}), overrides.get(row.get("id") or row.get("instance_id"), {}))
             if override.get("enabled") is False or (kind == "providers" and (row.get("id") or row.get("instance_id") or row["module"].removeprefix("provider-")) in settings.get("configurator", {}).get("disabled", {}).get("providers", [])):
+                if kind == "providers":
+                    # Removing a connection must not erase its old image intent
+                    # and silently authorize another account through routing.
+                    # Keep only the migration's image fields, never credentials.
+                    effective_config = merge(row.get("config", {}), override.get("config", {}))
+                    image = effective_config.get("image_generation")
+                    if isinstance(image, dict) and image:
+                        unavailable_image_providers.append({
+                            **{key: row[key] for key in ("module", "id", "instance_id") if key in row},
+                            "enabled": False,
+                            "config": {"image_generation": {
+                                key: copy.deepcopy(value) for key, value in image.items()
+                                if key in {"enabled", "id", "model"}
+                            }},
+                        })
                 continue
             row = merge(row, {key:value for key,value in override.items() if key in {"source", "config"}})
             identity = row.get("id") or row.get("instance_id") or row.get("module")
@@ -461,6 +477,8 @@ def _apply_settings(bundle, config):
             bundle.session[kind] = merge(row, {key: value for key, value in override.items() if key in {"source", "config"}})
     from ..decision_accounts import bind_sources
     bind_sources({"providers": bundle.providers, "agents": bundle.agents}, getattr(config, "module_sources", {}))
+    # Host provenance only: this is not a declaration to mount the removed rows.
+    bundle._host_unavailable_image_providers = unavailable_image_providers
     return bundle
 
 
@@ -1100,12 +1118,14 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         prepared.resolver = ComponentResolver(prepared.resolver, components)
     with startup_timing.phase('manager.providers'):
         await materialize_bundle_providers(loaded, prepared, **({"isolation": isolation} if isolation else {}))
-        # Bound child plans inherit an exact parent selection, including image
-        # capability. Do not discover a new account outside that inherited plan.
+        # Translate old explicit image intent only in new unbound plans. No account
+        # discovery or provider ranking belongs in the host. Snapshots stay intact.
         if not snapshot and not getattr(loaded, '_host_provider_credentials_bound', False):
-            from ..image_defaults import apply_defaults
-            await apply_defaults(prepared.mount_plan, config.settings,
-                                 **({"check_available": lambda row: not isolation.failure(row)} if isolation else {}))
+            from ..image_migration import apply_legacy_image_intent
+            apply_legacy_image_intent(
+                prepared.mount_plan, config.settings,
+                scoped_sources=config.image_intent_sources,
+                unavailable_providers=getattr(loaded, '_host_unavailable_image_providers', ()))
         environment_plan = prepared.mount_plan
         if isolation:
             environment_plan = copy.deepcopy(environment_plan)

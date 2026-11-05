@@ -23,8 +23,8 @@ EFFECTS = {
 PERSISTENT = {
     **dict.fromkeys(('permissions.save', 'permissions.reset'), 'file_access'),
     **dict.fromkeys(('providers.save', 'providers.remove', 'providers.move', 'providers.reorder', 'providers.login', 'providers.configureDecisions'), 'connections'),
-    **dict.fromkeys(('providers.finishSetup', 'providers.configureImages', 'routing.use', 'routing.save'), 'model_defaults'),
-    **dict.fromkeys(('modules.save', 'modules.remove', 'modules.validate', 'sources.save', 'sources.remove', 'sources.validate'), 'modules'),
+    **dict.fromkeys(('providers.finishSetup', 'routing.use', 'routing.save'), 'model_defaults'),
+    **dict.fromkeys(('modules.save', 'modules.remove', 'modules.validate', 'modules.reconcile', 'sources.save', 'sources.remove', 'sources.validate'), 'modules'),
 }
 BUNDLE_GLOBAL = {'bundles.add', 'bundles.toggle', 'bundles.remove', 'bundles.move', 'bundles.reorder'}
 

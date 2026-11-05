@@ -1,7 +1,7 @@
 import React,{createContext,useContext,useRef} from 'react';
 
 const ConfigurationContext=createContext({kind:'global'});
-const editorKeys=['aiConnectionEditor','imageSettingsEditor','providerEditor','routingEditor','registryDraft','settingsFilters'];
+const editorKeys=['aiConnectionEditor','providerEditor','routingEditor','registryDraft','settingsFilters'];
 export function useConfigurationId(){
  const target=useContext(ConfigurationContext);
  return id=>target.kind==='workspace'?'workspace-'+target.workspaceId+'-'+id:id;

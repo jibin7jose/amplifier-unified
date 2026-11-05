@@ -74,6 +74,12 @@ class RegistryManager:
     async def perform(self,action,args):
         workspace=args.get('workspace') or str(Path.cwd());scope=args.get('scope','global')
         settings=self.store.read(workspace,scope)
+        if action in {'modules.diagnostics', 'modules.reconcile'}:
+            from .image_migration import configuration_diagnostics, reconcile_configuration
+            global_only = args.get('configurationTarget', {}).get('kind') == 'global'
+            if action == 'modules.diagnostics':
+                return {'diagnostics': configuration_diagnostics(self.store, workspace, scope, global_only=global_only)}
+            return reconcile_configuration(self.store, workspace, scope, args, global_only=global_only)
         if action in {'modules.list','sources.list'}:return self.rows(settings,scope)
         if action=='modules.validate':return await self.validate(args,workspace,scope)
         validation=None

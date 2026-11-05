@@ -813,7 +813,12 @@ class Management:
                 from .configuration_target import state_for
                 state_for(self.service,'registry',args).update(result)
                 self.service._publish_changes(globals={'registry'})
-            if action.endswith(('.save','.remove')) and result.get('takesEffect'):await self.invalidate_configuration()
+            if action == 'modules.reconcile' and result.get('takesEffect'):
+                # Reconciliation changes future defaults, never a loaded or
+                # saved plan. Do not retire/remount any existing conversation.
+                await self.invalidate_configuration(warm=False, session_ids=set())
+            elif action.endswith(('.save','.remove')) and result.get('takesEffect'):
+                await self.invalidate_configuration()
         elif action=='configuration.defaults':
             from .draft_defaults import resolve_defaults
             from .managed_chats import is_managed
@@ -933,16 +938,14 @@ class Management:
                     setup.setdefault('modelCatalogs',{})[result['modelsProviderId']]=result['models']
                     setup.setdefault('providerCatalogs',{})[result['modelsProviderId']]={'phase':'ready','models':result['models'],'supported':result.get('modelsSupported',True),'metadata':result.get('providerMetadata')}
                 self.service._publish_progress(session_ids=set(), record_only=True, global_keys={'setup'})
-            if action in {'providers.list','providers.save','providers.finishSetup','providers.configureImages','providers.remove','providers.move','providers.reorder','providers.loginStatus'}:
+            if action in {'providers.list','providers.save','providers.finishSetup','providers.remove','providers.move','providers.reorder','providers.loginStatus'}:
                 async with self.service.lock:
-                    from .image_defaults import preference
-                    image_config = manager.config(session['workspace'])
                     from .configuration_target import state_for
-                    state_for(self.service,'setup',args).update(providers=manager.provider_rows(session['workspace']),providersWorkspace=session['workspace'],providersLoadedAt=time.time(), providersLocation={'kind':'managed' if managed_draft else 'workspace'}, configurationTarget=args.get('configurationTarget'), imagePreference=preference(image_config.settings, image_config.providers))
+                    state_for(self.service,'setup',args).update(providers=manager.provider_rows(session['workspace']),providersWorkspace=session['workspace'],providersLoadedAt=time.time(), providersLocation={'kind':'managed' if managed_draft else 'workspace'}, configurationTarget=args.get('configurationTarget'))
                     self.service._publish_progress(session_ids=set(), record_only=True, global_keys={'setup'})
                 self.background(self.warm_providers(manager,session['workspace']))
-            if action in {'providers.save','providers.finishSetup','providers.configureImages','providers.configureDecisions','providers.remove','providers.move','providers.reorder','routing.save','routing.use'} and result.get('configurationChanged',True):
-                await self.invalidate_configuration(publish=False,warm=action not in {'providers.save','providers.finishSetup','providers.configureImages','providers.configureDecisions','providers.remove','providers.move','providers.reorder','routing.save','routing.use'},session_ids=set() if action=='providers.configureDecisions' else routing_sessions)
+            if action in {'providers.save','providers.finishSetup','providers.configureDecisions','providers.remove','providers.move','providers.reorder','routing.save','routing.use'} and result.get('configurationChanged',True):
+                await self.invalidate_configuration(publish=False,warm=action not in {'providers.save','providers.finishSetup','providers.configureDecisions','providers.remove','providers.move','providers.reorder','routing.save','routing.use'},session_ids=set() if action=='providers.configureDecisions' else routing_sessions)
         elif action in {'bundle.preview', 'bundle.switch', 'bundle.fork'}:
             from .bundle_actions import perform
             await perform(self, action, args)

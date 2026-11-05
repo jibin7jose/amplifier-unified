@@ -231,6 +231,91 @@ def child_plan(parent, overlay, *, tool_inheritance=None, hook_inheritance=None,
     return copy.deepcopy(result)
 
 
+def _check_retained_image_selection(plan, retained_plan):
+    """Refuse a changed image binding, never restore saved provider credentials.
+
+    Restrictions are already intersected by child_plan. The saved mount plan is
+    evidence to compare, not authority to replace the current plan. Providers own
+    their configuration vocabulary, so compare the whole credential-free config
+    for image-bearing providers rather than guess which account fields matter.
+    """
+    if not isinstance(retained_plan, dict):
+        return
+    current = [row for row in plan.get("tools", []) if row.get("module") == "tool-image"]
+    if not current:
+        return  # A current or retained tool exclusion cannot dispatch an image.
+    retained = [row for row in retained_plan.get("tools", [])
+                if isinstance(row, dict) and row.get("module") == "tool-image"]
+
+    def selections(rows):
+        result = []
+        for row in rows:
+            config = row.get("config", {})
+            if not isinstance(config, dict):
+                raise ValueError("Saved child image configuration must be a dictionary.")
+            result.append({
+                "instance": row.get("instance_id") or row.get("id") or row["module"],
+                "backend": config.get("backend") or None,
+                "model_role": config.get("model_role", "image-gen"),
+                "provider_preferences": config.get("provider_preferences"),
+                # Explicit built-in compatibility backends bind their model here.
+                "builtin": config.get("builtin"),
+                "model": config.get("model"),
+                "vertexai": config.get("vertexai"),
+            })
+        return result
+
+    if selections(current) != selections(retained):
+        raise ValueError("Saved child image selection has changed; review the image configuration before resuming.")
+
+    from .storage import _SECRET_KEYS
+    from ..provider_recording import apply_provider_recording
+    routed = any(not row.get("config", {}).get("backend") for row in current)
+
+    def credential_free(value):
+        # Checkpoints preserve host credential markers, while the current plan
+        # contains their rebound values. Neither form identifies the account:
+        # instance/source and every noncredential setting do. Match the store's
+        # secret-key vocabulary, excluding markers as well as literal secrets.
+        # Credential rebinding/authorization remains with its existing owner.
+        if isinstance(value, dict):
+            return {key: credential_free(item) for key, item in value.items()
+                    if key.lower() not in _SECRET_KEYS}
+        if isinstance(value, list):
+            return [credential_free(item) for item in value]
+        return value
+
+    def bindings(value):
+        # Normalize host-added recording defaults and id aliases without changing
+        # either plan. Credential stripping matches SessionStore's saved evidence.
+        # Main saves logical decision accounts but mounts them as hooks. Use the
+        # same validated projection on both sides; those accounts are not image
+        # providers and their restoration must not reorder the image comparison.
+        from ..decision_accounts import DecisionAccounts
+        value = DecisionAccounts(value, None, lambda module, source: source).plan
+        value = copy.deepcopy({"providers": value.get("providers", [])})
+        apply_provider_recording(value, enabled=False)
+        result = []
+        for row in value["providers"]:
+            config = row.get("config", {})
+            if not routed and "image_generation" not in config:
+                continue
+            result.append({
+                "module": row["module"],
+                "instance": row.get("instance_id") or row.get("id") or row["module"],
+                "source": row.get("source"),
+                "enabled": row.get("enabled", True),
+                "config": credential_free({key: item for key, item in config.items()
+                                          if key not in {"raw", "raw_debug"}}),
+            })
+        return result
+
+    # Routed images may use any mounted provider. Legacy backends depend on the
+    # nested image_generation declaration and its exact provider instance/source.
+    if bindings(plan) != bindings(retained_plan):
+        raise ValueError("Saved child image provider binding has changed; review the image configuration before resuming.")
+
+
 class StandaloneHostAdapter(HostAdapter):
     def __init__(self, registry=None):
         self.registry = registry
@@ -549,6 +634,10 @@ class Children:
         child_prepared.mount_plan = decision_accounts.plan
         if decision_accounts.aliases:
             child_prepared.resolver = AccountResolver(child_prepared.resolver, decision_accounts.aliases)
+        # Compare the final effective binding, including late provider environment
+        # expansion. Saved declarations never restore credentials or authorize a
+        # changed endpoint. Refusal still precedes child creation and publication.
+        _check_retained_image_selection(child_prepared.mount_plan, retained_plan)
         persistent = _PERSISTENT.get()
         call_id = admission["callId"]
         row = {"sessionId": identity, "parentSessionId": parent.session_id, "callId": call_id, "runId": admission["runId"],

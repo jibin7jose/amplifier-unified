@@ -14,7 +14,29 @@ def read_image_receipt(workspace, path):
     receipt = json.loads(data)
     text = {'type': 'string', 'minLength': 1, 'maxLength': 500}
     sha = {'type': 'string', 'pattern': '^[a-f0-9]{64}$'}
+    identity = {'type': ['string', 'null'], 'maxLength': 512}
+    # Routing adds producer-reported provenance, not a different artifact or
+    # permission boundary. Keep these fields explicit and bounded; old receipts
+    # without routing metadata still use the same byte and edit-parent checks.
+    routed = {
+        'planHash': sha,
+        'providerInstance': text,
+        'models': {'type': 'array', 'minItems': 1, 'maxItems': 4,
+            'contains': {'type': 'object', 'properties': {'purpose': {'const': 'image'}},
+                         'required': ['purpose']}, 'minContains': 1, 'maxContains': 1, 'items': {
+            'type': 'object',
+            'properties': {'purpose': {'enum': ['controller', 'image']},
+                           'requested': {'type': 'string', 'minLength': 1, 'maxLength': 512},
+                           'resolved': identity},
+            'required': ['purpose', 'requested', 'resolved'], 'additionalProperties': False}},
+        'upstream': {'type': ['object', 'null'],
+            'properties': {key: identity for key in ('request_id', 'response_id', 'image_call_id')},
+            'additionalProperties': False},
+        'dispatchState': {'enum': ['not_sent', 'response_received', 'unknown']},
+        'reasonCode': {'type': 'string', 'pattern': '^[a-z][a-z0-9_]{0,63}$'},
+    }
     validator = Draft202012Validator({'type': 'object', 'properties': {
+        **routed,
         'schema': {'const': 'amplifier.image.receipt.v1'}, 'status': {'const': 'completed'},
         'requestId': text, 'requestHash': sha, 'backend': text, 'model': text,
         'operation': {'enum': ['generate', 'edit']},
@@ -30,7 +52,7 @@ def read_image_receipt(workspace, path):
             'additionalProperties': False},
         'options': {'type': 'object', 'maxProperties': 10},
         'text': {'type': 'string', 'maxLength': 32000},
-        'receiptPath': text, 'providerRequestId': {'type': ['string', 'null'], 'maxLength': 500},
+        'receiptPath': text, 'providerRequestId': identity,
         'usage': {'type': ['object', 'null'], 'maxProperties': 20}},
         'required': ['schema', 'status', 'requestId', 'requestHash', 'operation', 'backend', 'model', 'inputs', 'artifact'],
         'additionalProperties': False})
@@ -49,7 +71,7 @@ def read_image_receipt(workspace, path):
     metadata = {key: receipt[key] for key in ('requestId', 'requestHash', 'backend', 'model', 'operation', 'inputs')}
     metadata.update(receiptSha256=hashlib.sha256(data).hexdigest(),
                     provenance='producer-reported; local artifact bytes verified')
-    for key in ('options', 'providerRequestId', 'usage', 'text'):
+    for key in ('options', 'providerRequestId', 'usage', 'text', *routed):
         if key in receipt:
             metadata[key] = receipt[key]
     return image, source, name, metadata

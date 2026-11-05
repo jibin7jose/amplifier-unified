@@ -169,16 +169,18 @@ async def test_controls_reject_failed_select_and_default_reset_without_mutating_
 
 
 @pytest.mark.asyncio
-async def test_unavailable_image_account_is_never_constructed_or_rewritten():
-    from amplifier_web.image_defaults import apply_defaults
+async def test_unavailable_image_account_is_never_constructed_or_rewritten(monkeypatch):
+    from amplifier_web.image_migration import apply_legacy_image_intent
     row = spec("broken", image_generation={"enabled": False}, api_key="private")
-    plan = {"providers": [row]}
-    before = copy.deepcopy(plan)
+    plan = {"providers": [row], "tools": [{"module": "tool-image", "config": {"allow_paid": True}}]}
+    before = copy.deepcopy(row)
     def load(_):
         pytest.fail("Unavailable account must not be constructed")
-    await apply_defaults(plan, {"image_generation": {"mode": "automatic"}},
-                         class_loader=load, check_available=lambda _: False)
-    assert plan == before
+    monkeypatch.setattr("amplifier_web.provider_environment.provider_class", load)
+    receipt = apply_legacy_image_intent(plan, {"image_generation": {"mode": "automatic"}})
+    assert row == before
+    assert receipt["result"] == "ambiguous_requires_review"
+    assert plan["tools"][0]["config"]["routing_blocked"] is True
 
 
 @pytest.mark.asyncio

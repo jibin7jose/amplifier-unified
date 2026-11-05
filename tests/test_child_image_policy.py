@@ -78,12 +78,77 @@ def test_spawn_policy_and_new_instance_cannot_escape_parent_image_boundary(tmp_p
         assert row["config"]["allowed_write_paths"] == [str(tmp_path / "images/nested")]
 
 
+@pytest.mark.parametrize("boundary", ["parent", "spawn", "child", "retained", "none"])
+@pytest.mark.parametrize("new_instance", [False, True])
+def test_image_routing_denial_cannot_be_cleared_at_any_child_boundary(tmp_path, boundary, new_instance):
+    declarations = {
+        name: image({"allow_paid": True, "routing_blocked": name == boundary, "backend": "legacy"})
+        for name in ("parent", "spawn", "child", "retained")
+    }
+    if new_instance:
+        declarations["spawn"]["instance_id"] = "spawn-image"
+        declarations["child"]["instance_id"] = "child-image"
+    parent = {"tools": [declarations["parent"]], "spawn": {"tools": [declarations["spawn"]]}}
+    overlay = {"tools": [declarations["child"]]}
+    retained = [declarations["retained"]]
+    original = copy.deepcopy((parent, overlay, retained))
+    plan = child_plan(parent, overlay, working_dir=tmp_path, retained_image_tools=retained)
+    for row in plan["tools"]:
+        assert row["config"]["routing_blocked"] is (boundary != "none")
+        # Compatibility backends must not evade the denial either.
+        assert row["config"]["allow_paid"] is (boundary == "none")
+    assert (parent, overlay, retained) == original
+
+
 def test_excluded_image_is_not_reintroduced_and_other_module_lists_stay_additive(tmp_path):
     parent = {"tools": [image({"allow_paid": True}),
                         {"module": "tool-skills", "config": {"skills": ["existing"]}}]}
     overlay = {"tools": [{"module": "tool-skills", "config": {"skills": ["added"]}}]}
     plan = child_plan(parent, overlay, tool_inheritance={"exclude_tools": ["tool-image"]}, working_dir=tmp_path)
     assert plan["tools"] == [{"module": "tool-skills", "config": {"skills": ["existing", "added"]}}]
+
+
+@pytest.mark.parametrize("boundary", ["spawn", "tool_inheritance"])
+@pytest.mark.parametrize("excluded_name", ["tool-image", "image_generate", "parent-image"])
+def test_inheritance_filter_does_not_erase_paid_denial_on_explicit_child_image(
+        tmp_path, boundary, excluded_name):
+    parent = {
+        "tools": [
+            image({"allow_paid": False}, instance_id="parent-image"),
+            {"module": "tool-skills", "config": {"skills": ["existing"]}},
+        ]
+    }
+    overlay = {"tools": [
+        {"module": "tool-skills", "config": {"skills": ["added"]}},
+        image({"allow_paid": True}, instance_id="child-image"),
+    ]}
+    policy = {"exclude_tools": [excluded_name]}
+    if boundary == "spawn":
+        parent["spawn"] = copy.deepcopy(policy)
+    original = copy.deepcopy((parent, overlay, policy))
+    plan = child_plan(
+        parent, overlay, working_dir=tmp_path,
+        tool_inheritance=policy if boundary == "tool_inheritance" else None,
+    )
+    # Inheritance filtering is not an irrevocable ban on explicit declarations.
+    # Paid denial is a separate boundary and cannot disappear with that filter.
+    images = [row for row in plan["tools"] if row.get("module") == "tool-image"]
+    assert any(row.get("instance_id") == "child-image" for row in images)
+    assert all(row["config"]["allow_paid"] is False for row in images)
+    assert [row for row in plan["tools"] if row.get("module") != "tool-image"] == [
+        {"module": "tool-skills", "config": {"skills": ["existing", "added"]}}
+    ]
+    assert (parent, overlay, policy) == original
+
+
+def test_unexcluded_image_redeclaration_keeps_existing_child_composition(tmp_path):
+    parent = {"tools": [image({"allow_paid": True}, instance_id="parent-image")]}
+    overlay = {"tools": [image({"allow_paid": True}, instance_id="child-image")]}
+    original = copy.deepcopy((parent, overlay))
+    plan = child_plan(parent, overlay, working_dir=tmp_path)
+    assert {row["instance_id"] for row in plan["tools"]} == {"parent-image", "child-image"}
+    assert all(row["config"]["allow_paid"] is True for row in plan["tools"])
+    assert (parent, overlay) == original
 
 
 @pytest.mark.parametrize("allowed", [[], ["images"]])
@@ -437,3 +502,360 @@ async def test_actual_resume_preserves_saved_image_authority_and_current_parent_
     assert [row for row in captured["tools"] if row["module"] == "tool-image"] == image_rows
     assert captured["kwargs"]["is_resumed"] is True
     assert original == {path: path.read_bytes() for path in (tmp_path / "history").rglob("*") if path.is_file()}
+
+
+def legacy_image_plan():
+    return {
+        "tools": [image({"backend": "images-a", "allow_paid": True})],
+        "providers": [{
+            "module": "provider-openai", "instance_id": "account-a", "source": "fixture-provider-source",
+            "config": {
+                "api_key": "synthetic-old-credential", "default_model": "chat-model",
+                "base_url": "https://api.example.invalid/v1", "project": "project-a",
+                "image_generation": {"enabled": True, "id": "images-a", "model": "image-model-a"},
+            },
+        }],
+    }
+
+
+@pytest.fixture
+def resume_at_image_boundary(tmp_path):
+    """Exercise public resume and actual plan composition, stopping before mount."""
+    async def resume(saved_plan, current_plan, *, overlay=None, error=None, preferences=None, isolation=False):
+        captured = {}
+
+        class StopBeforeMount(Exception):
+            pass
+
+        @dataclass
+        class Prepared:
+            bundle: Bundle
+            mount_plan: dict
+            resolver: object = None
+
+            async def create_session(self, **kwargs):
+                captured.update(plan=self.mount_plan, tools=self.bundle.tools,
+                                resolver=self.resolver, kwargs=kwargs)
+                raise StopBeforeMount
+
+        original_plans = copy.deepcopy((saved_plan, current_plan, overlay))
+        capabilities = {"session.working_dir": str(tmp_path)}
+        if isolation:
+            capabilities["web.provider_isolation"] = SimpleNamespace(preparation={})
+        coordinator = SimpleNamespace(config=current_plan, get=lambda _: None,
+            get_capability=capabilities.get)
+        parent = SimpleNamespace(session_id="parent", coordinator=coordinator)
+        store = SessionStore(tmp_path / "history")
+        children = Children(SimpleNamespace(inbox=asyncio.Queue()), store, None)
+        children.prepared["parent"] = Prepared(Bundle(
+            name="parent", tools=copy.deepcopy(current_plan.get("tools", [])),
+            providers=copy.deepcopy(current_plan.get("providers", []))), current_plan)
+        store.save("child", [{"role": "user", "content": "Retained image work"}], {
+            "parent_id": "parent", "agent_name": "worker", "agent_overlay": overlay or {},
+            "mount_plan": saved_plan,
+        })
+        original_files = {path: path.read_bytes() for path in (tmp_path / "history").rglob("*") if path.is_file()}
+        if error:
+            with pytest.raises(ValueError, match=error):
+                await children.resume("child", "must not dispatch", parent, provider_preferences=preferences)
+            assert captured == {}
+            assert children.rows == {}  # Refusal precedes session creation/events.
+        else:
+            with pytest.raises(StopBeforeMount):
+                await children.resume("child", "must not dispatch", parent, provider_preferences=preferences)
+            assert [row for row in captured["tools"] if row["module"] == "tool-image"] == [
+                row for row in captured["plan"]["tools"] if row["module"] == "tool-image"
+            ]
+            assert captured["kwargs"]["is_resumed"] is True
+        assert not children.sessions
+        assert (saved_plan, current_plan, overlay) == original_plans
+        assert original_files == {
+            path: path.read_bytes() for path in (tmp_path / "history").rglob("*") if path.is_file()
+        }
+        return captured
+
+    return resume
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", [False, True])
+async def test_resume_compares_materialized_late_image_provider_binding(
+        resume_at_image_boundary, monkeypatch, changed):
+    async def schema(*args, **kwargs):
+        return {"fields": []}
+
+    monkeypatch.setattr("amplifier_web.provider_environment.provider_config_schema", schema)
+    saved = legacy_image_plan()
+    current = copy.deepcopy(saved)
+    current["providers"][0]["config"]["base_url"] = "${FIXTURE_IMAGE_ENDPOINT}"
+    current["providers"][0]["config"]["api_key"] = "synthetic-current-credential"
+    endpoint = "https://other.example.invalid/v1" if changed else saved["providers"][0]["config"]["base_url"]
+    monkeypatch.setenv("FIXTURE_IMAGE_ENDPOINT", endpoint)
+    result = await resume_at_image_boundary(
+        saved, current, isolation=True,
+        error="Saved child image provider binding has changed" if changed else None,
+    )
+    if not changed:
+        assert result["plan"]["providers"][0]["config"]["base_url"] == endpoint
+        assert result["plan"]["providers"][0]["config"]["api_key"] == "synthetic-current-credential"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key,value", [
+    ("backend", "images-b"),
+    ("backend", None),
+    ("model_role", "another-image-role"),
+    ("model_role", None),
+    ("provider_preferences", [{"provider": "account-b", "model": "image-model-b"}]),
+    ("provider_preferences", None),
+    ("model", "builtin-image-model-b"),
+])
+async def test_resume_refuses_changed_or_lost_saved_image_selection(resume_at_image_boundary, key, value):
+    saved = legacy_image_plan()
+    config = saved["tools"][0]["config"]
+    if key in {"model_role", "provider_preferences"}:
+        config.pop("backend")
+        config.update(model_role="saved-specialist-role",
+                      provider_preferences=[{"provider": "account-a", "model": "image-model-a"}])
+    elif key == "model":
+        config.update(builtin="gptimage", model="builtin-image-model-a")
+    current = copy.deepcopy(saved)
+    if value is None:
+        current["tools"][0]["config"].pop(key)
+    else:
+        current["tools"][0]["config"][key] = value
+    await resume_at_image_boundary(saved, current, error="Saved child image selection has changed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path,value", [
+    (("config", "image_generation", "model"), "image-model-b"),
+    (("config", "image_generation", "id"), "images-b"),
+    (("config", "image_generation", "enabled"), False),
+    (("instance_id",), "account-b"),
+    (("source",), "other-provider-source"),
+    (("enabled",), False),
+    (("config", "base_url"), "https://other.example.invalid/v1"),
+    (("config", "project"), "project-b"),
+    (("config", "default_headers"), {"OpenAI-Organization": "organization-b"}),
+])
+async def test_resume_refuses_changed_legacy_image_model_or_account_binding(resume_at_image_boundary, path, value):
+    saved = legacy_image_plan()
+    current = copy.deepcopy(saved)
+    target = current["providers"][0]
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    await resume_at_image_boundary(saved, current, error="Saved child image provider binding has changed")
+
+
+@pytest.mark.asyncio
+async def test_resume_does_not_restore_a_removed_legacy_provider(resume_at_image_boundary):
+    saved = legacy_image_plan()
+    current = copy.deepcopy(saved)
+    current["providers"] = []
+    await resume_at_image_boundary(saved, current, error="Saved child image provider binding has changed")
+
+
+@pytest.mark.asyncio
+async def test_saved_image_overlay_can_resume_exact_selection_with_unchanged_binding(resume_at_image_boundary):
+    saved = legacy_image_plan()
+    current = copy.deepcopy(saved)
+    current["tools"][0]["config"]["backend"] = "images-b"
+    overlay = {"tools": [image({"backend": "images-a"})]}
+    captured = await resume_at_image_boundary(saved, current, overlay=overlay)
+    assert captured["plan"]["tools"][0]["config"]["backend"] == "images-a"
+    assert captured["plan"]["tools"][0]["config"]["allow_paid"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "routed", "builtin"])
+async def test_unchanged_image_resume_uses_current_credentials_without_restoring_saved_plan(
+        resume_at_image_boundary, mode):
+    saved = legacy_image_plan()
+    if mode == "routed":
+        saved["tools"][0]["config"] = {
+            "allow_paid": True, "model_role": "image-gen",
+            "provider_preferences": [{"provider": "account-a", "model": "image-model-a"}],
+        }
+    elif mode == "builtin":
+        saved["tools"][0]["config"].update(builtin="gptimage", model="image-model-a")
+        saved["providers"] = []
+    saved["session"] = {"saved_only": "must not be restored"}
+    current = copy.deepcopy(saved)
+    current["session"] = {"current_only": "retain current authority"}
+    current["tools"].append({"module": "tool-filesystem", "config": {"allowed_write_paths": []}})
+    if current["providers"]:
+        current["providers"][0]["config"]["api_key"] = "synthetic-current-credential"
+        # The composer supplies the equivalent Core/Foundation alias on resume.
+        current["providers"][0]["id"] = "account-a"
+    captured = await resume_at_image_boundary(saved, current)
+    assert captured["plan"]["session"] == current["session"]
+    assert captured["plan"]["tools"][0]["config"]["allowed_write_paths"] == []
+    assert captured["plan"]["tools"][0]["config"]["allow_paid"] is True
+    if current["providers"]:
+        config = captured["plan"]["providers"][0]["config"]
+        assert config["api_key"] == "synthetic-current-credential"
+        assert config["image_generation"] == saved["providers"][0]["config"]["image_generation"]
+    for key in ("backend", "model_role", "provider_preferences", "builtin", "model"):
+        assert captured["plan"]["tools"][0]["config"].get(key) == saved["tools"][0]["config"].get(key)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("denial", ["allow_paid", "routing_blocked"])
+async def test_resume_keeps_retained_image_off_even_when_overlay_clears_it(resume_at_image_boundary, denial):
+    saved = legacy_image_plan()
+    saved["tools"][0]["config"][denial] = denial == "routing_blocked"
+    current = legacy_image_plan()
+    overlay = {"tools": [image({"allow_paid": True, "routing_blocked": False})]}
+    captured = await resume_at_image_boundary(saved, current, overlay=overlay)
+    config = captured["plan"]["tools"][0]["config"]
+    assert config["allow_paid"] is False
+    if denial == "routing_blocked":
+        assert config["routing_blocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_image_resume_ignores_unrelated_chat_provider_changes(resume_at_image_boundary):
+    saved = legacy_image_plan()
+    saved["providers"].append({
+        "module": "provider-mock", "source": "fixture-chat-source", "config": {"default_model": "chat-a"},
+    })
+    current = copy.deepcopy(saved)
+    current["providers"][1]["config"]["default_model"] = "chat-b"
+    captured = await resume_at_image_boundary(saved, current)
+    assert captured["plan"]["providers"][1]["config"]["default_model"] == "chat-b"
+
+
+@pytest.mark.asyncio
+async def test_resume_checks_image_binding_after_provider_preference_resolution(resume_at_image_boundary, monkeypatch):
+    calls = []
+
+    async def resolve(plan, preferences, coordinator):
+        calls.append(preferences)
+        result = copy.deepcopy(plan)
+        result["providers"][0]["config"]["image_generation"]["model"] = "resolution-changed-image"
+        return result
+
+    monkeypatch.setattr("amplifier_foundation.apply_provider_preferences_with_resolution", resolve)
+    saved = legacy_image_plan()
+    await resume_at_image_boundary(saved, copy.deepcopy(saved),
+        preferences=[{"provider": "account-a", "model": "chat-model"}],
+        error="Saved child image provider binding has changed")
+    assert len(calls) == 1
+
+
+@pytest.fixture
+def routed_image_decision_plans(monkeypatch):
+    """Synthetic package metadata; projection and account validation stay real."""
+    from amplifier_web import decision_accounts as accounts
+    from amplifier_web.provider_environment import credential_bindings
+
+    definitions = {"provider-fixture-decisions": {
+        "module": "hooks-fixture-decisions", "when": {"chat_enabled": False}}}
+    monkeypatch.setattr(accounts, "catalogs", lambda: definitions)
+    original = legacy_image_plan()
+    original["tools"][0]["config"] = {
+        "allow_paid": True, "model_role": "image-gen",
+        "provider_preferences": [{"provider": "account-a", "model": "image-model-a"}],
+    }
+    original["providers"][0]["config"].pop("image_generation")
+    # Put the decision account first: ordinary resume restoration moves it behind
+    # real providers, which must not change the image-binding comparison.
+    original["providers"].insert(0, {
+        "module": "provider-fixture-decisions", "id": "decision-a", "instance_id": "decision-a",
+        "source": "fixture-decision-source",
+        "config": {"api_key": "synthetic-old-decision-key", "chat_enabled": False,
+                   "decisions": {"enabled": True, "backends": {
+                       "browser": {"enabled": True, "model": "saved-decision-model"}}}},
+    })
+    projected = accounts.DecisionAccounts(original, None, lambda module, source: source)
+    assert len(projected.expected) == 1
+    saved = credential_bindings(projected.plan)
+    assert accounts.ACCOUNTS not in saved["session"]
+    assert [row["module"] for row in saved["providers"]] == [
+        "provider-fixture-decisions", "provider-openai"]
+    current = copy.deepcopy(original)
+    current["providers"][0]["config"].update(
+        api_key="synthetic-current-decision-key", decisions={"enabled": False})
+    current["providers"][1]["config"]["api_key"] = "synthetic-current-image-key"
+    return saved, current
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_projection", ["logical", "hooks"])
+@pytest.mark.parametrize("image_credential", ["legacy-omitted", "host-binding"])
+async def test_routed_image_resume_preserves_decision_projection_and_exact_account(
+        resume_at_image_boundary, routed_image_decision_plans, parent_projection, image_credential):
+    from amplifier_web import decision_accounts as accounts
+
+    saved, current = routed_image_decision_plans
+    if image_credential == "legacy-omitted":
+        # Older SessionStore checkpoints omitted literal image credentials;
+        # current credential_bindings snapshots retain the host-owned marker.
+        saved["providers"][1]["config"].pop("api_key")
+    else:
+        assert saved["providers"][1]["config"]["api_key"] == {"$hostProviderCredential": True}
+    if parent_projection == "hooks":
+        current = accounts.DecisionAccounts(current, None, lambda module, source: source).plan
+    captured = await resume_at_image_boundary(saved, current)
+    plan = captured["plan"]
+    provider, = plan["providers"]
+    assert provider["instance_id"] == "account-a"
+    assert provider["config"]["api_key"] == "synthetic-current-image-key"
+    assert provider["config"]["base_url"] == saved["providers"][1]["config"]["base_url"]
+    assert plan["tools"][0]["config"]["provider_preferences"] == [
+        {"provider": "account-a", "model": "image-model-a"}]
+    hook, = [row for row in plan["hooks"] if accounts.ENVELOPE in row.get("config", {})]
+    assert hook["module"] == "hooks-fixture-decisions"
+    assert hook["source"] == "fixture-decision-source"
+    assert hook["config"]["api_key"] == "synthetic-current-decision-key"
+    assert hook["config"]["decisions"] == saved["providers"][0]["config"]["decisions"]
+    envelope = hook["config"][accounts.ENVELOPE]
+    assert envelope["provider_module"] == "provider-fixture-decisions"
+    assert envelope["instance_id"] == "decision-a"
+    record, = plan["session"][accounts.ACCOUNTS]
+    assert envelope["binding_id"] == record["binding_id"]
+    assert record["provider"]["instance_id"] == "decision-a"
+    assert isinstance(captured["resolver"], accounts.AccountResolver)
+    assert captured["resolver"].aliases == {
+        ("hooks-fixture-decisions", "fixture-decision-source"): "provider-fixture-decisions"}
+    restored = accounts.logical_plan(plan)
+    assert [row["instance_id"] for row in restored["providers"]] == ["account-a", "decision-a"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["image-model-pin", "ordinary-provider-endpoint"])
+async def test_routed_image_resume_rejects_changed_pin_beside_decision_projection(
+        resume_at_image_boundary, routed_image_decision_plans, change):
+    from amplifier_web import decision_accounts as accounts
+
+    saved, current = routed_image_decision_plans
+    # Use the legacy credential-free representation so a separate host-marker
+    # mismatch cannot satisfy the changed-binding negative control.
+    saved["providers"][1]["config"].pop("api_key")
+    if change == "image-model-pin":
+        current["tools"][0]["config"]["provider_preferences"][0]["model"] = "image-model-b"
+        error = "Saved child image selection has changed"
+    else:
+        current["providers"][1]["config"]["base_url"] = "https://other.example.invalid/v1"
+        error = "Saved child image provider binding has changed"
+    current = accounts.DecisionAccounts(current, None, lambda module, source: source).plan
+    await resume_at_image_boundary(saved, current, error=error)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["source", "disabled"])
+async def test_routed_image_resume_cannot_restore_unauthorized_decision_account(
+        resume_at_image_boundary, routed_image_decision_plans, change):
+    from amplifier_web import decision_accounts as accounts
+
+    saved, current = routed_image_decision_plans
+    decision = current["providers"][0]
+    if change == "source":
+        decision["source"] = "different-decision-source"
+    else:
+        decision["enabled"] = False
+    current = accounts.DecisionAccounts(current, None, lambda module, source: source).plan
+    await resume_at_image_boundary(
+        saved, current, error="saved child decision account/source is no longer authorized")

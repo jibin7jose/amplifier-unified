@@ -12,12 +12,12 @@ import {useSettingsDraft,useGuardedSettingsDraft} from './settings-drafts';
 import {ResultNotice} from './settings-ui';
 import {ModelSelect} from './model-select';
 import {modelOptions} from './setup-data';
-import {ImageGenerationSettings} from './image-generation-settings';
+import {ConfigurationDiagnostics} from './registry';
 import {AIConnectionDetail} from './ai-connection-detail';
 import {providerOptions} from './provider-options';
 import {aiServices,aiService,matchingSetupOperation,setupPending} from './ai-connections-data';
 
-export function AIConnections({state,session,act,navigate,onReturnToChat,imagesOnly=false}){
+export function AIConnections({state,session,act,navigate,onReturnToChat}){
  const [decisionSettingsOpened,setDecisionSettingsOpened]=useState(false);
  const layout=useContext(SettingsLayoutContext);
  const setup=state.setup||{},providers=(setup.providers||[]).filter(p=>p.enabled!==false);
@@ -29,12 +29,12 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
   return choice.decisionOnlyWhen&&config?{...choice,decisionOnly:config.chat_enabled===false}:choice;
  };
  const labels=new Map(providerOptions(providers.map(p=>({...p,info:{id:p.module,display_name:serviceFor(p.module).name}}))).map(row=>[row.id,row.label]));
- const editorKey=imagesOnly?'imageSettingsEditor':'aiConnectionEditor';
+ const editorKey='aiConnectionEditor';
  const configId=useConfigurationId();
  const requested=state.view?.[editorKey]||{};
  const identity=value=>configId('connection')+':'+(value.id||'')+':'+(value.module||'');
  const d=useGuardedSettingsDraft(requested,identity(requested),draft=>act('view.update',{patch:{[editorKey]:draft}}));
- const step=d.step||'list',selected=providers.find(p=>p.id===d.id),service=serviceFor(d.module,selected?.config);
+ const step=d.step==='images'?'list':d.step||'list',selected=providers.find(p=>p.id===d.id),service=serviceFor(d.module,selected?.config);
  const scope=useConfigurationScope(d.scope);
  const authMode=chatGPTMode(d.authMode||selected?.config?.auth_mode);
  const loginArgs={id:d.id,authMode,scope:scope};
@@ -79,9 +79,6 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
    setCompleted(false);setKey('');edit({step:'list',id:'',saved:false});setNotice('Connection removed. Chats that used it will need a replacement connection when resumed.');
   }else if(action==='providers.finishSetup'){
    setCompleted(true);edit({step:'list',saved:false});setNotice(setup.setupCompletion?.routingSelected?'Connection saved. Balanced model rules are ready for new conversations.':'Model saved. Existing model rules are unchanged.');
-  }else if(action==='providers.configureImages'){
-   setNotice('Image settings saved.');edit({imageEdited:false});
-  }else if(action==='providers.imageModels'){setNotice('');
   }else if(action==='providers.models'){setNotice('Model list checked. No chat request was sent.');}
  },[operation?.commandId,operation?.phase]);
  const login=setup.login?.providerId===d.id?setup.login:null;
@@ -113,20 +110,20 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
  const needsEndpoint=service.auth==='optional-key'||service.endpoint===true;
  const endpointKey=service.endpoint_config_key||'base_url',savedEndpoint=selected?.config?.[endpointKey]||'';
  const saveConnection=()=>run('providers.save',{id:d.id,module:d.module,config:{...selected?.config,...(service.decisionOnly?{chat_enabled:false}:{}),...(needsEndpoint?{[endpointKey]:d.baseUrl?.trim()}: {})},scope:scope,...(service.auth==='signin'?{}:credentialMode==='environment'?{apiKeyEnv:credential?.envVar}:credentialMode==='github-cli'?{useGitHubCli:true}:{apiKey:key})},service.decisionOnly?'decisions':service.auth==='signin'?'signin':'models');
- const back=()=>{setError('');edit({step:['services','detail','images','decisions'].includes(step)?'list':step==='model'?'detail':'services'});};
- const openImages=()=>navigate('image-generation');
+ const back=()=>{setError('');edit({step:['services','detail','decisions'].includes(step)?'list':step==='model'?'detail':'services'});};
  const advanced=()=>navigate('providers');
- const unsaved=!!d.imageEdited||!!key||(step==='connect'&&!!d.baseUrl&&d.baseUrl!==savedEndpoint)||(step==='model'&&!!d.model&&d.model!==(selected?.config?.default_model||selected?.config?.model||''));
- useSettingsDraft(imagesOnly?'image-generation':'ai-connections',{label:'AI connection setup',dirty:unsaved,
-  review:()=>{navigate(imagesOnly?'image-generation':'ai-connections');edit({step:d.imageEdited?'list':step,...(d.imageEdited?{imageFocus:crypto.randomUUID()}:{})})},
-  discard:()=>{setKey('');setError('');if(identity(editor.current)===draftIdentity)edit({step:'list',id:'',module:'',model:'',baseUrl:'',saved:false,imageMode:null,imageProviderId:null,imageModel:null,imagesEnabled:null,imageEdited:false})}});
+ const unsaved=!!key||(step==='connect'&&!!d.baseUrl&&d.baseUrl!==savedEndpoint)||(step==='model'&&!!d.model&&d.model!==(selected?.config?.default_model||selected?.config?.model||''));
+ useSettingsDraft('ai-connections',{label:'AI connection setup',dirty:unsaved,
+  review:()=>{navigate('ai-connections');edit({step})},
+  discard:()=>{setKey('');setError('');if(identity(editor.current)===draftIdentity)edit({step:'list',id:'',module:'',model:'',baseUrl:'',saved:false})}});
  return <section data-part="ai-connections" className="a-ai-form">
-  {imagesOnly?<ImageGenerationSettings key={session?.workspace||'global'} state={state} session={session} providers={providers} labels={labels} draft={d} edit={edit} act={act} run={run} pending={pending} busy={busy} navigate={navigate}/>:['list','images'].includes(step)?<>
+  {step==='list'?<>
    <p className="a-everyday-intro">Connect the AI services Amplifier can use for your work.</p>
-   {completed&&onReturnToChat&&<div className="a-ai-welcome"><h4>Your connection is saved</h4><p>Return to chat to write a message or attach a file. Your unfinished message is kept.</p><button type="button" className="a-primary" disabled={busy} onClick={onReturnToChat}>Return to chat</button>{selected&&setup.metadata?.[selected.module]?.imageGeneration&&<button type="button" className="a-soft" disabled={busy} onClick={openImages}>Image preferences</button>}</div>}
+   {completed&&onReturnToChat&&<div className="a-ai-welcome"><h4>Your connection is saved</h4><p>Return to chat to write a message or attach a file. Your unfinished message is kept.</p><button type="button" className="a-primary" disabled={busy} onClick={onReturnToChat}>Return to chat</button></div>}
    {!providersLoaded&&!providers.length?<div role="status">{listOperation?.phase==='error'?<><p>Could not load AI connections. {loadError}</p><button type="button" className="a-soft" onClick={()=>act('providers.list',{})}>Retry loading connections</button></>:'Loading AI connections…'}</div>:!providers.length?<div className="a-ai-welcome"><Sparkles aria-hidden="true"/><h4>Start with one connection</h4><p>Choose a service, connect your account, and choose a model. You can add more later.</p><button className="a-primary" data-action="settings.connection.start" disabled={busy} onClick={()=>changeConnection('settings.connection.start')}><Plus/>Connect AI</button></div>:<><div className="a-everyday-list">{providers.map(p=><SettingsLink key={p.id} disabled={busy} title={<>{labels.get(p.id)}{p.authenticationRequired&&<AttentionBadge count={1}/>}</>} description={(serviceFor(p.module,p.config||{}).decisionOnly?'Decision models':p.config?.default_model||p.config?.model||'Choose a model')+' · '+(p.authenticationRequired?'Sign-in needed':p.accountConnected?'Account connected':p.credentialsConfigured?'Credentials available':p.keySource==='provider-managed'?'Account sign-in':'Connection needs setup')+(p.credential?.preview?.masked?' · Key '+p.credential.preview.masked:'')} onClick={()=>{setError('');setNotice('');edit({step:'detail',id:p.id,module:p.module,authMode:chatGPTMode(p.config?.auth_mode),model:p.config?.default_model||p.config?.model||'',scope,baseUrl:p.config?.[serviceFor(p.module,p.config||{}).endpoint_config_key||'base_url']||'',previousLoginId:setup.login?.loginId,saved:true,initializeRouting:false})}}/>)}</div><button className="a-soft" data-action="settings.connection.start" disabled={busy} onClick={()=>changeConnection('settings.connection.start')}><Plus/>Connect another service</button></>}
    {setup.active&&providers.length>0&&<div className="a-ai-hint">Your model rules are saved. <button className="a-link" data-action="view.update" onClick={()=>navigate('routing')}>Advanced model rules</button></div>}
    <details className="a-everyday-disclosure" onToggle={event=>{if(event.currentTarget.open)setDecisionSettingsOpened(true)}}><summary>Decision models (optional)</summary>{decisionSettingsOpened&&<DecisionModelSettings state={state} act={act} navigate={navigate} onConnect={connectDecision} labels={labels}/>}</details>
+   <ConfigurationDiagnostics state={state} act={act} scope={scope} navigate={navigate}/>
    <div className="a-everyday-footer"><p className="a-caption">Connections are stored on the Amplifier host. Existing conversations keep their settings.</p><button className="a-link" data-action="view.update" onClick={advanced}>Advanced connection settings<ExternalLink/></button></div>
   </>:<>
    <button className="a-link" data-action="view.update" disabled={busy} onClick={back}><ArrowLeft/>Back</button>
@@ -134,7 +131,6 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,imagesO
     <p className="a-ai-step">{step==='connect'?'1 · Connect':step==='model'?'2 · Choose a model':'Saved connection'}</p><h4>{labels.get(d.id)||service.name}</h4>
     {step==='detail'?<AIConnectionDetail selected={selected} service={service} state={state} session={session} act={act} busy={busy}
      onModel={()=>{edit({step:'model',settingDefault:true});run('providers.models',{id:d.id})}}
-     onImages={openImages}
      onDecisions={()=>edit({step:'decisions'})}
      onCredentials={()=>{edit({step:'connect',previousLoginId:login?.loginId,credentialMode:'private'});scanCredentials(d.module)}}
      onRefresh={()=>run('providers.list',{refresh:true})} onCheck={()=>run('providers.test',{id:d.id})}

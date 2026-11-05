@@ -128,6 +128,7 @@ class HostConfig:
     config_home: Path | None = None
     global_only: bool = False
     access_mode: str = "ask"
+    image_intent_sources: tuple = ()
 
     @property
     def settings_file(self):
@@ -247,5 +248,8 @@ def read_config(workspace, *, home=None, shared_home=None, session_id=None, glob
         if isinstance(value, str): return value.replace(str(home / "foundation"), str(registry_home))
         return value
     from ..access_mode import read_mode
+    from ..image_migration import scoped_image_sources
     return HostConfig(home, workspace, relocate(settings), registry_home, shared, global_only,
-                      read_mode(home, workspace, session_id, owner_session_id=owner_session_id))
+                      read_mode(home, workspace, session_id, owner_session_id=owner_session_id),
+                      tuple(scoped_image_sources(workspace, shared_home=shared,
+                                                session_id=session_id, global_only=global_only)))

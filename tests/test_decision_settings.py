@@ -6,6 +6,16 @@ from amplifier_web import decision_settings as decisions
 from amplifier_web.setup import SetupManager
 from amplifier_web.host.session import _apply_settings
 
+
+@pytest.mark.parametrize(('row', 'expected'), [
+    ({'module': 'provider-fixture', 'id': 'saved', 'instance_id': 'mounted'}, 'saved'),
+    ({'module': 'provider-fixture', 'instance_id': 'mounted'}, 'mounted'),
+    ({'module': 'provider-fixture'}, 'fixture'),
+])
+def test_decision_identity_survives_retired_image_setup(row, expected):
+    assert decisions.row_id(row) == expected
+
+
 @pytest.fixture
 def manager(tmp_path,monkeypatch):
     def validate(row):

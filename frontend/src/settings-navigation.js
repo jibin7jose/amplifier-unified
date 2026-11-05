@@ -1,5 +1,5 @@
 export const chatSettingsPages={"conversation": "session-details", "runtime": "chat-advanced", "loaded-modules": "chat-models", "share-bundle": "chat-models", "recall": "chat-memory"};
-// Public destination IDs remain valid. Navigation never migrates configuration.
+// Unknown or retired saved destinations fall back without migrating configuration.
 export const settingsSections=[
  {id:'ai',title:'AI connections',scope:'Across workspaces on this Amplifier host',pages:[['ai-connections','AI connections'],['overview','AI connections']]},
  {id:'smart-tools',title:'Smart Tools',scope:'This Amplifier host',pages:[['smart-tools','Smart Tools']]},
@@ -10,10 +10,10 @@ export const settingsSections=[
  {id:'privacy',title:'Privacy & files',scope:'Your work and access choices',pages:[['privacy','Privacy & files'],['access-approvals','Access & approvals'],['permissions','File access'],['desktop','Screen & computer access'],['diagnostics','App diagnostic capture'],['history','Saved work'],['storage','Storage']]},
  {id:'testing',title:'Testing & resources',scope:'Across workspaces on this Amplifier installation',pages:[['testing','Testing & resources']]},
  {id:'updates',title:'Updates',scope:'This Amplifier host',pages:[['updates','Updates']]},
- {id:'advanced',title:'Advanced',scope:'Full configuration',pages:[['advanced','Advanced'],['model-capacity','Model capacity'],['image-generation','Image generation'],['providers','Provider configuration'],['routing','Model rules'],['app-bundles','Configured bundles'],['add-bundles','Discover bundles'],['defaults','Conversation defaults'],['registries','Module & source registries'],['tool-connections','Tool connections'],['custom-appearance','Custom appearance'],['repair','Backup & repair'],['reset','Advanced recovery'],['ready-conversations','Ready conversations'],['automation','Terminal & automation'],['install-app','Install app'],]},
+ {id:'advanced',title:'Advanced',scope:'Full configuration',pages:[['advanced','Advanced'],['model-capacity','Model capacity'],['providers','Provider configuration'],['routing','Model rules'],['app-bundles','Configured bundles'],['add-bundles','Discover bundles'],['defaults','Conversation defaults'],['registries','Module & source registries'],['tool-connections','Tool connections'],['custom-appearance','Custom appearance'],['repair','Backup & repair'],['reset','Advanced recovery'],['ready-conversations','Ready conversations'],['automation','Terminal & automation'],['install-app','Install app'],]},
 ];
 export const advancedGroups=[
- {title:'AI configuration',pages:['providers','image-generation','routing']},
+ {title:'AI configuration',pages:['providers','routing']},
  {title:'Bundles & modules',pages:['app-bundles','add-bundles','defaults','registries']},
  {title:'Tools & appearance',pages:['tool-connections','custom-appearance']},
  {title:'Performance & support',pages:['ready-conversations','repair','reset','automation','install-app']},
