@@ -2086,9 +2086,9 @@ class Collaboration:
                             'or make a separately valid owner decision about your own task.'}
                 if completed_followup:
                     envelope['completedTaskHandling'] = {**completed_followup,
-                        'instruction': 'Handle this fresh follow-up from your current assignment owner within '
-                            'the existing scope. Keep the earlier objective and evidence completed. Make the '
-                            'requested correction directly, or use task.create for its follow-up objective; '
+                        'instruction': 'Handle this fresh authorized peer request within your existing authority. '
+                            'Keep the earlier objective and evidence completed. Do the requested work directly, '
+                            'or use task.create for its follow-up objective; '
                             'that successor retains the existing turn allowance and used turns. Report with '
                             'coordination.reply for this exact request. Do not replay older or unknown work.'}
                 if target.get("collaboration"):

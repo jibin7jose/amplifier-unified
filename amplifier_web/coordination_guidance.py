@@ -41,6 +41,10 @@ PLANNING_GUIDANCE = (
     "rerun affected checks when they change. Change approach when repeated "
     "failures make no progress. Accept completed contributions without another "
     "worker acknowledgement turn; keep completed objectives and their evidence. "
+    "Send agreed handoffs directly to the responsible manager. Independent "
+    "Full-access managers can receive fresh work after completing an earlier "
+    "objective; completion alone does not require a user or external coordinator "
+    "to reopen it. Do not turn an obsolete handoff note into a new approval gate. "
     "Ask only for a missing decision or authority. Preserve actual Stop, "
     "unanswered user choices and ownership; reconcile uncertain effects."
 )

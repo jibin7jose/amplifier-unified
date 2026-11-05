@@ -11,6 +11,7 @@ from test_assignments import app, child, agent_action, generation, call
 from amplifier_web.execution import ingest
 from test_collaborative_workspaces import finish, until
 from test_task_continuity import controls, create
+from test_access_mode import save as access
 
 
 async def completed(control, **fields):
@@ -115,6 +116,89 @@ async def test_completed_owner_request_is_fresh_and_bound_to_membership(app):
     assignment['members'][target['id']]['status'] = 'retired'
     app.assignments.save(assignment)
     assert 'retired' in app.collaboration.guard(receipt, for_reply=True)
+
+
+@pytest.mark.parametrize('other_workspace', [False, True])
+async def test_independent_full_manager_accepts_fresh_work_without_reopening_completed_task(app, other_workspace):
+    source, target = app.state['sessions']
+    app.runtime.workers = {}  # No mounted configuration needs retirement for access setup.
+    if other_workspace:
+        target['workspace'] = str(app.data_dir / 'other-workspace')
+    await access(app, source)
+    await access(app, target)
+    target['task'] = {'id': 'previous-release', 'revision': 3, 'status': 'completed',
+                      'completionEvidence': ['Published release'], 'maxTurns': 8}
+    prior = copy.deepcopy(target['task'])
+    draft = copy.deepcopy(app.state['view']['draft'])
+    await agent_action(app, source, 'coordination.send', {
+        'sessionId': target['id'], 'text': 'Publish the newly accepted work.', 'mode': 'queue'}, 'new-release')
+    await until(lambda: app.collaboration.receipt('new-release').get('delivery') != 'queued')
+    receipt = app.collaboration.receipt('new-release')
+    assert receipt['delivery'] == 'accepted', receipt
+    assert receipt['completedTaskFollowup']['version'] == 2
+    assert app.collaboration.guard(receipt) is None
+    assert target['task'] == prior and app.state['view']['draft'] == draft
+    assert len(app.runtime.inputs) == 1
+    assert not receipt.get('humanResume')
+    # The exact retry observes the same input, not another wake or a reopened goal.
+    await agent_action(app, source, 'coordination.send', {
+        'sessionId': target['id'], 'text': 'Publish the newly accepted work.', 'mode': 'queue'}, 'new-release')
+    assert len(app.runtime.inputs) == 1
+    target['task'] = {'id': 'next-release', 'revision': 4, 'status': 'active',
+                      'followupOf': {'taskId': prior['id'], 'revision': prior['revision'],
+                                     'inputId': 'new-release', 'generationId': 'new-generation'}}
+    assert app.collaboration.guard(receipt, for_reply=True) is None
+    assert app.collaboration.guard(receipt) == 'The recipient task changed.'
+
+
+@pytest.mark.parametrize('boundary', ['source-ask', 'target-ask', 'stop', 'paused', 'cancelled', 'other-owner'])
+async def test_independent_completion_does_not_bypass_current_authority(app, boundary):
+    source, target = app.state['sessions']
+    app.runtime.workers = {}
+    source['status'] = 'idle'  # Set the standing policy before starting fixture work.
+    await access(app, source, scope='app')
+    if boundary == 'other-owner':
+        independent = target
+        target, _ = await child(app, source)
+        await finish(app, target, 'initial')
+        source = independent
+        await generation(app, source, 'independent-generation', ['independent-input'])
+    if boundary == 'source-ask':
+        await access(app, source, mode='ask')
+    if boundary == 'target-ask':
+        await access(app, target, mode='ask')
+    target['status'] = 'stopped' if boundary == 'stop' else 'idle'
+    target['task'] = {'id': 'done', 'revision': 2,
+                      'status': boundary if boundary in {'paused', 'cancelled'} else 'completed'}
+    await agent_action(app, source, 'coordination.send', {
+        'sessionId': target['id'], 'text': 'Fresh work.', 'mode': 'queue'}, 'not-authorized')
+    await until(lambda: app.collaboration.receipt('not-authorized').get('delivery') == 'suppressed')
+    assert not app.collaboration.receipt('not-authorized').get('completedTaskFollowup') or boundary == 'stop'
+    assert not any(row[1] == 'not-authorized' for row in app.runtime.inputs)
+
+
+@pytest.mark.parametrize('change', ['source-policy', 'target-policy', 'source-stop', 'task', 'old-request'])
+async def test_independent_completion_rechecks_frozen_request_without_upgrading_old_receipts(app, change):
+    source, target = app.state['sessions']
+    app.runtime.workers = {}
+    await access(app, source)
+    await access(app, target)
+    target['status'] = 'working'  # Deliberately hold queue delivery at the existing idle boundary.
+    target['task'] = {'id': 'done', 'revision': 2, 'status': 'completed'}
+    await agent_action(app, source, 'coordination.send', {
+        'sessionId': target['id'], 'text': 'Fresh work.', 'mode': 'queue'}, 'held-followup')
+    receipt = app.collaboration.receipt('held-followup')
+    assert receipt['delivery'] == 'queued' and app.collaboration.guard(receipt) is None
+    if change.endswith('policy'):
+        await access(app, source if change == 'source-policy' else target, mode='ask')
+    elif change == 'source-stop':
+        source['interruptionRevision'] = source.get('interruptionRevision', 0) + 1
+    elif change == 'task':
+        target['task']['revision'] += 1
+    else:
+        receipt.pop('completedTaskFollowup')
+    assert app.collaboration.guard(receipt)  # Policy changes may first require runtime retirement.
+    assert not app.runtime.inputs
 
 
 @pytest.mark.parametrize('boundary', ['stopped', 'paused', 'cancelled', 'independent', 'nonowner'])
