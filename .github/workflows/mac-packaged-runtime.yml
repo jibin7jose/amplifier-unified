@@ -9,6 +9,10 @@ on:
       - tests/fixtures/packaged_runtime_probe.py
       - tests/test_packaged_runtime_probe.py
   workflow_dispatch:
+  workflow_call:
+    secrets:
+      LOOP_LIVE_CI_READ_KEY:
+        required: true
 
 permissions:
   contents: read
