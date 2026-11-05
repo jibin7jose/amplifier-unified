@@ -107,7 +107,7 @@ jobs:
           EOF
           uv venv --no-config --python "$(command -v python)" "$RUNNER_TEMP/mac-host"
           uv pip install --no-config --python "$RUNNER_TEMP/mac-host/bin/python" \
-            --no-build-package amplifier-core \
+            --only-binary amplifier-core \
             --override "$RUNNER_TEMP/mac-host-overrides.txt" \
             "$RUNNER_TEMP/published-assets/amplifier_unified-0.55.0-py3-none-any.whl"
       - name: Exercise packaged start, readiness and resume from an isolated directory
