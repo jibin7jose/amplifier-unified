@@ -535,7 +535,7 @@ class UpdateManager:
     @staticmethod
     def requires_idle(state):
         return bool(state.get('pendingApp') or state.get('pendingRelease') or any(
-            not item.get('runnerSource') for item in state.get('pendingSmartTools', [])))
+            not item.get('runnerSource') and not item.get('failure') for item in state.get('pendingSmartTools', [])))
 
     def blockers(self):
         from .update_blockers import blockers
@@ -671,13 +671,15 @@ class UpdateManager:
             self.wakeup.set()
 
     @staticmethod
-    def runners_only(state):
+    def independent_tool_results(state):
         pending = state.get('pendingSmartTools') or []
-        return bool(pending) and all(row.get('runnerSource') for row in pending)
+        # Failed attempts retain their current installation and explicit
+        # retry/skip receipt; they are not unfinished activation work.
+        return bool(pending) and all(row.get('runnerSource') or row.get('failure') for row in pending)
 
     async def check(self, *, tier='application', install=False, fresh=True):
         state = self.service.state['updates']
-        if (self.closed or self.awaiting_restart() or state.get('pendingRelease') or (state.get('pendingSmartTools') and not self.runners_only(state))
+        if (self.closed or self.awaiting_restart() or state.get('pendingRelease') or (state.get('pendingSmartTools') and not self.independent_tool_results(state))
                 or (state.get('pendingApp') or {}).get('featureSelection')):
             return  # A timing measurement must not change a pending handoff.
         if self.check_task and not self.check_task.done():
@@ -712,11 +714,11 @@ class UpdateManager:
             # Queue that refresh, then recheck admission against current state.
             if (self.closed or self.awaiting_restart() or state.get('pendingRelease')
                     or (state.get('pendingApp') or {}).get('featureSelection')
-                    or (state.get('pendingSmartTools') and not self.runners_only(state))):
+                    or (state.get('pendingSmartTools') and not self.independent_tool_results(state))):
                 return
-            if self.runners_only(state):
-                # The runner owns its retained qualification independently.
-                # A new check/sequence must keep its own install intent.
+            if self.independent_tool_results(state):
+                # Retained runner qualification and failed optional tools own
+                # their rows independently of the new sequence/install intent.
                 await self.publish(runnerAvailabilityCheck=True)
             if state.get('pendingApp'):
                 if not state['pendingApp'].get('featureSelection'):
@@ -766,7 +768,10 @@ class UpdateManager:
                 from .managed_runner_backend import skip_key
                 retained = {skip_key(row['runnerSource']) for row in state.get('pendingSmartTools', [])
                             if row.get('runnerSource')}
-                rows = [row for row in rows if not (row.get('runnerKind') and skip_key(row) in retained)]
+                failed = {row['previous'] for row in state.get('pendingSmartTools', [])
+                          if row.get('failure') and not row.get('runnerSource')}
+                rows = [row for row in rows if not (row.get('runnerKind') and skip_key(row) in retained)
+                        and not (row.get('kind') == 'smart tool' and row.get('installationId') in failed)]
                 await self.publish(inventoryTimingMs=round((time.monotonic()-started)*1000), inventoryEvidence=getattr(self, 'inventory_evidence', None))
                 remote_tasks = {}
                 from .update_checks import git_revision, ref_policy
@@ -913,15 +918,10 @@ class UpdateManager:
             return
         if state.get('sequence'):
             await self.publish(sequence={**state['sequence'], 'install': True})
-        if state.get('pendingSmartTools') and not self.runners_only(state):
-            pending = list(self.service.state['updates']['pendingSmartTools'])
-            if all(item.get('failure') for item in pending):
-                for item in pending:
-                    await self.smartToolRetry(item.get('resultId', item['previous']))
-            else:
-                await self.activateSmartTools()
+        if state.get('pendingSmartTools') and not self.independent_tool_results(state):
+            await self.activateSmartTools()
             return
-        if self.runners_only(state) and any(state.get(key) for key in ('pendingApp', 'pendingRelease', 'appAvailable')):
+        if self.independent_tool_results(state) and any(state.get(key) for key in ('pendingApp', 'pendingRelease', 'appAvailable')):
             await self.publish(runnerAvailabilityCheck=True)
         if self.service.state['updates'].get('pendingApp'):
             await self.app()
@@ -932,20 +932,23 @@ class UpdateManager:
         if self.service.state['updates'].get('appAvailable'):
             await self.app()
             return
+        pending = state.get('pendingSmartTools', [])
+        if pending and all(item.get('failure') for item in pending) and not state.get('runnerAvailabilityCheck'):
+            # Preserve explicit retry of the failed batch, but never inherit
+            # that retry into a subsequent application/component sequence.
+            for item in pending:
+                await self.smartToolRetry(item.get('resultId', item['previous']))
+            return
         if self.lock.locked(): return
         if not self.inventory:
             path=self.directory/'inventory.json'
             self.inventory=json.loads(path.read_text()) if path.exists() else []
-        if self.runners_only(state) and not any(row.get('kind') != 'smart tool' and
+        if self.independent_tool_results(state) and not any(
                 row.get('status') == 'update' and row.get('eligible') for row in self.inventory):
-            pending = list(state['pendingSmartTools'])
-            if all(item.get('failure') for item in pending):
-                for item in pending:
-                    await self.smartToolRetry(item.get('resultId', item['previous']))
-            else:
+            if any(not item.get('failure') for item in state['pendingSmartTools']):
                 await self.activateSmartTools()
             return
-        if self.runners_only(state):
+        if self.independent_tool_results(state):
             await self.publish(runnerAvailabilityCheck=True)
         if any(row.get('kind')=='smart tool' and row.get('status')=='update' and row.get('eligible') for row in self.inventory) and not any(row.get('kind')!='smart tool' and row.get('status')=='update' and row.get('eligible') for row in self.inventory):
             await self.installSmartTools()
@@ -1402,7 +1405,7 @@ class UpdateManager:
         blockers = self.blockers() if self.requires_idle(state) else []
         if state.get('blockers', []) != blockers:
             await self.publish(blockers=blockers)
-        if state.get('pendingSmartTools') and not self.runners_only(state):
+        if state.get('pendingSmartTools') and not self.independent_tool_results(state):
             if (state.get('phase') not in {'error', 'interrupted'} or any(
                     row.get('runnerUpdate') and not row.get('failure') for row in state['pendingSmartTools'])):
                 await self.activateSmartTools()
@@ -1434,7 +1437,7 @@ class UpdateManager:
         if not managed_preview and (settings.get('autoInstall',True) or state.get('sequence', {}).get('install')) and state.get('phase')=='available' and state.get('available',0):
             await self.install()
             return
-        if self.runners_only(state) and (state.get('phase') not in {'error', 'interrupted'} or any(
+        if self.independent_tool_results(state) and (state.get('phase') not in {'error', 'interrupted'} or any(
                 row.get('runnerUpdate') and not row.get('failure') for row in state['pendingSmartTools'])):
             await self.activateSmartTools()
 

@@ -14,7 +14,7 @@ export function updateReleaseSummary(updates,application,overview){
  }else if(updates.pendingApp){
   stage='during';target=version(updates.pendingApp.latest);
  }else if(application.status==='update'&&application.latest&&
-   !updates.pendingRelease&&(!updates.pendingSmartTools?.length||overview.runnerOnlyPending)&&!updates.sequence?.install){
+   !updates.pendingRelease&&overview.toolResultsIndependent&&!updates.sequence?.install){
   stage='before';target=version(application.latest);
  }else{
   stage=overview.applicationResult?'after':'installed';target=version(application.current);

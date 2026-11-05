@@ -50,3 +50,8 @@ test('missing notes keep exact target and a safe release link without unrelated 
  assert.equal(result.version,'0.20.204');assert.equal(result.notes,undefined);
  assert.equal(result.url,'https://github.com/microsoft/amplifier-unified/releases/tag/v0.20.204');
 });
+
+test('failed optional tool does not conceal newer app notes',()=>{
+ const result=summary({phase:'available',pendingSmartTools:[{previous:'stories-old',failure:{reason:'smart-tool-update-failed'}}]});
+ assert.equal(result.stage,'before');assert.equal(result.notes.version,'0.20.206');
+});

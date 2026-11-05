@@ -49,7 +49,7 @@ export function UpdateSettings({state,act}){
  const statusRef=React.useRef(null);useReadVisible(unread.filter(item=>item.id==='updates:pending'||item.id==='source:application'),act,statusRef);
  const expanded=!!state.view?.maintenanceDraft?.updatesExpanded;
  const controlsBusy=busy||overview.busy,disabledReason=controlsBusy?overview.detail:pending?overview.detail:overview.blocked?'App updates for this development preview are managed by its owner.':'';
- const canRefreshQueued=!!updates.pendingApp&&!updates.pendingApp.featureSelection&&!updates.pendingRelease&&(!updates.pendingSmartTools?.length||updates.pendingSmartTools.every(row=>row.runnerSource))&&!updates.pendingRestart&&!replacement&&!busy;
+ const canRefreshQueued=!!updates.pendingApp&&!updates.pendingApp.featureSelection&&!updates.pendingRelease&&overview.toolResultsIndependent&&!updates.pendingRestart&&!replacement&&!busy;
  const canRefreshRunner=overview.runnerOnlyPending&&!replacement&&!busy;
  const checkDisabled=!!updates.applicationCheckPending||(!canRefreshQueued&&!canRefreshRunner&&(controlsBusy||!!pending));
  const change=patch=>act('settings.update',{patch:{updates:patch}});

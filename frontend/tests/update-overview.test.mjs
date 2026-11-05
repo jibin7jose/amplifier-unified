@@ -174,3 +174,18 @@ test('the exact current component failure wins over an older actionable episode'
  assert.equal(result.application.state,'current');
  assert.equal(result.attention.length,1);
 });
+
+test('failed optional tool stays actionable without holding independent app or component work',()=>{
+ const pendingSmartTools=[{previous:'stories-old',failure:{reason:'smart-tool-update-failed'}}];
+ const result=updateOverview({phase:'checked',sequence:{stage:'complete'},pendingSmartTools});
+ assert.equal(result.title,'Some tools were not updated');
+ assert.equal(result.tone,'error');assert.equal(result.pending,false);assert.equal(result.busy,false);assert.equal(result.waiting,false);
+ for(const available of [{application:{status:'update'}},{items:[{kind:'smart-tool',status:'update'}]}]){
+  const next=updateOverview({phase:'available',pendingSmartTools,...available});
+  assert.equal(next.title,'Updates available');assert.equal(next.busy,false);assert.equal(next.blocked,false);
+ }
+ const hot=updateOverview({phase:'staged',pendingSmartTools,pendingRelease:'candidate',plan:{activation:'per-worker'}});
+ assert.equal(hot.title,'Finishing your update');assert.equal(hot.waiting,false);
+ const mixed=updateOverview({phase:'staged',pendingSmartTools:[...pendingSmartTools,{previous:'healthy'}]});
+ assert.equal(mixed.toolResultsIndependent,false);assert.equal(mixed.waiting,true);
+});

@@ -582,3 +582,22 @@ test('batch presentation bounds full recovery scopes without altering the canoni
  assert.doesNotMatch(html,/component-6|component-7|component-8/);
  assert.equal(JSON.stringify(updates),before);
 });
+
+test('failed optional tool preserves retry and skip while app check and installation remain usable',async()=>{
+ const failed={previous:'stories-old',resultId:'stories-attempt',failure:{reason:'smart-tool-update-failed'}};
+ const calls=[];let root;
+ const act=(name,args)=>calls.push([name,args]);
+ await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state({phase:'error',error:'Tool update failed',pendingSmartTools:[failed]}),act}))});
+ assert.equal(root.root.findByProps({'data-action':'updates.check'}).props.disabled,false);
+ const available={phase:'available',application:{status:'update',current:'0.20.205',latest:'v0.20.207'},pendingSmartTools:[failed]};
+ await renderAct(async()=>root.update(React.createElement(UpdateSettings,{state:state(available),act})));
+ for(const name of ['updates.install','updates.check','updates.smartToolRetry','updates.smartToolSkip']){
+  const button=root.root.findByProps({'data-action':name});assert.equal(button.props.disabled,false);
+  await renderAct(async()=>button.props.onClick());
+ }
+ assert.deepEqual(calls,[['updates.install',undefined],['updates.check',undefined],['updates.smartToolRetry',{id:'stories-attempt'}],['updates.smartToolSkip',{id:'stories-attempt'}]]);
+ await renderAct(async()=>root.update(React.createElement(UpdateSettings,{state:state({...available,phase:'app-staged',pendingApp:{latest:'v0.20.207'}}),act})));
+ assert.equal(root.root.findByProps({'data-action':'updates.check'}).props.disabled,false);
+ assert.equal(root.root.findAllByProps({'data-action':'updates.install'}).length,0);
+ await renderAct(async()=>root.unmount());
+});

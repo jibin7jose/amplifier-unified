@@ -19,6 +19,15 @@ progress; work and calls must be idle for activation. A fresh process must prove
 its installation before component checks continue. Rollback cancels continuation
 and retains the existing rule that automatic installation is disabled.
 
+A failed optional Smart Tool update retains its current installation, failure
+receipt and explicit Retry/Skip controls. It must not block checking or staging
+a newer application, or silently retry when the application sequence resumes.
+Unfinished ordinary tool activation still owns its existing admission gate;
+independent runner qualification keeps its own owner. Later checks exclude
+retained failed installations until explicit recovery, and unrelated healthy
+tools may proceed. `tests/test_failed_tool_update_independence.py` covers these
+boundaries, including restart retention and preservation of foreground app state.
+
 Native child/job activity is bound to the runtime process that reported its
 lifecycle. After that exact process exits, unfinished owned rows become
 interrupted, including persistent children that were idle. An early closed

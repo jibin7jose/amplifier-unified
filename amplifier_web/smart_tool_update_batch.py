@@ -34,11 +34,14 @@ async def stage(manager):
         return
     async with manager.lock:
         pending = list(manager.service.state['updates'].get('pendingSmartTools', []))
-        if not pending:
+        if not pending or manager.independent_tool_results(manager.service.state['updates']):
+            retained = {row['previous'] for row in pending}
             sources = [row for row in manager.inventory if row.get('kind') == 'smart tool'
-                       and row.get('status') == 'update' and row.get('eligible')]
+                       and row.get('status') == 'update' and row.get('eligible')
+                       and row.get('installationId') not in retained]
             manager.diagnostics.begin('smart-tools', tier='other', components=[row.get('label', '') for row in sources])
-            await manager.publish(phase='staging', error=None, detail='Preparing Smart Tool updates…')
+            await manager.publish(phase='staging', error=None, runnerAvailabilityCheck=False,
+                                  detail='Preparing Smart Tool updates…')
             for source in sources:
                 item = {'previous': source['installationId'], 'revision': source.get('latest')}
                 if source.get('runnerKind'):
@@ -63,7 +66,7 @@ async def stage(manager):
 
 async def finish(manager, pending):
     if manager.service.state['updates'].get('runnerAvailabilityCheck'):
-        # Once the app/component sequence has resumed, runner results belong
+        # Once the app/component sequence has resumed, retained tool results belong
         # only to their own rows. Never overwrite its phase, errors, inventory
         # or restart continuation with a capacity wait or a late completion.
         await manager.publish(pendingSmartTools=pending, runnerAvailabilityCheck=bool(pending))
@@ -128,7 +131,8 @@ async def activate(manager):
             async with manager.service.lock:
                 if manager.busy():
                     return
-                manager.service.state['updates'].update(phase='activating', error=None, detail='Checking and switching Smart Tools…')
+                if not manager.service.state['updates'].get('runnerAvailabilityCheck'):
+                    manager.service.state['updates'].update(phase='activating', error=None, detail='Checking and switching Smart Tools…')
                 manager.service._publish_changes(globals={'updates', 'settings'})
             try:
                 for item in list(pending):
@@ -166,7 +170,7 @@ async def retry(manager, identity_value):
         if not item or not item.get('failure'):
             raise ValueError('This tool has no failed update to retry.')
         item.pop('failure')
-        independent = item.get('runnerSource') and manager.service.state['updates'].get('runnerAvailabilityCheck')
+        independent = manager.service.state['updates'].get('runnerAvailabilityCheck')
         await manager.publish(pendingSmartTools=pending, **({} if independent else {'phase': 'staging', 'error': None}))
         if not item.get('target'):
             source = item.get('runnerSource') or {'installationId': item['previous'], 'latest': item['revision']}
@@ -202,15 +206,15 @@ async def skip(manager, identity_value):
                       item['previous'], item.get('revision'))
         if cleanup.get('failure'):
             item['failure'] = cleanup['failure']
-            await manager.publish(phase='error', pendingSmartTools=pending,
-                                  error='The failed tool update could not be removed. Its current version is unchanged. Try Skip again to finish cleanup.')
+            await manager.publish(pendingSmartTools=pending, **({} if state.get('runnerAvailabilityCheck') else {
+                'phase': 'error', 'error': 'The failed tool update could not be removed. Its current version is unchanged. Try Skip again to finish cleanup.'}))
             return
         skipped = {**state.get('skippedSmartTools', {})}
         if item.get('revision'):
             skipped[identity_value] = item['revision']
         pending.remove(item)
         await manager.publish(pendingSmartTools=pending, skippedSmartTools=skipped)
-        if pending:
+        if pending or state.get('runnerAvailabilityCheck'):
             await finish(manager, pending)
         else:
             manager.diagnostics.clear_failure()
