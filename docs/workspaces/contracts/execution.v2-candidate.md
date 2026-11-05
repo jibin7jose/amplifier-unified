@@ -975,13 +975,19 @@ open native control files or decode saved view/history bodies to fill a preview.
 The agent bridge also avoids unrelated pending-progress publication for this read.
 
 
-### Fresh corrections to completed assignment members
+### Fresh work after a completed objective
 
 A new direct queued (including automatic idle delivery) request from the current
 active assignment owner to a bound completed member is ordinary commissioned
 work within existing authority. It needs no fresh target human message or resume
-proof. Stop, paused/cancelled tasks, nonowner peers, membership changes, native
-ownership, current task identity and explicit budget refusals still apply. Host
+proof. An independent root with current Full access may also receive a fresh
+direct request from another Full-access conversation, including across workspaces. A
+completed objective is not a user Stop or a permanent refusal of later authorized
+work. This does not let a nonowner wake another manager's commissioned member.
+The host records both access revisions and the independent recipient's assignment
+identity, and rechecks them and the sender's interruption revision at admission.
+Stop, paused/cancelled tasks, membership changes, native ownership, current task
+identity and explicit budget refusals still apply. Host
 receipts bind the completed task and new input; old requests are never replayed.
 
 The native owner reserves that input's turn durably without reopening the

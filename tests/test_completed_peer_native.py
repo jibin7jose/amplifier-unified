@@ -155,8 +155,10 @@ class Manager(ScriptedProvider):
         return self.final('The fresh correction is verified.')
 
 
-@pytest.mark.parametrize('successor,cap', [(False, 3), (True, 4), (True, None), ('active', 4), (False, 2)])
-async def test_completed_member_corrects_and_reports_under_existing_assignment(tmp_path, monkeypatch, successor, cap):
+@pytest.mark.parametrize('successor,cap,independent', [
+    (False, 3, False), (True, 4, False), (True, None, False), ('active', 4, False), (False, 2, False),
+    (False, 3, True), (True, 4, True), (False, 2, True)])
+async def test_completed_recipient_executes_and_reports_under_existing_authority(tmp_path, monkeypatch, successor, cap, independent):
     host = NativeHost()
     monkeypatch.setattr(runtime_worker, 'publish', host.publish)
     monkeypatch.setenv('AMPLIFIER_HOME', str(tmp_path/'native'))
@@ -166,9 +168,17 @@ async def test_completed_member_corrects_and_reports_under_existing_assignment(t
     app = host.app = AppService(tmp_path/'app', host, workspace=workspace)
     source, target = [app._new_session({'title': name}) for name in ('Manager', 'Completed member')]
     app.state['sessions'] = [source, target]
-    assignment = app.assignments.ensure(source, 'existing-assignment')
-    assignment['members'][target['id']] = {'status': 'bound', 'role': 'commissioned'}
-    target['assignmentId'] = assignment['id']; app.assignments.save(assignment); app._publish()
+    if independent:
+        host.workers = host.roots  # Expose actual mounted roots to configuration retirement.
+        from test_access_mode import save as access
+        await access(app, source, scope='app')
+        assert not source.get('fileAccessPending') and not target.get('fileAccessPending')
+    else:
+        assignment = app.assignments.ensure(source, 'existing-assignment')
+        assignment['members'][target['id']] = {'status': 'bound', 'role': 'commissioned'}
+        target['assignmentId'] = assignment['id']
+        app.assignments.save(assignment)
+    app._publish()
     paths = {name: Path(importlib.util.find_spec('amplifier_module_'+name.replace('-', '_')).origin).parent
              for name in ('loop-live', 'context-simple')}
     host.pump = asyncio.create_task(host.route_events())
@@ -219,6 +229,7 @@ async def test_completed_member_corrects_and_reports_under_existing_assignment(t
             assert len([e for e in worker.runtime.events if e['type'] == 'generation.started']) == 1
             receipt = app.collaboration.receipt('fresh-owner-correction')
             assert receipt['delivery'] == 'accepted'
+            assert receipt['completedTaskFollowup']['version'] == (2 if independent else 1)
             assert receipt['response']['admittedInputIds'] == ['fresh-owner-correction']
             assert receipt['response']['generationId'] == terminal['generation_id']
             assert receipt['response']['status'] == 'sealed'
