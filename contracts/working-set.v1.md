@@ -82,6 +82,8 @@ ownership of ordered parent-result append; this optimization adds no new durable
 append callback or stronger crash-recovery guarantee. Unknown or expired dispatch
 attribution uses the existing full checkpoint. Observed effects are never inferred
 to have rolled back or replayed merely because the parent is interrupted.
+Production Work-wrapped children under Full access with incomplete assurance share
+the enclosing transcript checkpoint without changing their assurance eligibility.
 
 ## Not in v1
 

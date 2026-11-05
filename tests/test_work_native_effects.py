@@ -142,6 +142,11 @@ async def test_programmatic_inner_pin_uses_real_service_not_synthetic_policy(app
     if fault not in {'uncovered', 'same_batch_read'}:
         await adapter.fill(required)
     c = adapter.coordinator
+    from amplifier_web.host.session import install_checkpoint_hooks
+    checkpoints = []
+    async def checkpoint(*, timing=None, transcript_required=True):
+        checkpoints.append(transcript_required)
+    install_checkpoint_hooks(c, SimpleNamespace(session_id=c.session_id, generation=None), checkpoint)
     adapter.loop.config['programmatic_dispatch'] = True
     c.register_capability('tools.dispatch', adapter.loop.approved_dispatch)
     adapter.delivery.install_dispatch(c)
@@ -161,9 +166,12 @@ async def test_programmatic_inner_pin_uses_real_service_not_synthetic_policy(app
         with adapter.loop.approved_dispatch.run_scope(c):
             return await adapter.loop._execute_tool_only(ToolCall(id='nested-parent', name='tool_exec', arguments={'code':code}), adapter.tools, adapter.hooks, None, c)
     before = retained_bytes(app)
-    await execute()
+    execution_result = await execute()
+    if mode == 'full' and fault != 'host_stop':
+        assert checkpoints.count(False) == (2 if fault == 'same_batch_read' else 1), execution_result
+        assert checkpoints.count(True) == 1
     if fault in {'none','reused_parent'} or mode == 'full' and fault in {'uncovered', 'same_batch_read'}:
-        assert 'nested-real-pin' in retained_bytes(app) and child['id'] in app._state['pinnedSessionIds']
+        assert 'nested-real-pin' in retained_bytes(app) and child['id'] in app._state['pinnedSessionIds'], execution_result
         assert len(pin_dispatches) == 1
         if fault == 'reused_parent':
             after=retained_bytes(app);await execute();assert retained_bytes(app)==after

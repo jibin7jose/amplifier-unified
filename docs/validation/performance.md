@@ -394,5 +394,7 @@ ordered parent append, failed child results, context mutation, compaction and
 Stop during a nested call. Untrusted or unavailable dispatch attribution takes
 the full-save path. Ordinary direct-tool full-save counts must match the baseline;
 do not add a second durable-append callback that doubles their persistence work.
+Include actual Work-wrapped Full/incomplete-assurance children sharing the enclosing
+checkpoint, and verify that their assurance eligibility remains unchanged.
 This reduces nested completion work without eliminating the remaining enclosing
 transcript persistence cost or adding a stronger crash-recovery guarantee.

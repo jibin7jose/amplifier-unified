@@ -14,7 +14,7 @@ from amplifier_web.coordination_delivery import CoordinationDelivery, WORK_NESTE
 from amplifier_web.host.session import install_checkpoint_hooks
 
 
-async def environment(tmp_path, *, count=4, fault=None, parallel=False, direct=False):
+async def environment(tmp_path, *, count=4, fault=None, parallel=False, direct=False, work_mode=None):
     session = AmplifierSession({'session': {
         'orchestrator': {'module': 'loop-live', 'config': {
             'programmatic_dispatch': True, 'use_streaming': False,
@@ -42,12 +42,36 @@ async def environment(tmp_path, *, count=4, fault=None, parallel=False, direct=F
     c.register_capability('live.checkpoint', checkpoint)
     install_checkpoint_hooks(c, runtime, checkpoint)
     # Real dispatcher lease plus Unified's own observation, not copied JSON proof.
-    delivery = CoordinationDelivery(None, None)
-    delivery.install_dispatch(c)
-    async def nested_pre(event, data):
-        delivery.observe_nested_pre(data)
-        return HookResult()
-    c.hooks.register('tool:pre', nested_pre, priority=-200)
+    if work_mode is None:
+        delivery = CoordinationDelivery(None, None)
+        delivery.install_dispatch(c)
+        async def nested_pre(event, data):
+            delivery.observe_nested_pre(data)
+            return HookResult()
+        c.hooks.register('tool:pre', nested_pre, priority=-200)
+    else:
+        from amplifier_web.app_guidance import install_app_access
+        from amplifier_web.coordination_delivery import WORK_EXECUTION
+        # Real installed WorkCheckedTool + fitted request + native dispatcher.
+        # The controlled policy models Full or a refused child; canonical host
+        # Full/Ask/Stop decisions are separately exercised by work_native_effects.
+        state.work_checks = []
+        async def check(name, arguments):
+            proof = WORK_EXECUTION.get()['proof']
+            state.work_checks.append((name, proof['complete'], proof['effectAuthorized']))
+            return {'allowed': work_mode == 'full' or name == 'tool_exec'}
+        c.register_capability('web.work_effect_check', check)
+        c.register_capability('web.work_full_access', lambda: True)
+        c.register_capability('web.work_origin_scope', lambda: {
+            'rootSessionId': session.session_id, 'runtimeSessionId': session.session_id,
+            'generationId': 'fixture-generation', 'inputIds': ['fixture-input'],
+            'inputCoverage': 'complete', 'stopRevision': 0})
+        async def bridge(operation, arguments):
+            return {'context.manifest': {'surfaces': [], 'inputIds': ['fixture-input']},
+                    'memory.context': {'items': []}, 'coordination.current': {}}[operation]
+        await install_app_access(c, bridge)
+        delivery = c.get_capability('web.surface_delivery').begin_work.__self__
+        state.delivery = delivery
 
     class Probe:
         name = 'probe'
@@ -104,7 +128,10 @@ async def environment(tmp_path, *, count=4, fault=None, parallel=False, direct=F
             state.provider_started.set()
             return ChatResponse(content=[TextBlock(text='Done')], tool_calls=[],
                 usage=Usage(input_tokens=1, output_tokens=1, total_tokens=2))
-    await c.mount('providers', Provider(), name='fixture')
+    provider = Provider()
+    if work_mode is not None:
+        provider = c.get_capability('web.provider_transform')(provider)
+    await c.mount('providers', provider, name='fixture')
     return session, c, context, runtime, state, path
 
 
@@ -128,8 +155,10 @@ async def test_real_nested_results_keep_enclosing_and_terminal_checkpoints(tmp_p
         await session.cleanup()
 
 
-async def test_real_live_cancellation_flushes_context_without_replaying_tools(tmp_path):
-    session, c, context, runtime, state, path = await environment(tmp_path, fault='cancel')
+@pytest.mark.parametrize('work_mode', [None, 'full'])
+async def test_real_live_cancellation_flushes_context_without_replaying_tools(tmp_path, work_mode):
+    session, c, context, runtime, state, path = await environment(
+        tmp_path, fault='cancel', work_mode=work_mode)
     execution = asyncio.create_task(session.execute('Run once.'))
     try:
         await asyncio.wait_for(state.started.wait(), 10)
@@ -200,6 +229,25 @@ async def test_parent_program_error_keeps_completed_child_context_without_replay
         assert result['success'] is False
         assert len(result['output']['calls']) == 1
         assert result['output']['calls'][0]['status'] == 'completed'
+        assert sum(m.get('tool_call_id') == 'parent' for m in saved) == 1
+    finally:
+        await session.cleanup()
+
+
+@pytest.mark.parametrize('work_mode', ['full', 'deny_child'])
+async def test_production_work_wrapper_keeps_native_nested_saves_without_granting_assurance(tmp_path, work_mode):
+    session, c, context, runtime, state, path = await environment(tmp_path, work_mode=work_mode)
+    try:
+        await asyncio.wait_for(session.execute('Run the local probes once.'), 10)
+        assert state.calls == ([0, 1, 2, 3] if work_mode == 'full' else [])
+        assert [name for name, _, _ in state.work_checks] == ['tool_exec', *(['probe'] * 4)]
+        assert all(not complete and not authorized for _, complete, authorized in state.work_checks)
+        assert any(row.get('assuranceUnavailable') for row in state.delivery.requests.values())
+        assert state.checkpoints.count(False) == 4
+        assert state.checkpoints.count(True) == 4
+        assert WORK_NESTED.get() is None
+        saved = json.loads(path.read_text())
+        assert all(any(m.get('content') == f'nested-{n}' for m in saved) for n in state.calls)
         assert sum(m.get('tool_call_id') == 'parent' for m in saved) == 1
     finally:
         await session.cleanup()

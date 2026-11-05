@@ -605,6 +605,8 @@ class CoordinationDelivery:
         unavailable = {'complete': False, 'effectAuthorized': False, 'status': 'unavailable'}
         nested = WORK_NESTED.get()
         if nested and nested['delivery'] is self:
+            if not nested.get('coverageEligible'):
+                return {**unavailable, 'reason': 'Nested causal delivery is not qualified.'}
             source = nested['lease']
             if (not nested['active'] or source.closed or not source.scope.active
                     or not source.scope.run.active or not nested['verified']
@@ -743,12 +745,16 @@ class CoordinationDelivery:
                 execution = WORK_EXECUTION.get()
                 if execution and execution['delivery'] is delivery:
                     eligible = (execution['active'] and not execution['leaseIssued']
-                                and execution['proof'].get('complete') is True
                                 and _same_json(execution['data'], {**dispatch, **parent}))
+                    # Full can execute without complete Work assurance. Native
+                    # nesting still shares its parent's transcript checkpoint;
+                    # it must not acquire the assurance that execution lacked.
+                    coverage_eligible = eligible and execution['proof'].get('complete') is True
                     execution['leaseIssued'] = True
                 else:
                     eligible = (dispatch.get('tool_call_id') == call.id
                                 and not delivery.call_consumed(call.id))
+                    coverage_eligible = eligible
                 if eligible and not execution:
                     delivery.executed_calls.add(call.id)
                 class BoundLease:
@@ -759,7 +765,8 @@ class CoordinationDelivery:
                             return await lease.call(name, arguments, request_id=request_id)
                         nested = {'delivery': delivery, 'lease': lease, 'parent': parent,
                                   'name': name, 'arguments': copy.deepcopy(arguments),
-                                  'active': True, 'verified': False, 'callId': None}
+                                  'active': True, 'verified': False, 'callId': None,
+                                  'coverageEligible': coverage_eligible}
                         token = WORK_NESTED.set(nested)
                         execution_token = WORK_EXECUTION.set(None)
                         try:
