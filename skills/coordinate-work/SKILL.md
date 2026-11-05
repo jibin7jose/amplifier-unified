@@ -120,6 +120,13 @@ write restrictions still apply; different existing bytes are never overwritten.
 Verify returned size/hash and provenance. After an uncertain return, inspect the
 destination before another explicit save; saved bytes are not test qualification.
 
+When a completed review unblocks another manager and you continue unrelated
+work, send that decision now through `coordination.send` in auto mode. Reference
+the exact reviewed source and evidence, optionally linking the incoming request
+with `replyToRequestId`. Do not wait for your whole turn to end. This attributed
+handoff does not seal a staged result or grant new authority; the recipient still
+applies its acceptance criteria and standing scope.
+
 After accepting a member's exact contribution, use `assignment.task.read` then
 `assignment.task.complete` with current revisions and completion evidence. The
 worker does not need another model turn to acknowledge acceptance or shipment.
