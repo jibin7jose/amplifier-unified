@@ -1,0 +1,52 @@
+{
+  "date": "2026-11-05",
+  "sourceBase": "424d8f4bce53de03451091bdb1488a525c267cda",
+  "qualifiedCandidateCommit": "98405a94ec80dbae2fa891e1f5af7248335102c2",
+  "publicEvidence": "Sanitized projection of privately retained original receipts. Host, workspace, session, resource and operation identities, private archive metadata and absolute paths are omitted. Measurements and test outcomes are unchanged.",
+  "normalRunnerPreflight": {
+    "imageObservation": "Required image was unavailable on the normal isolated runner; read-only checks exited 1.",
+    "launched": 0,
+    "fallbackReason": "Used the already-authorized configured managed Docker fallback without changing host settings or limits."
+  },
+  "runner": {
+    "profile": "python-project",
+    "backend": "Docker",
+    "python": "3.13.16",
+    "architecture": "aarch64",
+    "cpus": 2,
+    "memoryMiB": 4096,
+    "maxTaskOwnedActiveEnvironments": 1,
+    "network": "offline during execution",
+    "uvLockSha256": "5e8bbaaa6fe191311fe5c269a811a034c2cbe5597648a490b9df531f0cfd0e2c",
+    "executionTimeoutSeconds": 1200,
+    "advertisedMaxTimeoutSeconds": 1800,
+    "preparationTimeoutSeconds": 1800,
+    "providerCalls": 0,
+    "scope": "Source AppService in a copied isolated checkout; no native runtime rebuild or installed-wheel claim. Only private Python preparation changed; packaging and native adapter inputs unchanged."
+  },
+  "reproduction": {
+    "benchmark": "python tests/fixtures/execution_publication_scaling.py --source SOURCE --cycles 4 --output DIR",
+    "variants": ["--size small", "--reservation-bytes 512 --cycles 2", "--owners 1", "--profile (separate instrumented run)"],
+    "tests": "python -m pytest -q tests/test_execution_preparation.py tests/test_execution_references.py tests/test_accounting_projection_copy.py tests/test_accounting_canonical.py tests/test_cold_execution_compaction.py",
+    "finalTestResult": "104 passed in 6.16s",
+    "repetitions": "Three fresh processes per main comparison workload; predecessor then candidate per repetition; one-owner diagnostic has one repetition."
+  },
+  "retainedFailure": {
+    "status": "outcome_unknown",
+    "operationResultStatus": "not-started",
+    "reason": "Environment file lock could not be acquired before admission",
+    "reconciliation": "The exact saved admission receipt reported not-started; cleanup confirmed removal and zero task-owned environments. No test output existed. The original outcome remains unknown; a fresh qualification check was admitted after this evidence."
+  },
+  "cleanup": {
+    "removedEnvironments": 6,
+    "retainedExportsVerified": true,
+    "remainingOwnedEnvironments": 0
+  },
+  "limits": [
+    "Synthetic synchronous publications, not provider/action admission/browser or simultaneous execution latency",
+    "Cold means first service publication, not native runtime cold load",
+    "Profile spans are inclusive and never added",
+    "Live GC outliers and shell queue delay are separate unmeasured boundaries",
+    "Small-case filesystem noise retained; no small-case speedup claimed"
+  ]
+}

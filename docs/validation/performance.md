@@ -215,6 +215,28 @@ still visits the retained execution bytes. This short-term reduction in repeated
 conversion is not proof of history-independent work under WS5. Keep measuring
 that remaining cost; do not increase retention limits to make a benchmark pass.
 
+The retired-accounting preparation cache witnesses independent 128-row fragments
+within the same 8 MiB witness and 64 MiB accounting budgets. A changed receipt
+reprojects and sizes only its changed fragments; duplicate `(sessionId, id)`
+identities and unsupported values keep the original whole-list reduction.
+Fragment size accounting conservatively charges shared objects more than once.
+`test_execution_preparation.py` checks changed-fragment work, cross-fragment
+aliases, duplicate precedence, eviction and oversized fallback;
+`test_execution_references.py` retains pointer-failure/retry and resource checks.
+This still traverses the source witnesses and rebuilds live placements, and is
+not history-independent publication or a fix for unrelated storage GC delays.
+
+For repeatable comparisons, `execution_publication_scaling.py --cycles 4` records
+87 publications for three owners (three cold, 84 steady); `--size small` uses
+four receipts and ten placements per owner. Run several fresh processes against
+each exact source, alternate comparison order, and compare `executionSha256` and
+publication counts as well as timings. `--profile` is a separate instrumented
+run, not a latency sample. Process I/O counters include kernel writes beyond
+application payload bytes, and peak RSS includes setup and final readback.
+The `nested` event changes accounting usage (also aliased by its live placement)
+and the current tool revision together. These are synchronous service publications,
+not provider, browser, concurrent-dispatch or native cold-start measurements.
+
 ## Agent preparation and tool reads
 
 Native checkpoint persistence and host notification are separate work. Save each

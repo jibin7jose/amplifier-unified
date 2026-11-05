@@ -208,3 +208,69 @@ def test_retired_tuple_does_not_retain_a_borrowed_container():
              'lifecycle': {'tuple': tuple(['stable', i])}} for i in range(130)]
     assert cache.retired('a', rows)
     assert not cache.accounting and cache.accounting_bytes == 0
+
+
+def test_one_retired_change_only_reprojects_and_sizes_one_fragment(monkeypatch):
+    from amplifier_web import session_projection
+    for count in (256, 2048):
+        cache = ExecutionPreparation()
+        rows = [{'id': str(i), 'kind': 'llm', 'revision': 1, 'sessionId': 'root',
+                 'usage': {'inputTokens': i}, 'assignmentReservation': {'tokens': [i]}}
+                for i in range(count)]
+        previous = cache.retired('root', rows)
+        calls, sizes = [], []
+        project, charge = session_projection.accounting_projection, cache._accounting_charge
+        with monkeypatch.context() as patch:
+            patch.setattr(session_projection, 'accounting_projection', lambda tree, **kw: (
+                calls.append(len(tree['retiredUsageNodes'])), project(tree, **kw))[1])
+            patch.setattr(cache, '_accounting_charge', lambda value: (sizes.append(len(value)), charge(value))[1])
+            assert cache.retired('root', rows) is previous
+            rows[-1]['assignmentReservation']['tokens'].append(9)
+            current = cache.retired('root', rows)
+        assert calls == sizes == [128]
+        assert current == project({'retiredUsageNodes': rows})
+        assert previous[-1]['assignmentReservation']['tokens'] == [count - 1]
+        assert cache.accounting_bytes <= cache.MAX_BYTES
+        rows.reverse()
+        assert cache.retired('root', rows) == project({'retiredUsageNodes': rows})
+
+
+def test_retired_duplicate_identities_crossing_fragments_keep_ordered_reduction():
+    from amplifier_web.session_projection import stored_execution
+    cache = ExecutionPreparation()
+    rows = [{'id': str(i), 'kind': 'llm', 'revision': 1, 'sessionId': 'root',
+             'assignmentId': 'original', 'usage': {'inputTokens': i}} for i in range(256)]
+    tree = {'retiredUsageNodes': rows, 'nodes': []}
+    cache.retired('root', rows)
+    rows[-1].update(id='0', revision=2, assignmentId='replacement')
+    assert cache.retired('root', rows) is None
+    actual = stored_execution(tree, _retired=lambda snapshot: cache.retired('root', snapshot))
+    assert actual == stored_execution(tree)
+    assert actual['retiredUsageNodes'][0]['assignmentId'] == 'original'
+    assert actual['retiredUsageNodes'][0]['usage']['inputTokens'] == 255
+
+
+def test_fragment_witnesses_do_not_expand_total_witness_budget(monkeypatch):
+    from amplifier_web.execution_preparation import _BoundedBytes
+    cache = ExecutionPreparation()
+    rows = [{'id': str(i), 'kind': 'llm', 'revision': 1,
+             'assignmentReservation': {'note': f'{i}:' + 'x' * 100}} for i in range(256)]
+    monkeypatch.setattr(_BoundedBytes, 'LIMIT', 20000)
+    assert cache.retired('root', rows) is None
+    assert not cache.accounting and not cache.accounting_bytes
+
+
+def test_cross_fragment_aliases_invalidate_every_dependent_projection():
+    from amplifier_web.session_projection import accounting_projection
+    cache = ExecutionPreparation()
+    rows = [{'id': str(i), 'kind': 'llm', 'revision': 1,
+             'assignmentReservation': {'tokens': [i]}} for i in range(256)]
+    shared = {'tokens': [7]}
+    rows[127]['assignmentReservation'] = rows[128]['assignmentReservation'] = shared
+    before = cache.retired('root', rows)
+    shared['tokens'].append(9)
+    after = cache.retired('root', rows)
+    assert after == accounting_projection({'retiredUsageNodes': rows})
+    assert before[127]['assignmentReservation'] == before[128]['assignmentReservation'] == {'tokens': [7]}
+    assert after[127]['assignmentReservation']['tokens'] == [7, 9]
+    assert after[128]['assignmentReservation']['tokens'] == [7, 9]
