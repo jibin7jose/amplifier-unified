@@ -446,6 +446,9 @@ async def test_scalar_shortcut_preserves_changed_worker_and_task_view_and_restar
         row['workers'][0]['reportReceipts'].append({'id': 'report', 'text': 'Done with proof'})
         row['workers'][0]['status'] = 'completed'
         row['task']['objective'] = 'Updated objective'
+        row['interruptionRevision'] = 7
+        row['messages'].append({'id': 'next-input', 'role': 'user', 'text': 'Changed input',
+                                'inputId': 'next-input', 'createdAt': 2})
         with monkeypatch.context() as patch:
             patch.setattr(session_projection, 'stored_execution', lambda *a, **k: pytest.fail(
                 'Unchanged execution must not be converted for a task/report save'))
@@ -454,6 +457,7 @@ async def test_scalar_shortcut_preserves_changed_worker_and_task_view_and_restar
         saved = next(s for s in state_records.load(app.db)['sessions'] if s['id'] == row['id'])
         view = load(app.db, saved['$viewPayload'])
         assert view['workers'] == row['workers'] and view['task'] == row['task']
+        assert view['interruptionRevision'] == 7 and view['messages'] == row['messages']
         assert load(app.db, view[MARKER]['execution']) == session_projection.stored_execution(row['execution'])
         # Simulate the new service's empty disposable preparation owner and save
         # once more; persisted execution and changed non-execution facts agree.
@@ -462,6 +466,7 @@ async def test_scalar_shortcut_preserves_changed_worker_and_task_view_and_restar
         saved = next(s for s in state_records.load(app.db)['sessions'] if s['id'] == row['id'])
         restarted = load(app.db, saved['$viewPayload'])
         assert restarted['workers'] == view['workers'] and restarted['task'] == view['task']
+        assert restarted['interruptionRevision'] == 7 and restarted['messages'] == view['messages']
         assert restarted[MARKER]['execution'] == view[MARKER]['execution']
     finally:
         await close_maintenance(app)
@@ -547,3 +552,21 @@ def test_projection_hook_cannot_seed_digest_of_a_different_source(db):
     assert first != second
     assert resource_files.read_detached(resource_files.detach(db, second['$resource']))[
         'retiredUsageNodes'][0]['assignmentReservation'] == {'tokens': [99]}
+
+
+def test_failed_fragment_encoding_keeps_committed_reference_and_repairs_exactly(db):
+    from amplifier_web.session_projection import stored_execution
+    cache, row = ExecutionPreparation(), observed_owner()
+    first = save_projected(cache, db, row)
+    committed = cache.references[row['id']]
+    alias = row['execution']['retiredUsageNodes'][128]['assignmentReservation']['tokens']
+    alias.append(alias)
+    with pytest.raises(ValueError, match='Circular'):
+        cache.stored(db, row, row['execution'], {})
+    db.rollback()
+    assert cache.references[row['id']] is committed
+    alias.pop()
+    alias.append(99)
+    result = save_projected(cache, db, row)
+    assert result != first
+    assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == stored_execution(row['execution'])

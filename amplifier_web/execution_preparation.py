@@ -116,55 +116,78 @@ class ExecutionPreparation:
         They exist only while this service prepares its synchronous JSON save.
         """
         from .session_projection import accounting_projection
-        def project():
-            return accounting_projection({'retiredUsageNodes': rows})
         if (type(owner) is not str or len(owner) > 200
                 or type(rows) is not list or len(rows) < self.CHUNK):
             return None  # Keep the original projection and key/hook behavior.
         try:
-            witness = _witness(rows)
+            parts, witness_bytes = [], 0
+            for start in range(0, len(rows), self.CHUNK):
+                part = _witness(rows[start:start + self.CHUNK])
+                witness_bytes += len(part)
+                if witness_bytes > _BoundedBytes.LIMIT:
+                    return None  # Do not expand the prior whole-witness budget.
+                parts.append(part)
+            witness = tuple(parts)
         except (Unsupported, pickle.PicklingError, RecursionError, TypeError, ValueError):
             return None
+        old = self.accounting.get(owner)
+        if old is not None and old[0] == witness:
+            # This exact builtin content already passed the eligibility checks
+            # below. Witnessing still rejects custom values and nested edits.
+            self.accounting.move_to_end(owner)
+            return old[1]
         # Witness first: custom keys/values must not gain extra lookup hooks.
         if any(type(row) is not dict or type(row.get('id')) is not str
                or row.get('sessionId') is not None and type(row['sessionId']) is not str
                or type(row.get('revision', 0)) is not int for row in rows):
             return None
-        old = self.accounting.get(owner)
-        if old is not None and old[0] == witness:
-            self.accounting.move_to_end(owner)
-            return old[1]
-        result = project()
-        # Charge the detached graph once, including shared scalar objects, on a
-        # miss. Oversized graphs use the existing uncached projection path.
-        pending, seen = [result], set()
-        charge = sys.getsizeof(witness) + 256
+        # Revision/assignment precedence can cross fragments. Only independent
+        # identities may be projected separately; duplicate input keeps the
+        # original ordered reduction over the entire snapshot.
+        if len({(row.get('sessionId'), row['id']) for row in rows}) != len(rows):
+            return None
+        result, fragments = [], []
+        charge = sys.getsizeof(witness) + sys.getsizeof(owner) + 512
+        for index, content in enumerate(witness):
+            previous = old[3][index] if old is not None and index < len(old[3]) else None
+            if previous is not None and old[0][index] == content:
+                fragment, size = previous
+            else:
+                fragment = accounting_projection({'retiredUsageNodes':
+                    rows[index * self.CHUNK:(index + 1) * self.CHUNK]})
+                size = self._accounting_charge(fragment)
+            fragments.append((fragment, size))
+            result.extend(fragment)
+            charge += sys.getsizeof(content) + sys.getsizeof(fragments[-1]) + sys.getsizeof(size) + size
+        # Shared scalars across fragments are deliberately charged more than
+        # once. A changed chunk never requires walking unchanged derived graphs.
+        charge += sys.getsizeof(result) + sys.getsizeof(fragments)
+        if old is not None:
+            self.accounting_bytes -= self.accounting.pop(owner)[2]
+        if charge <= self.MAX_BYTES:
+            while self.accounting and self.accounting_bytes + charge > self.MAX_BYTES:
+                self.accounting_bytes -= self.accounting.popitem(last=False)[1][2]
+            self.accounting[owner] = (witness, result, charge, fragments)
+            self.accounting_bytes += charge
+        return result
+
+    def _accounting_charge(self, result):
+        """Conservative detached-fragment size; unsupported containers stay uncached."""
+        pending, seen, charge = [result], set(), 0
         while pending and charge <= self.MAX_BYTES:
             value = pending.pop()
             if id(value) in seen:
                 continue
             seen.add(id(value))
             charge += sys.getsizeof(value)
-            if charge > self.MAX_BYTES:
-                break
             if type(value) is dict:
                 pending.extend(value.keys())
                 pending.extend(value.values())
             elif type(value) is list:
                 pending.extend(value)
-            # deepcopy may preserve tuple identity; never retain a borrowed
-            # container that would prevent cold-display retirement.
             elif type(value) not in (str, int, float, bool, type(None)):
-                charge = self.MAX_BYTES + 1
-                break
-        if old is not None:
-            self.accounting_bytes -= self.accounting.pop(owner)[2]
-        if charge <= self.MAX_BYTES and not pending:
-            while self.accounting and self.accounting_bytes + charge > self.MAX_BYTES:
-                self.accounting_bytes -= self.accounting.popitem(last=False)[1][2]
-            self.accounting[owner] = (witness, result, charge)
-            self.accounting_bytes += charge
-        return result
+                return self.MAX_BYTES + 1
+        return charge
 
     def _part(self, key, value, reserved=0):
         try:
