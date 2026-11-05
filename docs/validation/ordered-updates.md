@@ -67,6 +67,17 @@ bounded preview. Unrelated generations, data-only reuse, missing qualification,
 legacy truncated scope and newer failure occurrences cannot establish recovery.
 Original failure evidence remains in the existing journal after settlement.
 
+Application storage failures can also recover when a newer release with the
+same known optional features completes staging and verified restart. Capture the
+prior occurrence before staging and preserve it across activation/restart;
+checking, partial preparation, listener-only reconciliation, changed or unknown
+features, and later failure occurrences do not clear it. Preserve the original
+failure in update history. Target-specific non-storage failures keep their
+existing recovery requirements. When the outgoing updater predates this snapshot,
+the same attempt's retained stage-start and success receipts must prove matching
+revision/features and an earlier exact failure occurrence; incomplete or ambiguous
+receipts do not establish recovery.
+
 Validation covers app-first early return, empty-tier progression, included-check
 failures, explicit install intent after a verified restart, missing-source
 revision validation, read-only inventory, preserved source policies, and a

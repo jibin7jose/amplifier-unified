@@ -296,11 +296,113 @@ def test_wrong_application_target_cannot_claim_recovery(tmp_path):
     state, diagnostics = fixture(tmp_path)
     fail(diagnostics, kind='application')
     diagnostics.begin('application', 'd' * 40, application_extras=[])
+    diagnostics.record('stage', 'succeeded')
     diagnostics.record('restart-ack', 'succeeded')
     assert len(active(state)) == 1
     diagnostics.begin('application', 'c' * 40, application_extras=[])
     diagnostics.record('restart-ack', 'succeeded')
     assert active(state) == []
+
+
+@pytest.mark.parametrize('reason', ['disk-full', 'disk-quota-exceeded',
+                                  'storage-permission-denied', 'read-only-storage'])
+def test_new_application_recovers_prior_storage_failure_after_staging_and_ack(tmp_path, reason):
+    state, diagnostics = fixture(tmp_path)
+    extras = ['decisions-jev', 'managed-browser']
+    diagnostics.begin('application', 'a' * 40, application_extras=extras)
+    failure = diagnostics.record('background-update', 'failed', errorType='OSError', reason=reason)
+    attempt = diagnostics.begin('application', 'b' * 40, application_extras=extras)
+    diagnostics.record('candidate-probe', 'succeeded')
+    diagnostics.record('stage', 'succeeded')
+    assert len(active(state)) == 1, 'Staging is not successful activation'
+    state, diagnostics = fixture(tmp_path, state['updates'])
+    diagnostics.begin('application', 'b' * 40, attempt, application_extras=extras)
+    diagnostics.record('restart-ack', 'succeeded')
+    assert active(state) == []
+    assert failure in diagnostics.state['events']
+    assert failure['id'] in diagnostics.path.read_text()
+
+
+@pytest.mark.parametrize('old_extras,new_extras', [
+    (None, []), ([], None), (['managed-browser'], []),
+    ([], ['managed-browser']), (['tui'], ['managed-browser']),
+])
+def test_new_application_storage_recovery_requires_exact_known_features(tmp_path, old_extras, new_extras):
+    state, diagnostics = fixture(tmp_path)
+    diagnostics.begin('application', 'a' * 40, application_extras=old_extras)
+    diagnostics.record('candidate-install', 'failed', errorType='OSError', reason='disk-full')
+    diagnostics.begin('application', 'b' * 40, application_extras=new_extras)
+    diagnostics.record('stage', 'succeeded')
+    diagnostics.record('restart-ack', 'succeeded')
+    assert len(active(state)) == 1
+
+
+@pytest.mark.parametrize('phase', ['restart-reconcile', 'restart-superseded', 'restart-ack'])
+def test_application_storage_recovery_requires_qualified_current_attempt(tmp_path, phase):
+    state, diagnostics = fixture(tmp_path)
+    diagnostics.begin('application', 'a' * 40, application_extras=[])
+    diagnostics.record('candidate-install', 'failed', errorType='OSError', reason='disk-full')
+    diagnostics.begin('application', 'b' * 40, application_extras=[])
+    if phase != 'restart-ack':
+        diagnostics.record('stage', 'succeeded')
+    diagnostics.record(phase, 'succeeded')
+    assert len(active(state)) == 1
+
+
+@pytest.mark.parametrize('changed', ['late-occurrence', 'new-attempt'])
+def test_application_storage_recovery_does_not_adopt_late_or_unqualified_failures(tmp_path, changed):
+    state, diagnostics = fixture(tmp_path)
+    diagnostics.begin('application', 'a' * 40, application_extras=[])
+    diagnostics.record('background-update', 'failed', errorType='OSError', reason='disk-full')
+    attempt = diagnostics.begin('application', 'b' * 40, application_extras=[])
+    diagnostics.record('stage', 'succeeded')
+    if changed == 'late-occurrence':
+        group = next(iter(diagnostics.state['activeFailures'].values()))
+        group['latest'] = {**group['latest'], 'id': 'late-storage-failure'}
+    diagnostics.begin('application', 'b' * 40,
+                      attempt if changed == 'late-occurrence' else None, application_extras=[])
+    diagnostics.record('restart-ack', 'succeeded')
+    assert len(active(state)) == 1
+
+
+@pytest.mark.parametrize('changed', [None, 'missing-start', 'missing-success', 'duplicate-stage',
+    'wrong-attempt', 'wrong-revision', 'unknown-extras', 'different-extras', 'later-failure',
+    'reversed-time', 'new-attempt', 'known-unqualified-snapshot'])
+def test_old_updater_storage_recovery_requires_exact_retained_stage(tmp_path, changed):
+    state, diagnostics = fixture(tmp_path)
+    extras = ['managed-browser']
+    diagnostics.begin('application', 'a' * 40, application_extras=extras)
+    failure = diagnostics.record('candidate-install', 'failed', errorType='OSError', reason='disk-full')
+    attempt = diagnostics.begin('application', 'b' * 40, application_extras=extras)
+    started = diagnostics.record('stage', 'started')
+    succeeded = diagnostics.record('stage', 'succeeded')
+    # Old activation re-entered begin(), moving startedAt past the stage. Neither
+    # outgoing begin() nor record() had the new storage snapshot fields.
+    diagnostics.begin('application', 'b' * 40, attempt, application_extras=extras)
+    batch = diagnostics.state['batch']
+    batch.pop('storageFailures')
+    batch.pop('verifiedStorageFailures')
+    assert batch['startedAt'] >= succeeded['at']
+    if changed == 'missing-start': diagnostics.state['events'].remove(started)
+    if changed == 'missing-success': diagnostics.state['events'].remove(succeeded)
+    if changed == 'duplicate-stage': diagnostics.state['events'].append(dict(succeeded))
+    if changed == 'wrong-attempt': succeeded['attemptId'] = 'c' * 32
+    if changed == 'wrong-revision': succeeded['revision'] = 'c' * 40
+    if changed == 'unknown-extras': succeeded.pop('applicationExtras')
+    if changed == 'different-extras': succeeded['applicationExtras'] = []
+    if changed == 'later-failure':
+        group = next(iter(diagnostics.state['activeFailures'].values()))
+        group['latest'] = {**failure, 'id': 'later-failure', 'at': succeeded['at']}
+    if changed == 'reversed-time': succeeded['at'] = started['at'] - 1
+    if changed == 'known-unqualified-snapshot':
+        batch.update(storageFailures={}, verifiedStorageFailures={})
+    state, diagnostics = fixture(tmp_path, state['updates'])
+    diagnostics.begin('application', 'b' * 40, None if changed == 'new-attempt' else attempt,
+                      application_extras=extras)
+    assert len(active(state)) == 1, 'Old stage proof alone is not activation'
+    diagnostics.record('restart-ack', 'succeeded')
+    assert len(active(state)) == (0 if changed is None else 1)
+    assert failure['id'] in diagnostics.path.read_text()
 
 
 def test_migration_keeps_unrelated_current_error_and_ecosystem_failure(tmp_path):

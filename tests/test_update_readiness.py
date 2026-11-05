@@ -133,6 +133,34 @@ async def test_successor_of_old_updater_proves_browser_recovery_before_clearing_
         await service.close()
 
 
+@pytest.mark.parametrize('healthy', [False, True])
+async def test_first_updated_process_settles_old_storage_failure_only_after_verified_ack(tmp_path,monkeypatch,healthy):
+    from amplifier_web import app_replacement
+    service,manager=make_manager(tmp_path,monkeypatch)
+    diagnostics=manager.diagnostics
+    try:
+        diagnostics.begin('application','e'*40,application_extras=[])
+        failure=diagnostics.record('candidate-install','failed',errorType='OSError',reason='disk-full')
+        diagnostics.begin('application',REVISION,ATTEMPT,application_extras=[])
+        diagnostics.record('stage','started')
+        diagnostics.record('stage','succeeded')
+        diagnostics.begin('application',REVISION,ATTEMPT,application_extras=[])
+        diagnostics.state['batch'].pop('storageFailures')
+        diagnostics.state['batch'].pop('verifiedStorageFailures')
+        service.state['updates']['pendingRestart']={**TARGET,'qualification':{'extras':[]}}
+        verified=[]
+        def matches(*_):
+            verified.append(True)
+            return healthy
+        monkeypatch.setattr(app_replacement,'matches_running',matches)
+        assert await manager.confirm_readiness(health(manager)) is healthy
+        assert verified==[True]
+        assert bool(diagnostics.state['activeFailures']) is not healthy
+        assert failure['id'] in diagnostics.path.read_text()
+    finally:
+        await service.close()
+
+
 async def test_application_result_survives_component_failure_and_service_reload(tmp_path,monkeypatch):
     service,manager=make_manager(tmp_path,monkeypatch)
     try:

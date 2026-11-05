@@ -338,6 +338,7 @@ class UpdateDiagnostics:
         covered = dict(batch.get('recoveringFailures', {}))
         if phase == 'restart-ack':
             covered.update(batch.get('verifiedBrowserFailures', {}))
+            covered.update(batch.get('verifiedStorageFailures', {}))
         for key, observed in covered.items():
             group = active.get(key)
             # Only failures covered when this exact attempt began. A later
@@ -424,6 +425,7 @@ class UpdateDiagnostics:
         if extras is not None:
             self.state['batch']['applicationExtras'] = extras
         recovering = {}
+        storage_failures = {}
         browser_failures = self.browser_failures(extras) if kind == 'application' else {}
         for key, group in self.state.get('activeFailures', {}).items():
             failure = group['latest']
@@ -431,6 +433,11 @@ class UpdateDiagnostics:
                 scope = sanitized_application_extras(failure.get('applicationExtras'))
                 matches = bool(revision and failure.get('revision') == revision
                                and scope is not None and extras is not None and scope == extras)
+                reason = failure.get('reason') or failure.get('probe', {}).get('reason')
+                if (revision and failure.get('revision') and failure.get('revision') != revision
+                        and scope is not None and scope == extras and failure.get('id')
+                        and reason in STORAGE_REASONS.values()):
+                    storage_failures[key] = failure['id']
             elif group['kind'] == kind == 'ecosystem':
                 component = failure.get('component') or failure.get('package') or failure.get('probe', {}).get('package')
                 scope = set(group.get('components', []))
@@ -452,6 +459,26 @@ class UpdateDiagnostics:
             # one before its own verified blank launch, never infer that proof.
             self.state['batch']['browserFailures'] = previous_batch.get('browserFailures', browser_failures) if same_attempt else browser_failures
             self.state['batch']['verifiedBrowserFailures'] = previous_batch.get('verifiedBrowserFailures', {}) if same_attempt else {}
+            # A newer fully staged app can recover storage failure for the same
+            # features. Preserve the pre-stage occurrence through activation;
+            # health alone cannot attest a successful installation.
+            legacy_storage = {}
+            if (same_attempt and extras is not None and 'storageFailures' not in previous_batch
+                    and 'verifiedStorageFailures' not in previous_batch):
+                # The outgoing updater may predate these snapshots. Its bounded
+                # journal must prove this exact stage and the earlier occurrence;
+                # activation re-entry changes batch.startedAt, so it is no fence.
+                stages = [row for row in self.state['events'] if row.get('kind') == kind
+                          and row.get('attemptId') == identity and row.get('phase') == 'stage']
+                if ([row.get('status') for row in stages] == ['started', 'succeeded']
+                        and all(row.get('revision') == revision
+                                and sanitized_application_extras(row.get('applicationExtras')) == extras
+                                and type(row.get('at')) in (int, float) for row in stages)
+                        and 0 < stages[0]['at'] <= stages[1]['at']):
+                    legacy_storage = {key: observed for key, observed in storage_failures.items()
+                                      if 0 < self.state['activeFailures'][key]['latest'].get('at', 0) < stages[0]['at']}
+            self.state['batch']['storageFailures'] = previous_batch.get('storageFailures', legacy_storage) if same_attempt else storage_failures
+            self.state['batch']['verifiedStorageFailures'] = previous_batch.get('verifiedStorageFailures', legacy_storage) if same_attempt else {}
         self.manager.service.state['updates'].pop('probeProgress',None)
         return identity
 
@@ -491,6 +518,9 @@ class UpdateDiagnostics:
             if probe:event['probe']=probe
         self.state['events']=(self.state['events']+[event])[-50:]
         self.state['latest']=event
+        if event['kind'] == 'application' and phase == 'stage' and status == 'succeeded':
+            batch = self.state.get('batch', {})
+            batch['verifiedStorageFailures'] = dict(batch.get('storageFailures', {}))
         if status=='succeeded' and phase in {'ecosystem-activation','smart-tools-complete','smart-tools-partial','restart-ack'}:
             batch=self.state.get('batch',{})
             if batch.get('attemptId')==event['attemptId']:
