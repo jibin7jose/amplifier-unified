@@ -210,6 +210,10 @@ def main():
     plan.add_argument('--base', help='Exact PR base SHA for content-aware release preparation selection')
     plan.add_argument('--head', help='Exact PR head SHA; unavailable comparisons retain ordinary coverage')
     plan.add_argument('--include-manual', action='store_true', help='Also report affected manual owners; does not execute them')
+    scope = commands.add_parser('fast-scope', help='Prove version-only preparation before selecting unchanged Fast checks')
+    scope.add_argument('--base')
+    scope.add_argument('--head')
+    scope.add_argument('--output', type=Path)
     frontend = commands.add_parser('frontend-test')
     frontend.add_argument('--base', help='Exact PR base; absent means full frontend tests')
     frontend.add_argument('--head', help='Exact PR head; absent means full frontend tests')
@@ -224,6 +228,13 @@ def main():
     check.add_argument('--lane', choices=manifest()['lanes'], required=True)
     check.add_argument('--junit', type=Path, required=True)
     args = parser.parse_args()
+    if args.command == 'fast-scope':
+        scope = frontend_test_scope(args.base, args.head)
+        if args.output:
+            with args.output.open('a') as stream:
+                stream.write('scope=' + scope + '\n')
+        print(json.dumps({'scope': scope}))
+        return 0
     if args.command == 'frontend-test':
         return test_frontend(args.base, args.head, args.output)
     if args.command == 'plan':

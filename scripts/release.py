@@ -115,7 +115,7 @@ def prepare(root, version, notes_file, build=False):
     return result
 
 
-def plan(root, selected_revision=None):
+def plan(root, selected_revision=None, *, fetch_tag=False):
     if selected_revision:
         if not re.fullmatch(r'[0-9a-f]{40}', selected_revision):
             raise ValueError('Select a full immutable commit SHA, not a branch or abbreviated revision')
@@ -127,6 +127,12 @@ def plan(root, selected_revision=None):
             raise ValueError('The selected release commit must be an ancestor of the checked-out main commit') from None
     version = version_at(root, selected_revision)
     tag = "v" + version
+    # Ordinary publication needs only the selected tree and its exact version
+    # tag, not every historical tree/tag. Remote errors remain release failures.
+    if fetch_tag and run('git', 'ls-remote', 'origin', 'refs/tags/' + tag, cwd=root):
+        depth = ['--depth=1'] if run('git', 'rev-parse', '--is-shallow-repository', cwd=root) == 'true' else []
+        run('git', 'fetch', '--no-tags', *depth, 'origin',
+            f'refs/tags/{tag}:refs/tags/{tag}', cwd=root)
     tags = run("git", "tag", "--list", tag, cwd=root).splitlines()
     revision = selected_revision or run("git", "rev-parse", "HEAD", cwd=root)
     if tags:
@@ -258,6 +264,7 @@ def main():
     parser.add_argument("--build", action="store_true", help="Run the canonical frontend build in the current prepared environment (prepare only)")
     parser.add_argument("--tag")
     parser.add_argument("--revision")
+    parser.add_argument("--fetch-tag", action="store_true", help="Fetch only the exact remote version tag before planning")
     parser.add_argument("--repository")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -267,7 +274,7 @@ def main():
             parser.error('prepare requires --version and --notes-file')
         print(json.dumps(prepare(root, args.version, args.notes_file, args.build)))
     elif args.command == "plan":
-        result = plan(root, args.revision)
+        result = plan(root, args.revision, fetch_tag=args.fetch_tag)
         if args.output:
             with args.output.open("a") as output:
                 output.write("".join(f"{key}={value}\n" for key, value in result.items()))

@@ -121,6 +121,9 @@ authored release scope or the normal unused-version check.
 Automatic publication watches the dedicated `amplifier_web/__init__.py` version
 owner. Dependency or release-tool edits alone do not start a publisher; explicit
 manual dispatch remains available with the same immutable identity checks.
+Ordinary publisher pushes fetch only the candidate tree and its exact version
+tag. An explicitly selected older manual target retains full ancestry to prove
+that it was merged; remote lookup failures and conflicting tags remain failures.
 
 Reuse focused behavior evidence for unchanged tested inputs. Do not add a local
 full frontend suite or a second manual build solely for a version change.
@@ -329,13 +332,15 @@ It does not qualify live accounts, provider transport, real host desktop input,
 browser consent or all desktop platforms. Do not substitute this suite for those
 boundaries when a change affects them.
 
-GitHub's required **Fast release checks** runs on every PR. It checks release
-identity/reporting contracts, the selected frontend tests, the build and committed
-assets. Only the existing release-only comparison can select the small asset/build
-smoke: it must prove all three application versions agree and no dependency, build
-metadata or executable source changed. Other PRs and manual Fast runs retain the
-full frontend suite. The unfiltered nightly/manual browser owner also runs that
-full suite once, using its already-required frontend dependencies.
+GitHub's required **Fast release checks** runs on every PR. Only the existing
+release-only comparison can select the small identity/notes and asset/build smoke:
+it must prove all three application versions agree and no dependency, build
+metadata or executable source changed. It then avoids repeating unchanged
+release/reporting-harness and access tests. Other PRs, manual runs and unknown
+comparisons retain those checks and the full frontend suite. All paths rebuild
+and compare committed assets; package/native/publication proof stays unchanged.
+The unfiltered nightly/manual browser owner also runs the full frontend suite
+once, using its already-required frontend dependencies.
 Path-scoped contract workflows remain available for affected components. The
 publication graph uses one read-only qualification runner for preparation, package,
 frontend and native-runtime checks, then an isolated write-enabled publisher.

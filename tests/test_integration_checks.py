@@ -199,7 +199,8 @@ def test_frontend_scope_uses_exact_shallow_pr_trees_without_history_fetch(
 
 
 @pytest.mark.parametrize('path', ['frontend/src/app.js', 'frontend/package-lock.json',
-                                  'frontend/tests/assets.test.mjs', 'scripts/integration_checks.py'])
+                                  'frontend/tests/assets.test.mjs', 'scripts/integration_checks.py',
+                                  '.github/workflows/work-workflows.yml', 'tests/test_access_mode.py'])
 def test_version_with_frontend_or_classifier_change_keeps_full_tests(release_repository, path):
     repo = release_repository
     repo.write(path, 'changed source')
@@ -225,6 +226,42 @@ def test_frontend_runner_reports_actual_successful_scope_only(monkeypatch, tmp_p
         assert output.read_text() == 'scope=' + scope + '\n'
     else:
         assert not output.exists()
+
+
+@pytest.mark.parametrize('kind', ['version', 'source', 'unknown', 'manual'])
+def test_fast_scope_reuses_exact_release_predicate_without_running_checks(release_repository, monkeypatch, kind):
+    repo = release_repository
+    if kind == 'source':
+        repo.write('amplifier_web/service.py', '# actual source change\n')
+    head = repo.commit()
+    output = repo.root/'scope-output'
+    args = ['checks', 'fast-scope', '--output', str(output)]
+    if kind != 'manual':
+        args += ['--base', repo.base, '--head', '0'*40 if kind == 'unknown' else head]
+    monkeypatch.setattr(checks.sys, 'argv', args)
+    assert checks.main() == 0
+    assert output.read_text() == 'scope=' + ('release-smoke' if kind == 'version' else 'full') + '\n'
+
+
+def test_fast_only_skips_unchanged_harness_checks_after_version_proof():
+    import yaml
+    workflow = yaml.load((ROOT/'.github/workflows/work-workflows.yml').read_text(), Loader=yaml.BaseLoader)
+    steps = workflow['jobs']['integration']['steps']
+    scope = next(step for step in steps if step.get('id') == 'verification-scope')
+    assert scope['env'] == {'PR_BASE':'${{ github.event.pull_request.base.sha }}',
+                            'PR_HEAD':'${{ github.event.pull_request.head.sha }}'}
+    assert 'fast-scope --base "$PR_BASE" --head "$PR_HEAD" --output "$GITHUB_OUTPUT"' in scope['run']
+    for name in ('Check release identity and post-release reporting contracts',
+                 'Check standing access authorization and revocation'):
+        step = next(step for step in steps if step.get('name') == name)
+        assert steps.index(scope) < steps.index(step)
+        assert step['if'] == "steps.verification-scope.outputs.scope != 'release-smoke'"
+    smoke = next(step for step in steps if step.get('name') == 'Check prepared release identity and notes')
+    assert smoke['if'] == "steps.verification-scope.outputs.scope == 'release-smoke'"
+    assert 'python scripts/release.py plan' in smoke['run']
+    assert 'tests/test_release_notes.py::test_packaged_history_has_current_release_and_retains_initial_changes' in smoke['run']
+    for name in ('Test frontend', 'Build frontend', 'Verify committed frontend assets'):
+        assert 'if' not in next(step for step in steps if step.get('name') == name)
 
 
 @pytest.mark.parametrize('probe', ['warm_worker_probe.py', 'history_edit_probe.py', 'attachments_runtime_probe.py',

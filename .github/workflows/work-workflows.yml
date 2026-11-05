@@ -29,10 +29,23 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - run: uv sync --locked --group dev --group artifacts
+      - name: Select Fast verification scope
+        id: verification-scope
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/integration_checks.py fast-scope --base "$PR_BASE" --head "$PR_HEAD" --output "$GITHUB_OUTPUT"
       - name: Check release identity and post-release reporting contracts
+        if: steps.verification-scope.outputs.scope != 'release-smoke'
         run: uv run --no-sync pytest -q tests/test_release_automation.py tests/test_release_qualification.py tests/test_frontend_release_proof.py tests/test_frontend_build_artifact.py tests/test_goal_peer_junit.py tests/test_post_release_checks.py tests/test_integration_checks.py tests/test_integration_clients.py tests/test_browser_check_runner.py tests/test_active_client_diagnostics.py
       - name: Check standing access authorization and revocation
+        if: steps.verification-scope.outputs.scope != 'release-smoke'
         run: uv run --no-sync pytest -q tests/test_access_mode.py tests/test_configuration_authority.py
+      - name: Check prepared release identity and notes
+        if: steps.verification-scope.outputs.scope == 'release-smoke'
+        run: |
+          python scripts/release.py plan
+          uv run --no-sync pytest -q tests/test_release_notes.py::test_packaged_history_has_current_release_and_retains_initial_changes
       # Full Python and browser coverage runs nightly or by explicit investigation.
       - name: Install frontend dependencies
         run: npm ci --prefix frontend

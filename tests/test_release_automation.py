@@ -198,6 +198,38 @@ def test_release_refuses_a_tag_on_a_different_package_version(repository):
     with pytest.raises(ValueError,match='immutable release tag'):release.plan(repository)
 
 
+@pytest.mark.parametrize('annotated', [False, True])
+@pytest.mark.parametrize('position', ['absent', 'same', 'older'])
+def test_shallow_publication_fetches_only_exact_tag_and_preserves_identity(repository, annotated, position):
+    original = git(repository, 'rev-parse', 'HEAD')
+    git(repository, 'tag', 'unrelated-old-tag')
+    (repository/'README.md').write_text('A later commit')
+    git(repository, 'add', '.');git(repository, 'commit', '-m', 'later')
+    current = git(repository, 'rev-parse', 'HEAD')
+    git(repository, 'tag', 'unrelated-current-tag')
+    if position != 'absent':
+        git(repository, 'tag', *(['-a', '-m', 'release'] if annotated else []),
+            'v1.2.3', original if position == 'older' else current)
+    clone = repository.parent/(repository.name+'-shallow')
+    subprocess.check_call(['git', 'clone', '-q', '--depth=1', '--no-tags', repository.as_uri(), str(clone)])
+    assert git(clone, 'rev-parse', '--is-shallow-repository') == 'true'
+    assert git(clone, 'tag', '--list') == ''
+    if position == 'older':
+        with pytest.raises(ValueError, match='selected commit'):
+            release.plan(clone, fetch_tag=True)
+    else:
+        assert release.plan(clone, fetch_tag=True) == {
+            'version':'1.2.3', 'tag':'v1.2.3', 'revision':current, 'existing_tag':position == 'same'}
+    assert git(clone, 'tag', '--list').splitlines() == ([] if position == 'absent' else ['v1.2.3'])
+    assert git(clone, 'rev-parse', 'HEAD') == current
+
+
+def test_remote_tag_lookup_failure_is_not_treated_as_a_new_release(repository):
+    git(repository, 'remote', 'add', 'origin', (repository/'unavailable.git').as_uri())
+    with pytest.raises(ValueError, match='Release command failed: git ls-remote'):
+        release.plan(repository, fetch_tag=True)
+
+
 def test_manual_plan_can_qualify_merged_maintenance_commit_after_main_advances(repository):
     original = git(repository, 'rev-parse', 'HEAD')
     (repository/'pyproject.toml').write_text('[project]\nversion="2.0.0"\n')
