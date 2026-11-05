@@ -456,3 +456,138 @@ async def test_owner_update_wait_yields_then_continues_once_on_exact_healthy_ado
             # Keep the stage/cause as the primary failure instead of replacing
             # it with DirectNativeHost's generic failed-execution cleanup error.
             failure.add_note(f"Native fixture cleanup also failed: {cleanup_error!r}")
+
+
+@pytest.mark.parametrize("boundary", ["accepted", "delegation", "goal"])
+async def test_same_generation_human_steering_supersedes_update_wait(tmp_path, monkeypatch, boundary):
+    """Fresh applied input, not a different generation/task, must invalidate yield."""
+    from amplifier_core import HookResult
+    from amplifier_web.conversation_steering import submit
+
+    host = OwnerUpdateHost()
+    monkeypatch.setattr(runtime_worker, "publish", host.publish)
+    monkeypatch.setenv("AMPLIFIER_HOME", str(tmp_path / "native"))
+    monkeypatch.setenv("AMPLIFIER_WEB_HOME", str(tmp_path / "app"))
+    app = host.app = AppService(tmp_path / "app", host, workspace=tmp_path)
+    app.management = Management(app)
+    manager = app.update_manager = UpdateManager(app)
+    source = app._new_session({"title": "Steered update owner", "bundle": "synthetic-update-wait"})
+    app.state["sessions"] = [source]
+    sid = source["id"]
+    manager.diagnostics.begin("application", RELEASE["revision"], RELEASE["attemptId"])
+    app.state["updates"].update(phase="app-staged", pendingApp=copy.deepcopy(RELEASE))
+    app.state["updates"]["application"]["canInstall"] = True
+    app._publish()
+    enrolled, apply_steering, applied, finish_answer = (asyncio.Event() for _ in range(4))
+    steering_id = "new-human-steering"
+    correction = "Continue current work now instead of waiting for the update."
+
+    class SteeredOwner(Owner):
+        async def script(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                return self.dispatch(WAIT, "task.waitForUpdate", self.wait_args)
+            if self.calls == 2:
+                assert tool_output(request, WAIT)["accepted"]
+                enrolled.set()
+                await apply_steering.wait()
+                # Keep this generation through the next request boundary, where
+                # queued steering is genuinely applied by streaming.
+                return self.dispatch("read-current-task", "task.get", {"sessionId": sid})
+            if self.calls == 3:
+                assert any(correction in message_text(m) for m in request.messages)
+                applied.set()
+                await finish_answer.wait()
+                return self.final("Following the fresh human instruction.")
+            assert self.calls == 4, "Unexpected input replay or extra goal turn"
+            return self.final("The existing objective continued without another input.")
+
+    provider = SteeredOwner(host, sid, {
+        "sessionId": sid, "expectedRevision": 1, "target": target(manager)})
+    paths = {name: Path(importlib.util.find_spec(
+        "amplifier_module_" + name.replace("-", "_")).origin).parent
+        for name in ("loop-live", "context-simple")}
+    host.pump = asyncio.create_task(host.route_events())
+    try:
+        async with asyncio.timeout(30):
+            worker = await host.mount(source, provider, paths)
+            coordinator = worker.session.coordinator
+            await app.dispatch("task.create", {"sessionId": sid, "expectedRevision": 0,
+                "objective": OBJECTIVE, "maxTurns": 8}, command_id="steered-task", include_state=False)
+            coordinator.session_state["goal"].update(turns_used=2, continuations=1)
+            worker.controls.persist(task_only=True)
+            original_task = copy.deepcopy(worker.controls.tasks.record())
+            evaluations, goal_identity = [], []
+
+            async def evaluate(*args):
+                evaluations.append(copy.deepcopy(coordinator.session_state["goal"]))
+                return len(evaluations) == 2, REASON
+
+            async def before_yield(event, data):
+                if data.get("state") == "continuing":
+                    goal_identity.append(coordinator.session_state["goal"])
+                return HookResult()
+
+            async def after_yield(event, data):
+                if data.get("state") == "continuing":
+                    assert coordinator.session_state["goal"] is goal_identity[-1], (
+                        "Obsolete update marker replaced the fresh-steered goal")
+                return HookResult()
+
+            coordinator.get("orchestrator")._evaluate_goal = evaluate
+            coordinator.hooks.register("orchestrator:goal_progress", before_yield,
+                name="fixture-before-update-yield", priority=-1)
+            coordinator.hooks.register("orchestrator:goal_progress", after_yield,
+                name="fixture-after-update-yield", priority=1)
+            await app.dispatch("conversation.send", {"sessionId": sid, "text": "Do the work"},
+                command_id=HUMAN, include_state=False)
+            await host.wait_stage(worker, enrolled.wait(), "owner wait enrolled")
+            generation = worker.runtime.generation["id"]
+            marker = worker._handoff_boundary
+            token = PUBLISH_ROOT.set(sid)
+            try:
+                result = await submit(worker.controls, worker.runtime,
+                    {"text": correction, "inputId": steering_id, "targetGenerationId": generation},
+                    worker.activation, lambda: worker.stop_revision)
+            finally:
+                PUBLISH_ROOT.reset(token)
+            assert result["accepted"], result
+            if boundary == "accepted":
+                assert steering_id not in worker.runtime.generation["input_ids"]
+                outcome = await coordinator.hooks.emit("tool:pre", {
+                    "session_id": sid, "tool_name": "delegate", "tool_call_id": "accepted-steer-child"})
+                assert outcome.action != "deny", "Accepted fresh steering still held delegation before application"
+            apply_steering.set()
+            await host.wait_stage(worker, applied.wait(), "fresh steering applied in original generation")
+            assert worker.runtime.generation["id"] == generation
+            assert steering_id in worker.runtime.generation["input_ids"]
+            assert worker.controls.tasks.record()["revision"] == original_task["revision"]
+            assert worker.controls.tasks.record()["continuationEpoch"] == original_task["continuationEpoch"]
+            assert worker._handoff_boundary is marker
+            # No observe_waiters/cancel call before either decision. Native fresh
+            # input evidence must make the obsolete marker inert on its own.
+            if boundary == "delegation":
+                outcome = await coordinator.hooks.emit("tool:pre", {
+                    "session_id": sid, "tool_name": "delegate", "tool_call_id": "fresh-child"})
+                assert outcome.action != "deny", "Obsolete update freeze denied fresh-steered delegation"
+            finish_answer.set()
+            await host.wait_stage(worker, host.outcome(worker, HUMAN),
+                                  "fresh-steered objective continued without an update wake")
+            await host.settle()
+            assert provider.calls == 4 and len(evaluations) == 2
+            assert [g["turns_used"] for g in evaluations] == [3, 4]
+            assert "yieldedGoal" not in marker
+            assert not host.admissions
+            assert len([e for e in worker.runtime.events if e["type"] == "steering.applied"
+                        and e["input_id"] == steering_id]) == 1
+            assert len([e for e in worker.runtime.events if e["type"] == "generation.started"]) == 1
+    finally:
+        apply_steering.set()
+        finish_answer.set()
+        failure = sys.exception()
+        try:
+            await app.close()
+        except Exception as cleanup_error:
+            if failure is None:
+                raise
+            failure.add_note(f"Cleanup also failed: {cleanup_error!r}")

@@ -874,3 +874,43 @@ async def test_fresh_generation_can_delegate_before_another_updater_observation(
     h.runtime.native[h.sid].runtime.generation = {'id': 'fresh-human-generation'}
     assert (await hook('tool:pre', {'tool_name': 'delegate', 'tool_call_id': 'new-child'})).action != 'deny'
     assert h.runtime.native[h.sid]._handoff_boundary is not None  # Original intent remains retained.
+
+
+@pytest.mark.parametrize('kind', ['user', 'steer', 'service', 'rejected-steer'])
+async def test_update_yield_distinguishes_fresh_admission_from_child_result(waiting, kind):
+    from amplifier_module_loop_live.runtime import Input
+    h = waiting
+    runtime = h.runtime.native[h.sid].runtime
+
+    class Accepted(dict):
+        visits = 0
+        def __reversed__(self):
+            for key in super().__reversed__():
+                self.visits += 1
+                yield key
+
+    # Old receipt bodies must never be traversed at repeated tool boundaries.
+    runtime.accepted = Accepted((f'old-{i}', object()) for i in range(1000))
+    runtime.accepted['original'] = Input('user', 'Original', id='original')
+    await h.wait()
+    before = h.controller.coordinator.session_state['goal']
+    native = h.runtime.native[h.sid]
+    hook = h.runtime.hooks[h.sid]['tool:pre']
+    runtime.accepted.visits = 0
+    assert (await hook('tool:pre', {'tool_name': 'delegate', 'tool_call_id': 'new'})).action == 'deny'
+    assert runtime.accepted.visits == 1
+    if kind != 'rejected-steer':
+        runtime.accepted['fresh'] = Input(kind, 'New input', id='fresh',
+            source='amplifier-delegate' if kind == 'service' else 'user')
+    if kind == 'service':
+        # Delivered child reports can grow generation.input_ids but are not
+        # new human direction. Existing drain correlation still owns them.
+        runtime.generation['input_ids'] = ['original', 'fresh']
+    fresh = kind in {'user', 'steer'}
+    assert ((await hook('tool:pre', {'tool_name': 'delegate', 'tool_call_id': 'new'})).action != 'deny') is fresh
+    await h.runtime.hooks[h.sid]['orchestrator:goal_progress']('orchestrator:goal_progress', {
+        'state': 'continuing', 'session_id': h.sid,
+        'condition': before['condition'], 'turn': before['turns_used']})
+    assert (h.controller.coordinator.session_state['goal'] is before) is fresh
+    assert ('yieldedGoal' in native._handoff_boundary) is not fresh
+    assert runtime.accepted.visits <= 5  # Constant old-history work plus the one new input.

@@ -34,15 +34,33 @@ async def inspect(worker, request_id, cancel=False, *, update=False, expected=No
             requested_task = ({key: task.get(key) for key in ('id', 'revision', 'continuationEpoch')}
                               if update and task else None)
             requested_generation = ((worker.runtime.generation or {}).get('id') if update else None)
+            # Native admission retains immutable Input identities in insertion
+            # order before emitting/awaiting steering events. Inspect only new
+            # admissions, not history or applied input_ids (which also contains
+            # already-admitted child observations).
+            accepted = getattr(worker.runtime, 'accepted', {})
+            admitted_tail = next(reversed(accepted), None)
+            superseded = False
+
+            def current_update():
+                nonlocal superseded
+                task = coordinator.session_state.get('task') or {}
+                generation = (worker.runtime.generation or {}).get('id')
+                if not superseded:
+                    for identity in reversed(accepted):
+                        if identity == admitted_tail:
+                            break
+                        if accepted[identity].kind in {'user', 'steer'}:
+                            superseded = True
+                            break
+                return (not superseded and (generation is None or generation == requested_generation)
+                    and (not requested_task or task.get('status') == 'active' and
+                         all(task.get(key) == value for key, value in requested_task.items())))
 
             async def finish_turn(event, data):
                 goal = coordinator.session_state.get('goal')
-                task = coordinator.session_state.get('task')
-                if update and (worker.runtime.generation or {}).get('id') != requested_generation:
-                    return HookResult()
-                if update and requested_task and (
-                        not task or task.get('status') != 'active'
-                        or any(task.get(key) != requested_task.get(key) for key in ('id', 'revision', 'continuationEpoch'))):
+                if update and (not current_update()
+                        or (worker.runtime.generation or {}).get('id') != requested_generation):
                     return HookResult()
                 if (data.get('state') == 'continuing' and goal
                         and data.get('session_id', coordinator.session_id) == coordinator.session_id
@@ -71,12 +89,6 @@ async def inspect(worker, request_id, cancel=False, *, update=False, expected=No
             worker._handoff_boundary = {'id': request_id, 'unregister': unregister, 'update': update,
                 'hadGoal': bool(coordinator.session_state.get('goal'))}
             if update:
-                def current_update():
-                    task = coordinator.session_state.get('task') or {}
-                    generation = (worker.runtime.generation or {}).get('id')
-                    return ((generation is None or generation == requested_generation)
-                        and (not requested_task or task.get('status') == 'active' and
-                             all(task.get(key) == value for key, value in requested_task.items())))
                 worker._handoff_boundary['updateCurrent'] = current_update
         if update:
             from .handoff_drain import _freeze
