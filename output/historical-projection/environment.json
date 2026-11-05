@@ -1,0 +1,59 @@
+{
+  "date": "2026-11-05",
+  "timeZone": "America/Los_Angeles",
+  "sourceBase": "424d8f4bce53de03451091bdb1488a525c267cda",
+  "ownerSession": "03d04f75-8de1-5410-9c9f-5653b599e6a7",
+  "workspaceId": "5cea3de2aee7530fa59b483733af4e05",
+  "normalRunnerPreflight": {
+    "observedIntervalPST": "09:50:39–09:54:26",
+    "source": "Read-only DTU specialist, session 0000000000000000-43519ec8707348f4_digital-twin-universe-dtu-profile-builder",
+    "route": "spark-2 / Incus local / project default",
+    "daemonFingerprint": "623f6990a8695ceb37aa8139795c151f3b94cac9d8af6d9ded2dcc5aec9989d2",
+    "approvedImage": "2712816095c8141221a5d7d9b950781ac152a1714543a34aacc8b43baa292ada",
+    "imageObservation": "Image not found; both incus image info and exact GET exited 1",
+    "runningInstances": 20,
+    "runningDtuInstances": 19,
+    "capacityLimitQualification": "Observed occupancy only; no reconciliation of unknown reservations or route-specific limit overrides",
+    "launched": 0,
+    "fallbackReason": "Missing exact approved image; task-authorized existing managed Docker fallback"
+  },
+  "runner": {
+    "profile": "python-project",
+    "backend": "Docker",
+    "daemon": "182d808c-bbb9-42b2-9f12-c73871f53a7f",
+    "python": "3.13.16",
+    "cpus": 2,
+    "memoryMiB": 4096,
+    "maxTaskOwnedActiveEnvironments": 1,
+    "network": "offline during execution",
+    "uvLockSha256": "5e8bbaaa6fe191311fe5c269a811a034c2cbe5597648a490b9df531f0cfd0e2c",
+    "executionTimeoutSeconds": 1200,
+    "advertisedMaxTimeoutSeconds": 1800,
+    "preparationTimeoutSeconds": 1800,
+    "providerCalls": 0,
+    "scope": "Source AppService in a copied isolated checkout; no native runtime rebuild or installed-wheel claim. Only private Python preparation changed; packaging and native adapter inputs unchanged."
+  },
+  "checkIds": [
+    "historical-projection-baseline-424d8f4b-v1",
+    "historical-projection-candidate-simple-v1",
+    "historical-projection-candidate-chunks-v1",
+    "historical-projection-matched-final-v1",
+    "historical-projection-final-owner-only-v1",
+    "historical-projection-final-after-lock-refusal-v2"
+  ],
+  "retainedFailure": {
+    "check": "historical-projection-final-owner-only-v1",
+    "request": "0a65d47a-2c52-57b9-bbb6-aa9f0f2e4e66:execute",
+    "status": "outcome_unknown",
+    "operationResultStatus": "not-started",
+    "reason": "Environment file lock could not be acquired before admission",
+    "reconciliation": "operations.request reported not-started; workspace.environments.read confirmed exact environment removed and zero task-owned environments. No test output existed. The original outcome remains unknown; a new qualification check was admitted after this evidence."
+  },
+  "limits": [
+    "Synthetic synchronous publications, not provider/action admission/browser or simultaneous execution latency",
+    "Cold means first service publication, not native runtime cold load",
+    "Profile spans are inclusive and never added",
+    "Live GC outliers and shell queue delay are separate unmeasured boundaries",
+    "Small-case filesystem noise retained; no small-case speedup claimed"
+  ]
+}
