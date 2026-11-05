@@ -75,20 +75,52 @@ def release_only_changes(changed, base, head):
         return False  # Missing/malformed comparison keeps the ordinary owners.
 
 
-def select_revision_lanes(base, head, *, include_manual=False):
-    """PR selection; absent/unavailable comparisons retain the full matrix."""
+def revision_changes(base, head, *, merge_base=True):
+    """Return a proven PR comparison, or None when it is unavailable."""
     if not all(re.fullmatch(r'[0-9a-f]{40}', value or '') for value in (base, head)):
-        return select_lanes(include_manual=include_manual)
+        return None
     try:
-        ancestor = subprocess.check_output(['git', 'merge-base', base, head], cwd=ROOT, text=True).strip()
+        ancestor = (subprocess.check_output(['git', 'merge-base', base, head], cwd=ROOT, text=True).strip()
+                    if merge_base else base)
         changed = subprocess.check_output(
             ['git', 'diff', '--no-renames', '--name-only', '-z', ancestor, head], cwd=ROOT).decode().split('\0')
         changed = [path for path in changed if path]
     except (OSError, subprocess.CalledProcessError, UnicodeError):
+        return None
+    return changed, ancestor
+
+
+def select_revision_lanes(base, head, *, include_manual=False):
+    """PR selection; absent/unavailable comparisons retain the full matrix."""
+    comparison = revision_changes(base, head)
+    if comparison is None:
         return select_lanes(include_manual=include_manual)
+    changed, ancestor = comparison
     if release_only_changes(changed, ancestor, head):
         return []
     return select_lanes(changed, include_manual=include_manual)
+
+
+def frontend_test_scope(base, head):
+    # Exact trees suffice in a shallow PR merge checkout. A changed newer base
+    # conservatively keeps full tests instead of requiring historical ancestry.
+    comparison = revision_changes(base, head, merge_base=False)
+    if comparison is not None and release_only_changes(*comparison, head):
+        return 'release-smoke'
+    return 'full'
+
+
+def test_frontend(base, head, output=None):
+    scope = frontend_test_scope(base, head)
+    print('Frontend test scope: ' + scope, flush=True)
+    command = (['node', '--test', 'frontend/tests/assets.test.mjs',
+                'frontend/tests/build-artifacts.test.mjs'] if scope == 'release-smoke'
+               else ['npm', 'test', '--prefix', 'frontend'])
+    result = subprocess.run(command, cwd=ROOT)
+    if result.returncode == 0 and output:
+        with output.open('a') as stream:
+            stream.write('scope=' + scope + '\n')
+    return result.returncode
 
 
 def verify_junit(path, selectors):
@@ -178,6 +210,10 @@ def main():
     plan.add_argument('--base', help='Exact PR base SHA for content-aware release preparation selection')
     plan.add_argument('--head', help='Exact PR head SHA; unavailable comparisons retain ordinary coverage')
     plan.add_argument('--include-manual', action='store_true', help='Also report affected manual owners; does not execute them')
+    frontend = commands.add_parser('frontend-test')
+    frontend.add_argument('--base', help='Exact PR base; absent means full frontend tests')
+    frontend.add_argument('--head', help='Exact PR head; absent means full frontend tests')
+    frontend.add_argument('--output', type=Path, help='Append successful test scope to GitHub outputs')
     run = commands.add_parser('run')
     run.add_argument('--lane', choices=manifest()['lanes'], required=True)
     run.add_argument('--python', default=sys.executable)
@@ -188,6 +224,8 @@ def main():
     check.add_argument('--lane', choices=manifest()['lanes'], required=True)
     check.add_argument('--junit', type=Path, required=True)
     args = parser.parse_args()
+    if args.command == 'frontend-test':
+        return test_frontend(args.base, args.head, args.output)
     if args.command == 'plan':
         lanes = (select_revision_lanes(args.base, args.head, include_manual=args.include_manual)
                  if args.base is not None or args.head is not None else

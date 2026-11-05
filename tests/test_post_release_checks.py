@@ -400,7 +400,9 @@ def test_fast_required_check_runs_on_every_pr_without_exhaustive_suites():
     for name in ('test_post_release_checks.py', 'test_browser_check_runner.py',
                  'test_active_client_diagnostics.py'):
         assert name in commands
-    assert 'npm test' in commands and 'git diff --exit-code' in commands
+    assert 'scripts/integration_checks.py frontend-test' in commands
+    assets = next(step for step in job['steps'] if step.get('name') == 'Verify committed frontend assets')
+    assert 'git diff --exit-code' in assets['run'] and 'if' not in assets
     assert 'playwright' not in commands and 'node tests/' not in commands
 
 

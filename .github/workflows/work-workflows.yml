@@ -11,6 +11,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The PR merge commit and its exact base/head trees are sufficient.
+          fetch-depth: 2
       - name: Record the checked-out build source
         id: build-source
         run: |
@@ -34,7 +37,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
       - name: Test frontend
-        run: npm test --prefix frontend
+        id: frontend-tests
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/integration_checks.py frontend-test --base "$PR_BASE" --head "$PR_HEAD" --output "$GITHUB_OUTPUT"
       - name: Build frontend
         id: frontend-build
         run: npm run build --prefix frontend
@@ -52,7 +59,7 @@ jobs:
       - name: Verify committed frontend assets
         run: git diff --exit-code -- amplifier_web/static
       - name: Record frontend proof
-        run: python scripts/frontend_release_proof.py create --destination "$RUNNER_TEMP/frontend-proof.json"
+        run: python scripts/frontend_release_proof.py create --test-scope "${{ steps.frontend-tests.outputs.scope }}" --destination "$RUNNER_TEMP/frontend-proof.json"
       - name: Upload frontend proof
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -60,4 +67,4 @@ jobs:
           path: ${{ runner.temp }}/frontend-proof.json
           if-no-files-found: error
           retention-days: 7
-      # Browser coverage is available in browser-checks.yml (manual only).
+      # Full frontend/browser coverage also runs in the existing nightly/manual owner.

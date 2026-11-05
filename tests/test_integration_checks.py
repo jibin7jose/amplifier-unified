@@ -88,6 +88,7 @@ def test_proven_release_preparation_skips_broad_lanes_but_nightly_and_manual_sta
     repo = release_repository
     head = repo.commit()
     assert checks.select_revision_lanes(repo.base, head) == []
+    assert checks.frontend_test_scope(repo.base, head) == 'release-smoke'
     assert checks.select_revision_lanes(repo.base, head, include_manual=True) == []
     assert len(checks.select_lanes()) == 6
     assert len(checks.select_lanes(include_manual=True)) > 6
@@ -123,7 +124,9 @@ def test_release_version_does_not_hide_dependency_build_source_or_other_metadata
     target = repo.root / path
     text = target.read_text()
     target.write_text(text.replace(before, after) if before else text + after)
-    assert checks.select_revision_lanes(repo.base, repo.commit()) == checks.select_lanes()
+    head = repo.commit()
+    assert checks.select_revision_lanes(repo.base, head) == checks.select_lanes()
+    assert checks.frontend_test_scope(repo.base, head) == 'full'
 
 
 @pytest.mark.parametrize('problem', ['malformed', 'missing', 'duplicate-local', 'version-mismatch',
@@ -145,13 +148,16 @@ def test_unproven_release_changes_retain_ordinary_affected_owners(release_reposi
         (repo.root / 'amplifier_web/service.py').rename(repo.root / 'docs/moved.py')
     else:
         repo.write('bundle.yaml', 'bundle: changed\n')
-    assert checks.select_revision_lanes(repo.base, repo.commit()) == checks.select_lanes()
+    head = repo.commit()
+    assert checks.select_revision_lanes(repo.base, head) == checks.select_lanes()
+    assert checks.frontend_test_scope(repo.base, head) == 'full'
 
 
 def test_missing_git_comparison_cannot_establish_release_exemption(release_repository):
     repo = release_repository
     for base, head in [(repo.base, '0' * 40), ('not-a-sha', repo.commit()), (repo.base, None)]:
         assert checks.select_revision_lanes(base, head) == checks.select_lanes()
+        assert checks.frontend_test_scope(base, head) == 'full'
 
 
 def test_asset_only_change_and_diverged_base_do_not_hide_runtime_work(release_repository):
@@ -160,11 +166,65 @@ def test_asset_only_change_and_diverged_base_do_not_hide_runtime_work(release_re
     repo.write('amplifier_web/static/assets/app-new.js', '// a different client\n')
     assets = repo.commit()
     assert checks.select_revision_lanes(release, assets) == [{'lane': 'browser-headless', 'os': 'ubuntu-latest'}]
+    assert checks.frontend_test_scope(release, assets) == 'full'
     repo.git('checkout', '-q', repo.base)
     repo.write('amplifier_web/service.py', '# new accepted base runtime\n')
     advanced_base = repo.commit()
     # Compare against the actual merge base, not unrelated later base contents.
     assert checks.select_revision_lanes(advanced_base, release) == []
+    assert checks.frontend_test_scope(advanced_base, release) == 'full'
+
+
+@pytest.mark.parametrize('base_changed', [False, True])
+def test_frontend_scope_uses_exact_shallow_pr_trees_without_history_fetch(
+        release_repository, monkeypatch, base_changed):
+    repo = release_repository
+    repo.commit()
+    repo.write('docs/release.md', 'Second release preparation commit\n')
+    head = repo.commit()
+    repo.git('checkout', '-qb', 'pr-merge', repo.base)
+    if base_changed:
+        repo.write('amplifier_web/service.py', '# changed base runtime\n')
+        base = repo.commit()
+    else:
+        base = repo.base
+    repo.git('merge', '--no-ff', '-qm', 'tested merge', head)
+    clone = repo.root.parent / (repo.root.name + '-shallow')
+    subprocess.check_call(['git', 'clone', '-q', '--depth=2', repo.root.as_uri(), str(clone)])
+    monkeypatch.setattr(checks, 'ROOT', clone)
+    # Depth two has both merge parents, but not their full common ancestry.
+    assert subprocess.run(['git', 'merge-base', base, head], cwd=clone).returncode != 0
+    assert checks.frontend_test_scope(base, head) == ('full' if base_changed else 'release-smoke')
+    assert checks.frontend_test_scope(base, '0' * 40) == 'full'
+
+
+@pytest.mark.parametrize('path', ['frontend/src/app.js', 'frontend/package-lock.json',
+                                  'frontend/tests/assets.test.mjs', 'scripts/integration_checks.py'])
+def test_version_with_frontend_or_classifier_change_keeps_full_tests(release_repository, path):
+    repo = release_repository
+    repo.write(path, 'changed source')
+    assert checks.frontend_test_scope(repo.base, repo.commit()) == 'full'
+
+
+@pytest.mark.parametrize('scope,exit_code', [('full', 0), ('release-smoke', 0),
+                                           ('full', 1), ('release-smoke', 1)])
+def test_frontend_runner_reports_actual_successful_scope_only(monkeypatch, tmp_path, scope, exit_code):
+    monkeypatch.setattr(checks, 'frontend_test_scope', lambda base, head: scope)
+    calls = []
+    def execute(command, cwd):
+        calls.append((command, cwd))
+        return SimpleNamespace(returncode=exit_code)
+    monkeypatch.setattr(checks.subprocess, 'run', execute)
+    output = tmp_path / 'github-output'
+    monkeypatch.setattr(checks.sys, 'argv', ['checks', 'frontend-test', '--output', str(output)])
+    assert checks.main() == exit_code
+    expected = (['npm', 'test', '--prefix', 'frontend'] if scope == 'full' else
+                ['node', '--test', 'frontend/tests/assets.test.mjs', 'frontend/tests/build-artifacts.test.mjs'])
+    assert calls == [(expected, checks.ROOT)]
+    if exit_code == 0:
+        assert output.read_text() == 'scope=' + scope + '\n'
+    else:
+        assert not output.exists()
 
 
 @pytest.mark.parametrize('probe', ['warm_worker_probe.py', 'history_edit_probe.py', 'attachments_runtime_probe.py',

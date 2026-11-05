@@ -119,6 +119,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --prefix frontend
+      - name: Run full frontend units for unfiltered nightly/manual coverage
+        if: ${{ !inputs.multi_quote && !inputs.attachment_consumption && !inputs.app004_qualification && !inputs.mcp_boundary }}
+        run: |
+          set -o pipefail
+          npm test --prefix frontend 2>&1 | tee output/browser-checks/frontend-units.log
       - run: npm run build --prefix frontend
         id: frontend-build
       - name: Retain the successful production web build

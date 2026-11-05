@@ -25,7 +25,7 @@ def facts():
     qualifiers = {name: hashlib.sha256(name.encode()).hexdigest() for name in module.QUALIFIERS}
     inputs = {'tree': 'e' * 40, 'assets': 'assets-digest', 'qualifiers': qualifiers,
               'tools': {'node': 'v22.0.0', 'npm': '10.0.0', 'image': 'ubuntu24', 'imageVersion': '20261014'}}
-    proof = {'schema': 1, 'eligible': True, 'inputs': copy.deepcopy(inputs), 'repository': repository,
+    proof = {'schema': 2, 'testScope': 'full', 'eligible': True, 'inputs': copy.deepcopy(inputs), 'repository': repository,
              'runId': 101, 'attempt': 2, 'pr': 15, 'head': head, 'base': base, 'tested': tested}
     run = {'id': 101, 'run_attempt': 2, 'status': 'completed', 'conclusion': 'success',
            'event': 'pull_request', 'path': module.WORKFLOW, 'head_sha': head,
@@ -45,16 +45,18 @@ def test_success_requires_exact_external_facts(facts):
 
 
 @pytest.mark.parametrize('change', [
-    'inputs', 'assets', 'tool', 'image', 'missing-image', 'workflow-bytes', 'helper-bytes',
+    'inputs', 'assets', 'tool', 'image-family', 'machine', 'system', 'missing-image', 'missing-proof-image', 'workflow-bytes', 'helper-bytes',
     'run', 'attempt', 'pr', 'head', 'fork', 'event', 'workflow', 'failure', 'running',
     'association', 'tested', 'tree', 'parents', 'job-attempt', 'job-failed', 'step-skipped',
-    'ineligible',
+    'ineligible', 'unknown-scope', 'missing-scope', 'old-schema', 'classifier-bytes',
 ])
 def test_every_identity_or_success_mismatch_refuses_reuse(facts, change):
     if change == 'inputs': facts['proof']['inputs']['tree'] = 'changed'
     elif change == 'assets': facts['proof']['inputs']['assets'] = 'changed'
     elif change == 'tool': facts['proof']['inputs']['tools']['node'] = 'v23'
-    elif change == 'image': facts['proof']['inputs']['tools']['imageVersion'] = 'yesterday'
+    elif change in {'image-family', 'machine', 'system'}:
+        facts['proof']['inputs']['tools'][{'image-family': 'image', 'machine': 'machine', 'system': 'system'}[change]] = 'changed'
+    elif change == 'missing-proof-image': del facts['proof']['inputs']['tools']['imageVersion']
     elif change == 'missing-image':
         facts['inputs']['tools']['image'] = facts['proof']['inputs']['tools']['image'] = None
     elif change in {'workflow-bytes', 'helper-bytes'}:
@@ -76,6 +78,10 @@ def test_every_identity_or_success_mismatch_refuses_reuse(facts, change):
     elif change == 'job-failed': facts['jobs'][0]['conclusion'] = 'failure'
     elif change == 'step-skipped': facts['jobs'][0]['steps'][1]['conclusion'] = 'skipped'
     elif change == 'ineligible': facts['proof']['eligible'] = False
+    elif change == 'unknown-scope': facts['proof']['testScope'] = 'skipped'
+    elif change == 'missing-scope': del facts['proof']['testScope']
+    elif change == 'old-schema': facts['proof']['schema'] = 1
+    elif change == 'classifier-bytes': facts['qualifiers'][module.QUALIFIERS[2]] = 'changed'
     with pytest.raises(ValueError):
         module.verify(**facts)
 
@@ -232,9 +238,9 @@ def test_create_refuses_fork_or_manual_even_if_checkout_would_match(monkeypatch,
     path.write_text(json.dumps({'pull_request': {'head': {'repo': {'full_name': 'fork/app'}}}}))
     monkeypatch.setattr(module, 'identity', lambda root: pytest.fail('must not qualify untrusted source'))
     env = {'GITHUB_EVENT_PATH': str(path), 'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_REPOSITORY': 'owner/app'}
-    assert module.create(tmp_path, env)['eligible'] is False
+    assert module.create(tmp_path, env, 'full')['eligible'] is False
     env['GITHUB_EVENT_NAME'] = 'workflow_dispatch'
-    assert module.create(tmp_path, env)['eligible'] is False
+    assert module.create(tmp_path, env, 'full')['eligible'] is False
 
 
 def test_fingerprint_covers_all_tracked_inputs_and_detects_dirty_or_extra_assets(tmp_path, monkeypatch):
@@ -322,7 +328,8 @@ def test_workflow_retains_successful_build_before_committed_asset_failure():
     assert job['runs-on'] == 'ubuntu-latest' and job['timeout-minutes'] == '30'
     steps = job['steps']
     source = next(step for step in steps if step.get('id') == 'build-source')
-    assert steps[0] == {'uses': 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262'} and steps[1] == source
+    assert steps[0] == {'uses': 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262',
+                        'with': {'fetch-depth': '2'}} and steps[1] == source
     assert source['run'].splitlines() == [
         'echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"',
         'echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"',
@@ -359,3 +366,57 @@ def test_workflow_retains_successful_build_before_committed_asset_failure():
                      'with': {'name': 'frontend-proof-${{ github.run_attempt }}',
                               'path': '${{ runner.temp }}/frontend-proof.json',
                               'if-no-files-found': 'error', 'retention-days': '7'}}
+
+
+@pytest.mark.parametrize('scope', ['full', 'release-smoke'])
+def test_create_records_exact_executed_scope(tmp_path, monkeypatch, scope):
+    event = tmp_path / 'event.json'
+    event.write_text(json.dumps({'pull_request': {'number': 1,
+        'head': {'sha': 'a' * 40, 'repo': {'full_name': 'owner/app'}}, 'base': {'sha': 'b' * 40}}}))
+    env = {'GITHUB_EVENT_PATH': str(event), 'GITHUB_EVENT_NAME': 'pull_request',
+           'GITHUB_REPOSITORY': 'owner/app', 'GITHUB_SHA': 'c' * 40,
+           'GITHUB_RUN_ID': '1', 'GITHUB_RUN_ATTEMPT': '1'}
+    monkeypatch.setattr(module, 'command', lambda *args, **kwargs: 'c' * 40)
+    monkeypatch.setattr(module, 'identity', lambda root: {'tree': 'd' * 40})
+    assert module.create(tmp_path, env, scope)['testScope'] == scope
+    with pytest.raises(ValueError, match='scope'):
+        module.create(tmp_path, env, None)
+
+
+def test_lookup_preserves_smoke_scope_without_claiming_full_tests(lookup):
+    root, env, api = lookup
+    api.facts['proof']['testScope'] = 'release-smoke'
+    result = module.find(root, env, api)
+    assert result['reused'] and result['testScope'] == 'release-smoke'
+
+
+def test_fast_scope_selection_and_single_full_nightly_owner():
+    load = lambda name: yaml.load((ROOT / '.github/workflows' / name).read_text(), Loader=yaml.BaseLoader)
+    fast = load('work-workflows.yml')['jobs']['integration']['steps']
+    checkout = next(step for step in fast if step.get('uses', '').startswith('actions/checkout@'))
+    assert checkout['with']['fetch-depth'] == '2'
+    test = next(step for step in fast if step.get('name') == 'Test frontend')
+    assert test['env'] == {'PR_BASE': '${{ github.event.pull_request.base.sha }}',
+                           'PR_HEAD': '${{ github.event.pull_request.head.sha }}'}
+    assert 'frontend-test --base "$PR_BASE" --head "$PR_HEAD" --output "$GITHUB_OUTPUT"' in test['run']
+    proof = next(step for step in fast if step.get('name') == 'Record frontend proof')
+    assert '--test-scope "${{ steps.frontend-tests.outputs.scope }}"' in proof['run']
+    for name in ('Install frontend dependencies', 'Build frontend', 'Verify committed frontend assets'):
+        assert 'if' not in next(step for step in fast if step.get('name') == name)
+    browser = load('browser-checks.yml')['jobs']['browser']['steps']
+    full, = [step for step in browser if 'npm test --prefix frontend' in step.get('run', '')]
+    assert full['if'] == '${{ !inputs.multi_quote && !inputs.attachment_consumption && !inputs.app004_qualification && !inputs.mcp_boundary }}'
+    assert 'pipefail' in full['run'] and 'output/browser-checks/frontend-units.log' in full['run']
+    assert browser.index(full) > next(i for i, step in enumerate(browser) if step.get('run') == 'npm ci --prefix frontend')
+
+
+def test_hosted_image_patch_reuse_records_both_without_relaxing_other_inputs(lookup):
+    root, env, api = lookup
+    original = copy.deepcopy(api.facts['proof'])
+    api.facts['inputs']['tools']['imageVersion'] = '20261101.360.1'
+    result = module.find(root, env, api)
+    assert result['reused']
+    assert result['runnerImageVersions'] == {'qualification': '20261014', 'publisher': '20261101.360.1'}
+    assert api.facts['proof'] == original
+    api.facts['inputs']['tools']['npm'] = 'changed'
+    assert not module.find(root, env, api)['reused']

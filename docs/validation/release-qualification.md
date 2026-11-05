@@ -105,7 +105,9 @@ already saved for that version. An identical retry changes nothing. It neither
 installs dependencies nor commits, tags or publishes. Run with `--build` in the
 owned prepared DTU to perform the single canonical frontend build in that same
 invocation; otherwise its output gives the build command for the environment
-owner. A failed build retains the prepared metadata: fix the reported build
+owner. Complete routine preparation in one invocation, then commit, push and open
+the release PR; avoid separate model/tool turns for each version field, hash or
+repeated readback. A failed build retains the prepared metadata: fix the reported build
 failure and rerun that build, rather than reconstructing the candidate by hand.
 
 The frontend embeds the package version in both its JavaScript bundle and
@@ -130,7 +132,9 @@ snapshots correctly include untracked, nonignored files, so old output packets
 otherwise become inputs to every later preparation. Preserve genuine untracked
 source edits; use a clean task-owned release checkout when necessary.
 **Fast release checks** still tests, builds and compares committed assets for the
-candidate. The publisher reuses only its verified exact-source PR proof, or runs
+candidate. A semantically verified version-only PR runs the maintained asset/build
+smoke tests; source/dependency changes and unknown or manual comparisons run all
+frontend unit tests. The proof names its actual test scope, never a skipped full suite. The publisher reuses only its verified exact-source PR proof, or runs
 the frontend checks itself when that proof is unavailable; an earlier version's
 proof does not qualify the new version. Package/native qualification and candidate
 receipts remain fresh under the existing publication workflow.
@@ -326,7 +330,12 @@ browser consent or all desktop platforms. Do not substitute this suite for those
 boundaries when a change affects them.
 
 GitHub's required **Fast release checks** runs on every PR. It checks release
-identity/reporting contracts, frontend unit tests, the build and committed assets.
+identity/reporting contracts, the selected frontend tests, the build and committed
+assets. Only the existing release-only comparison can select the small asset/build
+smoke: it must prove all three application versions agree and no dependency, build
+metadata or executable source changed. Other PRs and manual Fast runs retain the
+full frontend suite. The unfiltered nightly/manual browser owner also runs that
+full suite once, using its already-required frontend dependencies.
 Path-scoped contract workflows remain available for affected components. The
 publication graph uses one read-only qualification runner for preparation, package,
 frontend and native-runtime checks, then an isolated write-enabled publisher.
@@ -358,8 +367,8 @@ main. All broad lanes receive the same verified immutable revision. Manual
 readiness, full Python, registered browsers and owned integrations as well.
 
 Readiness retains its distinct browser and installed-media checks; duplicate
-Python subsets now belong to the full Python lane and frontend units/build are
-already qualified by the publication graph. The [integration ownership
+Python subsets now belong to the full Python lane. Full frontend units belong to
+the unfiltered browser lane; readiness does not repeat them. The [integration ownership
 checklist](integration-coverage.md) assigns optional dependencies and rejects
 unexpected skips. The short publication runtime group is not duplicated there.
 The full Python lane has a 90-minute limit and prints each test's identity as it
@@ -473,12 +482,18 @@ The frontend lane may reuse an immutable artifact from successful **Fast release
 checks** for the same-repository PR whose merge commit is this publishing main
 commit. Reuse binds the entire tracked Git tree (a conservative superset of
 frontend code, tests, scripts, lockfiles, version and build configuration), the
-actual committed-assets digest, Node/npm and runner image identities. GitHub's
+actual committed-assets digest, exact Node/npm, OS/architecture and runner image
+family. Hosted-image patch versions are recorded separately for both runs but do
+not invalidate frontend-only proof reuse; native build/cache identity is unchanged.
+GitHub's
 run, attempt, PR association, tested merge commit/tree, job/step success and
 artifact archive digest are independently checked; the qualifying workflow and
-proof helper must match the release checkout. A green check name or a JSON claim
+proof helper and release-only classifier must match the release checkout. A green
+check name or a JSON claim
 of success alone is insufficient. The proof is emitted only after tests, build
-and committed-assets verification, then retained seven days.
+and committed-assets verification, then retained seven days. It records `full` or
+`release-smoke` explicitly; publisher reuse preserves that scope and never claims
+full units ran for a version-only preparation.
 
 When GitHub explicitly returns an empty run PR-association list, the verifier may
 confirm the exact run-head commit's associated PR instead. That independently

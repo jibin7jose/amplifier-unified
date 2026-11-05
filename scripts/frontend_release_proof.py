@@ -21,7 +21,7 @@ import time
 import zipfile
 
 WORKFLOW = '.github/workflows/work-workflows.yml'
-QUALIFIERS = (WORKFLOW, 'scripts/frontend_release_proof.py')
+QUALIFIERS = (WORKFLOW, 'scripts/frontend_release_proof.py', 'scripts/integration_checks.py')
 ARTIFACT = 'frontend-proof-'
 STEPS = ('Install frontend dependencies', 'Test frontend', 'Build frontend',
          'Verify committed frontend assets', 'Record frontend proof', 'Upload frontend proof')
@@ -96,18 +96,20 @@ def identity(root):
     }
 
 
-def create(root, env):
+def create(root, env, test_scope):
+    if test_scope not in {'full', 'release-smoke'}:
+        raise ValueError('Unknown frontend test scope')
     event = json.loads(Path(env['GITHUB_EVENT_PATH']).read_text())
     pr = event.get('pull_request', {})
     # Fork/manual runs still execute their normal checks, but cannot supply a
     # release proof. No token or secret is needed to produce this receipt.
     if env.get('GITHUB_EVENT_NAME') != 'pull_request' or (
             pr.get('head', {}).get('repo', {}).get('full_name') != env['GITHUB_REPOSITORY']):
-        return {'schema': 1, 'eligible': False}
+        return {'schema': 2, 'eligible': False}
     tested = command('git', 'rev-parse', 'HEAD', root=root)
     if tested != env['GITHUB_SHA']:
         raise ValueError('Checkout is not the triggering PR merge commit')
-    return {'schema': 1, 'eligible': True, 'inputs': identity(root),
+    return {'schema': 2, 'eligible': True, 'testScope': test_scope, 'inputs': identity(root),
             'repository': env['GITHUB_REPOSITORY'], 'runId': int(env['GITHUB_RUN_ID']),
             'attempt': int(env['GITHUB_RUN_ATTEMPT']), 'pr': pr['number'],
             'head': pr['head']['sha'], 'base': pr['base']['sha'],
@@ -147,17 +149,30 @@ class GitHub:
             return value
 
 
+def frontend_inputs(inputs):
+    # Hosted-image patch releases are recorded, not frontend compiler identity.
+    # Exact OS/image family, architecture, Node/npm, source and environment stay
+    # bound. This exception does not apply to any native build/cache receipt.
+    if not isinstance(inputs, dict) or not isinstance(inputs.get('tools'), dict):
+        raise ValueError('Proof inputs or provenance changed')
+    return {**inputs, 'tools': {key: value for key, value in inputs['tools'].items()
+                               if key != 'imageVersion'}}
+
+
 def verify(proof, *, inputs, run, pr, jobs, commit, qualifiers, repository,
            head_prs=None, selected=None):
     """Pure verifier; every identity is checked against independent API facts."""
-    expected = {'schema': 1, 'eligible': True, 'inputs': inputs, 'repository': repository,
+    expected = {'schema': 2, 'eligible': True, 'repository': repository,
                 'runId': run['id'], 'attempt': run['run_attempt'], 'pr': pr['number'],
                 'head': pr['head']['sha']}
-    if any(proof.get(key) != value for key, value in expected.items()):
+    if (proof.get('testScope') not in {'full', 'release-smoke'}
+            or any(proof.get(key) != value for key, value in expected.items())
+            or frontend_inputs(proof.get('inputs')) != frontend_inputs(inputs)):
         raise ValueError('Proof inputs or provenance changed')
     if qualifiers != inputs['qualifiers']:
         raise ValueError('Qualifying workflow/helper differs from trusted release inputs')
-    if not inputs['tools'].get('image') or not inputs['tools'].get('imageVersion'):
+    if (not inputs['tools'].get('image') or not inputs['tools'].get('imageVersion')
+            or not proof['inputs']['tools'].get('imageVersion')):
         raise ValueError('Missing runner image identity')
     if (run.get('status') != 'completed' or run.get('conclusion') != 'success'
             or run.get('event') != 'pull_request' or run.get('path') != WORKFLOW
@@ -240,7 +255,10 @@ def find(root, env, api):
                 return {'reused': True, 'inputs': inputs, 'tested': proof['tested'],
                         'runId': run['id'], 'attempt': attempt, 'artifactId': artifact['id'],
                         'artifactDigest': artifact['digest'], 'selected': selected,
-                        'association': associated, 'rejections': rejected}
+                        'association': associated, 'testScope': proof['testScope'],
+                        'runnerImageVersions': {'qualification': proof['inputs']['tools']['imageVersion'],
+                                                'publisher': inputs['tools']['imageVersion']},
+                        'rejections': rejected}
             except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile) as exc:
                 reject(REJECTIONS.get(str(exc), 'proof_lookup'))
                 continue
@@ -252,10 +270,12 @@ def main():
     parser.add_argument('action', choices=['create', 'reuse'])
     parser.add_argument('--destination', type=Path, required=True)
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--test-scope', choices=['full', 'release-smoke'],
+                        help='Actual successful Fast test scope; required when creating a proof')
     args = parser.parse_args()
     root = Path.cwd()
     if args.action == 'create':
-        value = create(root, os.environ)
+        value = create(root, os.environ, args.test_scope)
     else:
         try:
             value = find(root, os.environ, GitHub(os.environ['GITHUB_REPOSITORY']))

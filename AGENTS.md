@@ -47,7 +47,9 @@ five minutes or less**, including publication and the published-package smoke;
 moving an hour of work into the background for every release is not acceptable.
 Reuse maintained release commands and exact-input PR/DTU evidence; do not recreate
 one-off qualification harnesses or full-tree evidence packages for each version-only
-release. Run affected checks when inputs
+release. Fast keeps an asset/build smoke for proven version-only PRs, full frontend
+units for other inputs, and one full nightly/manual owner. Do not relabel smoke as
+full-suite evidence. Run affected checks when inputs
 change, with specific checks for material risks such as migrations or authority
 changes. Do not repeat full suites for version-only preparation.
 
