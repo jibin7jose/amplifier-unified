@@ -61,6 +61,30 @@ class PackagedProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "checkout"):
             probe.verify_identity(record, prefix=Path("/installed"), checkout=Path("/installed"))
 
+    def test_uv_empty_archive_metadata_still_requires_exact_local_wheel(self):
+        wheel = Path("/downloaded/wheel with spaces.whl")
+        direct = {"url": wheel.as_uri(), "archive_info": {}}
+        probe.verify_wheel_origin(direct, wheel)
+        with self.assertRaisesRegex(AssertionError, "another wheel"):
+            probe.verify_wheel_origin(direct, Path("/downloaded/other.whl"))
+        with self.assertRaisesRegex(AssertionError, "archive install"):
+            probe.verify_wheel_origin({**direct, "dir_info": {"editable": True}}, wheel)
+        with self.assertRaisesRegex(AssertionError, "hash differs"):
+            probe.verify_wheel_origin({**direct, "archive_info": {"hashes": {"sha256": "bad"}}}, wheel)
+
+    def test_late_runtime_error_generation_or_cleanup_call_cannot_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sentinel = Path(tmp) / "calls"
+            ready = {"type": "runtime.status", "event": "session.ready"}
+            probe.verify_lifecycle([ready], sentinel)
+            with self.assertRaisesRegex(AssertionError, "Runtime reported"):
+                probe.verify_lifecycle([ready, {"type": "runtime.error"}], sentinel)
+            with self.assertRaisesRegex(AssertionError, "Generation"):
+                probe.verify_lifecycle([ready, {"type": "runtime.generation", "event": "generation.started"}], sentinel)
+            sentinel.write_text("cleanup model call")
+            with self.assertRaisesRegex(AssertionError, "shutdown"):
+                probe.verify_lifecycle([ready], sentinel)
+
     def test_publication_oracle_rejects_writable_root_changed_bytes_modes_and_extras(self):
         with tempfile.TemporaryDirectory() as tmp:
             origin, target = Path(tmp) / "origin", Path(tmp) / "target"

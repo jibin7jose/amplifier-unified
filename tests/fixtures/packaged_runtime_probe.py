@@ -22,6 +22,7 @@ import sys
 import time
 import tomllib
 import traceback
+from urllib.parse import unquote, urlsplit
 import zipfile
 
 VERSION = "0.55.0"
@@ -48,6 +49,7 @@ async def mount(coordinator, config=None):
         "directUrl": json.loads(distribution.read_text("direct_url.json")),
         "app": str(Path(amplifier_web.__file__).resolve()),
         "worker": str(Path(sys.modules["__main__"].__file__).resolve()),
+        "hooks": [row["module"] for row in coordinator.config.get("hooks", [])],
     }
     with Path(config["records"]).open("a") as stream:
         stream.write(json.dumps(record) + "\\n")
@@ -150,6 +152,25 @@ def verify_identity(record, *, prefix, checkout):
     require(not origin.is_relative_to(checkout), "Foundation imported from checkout")
 
 
+def verify_wheel_origin(direct, wheel):
+    # uv records local wheels with an empty archive_info. The downloaded bytes
+    # and installed-file comparisons are authoritative, not an invented hash.
+    parsed = urlsplit(direct.get("url", ""))
+    require(parsed.scheme == "file" and parsed.netloc in {"", "localhost"},
+            "App did not install from the downloaded local wheel")
+    require(Path(unquote(parsed.path)).resolve() == wheel.resolve(), "App installed from another wheel")
+    require("archive_info" in direct and "dir_info" not in direct, "App is not an archive install")
+    observed = direct["archive_info"].get("hashes", {}).get("sha256")
+    require(observed in {None, WHEEL_SHA256}, "Installed wheel metadata hash differs")
+
+
+def verify_lifecycle(events, calls):
+    require(not any(event["type"] == "runtime.error" for event in events), "Runtime reported an error")
+    require(not any(event.get("event", "").startswith("generation.") for event in events),
+            "Generation unexpectedly started")
+    require(not calls.exists(), "Unexpected model call, including during shutdown")
+
+
 def inspect_object(root, origin, revision):
     """Exact tracked bytes/modes, seal and clean Git state; no chmod repair."""
     require(stat.S_IMODE(root.stat().st_mode) == 0o555, "Published root must be exactly 0555")
@@ -182,9 +203,7 @@ def installed_app(wheel, checkout):
     require(app.is_relative_to(Path(sys.prefix).resolve()), "App is not installed in host environment")
     require(not app.is_relative_to(checkout), "App imported from source checkout")
     direct = json.loads(metadata.distribution("amplifier-unified").read_text("direct_url.json"))
-    require(not direct.get("dir_info", {}).get("editable"), "Editable app is not package acceptance")
-    require(direct.get("archive_info", {}).get("hashes", {}).get("sha256") == WHEEL_SHA256,
-            "Installed wheel metadata does not identify release bytes")
+    verify_wheel_origin(direct, wheel)
     with zipfile.ZipFile(wheel) as archive:
         # Runtime-critical shipped files must match original release bytes.
         names = ("__init__.py", "runtime.py", "runtime_environment.py", "runtime_worker.py",
@@ -223,13 +242,18 @@ async def exercise(args, result):
     shutil.copy2(project / "uv.lock", receipt / "runtime.lock")
     shutil.copy2(project / "uv.lock", output / "runtime.lock")
     shutil.copy2(project / "pyproject.toml", output / "runtime.toml")
+    overrides = work / "module-overrides.txt"
+    overrides.write_text(
+        f"amplifier-foundation @ git+{FOUNDATION_URL}@{FOUNDATION}\n"
+        f"amplifier-module-hooks-session-naming @ git+{FOUNDATION_URL}@{FOUNDATION}#subdirectory=modules/hooks-session-naming\n")
+    os.environ["UV_OVERRIDE"] = str(overrides)
     worker_python = project / ".venv/bin/python"
     context_source = command([worker_python, "-I", "-c",
         "import amplifier_module_context_simple as c; from pathlib import Path; print(Path(c.__file__).parent.parent)"], capture=True)
     result["workerProject"] = str(project)
 
     origin = work / "hook-origin"
-    package = origin / "amplifier_module_hooks_packaged_probe"
+    package = origin / "amplifier_module_hook_context_intelligence"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text(HOOK)
     (origin / "payload.txt").write_bytes(b"exact shared source bytes\n")
@@ -256,7 +280,7 @@ async def exercise(args, result):
         "session": {"orchestrator": {"module": "loop-live", "source": "git+" + LOOP_URL + "@main"},
                     "context": {"module": "context-simple", "source": context_source}},
         "providers": [{"module": "provider-packaged-probe", "source": str(provider), "config": {"calls": str(calls)}}],
-        "hooks": [{"module": "hooks-packaged-probe", "source": source, "config": {"records": str(records)}}]}))
+        "hooks": [{"module": "hook-context-intelligence", "source": source, "config": {"records": str(records)}}]}))
     settings = {"bundle": {"active": str(bundle), "app": []}, "web_bundles": {"excluded": list(APPENDED_DEFAULTS)}}
     require(app_behaviors(settings) == [], "Automatic overlays would widen this check")
     Path(os.environ["AMPLIFIER_HOME"]).mkdir(parents=True)
@@ -266,10 +290,13 @@ async def exercise(args, result):
     transcript = store_history.directory(sid) / "transcript.jsonl"
     manager = RuntimeManager(startup_timeout=180, preparation_timeout=180)
     manager.home = home
-    events, processes = [], []
+    events, processes, retained_rows = [], [], []
+    native_ready = asyncio.Event()
     result["runs"] = []
     async def emit(kind, payload):
         events.append({"type": kind, **payload})
+        if payload.get("event") == "session.ready":
+            native_ready.set()
         with (output / "events.jsonl").open("a") as stream:
             stream.write(json.dumps(events[-1]) + "\n")
     try:
@@ -280,11 +307,15 @@ async def exercise(args, result):
                 store_history.save(sid, ROWS, {"bundle": str(bundle), "name_auto": False})
                 original = transcript.read_bytes()
             started = time.monotonic()
+            native_ready.clear()
             actual_command = manager._command(None, home=home)
             require(actual_command[-1] == str(app / "runtime_worker.py"), "Command does not launch installed worker")
             await manager.start({"id": sid, "workspace": str(workspace), "bundle": str(bundle)}, emit)
             row = manager.workers[sid]
+            retained_rows.append(row)
             processes.append(row["process"])
+            await asyncio.wait_for(native_ready.wait(), timeout=20)
+            verify_lifecycle(events, calls)
             report = row["ready"].result()
             require(bool(report["resumed"]) == resumed, "Incorrect new/resumed readiness")
             hook_records = [json.loads(line) for line in records.read_text().splitlines()]
@@ -295,6 +326,7 @@ async def exercise(args, result):
             require(identity["pid"] != os.getpid(), "Worker was not a separate process")
             require(identity["worker"] == str(app / "runtime_worker.py"), "Worker imported from wrong app")
             require(identity["app"] == str(app / "__init__.py"), "Worker used another app")
+            require(identity["hooks"] == ["hook-context-intelligence"], "Unexpected mounted hook declarations")
             verify_identity(identity, prefix=project / ".venv", checkout=args.checkout)
             require(Path(identity["hook"]).is_relative_to(target), "Hook bypassed shared source publication")
             provenance = await manager.provenance(sid, ["amplifier_foundation.sources.shared", "__main__"])
@@ -320,6 +352,10 @@ async def exercise(args, result):
                    "historySha256": digest(transcript), "historyPreserved": resumed}
             result["runs"].append(run)
             await manager.stop(sid)
+            verify_lifecycle(events, calls)
+            timing = home / "runtime-reports" / sid / "startup-timing.json"
+            if timing.exists():
+                shutil.copy2(timing, output / ("resumed-timing.json" if resumed else "fresh-timing.json"))
             (output / ("resumed-stderr.txt" if resumed else "fresh-stderr.txt")).write_text(
                 "\n".join(row.get("stderr", [])))
             require(row["process"].returncode == 0, "Worker did not exit cleanly")
@@ -327,14 +363,23 @@ async def exercise(args, result):
             if resumed:
                 require(transcript.read_bytes() == original, "Shutdown changed resumed transcript")
         require(result["runs"][0]["worker"]["pid"] != result["runs"][1]["worker"]["pid"], "Resume reused first process")
-        require(not any("generation.started" in json.dumps(event) for event in events), "Generation unexpectedly started")
+        verify_lifecycle(events, calls)
         result["assertions"] = {"coldPublication": True, "exactBytesModes": True, "sourceReuse": True,
                                 "freshReady": True, "newWorkerResume": True, "historyPreserved": True, "modelCalls": 0}
+    except BaseException as error:
+        diagnostic = getattr(error, "diagnostic_path", None)
+        if diagnostic:
+            diagnostic = Path(diagnostic).resolve()
+            if diagnostic.is_relative_to(home) and diagnostic.is_file() and diagnostic.stat().st_size < 100_000:
+                shutil.copy2(diagnostic, output / diagnostic.name)
+        raise
     finally:
         # Capture bounded production diagnostics on failure; never upload homes.
         for name, row in manager.workers.items():
             (output / (name + "-stderr.txt")).write_text("\n".join(row.get("stderr", [])))
         await manager.close()
+        for index, row in enumerate(retained_rows):
+            (output / f"worker-{index}-stderr.txt").write_text("\n".join(row.get("stderr", [])))
         result["cleanup"] = {"remainingWorkers": list(manager.workers),
                              "processReturncodes": [proc.returncode for proc in processes],
                              "runnerOwnsDisposableFiles": str(work)}
