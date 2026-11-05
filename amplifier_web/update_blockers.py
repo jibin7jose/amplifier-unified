@@ -89,9 +89,9 @@ def assess(service):
                 "SELECT DISTINCT session_id FROM schedule_runs WHERE phase IN ('claimed','creating','submitting')"):
             add('schedule', 'An already claimed scheduled occurrence is finishing admission', sid)
     drain = state.get('updates', {}).get('drain') or {}
-    if drain.get('phase') == 'draining':
+    if drain.get('phase') in {'waiting', 'draining'}:
         for sid, row in drain.get('workers', {}).items():
-            if not row.get('ready'):
+            if not row.get('ready') and not row.get('suppressed'):
                 add('update-boundary', 'Finishing existing work before the app update', sid,
                     waitingFor=row.get('waitingFor', ['native-boundary']))
     if state.get('voicePreviewBusy'):

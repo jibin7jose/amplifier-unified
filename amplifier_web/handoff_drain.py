@@ -109,6 +109,8 @@ def _freeze(worker):
         def gate(entry):
             if previous:
                 previous(entry)
+            if marker.get('updateCurrent') and not marker['updateCurrent']():
+                return  # Fresh input or task authority supersedes only this update's freeze.
             # An accepted native job may not have entered Children yet. Only
             # its exact parent/job permits that first entry, never a grandchild
             # inheriting the outer job's context variable.
@@ -130,6 +132,8 @@ def _freeze(worker):
         loop = session.coordinator.get('orchestrator')
         names = set(getattr(loop, 'config', {}).get('background_tools', ['delegate'])) | {'delegate'}
         async def no_new_delegation(event, data, *, owner=sid, names=names):
+            if marker.get('updateCurrent') and not marker['updateCurrent']():
+                return HookResult()
             if data.get('tool_name') in names and not any(
                     key[0] == owner and job['call_id'] == data.get('tool_call_id')
                     for key, (_, job) in jobs.items()):

@@ -2263,6 +2263,8 @@ class AppService:
             from .capacity import dispatch as capacity_dispatch
             return await capacity_dispatch(self, action, args, origin, command_id, include_state)
         if action.startswith('task.'):
+            if action == 'task.waitForUpdate' and origin not in {'ui', 'user'} and args['sessionId'] != caller_session_id:
+                raise AppError('Update waits must target the calling conversation.', 403)
             from .task_continuity import dispatch as task_dispatch
             return await task_dispatch(self, action, args, origin, command_id, include_state, guard=admission_check)
         if action in {'question.list', 'question.read'}:

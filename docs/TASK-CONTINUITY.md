@@ -17,6 +17,16 @@ rather than replaced. Task actions return authoritative state, unlike a queued
 management acknowledgement. Linked operation IDs are observations; unknown
 outcomes remain unknown until their actual evidence is reconciled.
 
+`task.waitForUpdate` is the narrow host-owned exception to lifecycle-only edits:
+an owner explicitly yields its active goal for the exact staged app target and
+requests one guarded continuation after verified adoption. It never rewrites
+task status, revision, continuation epoch or budgets, and therefore preserves
+the original return bindings of admitted peer work. Its host command receipt is
+readable through `task.receipt`; checkpoint, adoption and input admission remain
+distinct. Use the [owner-local update flow](UPDATES.md#work-continues-while-an-application-update-is-pending),
+not generic pause/block plus an external resume. Stop and authority changes
+still supersede the wait.
+
 ## Planning and required limits
 
 A standing user request to complete work includes ordinary corrections,

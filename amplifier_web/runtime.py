@@ -1356,11 +1356,18 @@ class RuntimeManager:
     async def handoff_boundary(self, session_id, request_id, *, cancel=False, receipt=None, update=False):
         """Inspect only this existing worker; never warm or acquire a writer."""
         row = self.workers.get(session_id)
+        expected = (receipt or {}).get('updateWait')
+        def guard():
+            current = self.workers.get(session_id)
+            if expected and (not current or current.get('runtimeOwnerId') != expected['owner']):
+                raise ValueError('The requesting runtime owner changed before its update boundary.')
+        guard()
         if row is None:
             return {'ready': True, 'waitingFor': [], 'continuationAllowed': False}
         if row['process'].returncode is not None:
             raise RuntimeError('The old worker exited before confirming its saved boundary.')
-        return await self._request(session_id, 'handoff.boundary', request_id=request_id, cancel=cancel, receipt=receipt, **({'update': True} if update else {}))
+        return await self._request(session_id, 'handoff.boundary', request_id=request_id, cancel=cancel,
+            receipt=receipt, **({'guard': guard} if expected else {}), **({'update': True} if update else {}))
 
     @contextmanager
     def stopped_boundary(self, session):

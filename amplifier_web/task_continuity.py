@@ -288,6 +288,12 @@ def definitions(schema, string):
         "task.update": ("Revise the task at its exact revision within existing authority. Managers may revise their own plans; preserve explicit user and owner limits. Corrections and used turns are retained; running work applies changes at the next request boundary.", schema({**sid, **revision, **fields}, ["sessionId", "expectedRevision"])),
         "task.pause": ("Pause future goal continuation at the exact task revision when the user asks. Current work may finish; no side effect is rolled back.", schema({**sid, **revision}, ["sessionId", "expectedRevision"])),
         "task.resume": ("Deliberately re-enable a paused or blocked task. Never infer resume from elapsed time or an unanswered question. Does not automatically send input.", schema({**sid, **revision}, ["sessionId", "expectedRevision"])),
+        "task.waitForUpdate": ("Yield only this active task at its saved native checkpoint for the exact staged app update. Finish this turn; do not block or pause the task. One guarded continuation follows verified adoption, preserving its objective and used budget. Stop, changed task/settings, new input or a different update suppress it. Does not install, restart or interrupt other work. Read updates.drain for settlement; never replay an unknown request.", schema({
+            **sid, **revision, "target": schema({
+                "hostInstanceId": string(200), "attemptId": string(200),
+                "revision": string(40), "generation": string(32)},
+                ["hostInstanceId", "attemptId", "revision", "generation"])},
+            ["sessionId", "expectedRevision", "target"])),
         "task.block": ("Record why dependent work cannot proceed. A blocked question never counts as approval.", schema({**sid, **revision, "reason": {**string(4000), "minLength": 1}}, ["sessionId", "expectedRevision", "reason"])),
         "task.complete": ("Explicitly mark the current objective achieved, with evidence and an exact revision/condition match. A completed model turn is not task completion.", schema({**sid, **revision, "condition": string(16000), "evidence": strings}, ["sessionId", "expectedRevision", "condition", "evidence"])),
     }
@@ -725,6 +731,13 @@ async def dispatch(service, operation, args, origin, command_id, include_state, 
     """Shared UI/agent path. Worker owns CAS and persists before acknowledging."""
     from .service import AppError
     sid = args["sessionId"]
+    if operation == "task.waitForUpdate":
+        from .update_drain import wait_for_update
+        return await wait_for_update(service, args, command_id, origin=origin, guard=guard)
+    if operation == "task.receipt":
+        from .update_drain import wait_receipt
+        if result := wait_receipt(service, sid, args.get("commandId")):
+            return {"accepted": True, "result": result}
     if operation in READ_ACTIONS:
         # _session(hydrate=False) can still admit dormant rows to the live
         # overlay. Identity metadata is sufficient for this passive read.

@@ -969,6 +969,9 @@ class Collaboration:
 
     def pending_continuation(self, sid):
         """Read an outcome-backed, unsubmitted exact wait; never claim or publish."""
+        from .update_drain import owner_waiting
+        if owner_waiting(self.service, sid):
+            return
         for (encoded,) in self.service.db.execute("""SELECT receipt FROM commands
                 WHERE json_extract(receipt,'$.commandAction')='coordination.send'
                 AND json_extract(receipt,'$.target.sessionId')=?
@@ -1092,8 +1095,8 @@ class Collaboration:
                         self.cancel_expiry(identity)
                         continue
                     target = self.service._session(sid)
-                    from .update_drain import held
-                    if held(self.service):
+                    from .update_drain import held, owner_waiting
+                    if held(self.service) or owner_waiting(self.service, sid):
                         break
                     if target.get('fileAccessPending'):
                         break  # Keep queued input until the existing refresh owner retires the old mount.
@@ -1199,8 +1202,8 @@ class Collaboration:
             return {"admitted": False, "reason": "The saved input delivery policy changed."}
         if receipt.get("mode") == "steer" and args.get("targetGenerationId") != receipt.get("targetGenerationId"):
             return {"admitted": False, "reason": "The steering generation anchor changed."}
-        from .update_drain import held
-        if held(self.service) and receipt.get('mode') != 'steer':
+        from .update_drain import held, owner_waiting
+        if (held(self.service) or owner_waiting(self.service, sid)) and receipt.get('mode') != 'steer':
             return {'admitted': False, 'waitingForUpdate': True, 'reason': 'Waiting for the app update.'}
         reason = self.guard(receipt)
         message = next((row for row in self.service._session(sid).get("messages", [])

@@ -2,7 +2,7 @@
 import copy
 
 
-async def inspect(worker, request_id, cancel=False, *, update=False):
+async def inspect(worker, request_id, cancel=False, *, update=False, expected=None):
     async with worker.command_lock:
         marker = getattr(worker, '_handoff_boundary', None)
         if cancel:
@@ -15,14 +15,35 @@ async def inspect(worker, request_id, cancel=False, *, update=False):
         if not worker.session or not worker.runtime:
             return {'ready': worker.parked, 'waitingFor': ['runtime']}
         coordinator = worker.session.coordinator
+        if expected and expected.get('observeOnly'):
+            if not marker:
+                raise ValueError('The original update boundary is unavailable; it was not recreated.')
+        elif expected:
+            task = coordinator.session_state.get('task') or {}
+            from .task_binding import matches
+            if (not matches(task, expected) or task.get('revision') != expected['taskRevision']
+                    or task.get('status') != 'active'
+                    or (worker.runtime.generation or {}).get('id') != expected['generationId']):
+                raise ValueError('The requesting task or generation changed before its update boundary.')
         if (update and worker.runtime.generation and coordinator.session_state.get('goal')
                 and not coordinator.get_capability('live.continuation_guard_supported')):
             return {'ready': False, 'waitingFor': ['unsupported-native-boundary']}
         if not marker:
             from amplifier_core import HookResult
+            task = coordinator.session_state.get('task')
+            requested_task = ({key: task.get(key) for key in ('id', 'revision', 'continuationEpoch')}
+                              if update and task else None)
+            requested_generation = ((worker.runtime.generation or {}).get('id') if update else None)
 
             async def finish_turn(event, data):
                 goal = coordinator.session_state.get('goal')
+                task = coordinator.session_state.get('task')
+                if update and (worker.runtime.generation or {}).get('id') != requested_generation:
+                    return HookResult()
+                if update and requested_task and (
+                        not task or task.get('status') != 'active'
+                        or any(task.get(key) != requested_task.get(key) for key in ('id', 'revision', 'continuationEpoch'))):
+                    return HookResult()
                 if (data.get('state') == 'continuing' and goal
                         and data.get('session_id', coordinator.session_id) == coordinator.session_id
                         and data.get('condition') == goal.get('condition')
@@ -49,6 +70,14 @@ async def inspect(worker, request_id, cancel=False, *, update=False):
                 name='unified-checkout-boundary', priority=0)
             worker._handoff_boundary = {'id': request_id, 'unregister': unregister, 'update': update,
                 'hadGoal': bool(coordinator.session_state.get('goal'))}
+            if update:
+                def current_update():
+                    task = coordinator.session_state.get('task') or {}
+                    generation = (worker.runtime.generation or {}).get('id')
+                    return ((generation is None or generation == requested_generation)
+                        and (not requested_task or task.get('status') == 'active' and
+                             all(task.get(key) == value for key, value in requested_task.items())))
+                worker._handoff_boundary['updateCurrent'] = current_update
         if update:
             from .handoff_drain import _freeze
             _freeze(worker)

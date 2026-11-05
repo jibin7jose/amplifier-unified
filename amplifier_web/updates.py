@@ -522,7 +522,7 @@ class UpdateManager:
             return
         drain = state.get('drain') or {}
         boundary = drain.get('workers', {}).get(settled_session_id)
-        if drain.get('phase') == 'draining' and boundary:
+        if drain.get('phase') in {'waiting', 'draining'} and boundary:
             # A committed native park/retirement event can invalidate the saved
             # unready observation. Retain it even during an activation attempt;
             # the next owner tick must still obtain positive boundary proof.
@@ -1382,6 +1382,8 @@ class UpdateManager:
     async def tick(self):
         settings=self.service.state['settings'].get('updates',{})
         state=self.service.state['updates']
+        from .update_drain import observe_waiters
+        await observe_waiters(self)
         if self.awaiting_restart():return
         from .update_drain import finish
         drain = state.get('drain') or {}
