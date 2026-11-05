@@ -60,6 +60,20 @@ uses ordinary busy-boundary/idle delivery. `notify` is a non-waking note; use it
 only when no continuation is needed. Ordinary collaboration within the assigned
 intent needs no separate approval. Do not enroll independent chats implicitly.
 
+## Continue when a dependency is resolved
+
+For an agent-recorded dependency block, send the new finding to the existing
+owner through ordinary `coordination.send` in auto or queue mode, **without
+`resume`**. The host admits this fresh input while keeping the task blocked.
+The owner verifies the dependency, then deliberately calls `task.resume` within
+its standing scope. No current `humanInput` or fresh human approval is needed.
+Do not hunt for a human message ID merely because work is dependency-blocked.
+
+Use the human-backed `resume` recipe in the reference only for an actual stopped,
+paused or failed commissioned member. Unknown block provenance, unresolved user
+questions and uncertain effects do not become resolved dependencies. Preserve
+the same task, used budget, evidence and actual Stop boundaries.
+
 ## Return a result or a real blocker
 
 Workers normally report at completion, or when another owner/user must resolve
