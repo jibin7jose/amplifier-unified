@@ -1,0 +1,86 @@
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {mkdir,writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import assert from 'node:assert/strict';
+import {chromium,expect} from '@playwright/test';
+
+const artifacts=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/context-inspector';await mkdir(artifacts,{recursive:true});
+const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||fileURLToPath(new URL('../../.venv/bin/python',import.meta.url)),[fileURLToPath(new URL('../../tests/fixtures/context_inspector_ui_server.py',import.meta.url))],{stdio:['ignore','pipe','inherit']});
+let browser,page,failure;const checks=[],record=name=>checks.push(name);
+try{
+ const url=await new Promise((resolve,reject)=>{let out='';const timeout=setTimeout(()=>reject(Error('Context fixture did not start')),30000);fixture.once('exit',code=>{clearTimeout(timeout);reject(Error('Fixture exited '+code))});fixture.stdout.on('data',chunk=>{out+=chunk;for(const line of out.split('\n')){try{const value=JSON.parse(line);if(value.url){clearTimeout(timeout);resolve(value.url)}}catch{}}})});
+ browser=await chromium.launch({headless:true});
+ page=await browser.newPage({viewport:{width:1440,height:1100},reducedMotion:'reduce',extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
+ const errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',req=>{try{const data=req.postDataJSON();if(data?.action==='context.inspect')requests.push(data.args)}catch{}});
+ await page.goto(url);await page.waitForFunction(()=>window.amplifier?.getState()?.selectedSessionId);
+ const fixtureState=await (await page.request.get(url+'/fixture/context')).json();
+ const action=(action,args)=>page.evaluate(([action,args])=>window.amplifier.dispatch(action,args),[action,args]);
+ const presentation=patch=>page.evaluate(async patch=>{const state=window.amplifier.getShellState(),clientId=window.amplifier.shellClientId;const prepared=await window.amplifier.dispatch('shell.changes.prepare',{clientId,expectedRevision:state.revision,composition:{...state.effectiveComposition,presentation:{...state.effectiveComposition.presentation,...patch}}});await window.amplifier.dispatch('shell.changes.apply',{clientId,expectedRevision:state.revision,changeId:prepared.result.id})},patch);
+ await presentation({scheme:'light'});
+ await action('session.select',{id:fixtureState.sessionId});
+ await action('view.update',{patch:{workSurface:'chat',panel:null}});
+ await action('canvas.visibility',{open:true});
+ await page.getByRole('button',{name:'Context inspector Last observed request · usage & contents'}).click();
+ const panel=page.locator('.a-context-inspector');
+ await expect(panel.getByRole('heading',{name:'Text composition',exact:true})).toBeVisible();record('overview entry opens actual context.inspect result');
+ assert.ok(requests.length===1);record('sidebar did not read history or prompt bodies before open');
+ const initial=await panel.getAttribute('data-selected-call');assert.ok(initial.startsWith('llm:'));
+ assert.equal(await panel.locator('.a-context-stack').innerText(),'');record('clean bar has no painted numeric labels');
+ await expect(panel.locator('.a-context-legend')).toContainText('of known text');
+ await page.screenshot({path:path.join(artifacts,'overview-light.png'),fullPage:true,animations:'disabled'});
+ await panel.locator('.a-context-category').filter({hasText:'Instructions & files'}).click();
+ await panel.locator('.a-context-item').filter({hasText:'AGENTS.md'}).click();
+ await expect(panel.getByLabel('Captured text')).toContainText('Keep original documents.');
+ await expect(panel.locator('.a-context-share').nth(0)).toContainText('of known text in this category');
+ await expect(panel.locator('.a-context-share').nth(1)).toContainText('of all known text in this request');record('category, selected captured file, both denominators and verbatim reader');
+ assert.ok(requests.at(-1).callId===initial&&requests.at(-1).itemId!=null);record('selected text call is identity bound');
+ await panel.getByText('Provenance, bytes & measurement',{exact:true}).click();await expect(panel.locator('.a-context-reader')).toContainText('/synthetic/AGENTS.md');
+ await page.screenshot({path:path.join(artifacts,'desktop-light.png'),fullPage:true,animations:'disabled'});
+ const search=panel.getByRole('searchbox');await search.fill('no-such-item');await expect(panel.getByText('No matching items. Try another name.')).toBeVisible();await search.fill('');record('empty search does not renormalize percentages');
+ await panel.getByRole('button',{name:'All categories',exact:true}).click();await panel.locator('.a-context-category').filter({hasText:'Conversation & results'}).click();
+ await panel.locator('.a-context-item').filter({hasText:'User 2'}).click();await expect(panel.getByRole('button',{name:'Next page'})).toBeEnabled();await panel.getByRole('button',{name:'Next page'}).click();await expect(panel.locator('.a-context-pagination')).toContainText('6001');record('selected content is paginated');
+ await page.setViewportSize({width:390,height:844});
+ await presentation({scheme:'dark'});
+ await expect(page.locator('#amp-one')).toHaveAttribute('data-theme-scheme','dark');
+ await panel.getByRole('heading',{name:'User 2',exact:true}).scrollIntoViewIfNeeded();
+ assert.ok(await panel.evaluate(el=>el.scrollWidth<=el.clientWidth));
+ await page.screenshot({path:path.join(artifacts,'narrow-dark-reader.png'),fullPage:true,animations:'disabled'});record('390px content has no horizontal overflow');
+ await panel.getByRole('button',{name:'Back to items'}).click();await expect(panel.locator('.a-context-item').first()).toBeFocused();record('keyboard return focus');
+ await panel.locator('.a-context-item').first().press('/');await expect(search).toBeFocused();record('slash focuses search');
+ let failRead=true;
+ await page.route('**/api/actions',async route=>{const payload=route.request().postDataJSON();if(failRead&&payload?.action==='context.inspect'){failRead=false;await route.abort('failed')}else await route.continue()});
+ await panel.getByRole('button',{name:'Refresh',exact:true}).click();await expect(panel.getByRole('alert')).toBeVisible();
+ await expect(panel).toHaveAttribute('data-selected-call',initial);
+ await page.unrouteAll({behavior:'wait'});await panel.getByRole('button',{name:'Try again',exact:true}).click();await expect(panel.getByRole('alert')).toHaveCount(0);record('manual refresh error retains exact useful view and retry recovers');
+ await page.request.post(url+'/fixture/context',{data:{scenario:'partial'}});await panel.getByRole('button',{name:'Refresh',exact:true}).click();
+ await expect(panel).not.toHaveAttribute('data-selected-call',initial);await expect(panel).toContainText('Model window: unavailable');
+ await panel.locator('.a-context-category').filter({hasText:'Instructions & files'}).click();await panel.locator('.a-context-item').first().click();await expect(panel).toContainText('No current file is substituted.');assert.equal(await panel.getByLabel('Captured text').count(),0);record('new no-record cycle has real estimates, unknown window and no body');
+ await page.screenshot({path:path.join(artifacts,'narrow-partial.png'),fullPage:true,animations:'disabled'});
+ const after=await (await page.request.get(url+'/fixture/context')).json();assert.equal(after.providerCalls,2);record('reads and refresh made no provider calls');
+ await page.request.post(url+'/fixture/context',{data:{scenario:'unicode'}});await panel.getByRole('button',{name:'Refresh',exact:true}).click();
+ await panel.locator('.a-context-category').filter({hasText:'Conversation & results'}).click();await panel.locator('.a-context-item').filter({hasText:'User 2'}).click();
+ await expect(panel.locator('.a-context-pagination')).toContainText('1–6000 of 10000');
+ await panel.getByRole('button',{name:'Next page'}).click();await expect(panel.locator('.a-context-pagination')).toContainText('6001–10000 of 10000');record('astral characters retain Unicode page ranges');
+ await page.request.post(url+'/fixture/context',{data:{scenario:'known-window-no-usage'}});await panel.getByRole('button',{name:'Refresh',exact:true}).click();
+ await expect(panel.locator('.a-context-capacity')).toContainText('Model window 8,000');
+ await expect(panel.locator('.a-context-capacity')).toContainText('Input usage unavailable');
+ await expect(panel.locator('.a-context-capacity-track')).toHaveCount(0);record('known model window remains visible with missing usage and no invented fraction');
+ let release,entered;const gate=new Promise(resolve=>{release=resolve}),held=new Promise(resolve=>{entered=resolve});let delay=true;
+ await page.route('**/api/actions',async route=>{const payload=route.request().postDataJSON();if(delay&&payload?.action==='context.inspect'){delay=false;const response=await route.fetch();entered();await gate;await route.fulfill({response})}else await route.continue()});
+ await panel.getByRole('button',{name:'Refresh',exact:true}).click();await held;
+ await action('session.select',{id:fixtureState.emptyId});await action('view.update',{patch:{panel:'context-inspector'}});
+ await expect(panel.getByRole('heading',{name:'No completed request observation'})).toBeVisible();assert.equal(await panel.getByLabel('Captured text').count(),0);record('cross-chat empty state does not retain old reader');
+ release();await page.unrouteAll({behavior:'wait'});await expect(panel.getByRole('heading',{name:'No completed request observation'})).toBeVisible();record('late previous-chat response cannot replace new selection');
+ await page.setViewportSize({width:1440,height:1100});await presentation({scheme:'light'});
+ await page.screenshot({path:path.join(artifacts,'empty-light.png'),fullPage:true,animations:'disabled'});
+ assert.deepEqual(errors,[]);record('no browser runtime errors');
+ await writeFile(path.join(artifacts,'checks.json'),JSON.stringify({checks,providerCalls:after.providerCalls,browser:browser.version(),requests,errors},null,2));
+ console.log(JSON.stringify({passed:checks.length,checks}));
+}catch(error){failure=error;if(page){await page.screenshot({path:path.join(artifacts,'failure.png'),fullPage:true}).catch(()=>{});await writeFile(path.join(artifacts,'failure.txt'),await page.locator('body').innerText().catch(()=>''));}throw error}
+finally{
+ await browser?.close();
+ if(fixture.exitCode===null&&fixture.signalCode===null){const exit=once(fixture,'exit');fixture.kill('SIGTERM');let timer;try{await Promise.race([exit,new Promise((_,reject)=>{timer=setTimeout(()=>{fixture.kill('SIGKILL');reject(Error('Fixture cleanup exceeded 5 seconds'))},5000)})])}finally{clearTimeout(timer)}}
+ if(!failure){assert.equal(fixture.exitCode,0);assert.equal(fixture.signalCode,null)}
+}

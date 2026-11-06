@@ -8,6 +8,7 @@ import {CanvasOverviewSection} from './canvas-overview-state';
 import {ChatRow} from './shell/navigation-components';
 import {WorkspaceRow} from './workspace-explorer';
 import {useActivityClock} from './navigation-details';
+import {ContextEntry} from './context-inspector';
 
 export function ChatOverview({state,act,changeDraft,onSectionChange=changeDraft,onFilter}){
  const session=state.sessions?.find(row=>row.id===state.selectedSessionId),outputs=chatArtifacts(state),draft=state.view?.canvasDraft||{},now=useActivityClock();
@@ -25,6 +26,7 @@ export function ChatOverview({state,act,changeDraft,onSectionChange=changeDraft,
  const section={draft,onChange:onSectionChange};
  return <div className="a-chat-overview">
   <ChatPlan session={session} state={state} act={act} placement="overview" draft={draft} onSectionChange={onSectionChange}/>
+  <ContextEntry session={session} act={act}/>
   <CanvasOverviewSection {...section} id="outputs" title="Outputs" icon={FileText} summary={`${outputs.length} saved`}>
    {outputs.length?<SavedArtifacts state={state} act={act} compact onFilter={onFilter}/>:<p>Files and visuals from this chat will appear here.</p>}
    <div className="a-overview-actions"><button className="a-link" type="button" onClick={()=>changeDraft({open:true,browser:false,library:true})}><FolderOpen/>Open file</button><button className="a-link" type="button" onClick={()=>changeDraft({browser:true,open:false,library:true})}><Globe/>Open website</button></div>

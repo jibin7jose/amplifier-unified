@@ -79,6 +79,8 @@ class ExecutionEvents:
         self.admission_guard = None
         self.provider_wrappers = {}
         self.streaming_calls = set()
+        # Optional native projection; never used to assemble or recover context.
+        self.context_inspectors = {}
         # Optional status-only observation of live accepted plans, not a plan
         # store. Never read logs or retain tool text/arguments for discovery.
         self.status_plan_inputs = {} if os.environ.get('AMPLIFIER_STATUS_DIR') else None
@@ -168,7 +170,7 @@ class ExecutionEvents:
     def admission_input(self, sid):
         return self.admission_inputs.get(sid, self.admission_inputs.get(self.root_id, self.turn_id))
 
-    async def _begin_provider_call(self, sid, provider, request, *, label=None, run_id=None):
+    async def _begin_provider_call(self, sid, provider, request, *, label=None, run_id=None, request_options=None):
         parent,turn = self.parent(sid)
         admission_input = self.admission_input(sid)
         purpose=CALL_PURPOSE.get()
@@ -196,9 +198,11 @@ class ExecutionEvents:
         if active and not purpose:
             delivery, attempt = active
             delivery.admit_work(attempt, row, guarded=self.admission_guard is not None)
+        from .context_inspection_adapter import safe_observe
+        await safe_observe(self.context_inspectors.get(sid), 'begin', row, request, provider, request_options, defaults)
         return row
 
-    async def provider_call(self, sid, provider, request, invoke, *, label=None, run_id=None):
+    async def provider_call(self, sid, provider, request, invoke, *, label=None, run_id=None, request_options=None):
         """Observe one host-owned provider action through the same admission gate.
 
         Optional provider actions such as explicit compaction do not implement
@@ -213,7 +217,7 @@ class ExecutionEvents:
             purpose_token = CALL_PURPOSE.set({**(CALL_PURPOSE.get() or {}), "label": "Context compaction", "purpose": "context_compaction"})
             label = "Context compaction"
         try:
-            return await self._observed_provider_call(sid, provider, request, invoke, label=label, run_id=run_id)
+            return await self._observed_provider_call(sid, provider, request, invoke, label=label, run_id=run_id, request_options=request_options)
         finally:
             if purpose_token is not None:
                 CALL_PURPOSE.reset(purpose_token)
@@ -235,8 +239,9 @@ class ExecutionEvents:
         finally:
             CALL_PURPOSE.reset(purpose)
 
-    async def _observed_provider_call(self, sid, provider, request, invoke, *, label=None, run_id=None):
-        row = await self._begin_provider_call(sid, provider, request, label=label, run_id=run_id)
+    async def _observed_provider_call(self, sid, provider, request, invoke, *, label=None, run_id=None, request_options=None):
+        row = await self._begin_provider_call(sid, provider, request, label=label, run_id=run_id, request_options=request_options)
+        from .context_inspection_adapter import safe_observe
         token = CURRENT_CALL.set(row["id"])
         owner = CURRENT_PROVIDER.set(id(provider))
         admitted = ADMITTED_CALL.set(AdmittedProviderCall(row['id'], self.root_id, sid,
@@ -245,7 +250,9 @@ class ExecutionEvents:
         try:
             response = await invoke()
             usage = response.get("usage") if isinstance(response, dict) else getattr(response, "usage", None)
-            self.publish({**row, "phase": "completed", "endedAt": time.time(), "usage": public_usage(usage)})
+            terminal = {**row, "phase": "completed", "endedAt": time.time(), "usage": public_usage(usage)}
+            await safe_observe(self.context_inspectors.get(sid), 'finish', terminal)
+            self.publish(terminal)
             return response
         except BaseException as exc:
             from .session_health import exception_details
@@ -254,7 +261,9 @@ class ExecutionEvents:
                 # A received unsuccessful artifact can still report paid usage.
                 # Retain only normalized public evidence, never its payload.
                 failure['usage'] = public_usage(exc.result.get("usage"))
-            self.publish({**row, "phase": "cancelled" if isinstance(exc, asyncio.CancelledError) else "error", "endedAt": time.time(), **failure})
+            terminal = {**row, "phase": "cancelled" if isinstance(exc, asyncio.CancelledError) else "error", "endedAt": time.time(), **failure}
+            await safe_observe(self.context_inspectors.get(sid), 'finish', terminal)
+            self.publish(terminal)
             raise
         finally:
             CURRENT_CALL.reset(token)
@@ -279,7 +288,16 @@ class ExecutionEvents:
         async def complete(request, **kwargs):
             if CURRENT_PROVIDER.get() == id(provider):
                 return await original(request, **kwargs)
-            return await self.provider_call(sid, provider, request, lambda: original(request, **kwargs), run_id=run_id)
+            return await self.provider_call(sid, provider, request, lambda: original(request, **kwargs), run_id=run_id, request_options=kwargs)
+
+        original_budget = getattr(provider, 'request_budget', None)
+        @wraps(original_budget)
+        async def request_budget(request, **kwargs):
+            decision = original_budget(request, **kwargs)
+            decision = await decision if inspect.isawaitable(decision) else decision
+            from .context_inspection_adapter import safe_observe
+            await safe_observe(self.context_inspectors.get(sid), 'budget', request, kwargs, decision)
+            return decision
 
         original_compact = getattr(provider, "compact_context", None)
         async def compact_context(request, **kwargs):
@@ -321,7 +339,7 @@ class ExecutionEvents:
                     if callable(getattr(iterator, "aclose", None)):
                         await iterator.aclose()
                 return
-            row = await self._begin_provider_call(sid, provider, request, run_id=run_id)
+            row = await self._begin_provider_call(sid, provider, request, run_id=run_id, request_options=kwargs)
             self.streaming_calls.add(row["id"])
             self.publish(row)
             iterator = None
@@ -366,13 +384,18 @@ class ExecutionEvents:
                     phase = "error"
                     raise
                 finally:
-                    self.publish({**self.nodes[row["id"]], "phase": phase, "endedAt": time.time()})
+                    terminal = {**self.nodes[row["id"]], "phase": phase, "endedAt": time.time()}
+                    from .context_inspection_adapter import safe_observe
+                    await safe_observe(self.context_inspectors.get(sid), 'finish', terminal)
+                    self.publish(terminal)
                     self.streaming_calls.discard(row["id"])
 
         # Providers are plugin instances implementing the public complete
         # protocol. No SDK internals or request payloads are inspected.
         try:
             provider.complete = complete
+            if callable(original_budget):
+                provider.request_budget = request_budget
             if callable(original_compact):
                 provider.compact_context = compact_context
             if callable(original_image):
@@ -389,6 +412,8 @@ class ExecutionEvents:
             wrapper = ObservedProvider()
             wrapper.original = provider
             wrapper.complete = complete
+            if callable(original_budget):
+                wrapper.request_budget = request_budget
             if callable(original_compact):
                 wrapper.compact_context = compact_context
             if callable(original_image):

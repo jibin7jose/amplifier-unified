@@ -21,9 +21,11 @@ import {BundleSettings} from './bundles';
 import {CapacityControls} from './capacity';
 import {SettingsPageContext} from './settings-ui';
 import {SubagentHistoryButton} from './subagent-history';
+import {ContextInspector} from './context-inspector';
 import './chat-pages.css';
 
 export const chatPageTitles={
+ 'context-inspector':'Context inspector',
  'chat-error':'Error details','session-details':'Chat info','chat-rename':'Rename','chat-share':'Share or save',
  'chat-help':'Help & diagnostics','chat-advanced':'Advanced',
  'chat-work':'Work & automation','chat-models':'Model & tools',
@@ -48,7 +50,7 @@ function Info({session,state,act,open,questionReviewState}){
   {(session.failure||session.error||session.moduleFailures?.length>0)&&<ConversationFailure session={session}/>}
   <dl className="a-chat-facts"><div><dt>Status</dt><dd>{session.status}</dd></div>{session.createdAt&&<div><dt>Created</dt><dd>{new Date(session.createdAt*1000).toLocaleString()}</dd></div>}{session.bundle&&<div><dt>Bundle</dt><dd>{session.bundle}</dd></div>}</dl>
   {session.workspace&&<CopyDetail label="Workspace / saved settings home" value={session.workspace}/>}
-  <button type="button" className="a-link" onClick={()=>open('chat-context')}>Inspect current model context</button>
+  <button type="button" className="a-link" onClick={()=>open('context-inspector')}>Inspect last observed model request</button>
   <details><summary>Call receipts &amp; provider quota</summary><CapacityControls session={session} act={act} readOnly/></details>
   <details><summary>Locations &amp; identifiers</summary>
    {identity!==session.id&&<CopyDetail label="App record ID" value={session.id}/>}
@@ -78,6 +80,7 @@ export function ChatPages({page,state,session,act,dispatch=act,open,working,comp
  const back=<button type="button" className="a-link a-chat-back" onClick={()=>open('chat-advanced')}><ArrowLeft/>Back to Advanced</button>;
  if(!session)return <p>Select a chat to see its information and options.</p>;
  return <div className="a-chat-pages">
+  {page==='context-inspector'&&<ContextInspector key={session.id} session={session} act={dispatch} open={open}/>}
   {show('chat-error')&&<div hidden={page!=='chat-error'}><ConversationDetails key={session.id} session={session} act={dispatch} focused open={open}/></div>}
   {show('session-details')&&<div hidden={page!=='session-details'}><Info key={session.id} session={session} state={state} act={dispatch} open={open} questionReviewState={questionReviewState}/></div>}
   {show('chat-rename')&&<div hidden={page!=='chat-rename'}><ConversationName session={session} act={dispatch} details={false}/></div>}

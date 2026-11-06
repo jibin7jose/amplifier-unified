@@ -367,7 +367,7 @@ function App(){
      if(result.state)acceptState(result.state);
      // Exact annotation and read-only preview receipts settle locally. Navigation
      // still waits for its authoritative frame and exact history confirmation.
-     else if(!['message.reaction','peer.preview'].includes(action))await awaitState(result);
+     else if(!['message.reaction','peer.preview','context.inspect'].includes(action))await awaitState(result);
     }catch(error){
      // An accepted reset is not a refusal when only its following read fails.
      // Keep the exact receipt; the Canvas owner offers a read, never a replay.
@@ -396,7 +396,7 @@ function App(){
   const appearanceRead=isAppearanceRead(action,meta);
   // Optional plan summaries have their own exact read result; they must not
   // hold up browsing or ordered mutations while canonical files are read.
-  const planRead=action==='session.plans';
+  const planRead=action==='session.plans'||action==='context.inspect';
   // Reveal joins document ordering AND visibility ordering without merging their
   // queues globally. Capture the prior visibility tail before publishing this one.
   const after=permissionHistory?canvasVisibilityQueue.current:(catalogRead&&!choiceRead||appearanceRead)?commandQueue.current:null;

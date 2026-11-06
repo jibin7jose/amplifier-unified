@@ -344,6 +344,8 @@ from .questions import definitions as question_definitions
 ACTION_DEFINITIONS.update(question_definitions(schema, string))
 from .task_continuity import definitions as task_definitions
 ACTION_DEFINITIONS.update(task_definitions(schema, string))
+from .context_inspection_read import definitions as context_inspection_definitions
+ACTION_DEFINITIONS.update(context_inspection_definitions(schema, string))
 from .coordination import definitions as coordination_definitions
 ACTION_DEFINITIONS.update(coordination_definitions())
 from .integration_evidence import definitions as integration_definitions
@@ -456,6 +458,7 @@ for _access, _actions in {
         "permissions.get", "providers.credentials", "providers.schema", "providers.list", "providers.decisionModels",
         "diagnostics.records", "task.get", "task.history", "task.detail", "task.receipt",
         "capacity.read", "modelCapacity.read", "question.list", "question.read",
+        "context.inspect",
         "schedule.list", "schedule.read", "schedule.overview", "session.plans", "storage.inspect", "workspace.deleteFilesPreview", "feedback.destination",
         "worktree.inspect", "worktree.list", "worktree.status",
         "coordination.awareness", "coordination.intent.read",
@@ -2262,6 +2265,11 @@ class AppService:
         if action.startswith("capacity."):
             from .capacity import dispatch as capacity_dispatch
             return await capacity_dispatch(self, action, args, origin, command_id, include_state)
+        if action == 'context.inspect':
+            if origin not in {'ui', 'user'} and args['sessionId'] != caller_session_id:
+                raise AppError('Context inspection must target the calling conversation.', 403)
+            from .context_inspection_read import read
+            return {'accepted': True, 'result': await read(self, args)}
         if action.startswith('task.'):
             if action == 'task.waitForUpdate' and origin not in {'ui', 'user'} and args['sessionId'] != caller_session_id:
                 raise AppError('Update waits must target the calling conversation.', 403)

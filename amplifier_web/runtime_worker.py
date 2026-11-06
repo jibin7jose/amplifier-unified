@@ -727,6 +727,13 @@ class Worker:
             return not CALL_PURPOSE.get()
         coordinator.register_capability("live.public_stream", public_stream)
         if self.telemetry:
+            if (self.home is not None and self.workspace is not None
+                    and coordinator.session_id == self.runtime.session_id
+                    and coordinator.session_id not in self.telemetry.context_inspectors):
+                from amplifier_web.context_inspection_adapter import ContextInspection
+                from amplifier_web.session_files import capture_dir
+                self.telemetry.context_inspectors[coordinator.session_id] = ContextInspection(
+                    coordinator, capture_dir(self.workspace, coordinator.session_id), self.home)
             coordinator.register_capability('image.backend_invoke',
                 lambda backend, arguments: self.telemetry.image_backend_call(
                     coordinator.session_id, backend, arguments, run_id=activity_run_id))
