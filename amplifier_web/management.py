@@ -1118,6 +1118,19 @@ class Management:
                 return
             if await self.recover_provider_catalog(session, args['operation'], args.get('args', {})):
                 return
+            if args['operation'] == 'configuration.inspect' and self.unresolved_configuration(session):
+                # Recovery diagnostics observe only an existing owner. They do
+                # not prepare a runtime, reapply settings or release its fence.
+                if getattr(self.service.runtime, 'workers', {}).get(session['id']) is None:
+                    raise ValueError('Configuration is unresolved and no existing worker is available to inspect. Resume the saved operation to load its saved plan.')
+                from .configuration_readback import observe_loaded
+                inspected, readback_guard = await observe_loaded(self, session, operation_guard)
+                async with self.service.lock:
+                    readback_guard()
+                    self.service._session(session['id'])['configuration'] = inspected
+                    self.service.state.setdefault('runtimeControl', {}).setdefault(session['id'], {})[args['operation']] = inspected
+                    self.service._publish_progress(session_ids={session['id']}, record_only=True)
+                return
             mutating=placement or recovery_request or args['operation'] in {'configuration.apply','configuration.toggle','context.clear','provider.select','provider.reset','native.compact'}
             recovery_contract_change = placement or args['operation'] in {
                 'configuration.apply', 'configuration.toggle', 'context.clear',

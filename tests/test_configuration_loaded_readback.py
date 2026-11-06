@@ -106,12 +106,19 @@ def adopted_sources(tmp_path, change=None):
     return expected, actual, worker
 
 
-@pytest.mark.parametrize('change', [None, 'inactive', 'pin', 'ref', 'repository',
+@pytest.mark.parametrize('change', [None, 'pin', 'ref', 'repository',
     'subdirectory', 'package', 'derived-revision', 'derived-digest', 'old-unqualified',
     'old-dirty', 'configuration'])
 def test_saved_plan_follows_only_already_adopted_mutable_source(tmp_path, change):
     expected, actual, worker = adopted_sources(tmp_path, change)
     assert matches(expected, actual, sources=source_aliases(tmp_path, worker, expected, actual)) is (change is None)
+
+
+def test_worker_source_readback_survives_later_component_promotion(tmp_path):
+    expected, actual, worker = adopted_sources(tmp_path, 'inactive')
+    # The exact worker captured its qualified parent before another update
+    # became active. Promotion changes new workers, not this mounted graph.
+    assert matches(expected, actual, sources=source_aliases(tmp_path, worker, expected, actual))
 
 
 @pytest.mark.parametrize('change', ['parent', 'missing', 'digest', 'revision', 'repository',
@@ -279,8 +286,10 @@ async def test_saved_resume_keeps_fence_when_readback_or_authority_changes(bound
     assert not b.runtime.inputs
 
 
-@pytest.mark.parametrize('adopted, saved_readback', [(False, False), (True, False), (True, True)])
-async def test_apply_and_resume_accept_qualified_source_resolution(boundary, adopted, saved_readback):
+@pytest.mark.parametrize('adopted, saved_readback, promoted', [
+    (False, False, False), (True, False, False), (True, True, False),
+    (True, False, True), (True, True, True)])
+async def test_apply_and_resume_accept_qualified_source_resolution(boundary, adopted, saved_readback, promoted):
     b = boundary
     expected, loaded, row = (adopted_sources(b.app.data_dir) if adopted
                             else qualified_sources(b.app.data_dir, reused=True))
@@ -293,6 +302,9 @@ async def test_apply_and_resume_accept_qualified_source_resolution(boundary, ado
             if lose_readback:
                 raise RuntimeError('Synthetic lost loaded-plan readback')
             result['plan']['tools'][0]['source'] = loaded['tools'][0]['source']
+            if promoted:
+                (b.app.data_dir / 'updates/active.json').write_text(json.dumps({
+                    'current': 'd' * 32, 'previous': row['generation']}))
         return result
     b.runtime.control = relocated
     b.owner['status'] = 'working'
@@ -317,6 +329,49 @@ async def test_apply_and_resume_accept_qualified_source_resolution(boundary, ado
     assert operation(b)['state']['effect'] == 'mounted'
     assert not b.owner['configurationBusy']
     assert b.runtime.calls.count('configuration.apply') == 1
+
+
+async def test_inspect_held_worker_reads_current_plan_without_resolving_operation(boundary):
+    b = boundary
+    saved = await saved_failure(b)
+    sealed = receipt_path(saved['attempts'][-1]).read_bytes()
+    config = override_path(b.owner['id']).read_bytes()
+    before = list(b.runtime.calls)
+    # Read-only diagnostics must expose a real mismatch, not just the old
+    # saved projection and not require a successful recovery first.
+    b.runtime.coordinator.config['tools'][0]['config']['limit'] = 99
+    await b.app.management.perform('configuration.inspect', {'id': b.owner['id']})
+    assert b.owner['configuration']['plan']['tools'][0]['config']['limit'] == 99
+    assert operation(b) == saved and b.owner['configurationBusy']
+    assert b.runtime.calls[len(before):] == ['configuration.inspect']
+    assert receipt_path(saved['attempts'][-1]).read_bytes() == sealed
+    assert override_path(b.owner['id']).read_bytes() == config
+    assert not b.runtime.inputs
+
+
+@pytest.mark.parametrize('changed', ['absent', 'owner', 'stop'])
+async def test_held_inspection_cannot_start_or_publish_from_changed_worker(boundary, changed):
+    b = boundary
+    saved = await saved_failure(b)
+    before = list(b.runtime.calls)
+    original = copy.deepcopy(b.owner.get('configuration'))
+    control = b.runtime.control
+    async def change_owner(sid, name, args, **kwargs):
+        result = await control(sid, name, args, **kwargs)
+        if changed == 'owner':
+            b.runtime.workers[sid] = {'runtimeOwnerId': 'replacement'}
+        elif changed == 'stop':
+            b.owner['interruptionRevision'] = b.owner.get('interruptionRevision', 0) + 1
+        return result
+    b.runtime.control = change_owner
+    if changed == 'absent':
+        b.runtime.workers.clear()
+    with pytest.raises(ValueError):
+        await b.app.management.perform('configuration.inspect', {'id': b.owner['id']})
+    assert b.owner.get('configuration') == original
+    assert operation(b) == saved and b.owner['configurationBusy']
+    assert b.runtime.calls[len(before):] == ([] if changed == 'absent' else ['configuration.inspect'])
+    assert not b.runtime.inputs
 
 
 async def test_saved_readback_rechecks_worker_after_waiting_for_commit_lock(boundary):

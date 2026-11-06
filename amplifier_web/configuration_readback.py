@@ -83,10 +83,9 @@ def source_aliases(home, worker, expected, actual):
 
         if not (parent / 'validated.json').is_file() or not (parent / 'profiles-qualified.json').is_file():
             return aliases
-        from .updates import active_release, pinned
+        from .updates import pinned
 
         adopted = records(parent)
-        current = active_release(home).get('current') == generation
         previous = {generation: adopted}
         new = records(target)
         loaded = {row.get('source') for row in declarations(actual)}
@@ -120,7 +119,9 @@ def source_aliases(home, worker, expected, actual):
             if before is None or after is None:
                 continue
             same_choice = before[:3] == after[:3] and before[4] == after[4]
-            adopted_update = (current and same_choice and not pinned(before[2])
+            # Runtime.start captured this qualified parent for the exact
+            # worker. A later global promotion cannot change its loaded graph.
+            adopted_update = (same_choice and not pinned(before[2])
                               and after == adopted.get(path))
             if before == after or adopted_update:
                 aliases[source] = replacement
@@ -129,18 +130,20 @@ def source_aliases(home, worker, expected, actual):
     return aliases
 
 
-async def inspect_loaded(management, session, expected, guard):
+async def observe_loaded(management, session, guard):
     """Inspect the captured existing owner; never prepare or start a worker."""
     runtime, sid = management.service.runtime, session['id']
     workers = getattr(runtime, 'workers', {})
     row = workers.get(sid)
+    interruption = session.get('interruptionRevision', 0)
     def ownership():
         return tuple(row.get(key) for key in ('runtimeOwnerId', 'generation', 'source_generation')) if row is not None else None
     owner = ownership()
 
     def same_owner():
         guard()
-        if workers.get(sid) is not row or ownership() != owner:
+        if (workers.get(sid) is not row or ownership() != owner
+                or management.service._session(sid).get('interruptionRevision', 0) != interruption):
             raise ValueError('The loaded configuration owner changed before readback completed.')
 
     same_owner()
@@ -148,6 +151,12 @@ async def inspect_loaded(management, session, expected, guard):
     same_owner()
     if not isinstance(inspected.get('plan'), dict):
         raise ValueError('Saved configuration has no confirmed loaded-plan readback.')
+    return inspected, same_owner
+
+
+async def inspect_loaded(management, session, expected, guard):
+    inspected, same_owner = await observe_loaded(management, session, guard)
+    row = getattr(management.service.runtime, 'workers', {}).get(session['id'])
     sources = source_aliases(management.service.data_dir, row or {}, expected, inspected['plan'])
     if not matches(expected, inspected['plan'], sources=sources):
         raise ValueError('Saved configuration does not match loaded-plan readback. Its operation remains unresolved.')
