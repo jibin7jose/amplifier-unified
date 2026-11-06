@@ -35,8 +35,8 @@ def matches(expected, actual, *, sources=None):
 def source_aliases(home, worker, expected, actual):
     """Read bounded qualification receipts for this exact worker's generation.
 
-    Both immutable generations must name the same installed source, including
-    tracked content. Never infer equivalence from a caller-supplied path mapping.
+    Sources must be identical, or match the already adopted component update for
+    the same mutable source choice. Never trust caller-supplied path mappings.
     Missing or ambiguous evidence leaves the original source comparison intact.
     """
     aliases = {}
@@ -83,7 +83,11 @@ def source_aliases(home, worker, expected, actual):
 
         if not (parent / 'validated.json').is_file() or not (parent / 'profiles-qualified.json').is_file():
             return aliases
-        previous = {generation: records(parent)}
+        from .updates import active_release, pinned
+
+        adopted = records(parent)
+        current = active_release(home).get('current') == generation
+        previous = {generation: adopted}
         new = records(target)
         loaded = {row.get('source') for row in declarations(actual)}
         for row in declarations(expected):
@@ -97,10 +101,10 @@ def source_aliases(home, worker, expected, actual):
             prior = parts[0]
             if prior not in previous:
                 root = base / prior
-                # A subsequent edit may retain sources from a previous custom
-                # profile. Both profiles must derive from this worker's parent.
+                # A saved edit can outlive multiple component updates. Its old
+                # qualification still proves which source choice was saved.
                 if (not (root / 'profiles-qualified.json').is_file()
-                        or json.loads((root / 'validated.json').read_text()).get('parentGeneration') != generation):
+                        or not isinstance(json.loads((root / 'validated.json').read_text()), dict)):
                     continue
                 previous[prior] = records(root)
             old = previous[prior]
@@ -112,7 +116,13 @@ def source_aliases(home, worker, expected, actual):
             if not candidates:
                 continue
             path = max(candidates, key=lambda path: len(path.parts))
-            if old[path] is not None and old[path] == new.get(path):
+            before, after = old[path], new.get(path)
+            if before is None or after is None:
+                continue
+            same_choice = before[:3] == after[:3] and before[4] == after[4]
+            adopted_update = (current and same_choice and not pinned(before[2])
+                              and after == adopted.get(path))
+            if before == after or adopted_update:
                 aliases[source] = replacement
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return {}

@@ -366,9 +366,14 @@ resume to finish that same operation's loaded readback. It observes the exact
 existing worker first; only an absent worker may mount the proven saved plan.
 This continuation never repeats the settings write or submits conversation input.
 A different loaded plan remains held. Readback may equate relocated module source
-declarations only through the owning worker's qualified parent/derived generation
-and matching recorded repository, revision, subdirectory and source-content digest;
-module configuration, ordering and disabled rows remain exact. Retained effective
+declarations through qualified generations and matching recorded repository,
+revision, subdirectory and source-content digest. If an ecosystem update has
+already been adopted, an older saved declaration may also resolve to that active
+generation's qualified code for the same package, repository, mutable ref and
+subdirectory. The worker's derived profile must match the adopted parent's exact
+revision and content digest. This recognizes an existing update, never authorizes
+a new source choice or moves a fixed revision/tag. Module configuration, ordering
+and disabled rows remain exact. Retained effective
 configuration files are not loaded-worker evidence. Missing provenance fails closed.
 For UI, user or internal originals, a current Full agent, qualified child or
 trusted system can reconcile and resume through the same recovery owner. Ask

@@ -15,10 +15,10 @@ from test_queued_configuration_boundary import (
 )
 
 
-def qualified_sources(home, *, reused=False):
+def qualified_sources(home, *, reused=False, parent_id='parent'):
     """Qualified receipt shape, including retained older editable source paths."""
     base = home / 'updates/releases'
-    parent, derived = base / 'parent', base / 'derived'
+    parent, derived = base / parent_id, base / 'derived'
     relative = 'cache/bundle-fixture/modules/tool-fixture'
     identity = {'url': 'https://example.invalid/module', 'ref': 'main',
         'revision': 'a' * 40, 'dirty': False, 'trackedContentSha256': 'b' * 64,
@@ -26,7 +26,7 @@ def qualified_sources(home, *, reused=False):
     for root in (parent, derived):
         root.mkdir(parents=True, exist_ok=True)
         (root / 'validated.json').write_text(json.dumps(
-            {'parentGeneration': 'parent'} if root == derived else {}))
+            {'parentGeneration': parent_id} if root == derived else {}))
         (root / 'profiles-qualified.json').write_text('{}')
         installed = base / 'retained-older' if reused and root == parent else root
         (root / 'runtime-installed.json').write_text(json.dumps([{
@@ -35,7 +35,7 @@ def qualified_sources(home, *, reused=False):
     expected, actual = plan(2), plan(2)
     expected['tools'][0]['source'] = str(parent / 'foundation' / relative)
     actual['tools'][0]['source'] = str(derived / 'foundation' / relative)
-    worker = {'runtimeOwnerId': 'mounted-owner', 'generation': 'parent', 'source_generation': 'derived'}
+    worker = {'runtimeOwnerId': 'mounted-owner', 'generation': parent_id, 'source_generation': 'derived'}
     return expected, actual, worker
 
 
@@ -53,7 +53,7 @@ def test_qualified_source_relocation_retains_exact_identity(tmp_path, reused):
 
 
 @pytest.mark.parametrize('same_parent', [False, True])
-def test_second_edit_uses_previous_qualified_profile_without_blessing_foreign_generation(tmp_path, same_parent):
+def test_second_edit_recognizes_unchanged_sources_in_previous_qualified_generation(tmp_path, same_parent):
     expected, actual, row = qualified_sources(tmp_path, reused=True)
     base = tmp_path / 'updates/releases'
     previous = base / 'previous-profile'
@@ -64,7 +64,54 @@ def test_second_edit_uses_previous_qualified_profile_without_blessing_foreign_ge
     (previous / 'runtime-installed.json').write_bytes((base / 'parent/runtime-installed.json').read_bytes())
     expected['tools'][0]['source'] = expected['tools'][0]['source'].replace('/parent/foundation/', '/previous-profile/foundation/')
     aliases = source_aliases(tmp_path, row, expected, actual)
-    assert matches(expected, actual, sources=aliases) is same_parent
+    assert matches(expected, actual, sources=aliases)
+
+
+def adopted_sources(tmp_path, change=None):
+    parent = 'b' * 32
+    expected, actual, worker = qualified_sources(tmp_path, reused=True, parent_id=parent)
+    base = tmp_path / 'updates/releases'
+    prior = base / ('a' * 32)
+    prior.mkdir()
+    (prior / 'validated.json').write_text('{}')
+    (prior / 'profiles-qualified.json').write_text('{}')
+    original = json.loads((base / parent / 'runtime-installed.json').read_text())
+    # A saved operation can outlive multiple updates, not just active.previous.
+    (tmp_path / 'updates/active.json').write_text(json.dumps({
+        'current': 'd' * 32 if change == 'inactive' else parent, 'previous': 'c' * 32}))
+    expected['tools'][0]['source'] = expected['tools'][0]['source'].replace(
+        f'/{parent}/foundation/', f'/{prior.name}/foundation/')
+    if change == 'pin':
+        original[0]['cacheSource']['ref'] = 'v1.0.0'
+    old = copy.deepcopy(original)
+    if change == 'old-dirty':
+        old[0]['cacheSource']['dirty'] = True
+    (prior / 'runtime-installed.json').write_text(json.dumps(old))
+    if change == 'old-unqualified':
+        (prior / 'profiles-qualified.json').unlink()
+    installed = copy.deepcopy(original)
+    installed[0]['cacheSource'].update(revision='e' * 40, trackedContentSha256='f' * 64)
+    if change in {'ref', 'repository', 'subdirectory'}:
+        installed[0]['cacheSource'][{'repository': 'url'}.get(change, change)] = 'different'
+    if change == 'package':
+        installed[0]['name'] = 'different-package'
+    (base / parent / 'runtime-installed.json').write_text(json.dumps(installed))
+    if change == 'derived-revision':
+        installed[0]['cacheSource']['revision'] = '9' * 40
+    if change == 'derived-digest':
+        installed[0]['cacheSource']['trackedContentSha256'] = '8' * 64
+    (base / 'derived/runtime-installed.json').write_text(json.dumps(installed))
+    if change == 'configuration':
+        actual['tools'][0]['config']['limit'] = 99
+    return expected, actual, worker
+
+
+@pytest.mark.parametrize('change', [None, 'inactive', 'pin', 'ref', 'repository',
+    'subdirectory', 'package', 'derived-revision', 'derived-digest', 'old-unqualified',
+    'old-dirty', 'configuration'])
+def test_saved_plan_follows_only_already_adopted_mutable_source(tmp_path, change):
+    expected, actual, worker = adopted_sources(tmp_path, change)
+    assert matches(expected, actual, sources=source_aliases(tmp_path, worker, expected, actual)) is (change is None)
 
 
 @pytest.mark.parametrize('change', ['parent', 'missing', 'digest', 'revision', 'repository',
@@ -133,8 +180,14 @@ async def saved_failure(b):
     return saved
 
 
-async def finish_resume(b):
-    receipt = await recovery(b, 'resume')
+async def finish_resume(b, *, operator=False):
+    if operator:
+        saved = operation(b)
+        receipt = await b.app.dispatch('configuration.operation.resume', {
+            'sessionId': b.owner['id'], 'operationId': saved['id'],
+            'expectedRevision': saved['revision']}, origin='ui')
+    else:
+        receipt = await recovery(b, 'resume')
     task = b.app.management.pending_config_tasks.get(b.owner['id'])
     if task is not None:
         await asyncio.wait_for(task, 3)
@@ -226,14 +279,19 @@ async def test_saved_resume_keeps_fence_when_readback_or_authority_changes(bound
     assert not b.runtime.inputs
 
 
-async def test_original_apply_accepts_only_qualified_loaded_relocation(boundary):
+@pytest.mark.parametrize('adopted, saved_readback', [(False, False), (True, False), (True, True)])
+async def test_apply_and_resume_accept_qualified_source_resolution(boundary, adopted, saved_readback):
     b = boundary
-    expected, loaded, row = qualified_sources(b.app.data_dir, reused=True)
+    expected, loaded, row = (adopted_sources(b.app.data_dir) if adopted
+                            else qualified_sources(b.app.data_dir, reused=True))
     b.runtime.workers = {b.owner['id']: row}
     control = b.runtime.control
+    lose_readback = saved_readback
     async def relocated(sid, name, args, **kwargs):
         result = await control(sid, name, args, **kwargs)
         if name == 'configuration.inspect':
+            if lose_readback:
+                raise RuntimeError('Synthetic lost loaded-plan readback')
             result['plan']['tools'][0]['source'] = loaded['tools'][0]['source']
         return result
     b.runtime.control = relocated
@@ -243,6 +301,19 @@ async def test_original_apply_accepts_only_qualified_loaded_relocation(boundary)
     b.queued_task = b.app.management.pending_config_tasks[b.owner['id']]
     await reach_apply(b)
     await settle(b)
+    if saved_readback:
+        saved = operation(b)
+        assert saved['state']['effect'] == 'saved_not_mounted', saved['state']
+        config = override_path(b.owner['id']).read_bytes()
+        sealed = receipt_path(saved['attempts'][-1]).read_bytes()
+        before = list(b.runtime.calls)
+        lose_readback = False
+        await finish_resume(b, operator=True)
+        assert operation(b)['attempts'] == saved['attempts']
+        assert b.runtime.calls[len(before):] == ['configuration.inspect']
+        assert override_path(b.owner['id']).read_bytes() == config
+        assert receipt_path(saved['attempts'][-1]).read_bytes() == sealed
+        assert not b.runtime.inputs
     assert operation(b)['state']['effect'] == 'mounted'
     assert not b.owner['configurationBusy']
     assert b.runtime.calls.count('configuration.apply') == 1
