@@ -67,6 +67,13 @@ async def run(root):
         assert result.success, result
         assert 'Discover the target' in str(result.output)
         assert tool.skills['amplifier-shell'].path.resolve().is_relative_to(resource_root().resolve())
+        app = await tool.execute({'skill_name': 'unified-app'})
+        assert app.success and 'Read only the companion' in str(app.output)
+        app_path = tool.skills['unified-app'].path.resolve()
+        assert app_path.is_relative_to(resource_root().resolve())
+        # The installed reference stays reachable without joining ambient context.
+        assert 'resetPreview' in (app_path.parent / 'canvas.md').read_text()
+        assert 'resetPreview' not in str(app.output)
         results.append({'resolverTiming':timing,'catalogVisible':True,'skillLoads':True})
         await cleanup()
     print(json.dumps({'wheel':wheel.name,'packagedRelativeReferences':len(refs),'actualUpstreamBehavior':True,'checks':results},indent=2))

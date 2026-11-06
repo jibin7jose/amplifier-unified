@@ -103,3 +103,10 @@ a release ledger, event history or new authority. Keep detailed evidence with it
 owner; replace stale current entries and preserve useful history outside automatic
 includes. Changes to these templates should verify rendered prompts omit linked
 archives while current notes still reload, and preserve existing user files.
+
+Apply the [context contract](docs/workspaces/contracts/context.v1.md): keep the
+always-on host guide short, put specialist recipes behind existing skill/schema
+discovery, and retire superseded workarounds with their code. Reuse repository
+guidance until its relevant source or scope changes. Validate actual composed
+requests and installed companion discovery; fewer bytes alone do not establish
+better model behavior or authorize removing user-selected capabilities.

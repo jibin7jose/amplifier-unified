@@ -6,13 +6,15 @@ from amplifier_foundation.mentions import BaseMentionResolver, expand_mentions_i
 from amplifier_foundation.paths.resolution import get_amplifier_home
 
 
-def include_instruction_files(bundle, config_home=None, execution_workspace=None):
+def include_instruction_files(bundle, config_home=None, execution_workspace=None, *, workspace=None):
     """Bind the host's optional instruction files without freezing their contents.
 
     Call after composition and runtime overrides, before preparing an ordinary
     root. Foundation reads context Paths and their nested mentions afresh on
     each request. Authored mentions retain their original meaning. Exported
-    snapshot bundles retain their frozen instructions.
+    snapshot bundles retain their frozen instructions. The host supplies the
+    associated workspace separately from a task's checkout. Never discover it
+    by walking parent directories or borrowing another session's working path.
     """
     from amplifier_foundation.mentions import parse_mentions
     instruction = getattr(bundle, 'instruction', None) or ''
@@ -25,13 +27,20 @@ def include_instruction_files(bundle, config_home=None, execution_workspace=None
     reserved = {mention[1:].split(':', 1)[1] for mention in declared if ':' in mention}
     pending_keys = {key.split(':', 1)[-1] for key in pending}
     home = Path(config_home if config_home is not None else Path.home() / '.amplifier').expanduser().resolve()
-    workspace = Path(execution_workspace if execution_workspace is not None else Path.cwd()).expanduser().resolve()
+    execution = Path(execution_workspace if execution_workspace is not None else Path.cwd()).expanduser().resolve()
+    associated = Path(workspace).expanduser().resolve() if workspace is not None else execution
     defaults = {}
-    for stem, path in (
-        ('__unified_instruction_global', home / 'AGENTS.md'),
-        ('__unified_instruction_project', workspace / '.amplifier/AGENTS.md'),
-        ('__unified_instruction_workspace', workspace / 'AGENTS.md'),
-    ):
+    paths = [('__unified_instruction_global', home / 'AGENTS.md')]
+    if associated != execution:
+        paths += [
+            ('__unified_instruction_associated_project', associated / '.amplifier/AGENTS.md'),
+            ('__unified_instruction_associated_workspace', associated / 'AGENTS.md'),
+        ]
+    paths += [
+        ('__unified_instruction_project', execution / '.amplifier/AGENTS.md'),
+        ('__unified_instruction_workspace', execution / 'AGENTS.md'),
+    ]
+    for stem, path in paths:
         alias, suffix = stem, 1
         while alias in pending_keys or alias in reserved or (alias in context and context[alias] != path):
             suffix += 1

@@ -59,3 +59,23 @@ def test_real_core_refreshes_workspace_awareness_without_history_accumulation(mo
     assert result.returncode == 0, result.stdout + result.stderr
     assert '"fresh_each_request": true' in result.stdout
     assert '"history_clean": true' in result.stdout
+
+
+def test_recurring_guidance_is_orientation_and_manual_stays_discoverable():
+    from amplifier_web.app_guidance import CANVAS_GUIDANCE
+    from amplifier_web.builtin_behaviors import resource_root
+
+    # A regression budget, not runtime truncation of user-authored instructions.
+    assert len(CANVAS_GUIDANCE.encode('utf-8')) < 9000
+    skill = resource_root() / 'skills/unified-app'
+    assert (skill / 'SKILL.md').is_file()
+    for marker, reference in (
+        ('window.BABYLON', 'canvas.md'),
+        ('smartTools.open', 'smart-tools.md'),
+        ('coordination.artifact.save', 'collaboration.md'),
+        ('outputs.attachMedia', 'outputs.md'),
+    ):
+        assert marker not in CANVAS_GUIDANCE
+        assert marker in (skill / reference).read_text()
+    assert 'unknown' in CANVAS_GUIDANCE and 'Stop' in CANVAS_GUIDANCE
+    assert 'A missing skill is not a coordination failure' in CANVAS_GUIDANCE

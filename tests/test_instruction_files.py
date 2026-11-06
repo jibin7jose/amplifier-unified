@@ -229,3 +229,44 @@ async def test_bound_execution_guidance_is_not_retargeted_by_render_workspace(tm
     (execution / 'AGENTS.md').write_text('EDITED-EXECUTION-GUIDANCE')
     updated = await render()
     assert 'EDITED-EXECUTION-GUIDANCE' in updated and 'RENDER-DECOY' not in updated
+
+
+async def test_explicit_workspace_context_follows_independent_checkouts_without_ancestors(tmp_path):
+    workspace = tmp_path / 'associated'
+    (workspace / '.amplifier').mkdir(parents=True)
+    (workspace / 'AGENTS.md').write_text('SHARED-RULE\n@./SCRATCH.md')
+    (workspace / '.amplifier/AGENTS.md').write_text('@../AGENTS.md')
+    (workspace / 'SCRATCH.md').write_text('CURRENT-DECISION\n[Details](archive.md)')
+    (workspace / 'archive.md').write_text('OBSOLETE-HOLD')
+    (tmp_path / 'AGENTS.md').write_text('UNRELATED-ANCESTOR')
+    root = Bundle(name='work')
+    renderers = []
+    for name in ('worker-one', 'worker-two'):
+        checkout = tmp_path / name
+        checkout.mkdir()
+        (checkout / 'AGENTS.md').write_text(f'RULE-FOR-{name.upper()}')
+        included = include_instruction_files(root, execution_workspace=checkout, workspace=workspace)
+        assert included.context == include_instruction_files(
+            included, execution_workspace=checkout, workspace=workspace).context
+        render = factory(included, checkout)
+        renderers.append(render)
+        prompt = await render()
+        for text in ('SHARED-RULE', 'CURRENT-DECISION', f'RULE-FOR-{name.upper()}'):
+            assert prompt.count(text) == 1
+        assert 'OBSOLETE-HOLD' not in prompt and 'UNRELATED-ANCESTOR' not in prompt
+        assert str(workspace / 'AGENTS.md') in prompt
+        assert str(checkout / 'AGENTS.md') in prompt
+    (workspace / 'SCRATCH.md').write_text('REVISED-DECISION')
+    for render in renderers:
+        prompt = await render()
+        assert 'REVISED-DECISION' in prompt and 'CURRENT-DECISION' not in prompt
+    assert root.context == {}
+
+
+async def test_same_workspace_and_execution_keep_original_binding_and_render_once(tmp_path):
+    (tmp_path / 'AGENTS.md').write_text('ONE-SET-OF-RULES')
+    bundle = Bundle(name='work')
+    old = include_instruction_files(bundle, execution_workspace=tmp_path)
+    explicit = include_instruction_files(bundle, execution_workspace=tmp_path, workspace=tmp_path)
+    assert explicit.context == old.context
+    assert (await factory(explicit, tmp_path)()).count('ONE-SET-OF-RULES') == 1

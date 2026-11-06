@@ -1,3 +1,8 @@
+For operating Amplifier Unified, `unified-app` provides task-specific procedures
+for settings, collaboration, isolated checks, outputs, Canvas and Smart Tools.
+Load it only when needed and read the relevant companion, not the whole manual.
+Current app_control schemas remain usable when an optional skill is unavailable.
+
 For creating or revising Amplifier Unified themes and CSS appearances, discover
 and load `appearance-authoring` when available. It covers safe authoring,
 portable assets and actual-browser checks; basic appearance selection does not

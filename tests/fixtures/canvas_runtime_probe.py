@@ -61,8 +61,11 @@ async def run():
             serialized = provider.requests[0].model_dump_json()
             assert 'canvas.show' in serialized, serialized
             assert 'web-canvas' in str(session.coordinator.hooks) or 'app_control' in serialized
-            assert 'Graphviz' in serialized and 'one full preview surface at a time' in serialized
-            assert 'presentation:inline' in serialized and 'resetPreview' in serialized
+            assert 'one full preview surface at a time' in serialized
+            assert 'unified-app' in serialized
+            # Recipes are available on demand, not charged to every model call.
+            assert 'resetPreview' not in serialized and 'window.BABYLON' not in serialized
+            assert len(CANVAS_GUIDANCE.encode('utf-8')) < 9000
             context = await session.coordinator.get('context').get_messages()
             assert CANVAS_GUIDANCE not in json.dumps(context, default=str), 'Ephemeral host instructions must not pollute saved history'
 

@@ -1,5 +1,11 @@
 # Bounded agent discovery and result delivery
 
+The recurring host prompt supplies orientation, discovery and essential ownership
+semantics. Detailed recipes ship in the `unified-app` skill and its task-selected
+companions; the host does not inject that manual on every provider request. Optional
+skill absence does not remove current app controls. Keep this split when adding
+new controls, following the [workspace context contract](workspaces/contracts/context.v1.md).
+
 `app_control list_actions` returns `items`, `prefix`, `revision`, `offset`,
 `nextOffset` and `total`. Follow `nextOffset` with the same prefix and revision.
 Pages are bounded to 12,000 escaped JSON bytes; a changed catalog rejects stale

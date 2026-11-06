@@ -103,6 +103,21 @@ approval ceremony. Stop, ownership, resource conflicts and honest unknown-effect
 receipts still apply. Bounded reads and storage retention are implementation
 controls, not limits on how much useful work an assignment can complete.
 
+### 12. Context serves the current work
+Give the model the smallest useful orientation and the relevant task context.
+Keep specialist procedures and historical evidence discoverable on demand;
+installation alone is not a reason to inject every workflow into every request.
+Workspace scratch is a current shared index, not another task or authority store.
+One manager can commission many independently owned, complete deliverables and
+review their results without routine acknowledgement or permission loops.
+
+Enforce correctness and permissions in their canonical owners. Prompt reminders
+explain those mechanisms without reconstructing them as competing procedures.
+When a new mechanism replaces an old workaround, retire the workaround's guidance
+too. Measure composed requests and actual behavior, not just individual file size.
+The [workspace context contract](../workspaces/contracts/context.v1.md) applies
+this principle to provenance, freshness, personal memory and validation.
+
 ## What this deliberately resists
 
 - A global application snapshot as the default read, update or persistence unit.
@@ -128,6 +143,7 @@ controls, not limits on how much useful work an assignment can complete.
 
 | Date | Change | Evidence |
 | --- | --- | --- |
+| 2026-11-06 | Keep context task-relevant, discoverable and subordinate to canonical controls. | User-approved audit and simplification of instructions, scratch and memory. |
 | 2026-10-30 | Use resource-based throughput instead of arbitrary default work-count ceilings. | User-requested removal of artificial limits and optional adjustable controls. |
 | 2026-10-30 | Make operator-selected Full access cover unattended and system-delegated work. | User-requested standing authorization and removal of recurring human gates. |
 | 2026-10-29 | Make scaling and semantic preservation explicit in performance evidence. | [Implementation and review guidance](../validation/performance.md); user-requested regression safeguards. |

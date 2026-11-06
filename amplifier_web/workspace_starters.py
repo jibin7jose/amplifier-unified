@@ -42,7 +42,7 @@ Typical layout:
 
 ## Each child repository has its own rules
 
-Before changing a repo, read AGENTS.md, CONTRIBUTING.md, README.md and applicable subtree guidance. Recheck relevant conventions as work shifts from design to implementation, debugging, verification and PR review. Inspect its PR template and verification instructions; fill them from actual evidence. Capture lessons in the owning repository only when in scope, preserving its information boundaries. Do not reconstruct its guidance from memory.
+Before changing a repo, read its applicable AGENTS.md and the contribution, architecture or verification guidance needed for the task. Reuse that context while its source and applicable scope are unchanged; changing from design to implementation or review is not by itself a reason to reread every file. Recheck when relevant guidance changes, you enter a new subtree, or a decision needs an exact rule. Fill the PR template from actual evidence. Capture durable lessons in the owning repository only when in scope, preserving its information boundaries.
 
 ## Checkpoints and worktrees
 
@@ -50,7 +50,7 @@ Use small, meaningful commits in the child repository for reversible checkpoints
 
 ## Working memory
 
-@SCRATCH.md
+@./SCRATCH.md
 
 SCRATCH.md is loaded into every request. Keep it a short current context and index: shared focus, decisions still relevant to several tasks, and links to the owning task or evidence. It is not a task database, event log, release ledger, copy of a transcript, or source of authority. Saved host tasks and receipts own status; actual user instructions and current permissions own authority. Do not copy their full records here or treat an old note as a current hold.
 
@@ -178,7 +178,7 @@ class StarterCatalog:
 
     def listing(self):
         value = self._read()
-        revisions = {'blank': 1, 'development': 6, 'amplifier-development': 7}
+        revisions = {'blank': 1, 'development': 7, 'amplifier-development': 8}
         builtins = [{**copy.deepcopy(row), 'builtIn': True, 'revision': revisions[row['id']]} for row in BUILTINS]
         if self.inherit_amplifier_default:
             # Inherit deliberately saved defaults, not the automatic Work fallback.

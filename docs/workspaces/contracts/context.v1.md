@@ -57,6 +57,36 @@ chat catalog. A repository is identified separately from any one task checkout.
    state and preserves successful work when another fails. Retry uses the same
    receipt; a multi-repo import is not called complete while one binding is absent.
 
+8. **Always-present context is orientation, not a manual.** Include durable user
+   preferences, applicable instructions, the current objective and essential
+   discovery/authority semantics. Detailed recipes and specialist workflows use
+   existing skills, schemas and exact references when relevant. Preserve selected
+   sources and exclusions; missing optional guidance does not disable supported
+   actions. Do not silently truncate user instructions to meet a prompt budget.
+
+9. **Guidance follows explicit scope and stays current.** Ordinary roots bind the
+   associated workspace and actual execution directory separately, with source
+   attribution and duplicate suppression. Do not walk unrelated ancestor folders.
+   File-relative includes such as `@./SCRATCH.md` resolve beside their declaring
+   file, not accidentally inside a separate execution checkout.
+   Read bound files afresh through the native context owner; snapshots retain their
+   deliberate frozen semantics. Reuse already-read repository guidance until its
+   relevant source or scope changes, rather than rereading at each work phase.
+
+10. **Notes do not become competing control systems.** Shared scratch holds only
+    current cross-task decisions, unresolved blockers with owners, and ordinary
+    links. Task details, transcripts and closed-work evidence stay on demand.
+    Personal memory records stable preferences, not obsolete holds, repeated
+    reminders, global task procedures or unbounded execution history. Preserve
+    explicit user choices and concurrent edits when simplifying existing files;
+    starter revisions never silently rewrite user-authored guidance.
+
+11. **Autonomy includes ordinary repair.** A manager can commission many workers
+    with complete objectives and existing authority. Workers return completed
+    deliverables or concrete external blockers, not routine acknowledgements.
+    Actual Stop, permissions, ownership and uncertain-effect recovery remain with
+    their canonical controls. Prompt text must not invent another approval gate.
+
 ## Not in v1
 
 - **Automatic personal memory extraction** is promoted through the separate
@@ -73,6 +103,28 @@ chat catalog. A repository is identified separately from any one task checkout.
 - P5: race two shared-decision edits and require a revision conflict or both records.
 - P6: change a dependency in another task and inspect the executing import path.
 - P7: fail one of two imports, retry, and compare stable binding/receipt IDs.
+- P8–P10: inspect a real assembled request for source attribution, size, duplicate
+  imports, changed scratch, an unrelated ancestor and linked historical records.
+  Verify packaged skills and companions remain discoverable without loading their
+  bodies on every request. Track the shipped orientation budget in a focused test.
+- P11: qualify representative routine repair, independent worker and recovery
+  flows. Compare avoidable questions, reads and waiting while preserving the same
+  acceptance requirements. A smaller prompt alone is not proof of better behavior.
+
+## Guidance maintenance
+
+Every new always-on instruction needs an owner, applicability and a reason it
+cannot live in a schema, skill or enforced mechanism. Remove superseded advice
+when its underlying defect or missing capability is repaired. Prefer clear goals
+and exceptions over growing lists of mandatory steps. Runtime capability and
+always-on procedure are separate design decisions; do not remove useful tools
+merely to reduce their awareness text.
+
+This direction follows current [OpenAI prompting guidance](https://developers.openai.com/api/docs/guides/latest-model),
+[Anthropic context engineering](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents)
+and [instruction-file guidance](https://code.claude.com/docs/en/memory), reviewed
+2026-11-06. Their recommendations inform tests; they do not override user choices
+or substitute for measured behavior in this application.
 
 ## Open questions
 
@@ -83,6 +135,7 @@ chat catalog. A repository is identified separately from any one task checkout.
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-11-06 | Add task-scoped context, fresh explicit bindings and guidance maintenance (P8–P11). | User-approved operating principles; implementation and behavioral evidence remain separate. |
 | 2026-09-22 | Initial context and multi-repository boundaries. | Inspected multi-repo workflows, instruction template, and existing native-history separation. |
 | 2026-09-22 | Delegate chat identity and discovery to shared native history. | User ruled out an independent workspace chat catalog. |
 
