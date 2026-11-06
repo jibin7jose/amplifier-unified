@@ -360,7 +360,16 @@ A failed configuration operation retains its original authority, including Full
 access. The agent can reconcile native evidence and explicitly resume proven
 no-effect work without another permission request. Recovery checks the original
 mode revision, Stop boundary, target and exact payload again; re-enabling Full
-access does not renew an older operation. Unknown or saved effects cannot resume.
+access does not renew an older operation. Unknown or partial effects cannot resume.
+A terminal sealed native save receipt and an unchanged saved plan allow explicit
+resume to finish that same operation's loaded readback. It observes the exact
+existing worker first; only an absent worker may mount the proven saved plan.
+This continuation never repeats the settings write or submits conversation input.
+A different loaded plan remains held. Readback may equate relocated module source
+declarations only through the owning worker's qualified parent/derived generation
+and matching recorded repository, revision, subdirectory and source-content digest;
+module configuration, ordering and disabled rows remain exact. Retained effective
+configuration files are not loaded-worker evidence. Missing provenance fails closed.
 For UI, user or internal originals, a current Full agent, qualified child or
 trusted system can reconcile and resume through the same recovery owner. Ask
 cannot substitute a new grant for that operator-origin authority. Resume retains

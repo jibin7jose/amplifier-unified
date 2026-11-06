@@ -10,7 +10,7 @@ export function recoveryMeaning(report){
  const {phase,effect}=report?.state||{};
  if(phase==='ready'&&effect==='mounted')return 'Changes are applied to the loaded session.';
  if(phase==='queued')return 'Resume is queued. The change is not mounted yet.';
- if(phase==='applying')return 'Applying the original change. Waiting for loaded-session confirmation.';
+ if(phase==='applying')return effect==='saved_not_mounted'?'Confirming the saved change in the loaded session. No settings write is repeated.':'Applying the original change. Waiting for loaded-session confirmation.';
  if(effect==='saved_not_mounted')return 'Settings were saved, but the loaded session is not confirmed. This change remains held.';
  if(effect==='unknown')return 'The outcome is not confirmed. No settings write will be repeated without proof.';
  if(effect==='none')return 'No settings write occurred for this operation.';
@@ -67,7 +67,7 @@ export function ConfigurationRecovery({session,act}){
    <button type="button" className="a-soft" disabled={disabled||!report?.recovery.canReconcile||attempted.current.has('reconcile:'+report?.revision)} data-action="configuration.operation.reconcile" onClick={()=>mutate('reconcile')}>Check saved outcome</button>
    <button type="button" className="a-primary" disabled={disabled||!report?.recovery.canResume||attempted.current.has('resume:'+report?.revision)} data-action="configuration.operation.resume" onClick={()=>mutate('resume')}>Resume original change</button>
   </div>
-  <p className="a-caption">Resume uses only the original change and permission. Unknown or partial writes stay held. Stop and permission changes are checked again before application.</p>
+  <p className="a-caption">Resume uses only the original change and permission. Confirmed saved changes continue loaded-session verification without repeating the write. Unknown or partial writes stay held. Stop and permission changes are checked again.</p>
   {report?.operationId&&<details><summary>Operation details</summary><dl><dt>Operation</dt><dd className="a-wrap">{report.operationId}</dd><dt>Revision</dt><dd>{report.revision??'Unverified'}</dd><dt>Attempts</dt><dd>{report.attempts??'Unverified'}</dd></dl>{report.history?.length>0&&<ol>{report.history.map((row,index)=><li key={index}>Revision {row.revision}: {row.phase} / {row.effect}</li>)}</ol>}</details>}
  </section>;
 }

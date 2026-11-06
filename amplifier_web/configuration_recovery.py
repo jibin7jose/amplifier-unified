@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import time
 import uuid
 
 from .configuration_authority import fingerprint
@@ -29,7 +30,7 @@ def definitions(schema, string):
             description, schema({**properties, "expectedRevision": {"type": "integer", "minimum": 1}}))
             for name, description in {
                 "reconcile": "Reconcile the exact operation with its sealed native receipt at an expected revision. Never applies or warms; absent/partial evidence stays unknown.",
-                "resume": "Queue one explicit resume of the original operation after proven no effect, under its still-valid authority and target. Application waits for exclusive idle admission. Unknown or partial writes refuse; no new plan or grant.",
+                "resume": "Continue the original operation under its still-valid authority and target. Proven no effect may apply; a confirmed saved plan may only finish loaded readback or mount if its worker is absent. Exclusive idle admission; unknown or partial writes refuse. No new plan, grant or input.",
             }.items()},
     }
 
@@ -233,6 +234,80 @@ def public(record, observed=None):
     }
 
 
+def check_saved(management, session, record, attempt=None, observed=None):
+    """Prove the original write completed and its saved plan is unchanged."""
+    management.check_configuration_operation(session, record)
+    attempt = latest_attempt(record) if attempt is None else attempt
+    observed = evidence(attempt, home=management.service.data_dir) if attempt and observed is None else observed
+    if (record['request']['source'].get('action', 'configuration.apply') != 'configuration.apply'
+            or record['state']['effect'] != 'saved_not_mounted'
+            or not attempt or not observed or observed['effect'] != 'saved_not_mounted'
+            or observed.get('terminal') is not True):
+        raise ValueError('Continuation requires the original terminal native save receipt; unknown or partial work stays held.')
+    native = session.get('runtimeSessionId') or session.get('nativeIdentity') or session['id']
+    if attempt.get('nativeSessionId') != native:
+        raise ValueError('The saved configuration native target changed.')
+    from .session_files import validate_id
+    validate_id(native)
+    path = management.service.data_dir / 'sessions' / native / 'configuration.json'
+    saved = json.loads(path.read_text())
+    if not management.configuration_readback_matches(record['request']['config'], saved):
+        raise ValueError('The saved configuration changed after application; its operation remains unresolved.')
+
+
+async def finish_saved(management, identity, operation):
+    """Continue readback/mount only, never dispatch the original settings write."""
+    from .configuration_authority import CURRENT
+    from .configuration_readback import inspect_loaded
+    service = management.service
+
+    def guard(*, workspace=None, scope=None):
+        current = service._session(identity)
+        record = management.configuration_record(identity, operation)
+        check_saved(management, current, record)
+        if workspace is not None or scope is not None:
+            for authority in [record['request']['authority'], *record.get('resumptions', [])]:
+                service.configuration_authority.check(authority, workspace=workspace, scope=scope)
+        if (current.get('pendingConfiguration', {}).get('operationId') != operation
+                or current.get('configurationOperationFence') != operation
+                or not current.get('configurationBusy') or record['state']['phase'] != 'applying'
+                or record['state']['stage'] != 'reading'):
+            raise ValueError('The saved configuration continuation is no longer admitted.')
+
+    # Keep the same management serialization and retained authority ceilings as
+    # ordinary application. Queue acceptance itself admits no runtime effect.
+    async with management.lock:
+        token = CURRENT.set(guard)
+        try:
+            guard()
+            session = management.session({'sessionId': identity})
+            runtime = service.runtime
+            row = getattr(runtime, 'workers', {}).get(identity)
+            if row is None or row.get('process') is not None and row['process'].returncode is not None:
+                # A present worker is only observed. A different loaded plan
+                # cannot authorize retiring it or silently replacing its code.
+                await management.ensure_runtime(session, restart_guard=guard,
+                    saved_configuration_operation=operation)
+            guard()
+            expected = management.configuration_record(identity, operation)['request']['config']
+            inspected, readback_guard = await inspect_loaded(management, session, expected, guard)
+            async with service.lock:
+                readback_guard()
+                current = service._session(identity)
+                current['configuration'] = inspected
+                controls = service.state.setdefault('runtimeControl', {}).setdefault(identity, {})
+                controls['configuration.inspect'] = inspected
+                controls['configuration.apply'] = {'configuration': inspected, 'requiresRestart': False}
+                management.configuration_transition(current, operation, phase='ready', stage='readback',
+                    effect='mounted', error=None, recoveryRequired=False,
+                    detail='Changes are applied to the loaded session.', appliedAt=time.time())
+                management.queued_path(identity).unlink(missing_ok=True)
+                management.settle_configuration_fence(current, operation)
+                service._publish_changes(sessions={identity})
+        finally:
+            CURRENT.reset(token)
+
+
 def validate_recovery(management, session, record, attempt, observed, action, args, origin):
     """One validation path for mutations and observational UI availability."""
     service = management.service
@@ -280,7 +355,9 @@ def validate_recovery(management, session, record, attempt, observed, action, ar
         elif effect != "none":
             raise ValueError("Legacy operation lacks native binding; its outcome remains unknown.")
     elif action.endswith(".resume"):
-        if (record["state"]["effect"] != "none"
+        if effect == 'saved_not_mounted':
+            check_saved(management, session, record, attempt, observed)
+        elif (record["state"]["effect"] != "none"
                 or attempt and (record["state"]["stage"] != "reconciled"
                     or not observed or observed["effect"] != "none" or not observed.get("terminal"))):
             raise ValueError("Resume requires proven pre-write no-effect evidence; unknown or saved work is not repeated.")
@@ -304,7 +381,9 @@ def recovery_status(management, session, record, attempt, observed, origin):
         except (ValueError, OSError, KeyError, TypeError, AttributeError, AppError):
             pass  # Never publish raw errors, private paths, plan or authority.
     if status["canResume"]:
-        status["reason"] = "No settings write occurred. You can explicitly resume the original change; its permission will be checked again."
+        status["reason"] = ("Settings were saved. Resume checks the loaded session, or loads the saved plan if its worker is absent; it never repeats the settings write."
+            if record['state']['effect'] == 'saved_not_mounted' else
+            "No settings write occurred. You can explicitly resume the original change; its permission will be checked again.")
     elif status["canReconcile"]:
         status["reason"] = "Check the saved outcome before deciding what can happen next. Checking never applies changes."
     elif record["state"]["phase"] in {"queued", "applying"} and record["state"].get("stage") != "interrupted":
@@ -368,7 +447,8 @@ def command(management, action, args, origin, caller):
             record.setdefault("resumptions", []).append(recovery_authority)
             write_private(management.configuration_record_path(session["id"], operation), json.dumps(record))
         record = management.configuration_transition(session, operation,
-            phase="queued", stage="queued", effect="none", error=None, recoveryRequired=False,
+            phase="queued", stage="readback_queued" if effect == 'saved_not_mounted' else "queued",
+            effect=effect, error=None, recoveryRequired=False,
             recovery_source=recovery_source)
         # Queue acceptance is not native admission. Accepted work may finish;
         # apply_queued rechecks authority and atomically claims the idle fence.

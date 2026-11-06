@@ -6,7 +6,7 @@ import {createServer} from 'vite';
 import {recoveryRequestObserver} from './configuration-recovery-observer.mjs';
 import {finishFixture} from './fixture-lifecycle.mjs';
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
-const {ConfigurationRecovery}=await server.ssrLoadModule('/src/configuration-recovery.jsx');
+const {ConfigurationRecovery,recoveryMeaning}=await server.ssrLoadModule('/src/configuration-recovery.jsx');
 const {ModuleSettings}=await server.ssrLoadModule('/src/bundles.jsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>server.close());
@@ -74,6 +74,24 @@ test('lost acknowledgement preserves a read-only recovery route and never resend
  await renderAct(async()=>button(root,'read').props.onClick());
  assert.equal(button(root,'resume').props.disabled,true);
  assert.equal(calls.filter(c=>c.endsWith('.resume')).length,1);
+ await renderAct(async()=>root.unmount());
+});
+
+test('proven saved continuation uses the original resume and remains unconfirmed during readback',async()=>{
+ const s=session();let root;const calls=[];
+ const view=report(s,{state:{phase:'error',effect:'saved_not_mounted'},recovery:{canResume:true,canReconcile:true,
+  reason:'Settings were saved. Resume checks the loaded session; it never repeats the settings write.'}});
+ const act=async(action,args)=>{calls.push({action,args});return {accepted:true,result:view}};
+ await renderAct(async()=>{root=create(React.createElement(ConfigurationRecovery,{session:s,act}))});
+ assert.equal(button(root,'resume').props.disabled,false);
+ assert.match(text(root),/never repeats the settings write/);
+ await renderAct(async()=>button(root,'resume').props.onClick());
+ assert.deepEqual(calls.find(c=>c.action.endsWith('.resume')).args,
+  {sessionId:'owner',operationId:'op-owner',expectedRevision:3});
+ assert.equal(calls.filter(c=>c.action.endsWith('.resume')).length,1);
+ const meaning=recoveryMeaning({state:{phase:'applying',effect:'saved_not_mounted'}});
+ assert.match(meaning,/Confirming the saved change/);assert.match(meaning,/No settings write is repeated/);
+ assert.doesNotMatch(meaning,/Changes are applied/);
  await renderAct(async()=>root.unmount());
 });
 

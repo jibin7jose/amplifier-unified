@@ -449,22 +449,8 @@ class Management:
 
     @staticmethod
     def configuration_readback_matches(expected, actual):
-        """Only normalize additions made by RuntimeControls.configuration().
-
-        Lists remain ordered and nested configuration dictionaries remain exact.
-        Unrecognized normalization fails closed instead of hiding a lost edit.
-        Redacted public equality is not proof of the underlying secret bytes.
-        """
-        from .runtime_controls import PLAN_KEYS, SECTIONS, public_config
-        from .configuration_authority import fingerprint
-        def normalized(value):
-            value = {key: copy.deepcopy(item) for key, item in public_config(value).items() if key in PLAN_KEYS}
-            for section in SECTIONS:
-                rows = value.setdefault(section, [])
-                for row in rows:
-                    row.setdefault('enabled', True)
-            return value
-        return fingerprint(normalized(expected)) == fingerprint(normalized(actual))
+        from .configuration_readback import matches
+        return matches(expected, actual)
 
     def queued_path(self,identity):
         return self.service.data_dir/'sessions'/identity/'pending-configuration.json'
@@ -625,31 +611,50 @@ class Management:
                     operation = pending.get('operationId')
                     record = self.configuration_record(identity, operation)
                     operation_action = record['request']['source'].get('action', 'configuration.apply')
-                    if record['state']['stage'] != 'queued' or record['state']['effect'] != 'none':
+                    saved = (record['state']['stage'] == 'readback_queued'
+                             and record['state']['effect'] == 'saved_not_mounted')
+                    if not saved and (record['state']['stage'] != 'queued' or record['state']['effect'] != 'none'):
                         raise ValueError('This configuration operation already entered application; it was not repeated.')
                     self.check_configuration_operation(session, record)
-                    if self.configuration_idle(session):
+                    candidate = session
+                    if saved:
+                        from .configuration_recovery import check_saved
+                        check_saved(self, session, record)
+                        if session.get('configurationOperationFence') not in {None, operation}:
+                            raise ValueError('Another configuration operation owns this conversation.')
+                        # Only this proven saved operation may retain its own
+                        # fence while waiting for the ordinary work-idle check.
+                        candidate = {**session, 'pendingConfiguration': {}, 'configurationBusy': False}
+                    if self.configuration_idle(candidate):
                         # The same host admission fence is visible before any
                         # runtime-preparation await or management-lock wait.
                         session['configurationBusy'] = True
                         session['configurationOperationFence'] = operation
-                        record = self.configuration_transition(session, operation, phase='applying', stage='preparing')
+                        record = self.configuration_transition(session, operation, phase='applying',
+                            stage='reading' if saved else 'preparing')
                         self.service._publish_changes(sessions={identity})
                         break
                 await asyncio.sleep(.5)
             else:
                 return
             request = record['request']
-            await self.command(request['source'].get('action', 'configuration.apply'),
-                {'id': identity, 'config': request['config'], 'whenIdle': True},
-                request['commandId'], request['authority'], request['source'], configuration_operation=operation)
+            if saved:
+                from .configuration_recovery import finish_saved
+                await finish_saved(self, identity, operation)
+            else:
+                await self.command(request['source'].get('action', 'configuration.apply'),
+                    {'id': identity, 'config': request['config'], 'whenIdle': True},
+                    request['commandId'], request['authority'], request['source'], configuration_operation=operation)
         except asyncio.CancelledError:
             async with self.service.lock:
                 session = self.service._session(identity)
                 pending = session.get('pendingConfiguration', {})
                 if (operation and pending.get('operationId') == operation
-                        and pending.get('phase') == 'applying' and pending.get('effect') == 'none'):
-                    self.configuration_error(session, operation, 'Configuration preparation was cancelled before dispatch.')
+                        and pending.get('phase') == 'applying'):
+                    if pending.get('effect') == 'none':
+                        self.configuration_error(session, operation, 'Configuration preparation was cancelled before dispatch.')
+                    elif pending.get('stage') == 'reading':
+                        self.configuration_error(session, operation, 'Saved configuration readback was interrupted; no write was repeated.')
                     self.service._publish_changes(sessions={identity})
             raise
         except Exception as exc:
@@ -677,9 +682,18 @@ class Management:
                     if not session.get('configurationBusy'):
                         self.background(self.service.collaboration.drain(identity))
 
-    async def ensure_runtime(self,session,*,selection_override=None,bundle_replacement=None,restart_guard=None,preserve_configuration=False):
+    async def ensure_runtime(self,session,*,selection_override=None,bundle_replacement=None,restart_guard=None,preserve_configuration=False,saved_configuration_operation=None):
         if self.unresolved_configuration(self.service._session(session['id'])):
-            raise ValueError('The original configuration application is unresolved. Runtime preparation cannot reconcile or repeat it.')
+            if saved_configuration_operation is None or restart_guard is None:
+                raise ValueError('The original configuration application is unresolved. Runtime preparation cannot reconcile or repeat it.')
+            current = self.service._session(session['id'])
+            record = self.configuration_record(session['id'], saved_configuration_operation)
+            from .configuration_recovery import check_saved
+            check_saved(self, current, record)
+            if (record['state']['phase'] != 'applying' or record['state']['stage'] != 'reading'
+                    or current.get('configurationOperationFence') != saved_configuration_operation
+                    or not current.get('configurationBusy')):
+                raise ValueError('The saved configuration continuation is no longer admitted.')
         if session.get('nativeProject'):
             if session.get('historyReadOnlyReason'):
                 raise ValueError(session['historyReadOnlyReason'])
@@ -1199,25 +1213,25 @@ class Management:
                         from .patch_placement import observe, verify_readback
                         inspected = await observe(self.service, session, args['args']['config']['moduleId'])
                         verify_readback(self, session, args['args']['config'], inspected)
-                    else:
+                    elif configuration_operation is None:
                         inspected=await self.service.runtime.control(session['id'],'configuration.inspect',{})
-                    if not placement and configuration_operation is not None and not isinstance(inspected.get('plan'), dict):
-                        raise ValueError('Saved configuration has no confirmed loaded-plan readback.')
                     if not placement and configuration_operation is not None:
                         # The worker acknowledgement is evidence to check, not
                         # authority to replace the immutable requested plan.
                         expected = self.configuration_record(session['id'], configuration_operation)['request']['config']
+                        from .configuration_readback import inspect_loaded
+                        inspected, readback_guard = await inspect_loaded(self, session, expected, operation_guard)
                         if 'configuration' in result and (
                                 not isinstance(result['configuration'], dict)
                                 or not self.configuration_readback_matches(expected, result['configuration'])):
                             raise ValueError('Saved configuration acknowledgement does not match the original request. Its operation remains unresolved.')
-                        if not self.configuration_readback_matches(expected, inspected['plan']):
-                            raise ValueError('Saved configuration does not match loaded-plan readback. Its operation remains unresolved.')
                     if not placement:
                         result['configuration']=inspected
                     if configuration_operation is not None:
                         async with self.service.lock:
                             operation_guard()
+                            if not placement:
+                                readback_guard()
                             self.configuration_transition(self.service._session(session['id']), configuration_operation,
                                 stage='readback', effect='mounted')
                             self.service._publish_changes(sessions={session['id']})

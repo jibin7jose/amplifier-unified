@@ -320,11 +320,27 @@ async def test_real_process_lost_ack_keeps_saved_distinct_from_mounted(process_b
     assert read["nativeEffect"] == "saved_not_mounted" and read["state"]["effect"] == "unknown"
     await recovery(b, "reconcile")
     assert operation(b)["state"]["effect"] == "saved_not_mounted"
-    with pytest.raises(AppError, match="no-effect"):
-        await recovery(b, "resume")
+    await recovery(b, "resume")
+    task = b.app.management.pending_config_tasks.get(b.owner["id"])
+    if task is not None:
+        await asyncio.wait_for(task, 3)
+    # The old worker still has the previous plan. Continuation observes it,
+    # never retires it, repeats the saved mutation or blesses its stale mount.
+    assert "does not match loaded-plan" in operation(b)["state"]["error"]
     assert b.owner["configurationBusy"]
     assert receipt_path(saved["attempts"][-1]).read_bytes() == receipt
     assert json.loads(override_path("synthetic-native-owner").read_text()) == plan(2)
+    # Once that worker is absent, an explicit continuation mounts the same save.
+    await b.runtime.stop(b.owner["id"], reason="configuration")
+    current = operation(b)
+    await b.app.dispatch("configuration.operation.resume", {"sessionId": b.owner["id"],
+        "operationId": saved["id"], "expectedRevision": current["revision"]})
+    task = b.app.management.pending_config_tasks.get(b.owner["id"])
+    if task is not None:
+        await asyncio.wait_for(task, 12)
+    assert operation(b)["state"]["effect"] == "mounted"
+    assert operation(b)["attempts"] == saved["attempts"]
+    assert receipt_path(saved["attempts"][-1]).read_bytes() == receipt
 
 
 async def test_unsealed_success_ack_is_not_configuration_save_proof(boundary):
@@ -1350,7 +1366,8 @@ async def test_wrong_saved_ack_cannot_replace_the_immutable_request(boundary, lo
     assert record["state"]["phase"] == "error"
     assert record["state"]["effect"] == "saved_not_mounted"
     assert boundary.owner["configurationBusy"]
-    assert "acknowledgement does not match" in record["state"]["error"]
+    assert ("acknowledgement does not match" if loaded_limit == 2 else
+            "does not match loaded-plan") in record["state"]["error"]
     assert boundary.app.management.queued_path(boundary.owner["id"]).read_bytes() == boundary.payload
     calls = list(boundary.runtime.calls)
     duplicate = await agent(boundary.app, boundary.owner, "configuration.apply",
@@ -1737,6 +1754,13 @@ async def test_settled_cancelled_dispatch_reconciles_late_native_evidence_withou
                 await asyncio.wait_for(task, 3)
             assert operation(b)["state"]["effect"] == "mounted"
             assert len(operation(b)["attempts"]) == 2
+        elif outcome == "saved_not_mounted":
+            assert (await http_recovery(b, "resume", identity="after-proof-resume")).status == 200
+            task = b.app.management.pending_config_tasks.get(b.owner["id"])
+            if task is not None:
+                await asyncio.wait_for(task, 3)
+            assert len(operation(b)["attempts"]) == 1
+            assert b.runtime.calls.count("configuration.apply") == calls.count("configuration.apply")
         else:
             assert (await http_recovery(b, "resume", identity="after-proof-resume")).status == 409
             assert b.owner["configurationBusy"] and len(operation(b)["attempts"]) == 1

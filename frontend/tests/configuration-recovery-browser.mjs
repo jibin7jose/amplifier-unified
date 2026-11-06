@@ -11,7 +11,7 @@ import {recoveryRequestObserver} from './configuration-recovery-observer.mjs';
 const output=resolve(process.env.AMPLIFIER_TEST_ARTIFACTS||'../output/configuration-recovery');
 await mkdir(output,{recursive:true});
 const {base,stop}=await startSettingsFixture({SETTINGS_RECOVERY_FIXTURE:'1'});
-let browser,failure;const pages=[],errors=[],actions=[];
+let browser,failure;const browsers=[],pages=[],errors=[],actions=[];
 const requestObserver=recoveryRequestObserver(base,actions);
 const observe=async page=>{const response=await page.request.get(base+'/fixture/recovery-observations');assert.equal(response.status(),200);return response.json()};
 const panel=page=>page.getByRole('region',{name:'Configuration recovery',exact:true});
@@ -23,8 +23,16 @@ async function open(page){
  await expect(panel(page).getByRole('button',{name:'Refresh status',exact:true})).toBeEnabled();
 }
 try{
- browser=await chromium.launch({headless:true});
+ const launch={headless:true,...(process.env.DTU_CHROMIUM_SINGLE_PROCESS==='1'?
+  {args:['--no-zygote','--single-process','--disable-gpu']}:{}),...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?
+  {executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{})};
+ browser=await chromium.launch(launch);browsers.push(browser);
  for(let index=0;index<2;index++){
+  // Chromium's single-process mode needs a separate owner for each private
+  // context. Keep both actual clients and all isolation assertions in DTUs.
+  if(index&&process.env.DTU_CHROMIUM_SINGLE_PROCESS==='1'){
+   browser=await chromium.launch(launch);browsers.push(browser);
+  }
   const context=await browser.newContext({viewport:{width:index?390:1200,height:900}});
   // Only fixture bootstrap uses a synthetic bearer. Every application/UI request
   // below uses the ordinary authenticated browser cookie and real action route.
@@ -121,7 +129,7 @@ try{
  failure=error;console.error('Recovery request observer:',JSON.stringify(requestObserver.snapshot()));throw error;
 }finally{
  let closingFailure=failure;
- try{await finishFixture({label:'Configuration recovery UI fixture',close:[['Recovery browsers',()=>browser?.close()]],stop,originalError:failure})}
+ try{await finishFixture({label:'Configuration recovery UI fixture',close:browsers.map((owned,index)=>['Recovery browser '+index,()=>owned.close()]),stop,originalError:failure})}
  catch(error){closingFailure??=error;throw error}
  finally{
   // Always retain observer outcomes, including malformed submissions and late
