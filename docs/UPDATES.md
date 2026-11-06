@@ -36,7 +36,8 @@ find **Force restart…**. Its confirmation explains that running chats, workers
 tools and calls will be interrupted, saved history and drafts are retained, and
 interrupted work is not replayed automatically. An unresolved checkout handoff
 is labeled separately: restarting does not reconcile it or clear its chat fence.
-Ordinary automatic updates save current work at a supported native turn boundary, then retain their existing idle and checkpoint checks.
+Ordinary automatic updates wait for idle work. An owner can explicitly yield its
+active objective at a supported native turn boundary as described below.
 
 `updates.forceRestart` requires `confirm: true` and the exact
 `hostInstanceId`, staged `revision`, `generation`, and `attemptId` from
@@ -424,6 +425,32 @@ idle readiness check. Active tools, children, calls and unresolved operations
 postpone the update, not unrelated work. Continuously busy hosts can leave an
 update pending; the existing explicit **Restart now** control is the separate
 operator choice to interrupt work for a qualified restart.
+
+An agent with an active saved objective can instead use `task.waitForUpdate` with
+its own `sessionId`, exact task `expectedRevision`, and `target` copied from
+`updates.forceRestartTarget` (the existing qualified target identity, not restart
+consent). Use a stable dispatch ID. This action does **not** install, force
+restart, pause the objective or stop unrelated work. Finish the current safe turn;
+do not call `task.block` or `task.pause` merely to yield for the update.
+
+The owner-local wait uses the existing native goal boundary. It preserves the
+task ID, continuation epoch, objective, limits and used turns. Existing tools
+and children finish before positive checkpoint evidence permits replacement.
+Unsubmitted returns wait only for that owner; independent admitted work can
+still report on its original request. Other conversations remain usable.
+
+After exact healthy `restart-ack`, matching running revision, and released
+replacement drain, the host admits one guarded continuation. An already queued
+eligible result takes precedence over a redundant update notification. Duplicate
+callbacks and reconnects do not replay inputs. A newer Stop, user pause, task
+revision/replacement, changed authority/settings or fresh input suppresses that
+saved continuation. Failed, unknown, withdrawn or different updates do not
+establish successful adoption. Inspect `updates.drain` for the current target
+and owner boundary. The returned `task.receipt` reference retains this exact
+wait after later updates replace that view, including unknown/suppressed outcomes
+and the continuation's `coordination.result` reference when queued. Adoption is
+not proof that the continuation was admitted or completed. Do not submit another
+wait to recover an uncertain one. No blocked tasks are resumed in bulk.
 
 After final candidate validation, activation rechecks readiness under the same
 host lock that commits replacement. Work arriving during validation takes priority
