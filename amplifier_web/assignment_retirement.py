@@ -24,6 +24,13 @@ def checked(app, source, target, args, origin):
     if (target['id'] == source['id'] or value['members'].get(target['id'], {}).get('status') != 'bound'
             or (assignments.current(target) or {}).get('id') != value['id']):
         error('Choose a current helper member, not the assignment owner.', 409)
+    require_finished(app, target, value)
+    return value
+
+
+def require_finished(app, target, value):
+    """Shared settlement checks for retirement and standing-authority reuse."""
+    error = app.collaboration.error
     active = target.get('collaborationGeneration') or {}
     if (target.get('status') not in {'idle', 'stopped'}
             or active.get('id') and not active.get('terminal')
@@ -64,7 +71,33 @@ def checked(app, source, target, args, origin):
                     OR coalesce(json_extract(body,'$.preparationPending'),0)!=0) LIMIT 1""",
                 (target['id'], environments.KIND)).fetchone():
             error('Wait for this member’s test environment to stop and reconcile uncertain operations before retirement.', 409)
-    return value
+
+
+def reuse_binding(app, source, target):
+    """Freeze scope, not transcript bodies or a second authority record."""
+    from .manager_placement import task_binding
+    from .schedule_handoff import latest_human
+    def context(session):
+        return {
+            'identity': [session.get(key) for key in (
+                'id', 'workspace', 'runtimeSessionId', 'nativeIdentity',
+                'workingDirectory', 'executionRevision', 'configurationPendingRevision')],
+            'configuration': fingerprint({key: session.get(key) for key in (
+                'configuration', 'bundle', 'model', 'provider')}),
+            'stop': session.get('interruptionRevision', 0),
+        }
+    adoption = app.db.execute("""SELECT id FROM commands
+        WHERE json_extract(receipt,'$.commandAction')='assignment.adopt'
+        AND json_extract(receipt,'$.targetSessionId')=?
+        ORDER BY rowid DESC LIMIT 1""", (target['id'],)).fetchone()
+    return {
+        'version': 1, 'source': context(source), 'sourceTask': task_binding(app, source),
+        'target': context(target), 'targetAccess': app.access_mode.snapshot(target)['revision'],
+        'targetTask': fingerprint(target.get('task') or app.coordination.task(target['id'])),
+        'targetGeneration': (target.get('collaborationGeneration') or {}).get('id'),
+        'targetHuman': (latest_human(target) or {}).get('id'),
+        'targetAdoption': adoption[0] if adoption else None,
+    }
 
 
 async def dispatch(assignments, action, args, origin, command_id, caller):
@@ -113,6 +146,7 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
                 receipt = {'accepted': True, 'commandAction': action, 'assignmentId': value['id'],
                     'senderSessionId': source['id'], 'targetSessionId': target['id'],
                     'previousMembership': previous,
+                    'reuseBinding': reuse_binding(app, source, target),
                     'result': {'assignment': copy.deepcopy(value), 'inputSent': False,
                                'activeMemberCount': assignments.active_member_count(value)}}
                 collaboration.insert(identity, digest, receipt)

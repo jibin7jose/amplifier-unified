@@ -11,6 +11,39 @@ from .management import Management
 from .schedule_handoff import latest_human
 
 
+def reusable_retirement(app, source, target):
+    """Only a proven same-owner retirement can replace a new human instruction."""
+    from .assignment_retirement import require_finished, reuse_binding
+    from .errors import AppError
+    from .peer_resume import safety_halt
+    from .task_binding import dependency_blocked
+    value = app.assignments.current(source)
+    member = value['members'].get(target['id'], {})
+    if member.get('status') != 'retired' or member.get('retiredBySessionId') != source['id']:
+        return False
+    try:
+        receipt = app.collaboration.receipt(member.get('retirementOperationId'))
+    except AppError:
+        return False
+    retired = receipt.get('result', {}).get('assignment', {})
+    if (receipt.get('accepted') is not True or receipt.get('commandAction') != 'assignment.retire'
+            or receipt.get('senderSessionId') != source['id']
+            or receipt.get('targetSessionId') != target['id']
+            or receipt.get('assignmentId') != value['id']
+            or retired.get('ownerSessionId') != source['id']
+            or retired.get('members', {}).get(target['id']) != member
+            or receipt.get('reuseBinding') != reuse_binding(app, source, target)):
+        return False
+    source_task = source.get('task') or app.coordination.task(source['id'])
+    if (source.get('status') in {'stopped', 'stopping', 'error', 'interrupted'}
+            or source_task.get('status') == 'paused'
+            or source_task.get('status') == 'blocked' and not dependency_blocked(source_task)
+            or target.get('status') != 'idle' or target.get('failure') or safety_halt(target)):
+        return False
+    require_finished(app, target, value)
+    return True
+
+
 def inspect(app, source, target):
     assignment = app.assignments.current(source)
     if (not assignment or assignment['status'] != 'active'
@@ -65,7 +98,7 @@ def inspect(app, source, target):
 
 
 def checked(app, source, target, args, origin):
-    """Revalidate the same review and human instruction after any idle retirement."""
+    """Revalidate the same review and authority after any idle retirement."""
     try:
         observation = inspect(app, source, target)
     except ValueError as exc:
@@ -74,15 +107,21 @@ def checked(app, source, target, args, origin):
             or observation['assignmentRevision'] != args['expectedRevision']):
         app.collaboration.error(observation['reason'] or 'The chat or assignment changed. Review it before adding it.', 409)
     human = None
+    full = None
     if origin not in {'ui', 'user'}:
         lineage = app.collaboration.lineage(source, origin)
+        # lineage/source keep the strict root principal. Full never lets a native
+        # child use the manager's identity or a later generation's input.
+        full = app.access_mode.capture_full(source, origin)
+        if full and reusable_retirement(app, source, target):
+            return {'human': None, 'full': full}
         human = latest_human(source)
         if (not human or human['id'] != args.get('sourceMessageId')
                 or human.get('questionId') or human.get('scheduledRunId')
                 or human.get('inputId') not in lineage.get('sourceInputIds', [])
                 or human.get('createdAt', 0) <= (target.get('lastInterruption') or {}).get('at', 0)):
             app.collaboration.error('Adding an existing chat requires the latest actual human instruction in the manager’s current input, after any Stop.', 409)
-    return human
+    return {'human': human, 'full': None}
 
 
 async def retire_idle(app, source, target, args, origin, identity, digest, *, validate=checked):
@@ -134,9 +173,14 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
                 return {'accepted': True, 'result': inspect(app, source, target)}
             except ValueError as exc:
                 collaboration.error(str(exc), 409)
-        checked(app, source, target, args, origin)
+        authority = checked(app, source, target, args, origin)
+    def validate(app, source, target, args, origin):
+        current = checked(app, source, target, args, origin)
+        if current != authority:
+            collaboration.error('The adoption authority changed. Review it before adding the chat.', 409)
+        return current
     try:
-        await retire_idle(app, source, target, args, origin, identity, digest)
+        await retire_idle(app, source, target, args, origin, identity, digest, validate=validate)
     except (OSError, RuntimeError, ValueError) as exc:
         collaboration.error(f'Could not confirm that this chat has settled. {exc}', 409)
     async with app.lock:
@@ -144,7 +188,7 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
         if duplicate:
             return duplicate
         target = collaboration.authorize(source, {'sessionId': args['targetSessionId']})
-        human = checked(app, source, target, args, origin)
+        human = validate(app, source, target, args, origin)['human']
         # Every eligible status needs the real native lease. The lease spans the
         # durable commit; an idle projection alone is never ownership evidence.
         with ExitStack() as boundary:
@@ -173,6 +217,8 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
                            'senderSessionId': source['id'], 'targetSessionId': target['id'],
                            'workspace': source['workspace'], 'membership': copy.deepcopy(membership),
                            'result': {'assignment': copy.deepcopy(value), 'inputSent': False}}
+                if authority['full']:
+                    receipt['readmissionAuthority'] = authority['full']
                 collaboration.insert(identity, digest, receipt)
                 app._publish_changes(sessions={source['id'], target['id']})
         return receipt

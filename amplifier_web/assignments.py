@@ -35,7 +35,7 @@ def definitions(schema, string):
         'assignment.read': ('Inspect this explicit assignment, its members and aggregate usage without starting workers. Independent peers are not members.', schema(target, ['sessionId'])),
         'assignment.start': ('Start an assignment for this unassigned root. New commissioned chats join automatically. Adding an existing chat requires explicit adoption.', schema(target, ['sessionId'])),
         'assignment.adoption': ('Review adding one settled existing workspace chat to this manager’s assignment. Does not start work or change membership.', schema({**target, 'targetSessionId': string(200)}, ['sessionId', 'targetSessionId'])),
-        'assignment.adopt': ('Explicitly add a reviewed existing chat to this owner’s active assignment. Agents require the current human instruction; do not infer permission from a shared workspace. Preserves history and previous usage, sends no input, and does not clear Stop. Use ordinary guarded resume separately when authorized.', schema({**revision, 'targetSessionId': string(200), 'expectedTargetRevision': string(200), 'sourceMessageId': string(200)}, ['sessionId', 'targetSessionId', 'expectedRevision', 'expectedTargetRevision'])),
+        'assignment.adopt': ('Explicitly add a reviewed existing chat to this owner’s active assignment. A current Full-access owner root may readmit its own unchanged finished retired member with a verified retirement receipt, without a human message. Other agent adoption requires the current human instruction; a shared workspace is not authority. Preserves history, usage and budgets, sends no input, and does not clear Stop or task pause. Send a deliberate fresh follow-up separately; old requests never replay.', schema({**revision, 'targetSessionId': string(200), 'expectedTargetRevision': string(200), 'sourceMessageId': string(200)}, ['sessionId', 'targetSessionId', 'expectedRevision', 'expectedTargetRevision'])),
         'assignment.set': ('Owner sets revision-bound aggregate limits. Null maxOpenTasks/maxMembers/maxConcurrentCalls means no count limit. maxMembers counts current bound and reserved members, not retired history. Per-call reservations are allowances, not exact provider spend caps. Existing effects may finish.', schema({**revision, **limits}, ['sessionId', 'expectedRevision'])),
         'assignment.integration': ('Owner explicitly assigns integration responsibility to a current member, or clears it. Does not start work, enroll peers or grant execution authority.', schema({**revision, 'responsibleSessionId': {'type': ['string', 'null'], 'minLength': 1, 'maxLength': 200}}, ['sessionId', 'expectedRevision', 'responsibleSessionId'])),
         'assignment.stop': ('Owner closes assignment admission before requesting interruption of still-bound roots and native children. Does not stop independent peers or remove resources.', schema(revision, ['sessionId', 'expectedRevision'])),
@@ -53,6 +53,9 @@ class Assignments:
         self.tasks = AssignmentTasks(self)
         service.db.execute("""CREATE INDEX IF NOT EXISTS assignment_requests ON commands(
             json_extract(receipt,'$.assignmentId'),json_extract(receipt,'$.commandAction'))""")
+        service.db.execute("""CREATE INDEX IF NOT EXISTS assignment_adoption_target ON commands(
+            json_extract(receipt,'$.targetSessionId'))
+            WHERE json_extract(receipt,'$.commandAction')='assignment.adopt'""")
         service.db.execute("""CREATE INDEX IF NOT EXISTS assignment_interruptions ON commands(
             json_extract(receipt,'$.interruptionsPending'))
             WHERE json_extract(receipt,'$.commandAction')='assignment.stop'""")

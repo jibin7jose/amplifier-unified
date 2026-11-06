@@ -50,9 +50,28 @@ path can add a retired chat to the same assignment again after a fresh review.
 It rechecks capacity and native ownership, records a new membership boundary,
 and retains the previous retirement receipt. Inputs and automatic returns from
 before readmission remain historical; they cannot restart the chat. Prior
-spending continues to count, and adoption itself sends no input. The current
-agent adoption requirement for an admitted human instruction still applies;
-this does not add a new approval screen or silently broaden that requirement.
+spending continues to count, and adoption itself sends no input.
+
+Under standing **Full access**, the current assignment-owning root can explicitly
+readmit its own finished retired member without a fresh human input. This implements
+the [standing authorization direction](configuration-authority.md#unattended-full-access-direction):
+requiring a human relay for an unchanged, already-owned follow-up wastes attention
+without establishing new authority. The exception is not independent-chat takeover.
+The host verifies the exact same-owner retirement receipt and its saved reuse
+binding: native identity, placement, configuration/access, Stop, target generation,
+completed task and manager task scope must remain unchanged. New retirement
+receipts retain that binding; older receipts without it do not establish this
+exception. The calling native principal must be the current manager root, not a
+child borrowing its authority. Full is captured before waits and rechecked at commit.
+
+The member must still be idle with completed or absent local work, settled native
+ownership, no unfinished shared claims, and no pending or uncertain input, calls,
+settings or test environments. A new review cannot erase a changed retirement
+binding. Ask mode, independent roots, user-detached members, stopped/paused/failed
+work and unavailable proof retain the existing human-instruction path and other
+guards. Readmission does not resume a task, change permissions, reset limits or
+usage, or replay suppressed/unknown work. After its confirmed receipt, send a
+separate deliberate follow-up through ordinary `coordination.send`.
 
 Lost replies retry the same operation ID. A stale review needs a fresh
 inspection; a failed durable save restores the target and assignment together.

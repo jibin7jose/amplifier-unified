@@ -107,6 +107,290 @@ async def test_readmit_same_chat_fences_old_requests_and_keeps_spend(app):
     assert len(app.runtime.inputs) == before + 1
 
 
+async def full_access(app, source, mode='full'):
+    # This transport-only fixture has no mounted native processes. Declare that
+    # before changing access so refresh does not use its generic Stop stub.
+    app.runtime.workers = {}
+    current = app.access_mode.snapshot(source)
+    await app.dispatch('access.set', {
+        'sessionId': source['id'], 'scope': 'session', 'mode': mode,
+        'expectedRevision': current['revision']})
+    # This fixture has no mounted file tools to retire.
+    source['fileAccessPending'] = source['configurationPending'] = False
+
+
+async def reviewed_args(app, source, target):
+    observation = (await app.dispatch('assignment.adoption', {
+        'sessionId': source['id'], 'targetSessionId': target['id']}))['result']
+    return {'sessionId': source['id'], 'targetSessionId': target['id'],
+            'expectedRevision': observation['assignmentRevision'],
+            'expectedTargetRevision': observation['revision']}
+
+
+async def test_full_owner_readmits_completed_retired_member_from_peer_only_input(app):
+    source, target, created = await setup(app)
+    await full_access(app, source)
+    target['task'] = {'id': 'original-task', 'revision': 3, 'status': 'completed',
+                      'maxTurns': 8, 'goalState': {'turns_used': 3},
+                      'evidence': ['Original contribution accepted']}
+    await limits(app, source, maxMembers=2, maxTotalTokens=100)
+    charged = call(target, 'charged')
+    assert (await admission(app, target['id'], {'call': charged}))['allowed']
+    ingest(target, {**charged, 'phase': 'completed', 'endedAt': 4, 'revision': 2,
+                   'usage': {'totalTokens': 15}})
+    old = copy.deepcopy(app.collaboration.receipt(created['initialInputId']))
+    await retire(app, source, target)
+    retirement = copy.deepcopy(app.collaboration.receipt('retire'))
+    before = copy.deepcopy(target)
+    count = len(app.runtime.inputs)
+    assert not app.collaboration.current_human_input(source)
+    args = await reviewed_args(app, source, target)
+    from amplifier_web.assignment_retirement import reuse_binding
+    assert app.access_mode.full(source)
+    assert retirement['reuseBinding'] == reuse_binding(app, source, target)
+    assert target['status'] == 'idle' and not target.get('failure'), target.get('failure')
+    receipt = await agent_action(app, source, 'assignment.adopt', args, 'full-readmit')
+    value = app.assignments.current(target)
+    assert value['members'][target['id']]['previousRetirementId'] == 'retire'
+    assert receipt['membership']['sourceMessageId'] is None
+    assert receipt['result']['inputSent'] is False
+    assert target['task'] == before['task'] and target['messages'] == before['messages']
+    assert len(app.runtime.inputs) == count
+    assert app.collaboration.receipt('retire') == retirement
+    assert app.collaboration.receipt(created['initialInputId']) == old
+    assert 'earlier assignment membership' in app.collaboration.guard(old)
+    assert app.assignments.usage(value)['metrics']['grossTotalTokens']['value'] == 15
+    assert (await agent_action(app, source, 'assignment.adopt', args, 'full-readmit'))['duplicate']
+    await agent_action(app, source, 'coordination.send', {
+        'sessionId': target['id'], 'mode': 'queue', 'text': 'One deliberate fresh follow-up',
+        'returnNotification': False}, 'fresh-full-followup')
+    await settled(app, 'fresh-full-followup', 'accepted')
+    assert len(app.runtime.inputs) == count + 1
+    assert app.runtime.inputs[-1][1] == 'fresh-full-followup'
+    assert target['task'] == before['task']
+
+
+@pytest.mark.parametrize('change', [
+    'ask', 'stop', 'paused', 'new-task', 'failed', 'unknown-input', 'unknown-call',
+    'queued', 'foreign-owner', 'detached', 'placement', 'configuration', 'access',
+    'native-identity', 'new-human', 'generation', 'preparation', 'worker',
+    'pending-settings', 'claim', 'check', 'missing-receipt', 'legacy-receipt',
+    'forged-receipt', 'manager-stop', 'manager-task', 'manager-paused',
+])
+async def test_full_readmission_refuses_changed_or_unsettled_retirement(app, change):
+    source, target, _ = await setup(app)
+    await full_access(app, source)
+    await retire(app, source, target)
+    if change == 'ask':
+        await full_access(app, source, 'ask')
+    elif change in {'stop', 'failed'}:
+        target['status'] = 'stopped' if change == 'stop' else 'error'
+        target['interruptionRevision'] = 1
+    elif change in {'paused', 'new-task'}:
+        target['task'] = {'id': 'new-task', 'revision': 1,
+                          'status': 'paused' if change == 'paused' else 'active'}
+    elif change in {'unknown-input', 'queued'}:
+        app.collaboration.insert('unsettled', 'fixture', {
+            'commandAction': 'coordination.send', 'target': {'sessionId': target['id']},
+            'delivery': 'unknown' if change == 'unknown-input' else 'queued'})
+    elif change == 'unknown-call':
+        ingest(target, {**call(target, 'uncertain'), 'phase': 'outcome_unknown'})
+    elif change == 'foreign-owner':
+        app.assignments.ensure(target, 'other-assignment')
+    elif change == 'detached':
+        value = app.assignments.current(source)
+        value['members'][target['id']]['status'] = 'detached'
+        app.assignments.save(value)
+    elif change == 'placement':
+        target['executionRevision'] = 1
+    elif change == 'configuration':
+        target['configurationPendingRevision'] = target.get('configurationPendingRevision', 0) + 1
+    elif change == 'access':
+        await full_access(app, target, 'ask')
+    elif change == 'native-identity':
+        target['runtimeSessionId'] = 'another-native'
+    elif change == 'new-human':
+        app._message(target, 'user', 'Independent new direction', inputOrigin='ui', inputId='new-human')
+    elif change == 'generation':
+        target['collaborationGeneration']['terminal'] = False
+    elif change == 'preparation':
+        app.runtime._preparations = {target['id']: object()}
+    elif change == 'worker':
+        target['workers'].append({'id': 'native-child', 'status': 'idle'})
+    elif change == 'pending-settings':
+        target['configurationPending'] = True
+    elif change == 'claim':
+        value = app.assignments.current(source)
+        value['tasks'] = {'claimed': {'status': 'claimed', 'claim': {'sessionId': target['id']}}}
+        app.assignments.save(value)
+    elif change == 'check':
+        app.collaboration.insert('active-check', 'fixture', {
+            'commandAction': 'workspace.tests.submit', 'senderSessionId': target['id'],
+            'job': {'status': 'checking'}})
+    elif change == 'missing-receipt':
+        app.db.execute("DELETE FROM commands WHERE id='retire'")
+    elif change in {'legacy-receipt', 'forged-receipt'}:
+        record = app.collaboration.receipt('retire')
+        if change == 'legacy-receipt':
+            record.pop('reuseBinding')
+        else:
+            record['senderSessionId'] = 'other-manager'
+        app.collaboration.save('retire', record)
+    elif change == 'manager-stop':
+        source['interruptionRevision'] = 1
+    elif change == 'manager-task':
+        source['task'] = {'id': 'different-scope', 'revision': 1, 'status': 'active'}
+    else:
+        source['task'] = {'id': 'paused-manager', 'revision': 1, 'status': 'paused'}
+    # Even a new inspection cannot erase a changed retirement or borrow Full.
+    args = await reviewed_args(app, source, target)
+    before = copy.deepcopy(app.assignments.current(source))
+    inputs = len(app.runtime.inputs)
+    with pytest.raises(AppError):
+        await agent_action(app, source, 'assignment.adopt', args, 'invalid-readmit')
+    assert app.assignments.current(source) == before
+    assert not app.db.execute("SELECT 1 FROM commands WHERE id='invalid-readmit'").fetchone()
+    assert len(app.runtime.inputs) == inputs
+
+
+@pytest.mark.parametrize('change', ['revision', 'placement', 'workspace', 'stop'])
+async def test_full_readmission_requires_exact_review(app, change):
+    source, target, _ = await setup(app)
+    await full_access(app, source)
+    await retire(app, source, target)
+    args = await reviewed_args(app, source, target)
+    if change == 'revision':
+        await limits(app, source, maxMembers=5)
+    elif change == 'workspace':
+        target['workspace'] += '-elsewhere'
+    elif change == 'placement':
+        target['executionRevision'] = 1
+    else:
+        target['interruptionRevision'] = 1
+    with pytest.raises(AppError):
+        await agent_action(app, source, 'assignment.adopt', args, 'stale-readmit')
+    assert app.assignments.current(target) is None
+
+
+async def test_full_does_not_adopt_unrelated_root_or_lend_authority_to_native_child(app):
+    source, target, _ = await setup(app)
+    await full_access(app, source)
+    independent = next(row for row in app.state['sessions'] if row['id'] not in {source['id'], target['id']})
+    with pytest.raises(AppError, match='human instruction'):
+        await agent_action(app, source, 'assignment.adopt',
+                           await reviewed_args(app, source, independent), 'unrelated')
+    await retire(app, source, target)
+    args = await reviewed_args(app, source, target)
+    with pytest.raises(AppError):
+        await app.app_bridge('dispatch', {
+            'action': 'assignment.adopt', 'args': args, 'id': 'child-borrow',
+            '_runtimeSessionId': 'native-child',
+            '_generationId': source['collaborationGeneration']['id'],
+            '_inputBindings': [{'inputId': 'incoming-peer'}]}, source['id'])
+    assert app.assignments.current(target) is None
+
+
+async def test_full_readmission_refuses_foreign_native_writer(app):
+    from amplifier_foundation.session import SharedSessionStore
+    source, target, _ = await setup(app)
+    await full_access(app, source)
+    await retire(app, source, target)
+    held = SharedSessionStore(target['workspace'], target['id']).acquire(app='foreign-writer')
+    try:
+        with pytest.raises(AppError, match='confirm'):
+            await agent_action(app, source, 'assignment.adopt',
+                               await reviewed_args(app, source, target), 'foreign-native')
+        assert held.active and app.assignments.current(target) is None
+    finally:
+        held.release()
+
+
+@pytest.mark.parametrize('origin,allowed', [('agent', True), ('ui', False), (None, False)])
+async def test_readmission_respects_manager_dependency_block_provenance(app, origin, allowed):
+    source, target, _ = await setup(app)
+    await full_access(app, source)
+    source['task'] = {'id': 'same-manager-task', 'revision': 1, 'status': 'blocked',
+        'blockProvenance': {'version': 1, 'origin': origin, 'revision': 1, 'dependency': origin == 'agent'}}
+    await retire(app, source, target)
+    args = await reviewed_args(app, source, target)
+    if allowed:
+        receipt = await agent_action(app, source, 'assignment.adopt', args, 'dependency-followup')
+        assert not receipt['result']['inputSent']
+        assert source['task']['status'] == 'blocked'
+    else:
+        with pytest.raises(AppError):
+            await agent_action(app, source, 'assignment.adopt', args, 'dependency-followup')
+        assert app.assignments.current(target) is None
+
+
+async def test_newer_adoption_and_user_detach_cannot_restore_old_manager_authority(app):
+    source, target, _ = await setup(app)
+    await full_access(app, source)
+    await retire(app, source, target)
+    other = next(row for row in app.state['sessions'] if row['id'] not in {source['id'], target['id']})
+    app.assignments.ensure(other, 'new-manager')
+    await app.dispatch('assignment.adopt', await reviewed_args(app, other, target), command_id='new-owner')
+    await app.dispatch('assignment.detach', {'sessionId': target['id'],
+        'expectedRevision': app.assignments.current(other)['revision']}, command_id='user-detach')
+    with pytest.raises(AppError):
+        await agent_action(app, source, 'assignment.adopt',
+                           await reviewed_args(app, source, target), 'old-owner-reclaim')
+    assert app.assignments.current(target) is None
+
+
+async def test_retirement_witness_lookup_does_not_scan_unrelated_command_bodies(app, record_property):
+    import json
+    from amplifier_web.assignment_retirement import reuse_binding
+    source, target, _ = await setup(app)
+    def measured():
+        steps = 0
+        def step():
+            nonlocal steps
+            steps += 1
+            return 0
+        app.db.set_progress_handler(step, 1)
+        try:
+            value = reuse_binding(app, source, target)
+        finally:
+            app.db.set_progress_handler(None, 0)
+        return value, steps
+    before, small = measured()
+    app.db.executemany('INSERT INTO commands VALUES(?,?,?)', [
+        (f'unrelated-{i}', 'fixture', json.dumps({
+            'commandAction': 'assignment.adopt', 'targetSessionId': f'unrelated-{i}',
+            'result': 'x' * 4096})) for i in range(2000)])
+    after, large = measured()
+    assert after == before
+    record_property('sqlite_steps_small', small)
+    record_property('sqlite_steps_2000_unrelated_4k_receipts', large)
+    # A lookup may traverse more B-tree levels, but must not parse 8 MB of history.
+    assert large <= small + 20
+
+
+@pytest.mark.parametrize('change', ['full-off-on', 'stop', 'placement', 'unknown'])
+async def test_full_readmission_rechecks_after_idle_retirement(app, monkeypatch, change):
+    from amplifier_web import assignment_adoption
+    source, target, _ = await setup(app)
+    await full_access(app, source)
+    await retire(app, source, target)
+    args = await reviewed_args(app, source, target)
+    async def retire_while_changed(*_args, **_kwargs):
+        if change == 'full-off-on':
+            await full_access(app, source, 'ask')
+            await full_access(app, source)
+        elif change == 'stop':
+            source['interruptionRevision'] = 1
+        elif change == 'placement':
+            target['executionRevision'] = 1
+        else:
+            ingest(target, {**call(target, 'uncertain-after-wait'), 'phase': 'outcome_unknown'})
+    monkeypatch.setattr(assignment_adoption, 'retire_idle', retire_while_changed)
+    with pytest.raises(AppError):
+        await agent_action(app, source, 'assignment.adopt', args, 'changed-readmit')
+    assert app.assignments.current(target) is None
+    assert not app.db.execute("SELECT 1 FROM commands WHERE id='changed-readmit'").fetchone()
+
+
 async def test_retirement_does_not_notify_old_completion_after_readmission(app):
     source, target, created = await setup(app)
     old = app.collaboration.receipt(created['initialInputId'])

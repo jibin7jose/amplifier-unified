@@ -485,8 +485,10 @@ Finished member participation can now be closed by the assignment owner through
 never-created entries while their cumulative usage and membership evidence stay
 retained. Retirement requires settled work and completed local/shared tasks,
 with native ownership held through the commit. It does not archive or stop a
-chat. Existing adoption can readmit the same retired chat after a fresh review,
-capacity check and human instruction; the new membership boundary fences old
+chat. Existing adoption can readmit the same retired chat after a fresh review
+and capacity check. A current Full-access owner root can reuse its unchanged,
+finished member with verified retirement scope; other agent adoption retains
+the human-instruction requirement. The new membership boundary fences old
 requests and automatic returns. See [member closeout and reuse](assignment-adoption.md#finishing-and-reusing-a-member-chat).
 
 Qualification includes failure injection before commit and after acknowledgment
