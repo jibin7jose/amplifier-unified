@@ -153,3 +153,7 @@ would hide that boundary instead of fixing it.
 That shared proposal, cross-chat continuation and any broader storage redesign
 are separate from the first settings slice. They are not new prerequisites for
 unrelated releases.
+
+The [bounded device-freshness follow-up](device-freshness-20261107.md) records
+the shared owner's actual timer boundaries, the local-X11 observation change,
+and the separate Windows standing-policy gap.
