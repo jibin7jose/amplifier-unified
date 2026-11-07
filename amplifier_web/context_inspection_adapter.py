@@ -101,10 +101,12 @@ class ContextInspection:
             budget = captured_budget['budget']
             budget_status = captured_budget['status']
             binding_evidence = {
-                'scopedPreflightCount': 1,
+                'scopedPreflightCount': 0,  # Legacy pool count, not a ticket count.
                 'dispatchFingerprint': {'status': 'not_evaluated', 'reason': 'fitted_owner_ticket'},
                 'preflightFingerprints': [],
                 'association': 'fitted_owner_ticket' if budget_status in {'captured', 'not_reported'} else 'unproven',
+                'fitTicket': {'observed': True, 'status': budget_status,
+                              'reason': captured_budget.get('reason')},
             }
         context = self.coordinator.get('context')
         context_config = getattr(context, 'config', {}) or {}
@@ -134,6 +136,7 @@ class ContextInspection:
             'unmatched_preflight': 'Preflight was observed in this provider/task interval, but no complete fingerprint matches the dispatch. Request association is unproven; no candidate budget is substituted.',
             'unsupported': 'This mounted provider does not support preflight budget decisions.',
             'ambiguous': 'More than one identical preflight candidate was retained; no unique request association was proven.',
+            'ticket_unavailable': 'The fitted-owner ticket became unavailable or was superseded. Its fixed disposition is retained; no candidate budget is substituted.',
         }[budget_status]
         def evidence(value, source, reason):
             return {'status': 'captured' if value is not None else 'unavailable',

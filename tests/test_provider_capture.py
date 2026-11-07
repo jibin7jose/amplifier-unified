@@ -27,6 +27,27 @@ def chain(tmp_path):
     return observer, events, provider, SurfaceProvider(provider, NoWorkDelivery())
 
 
+async def test_flat_legacy_budget_keywords_are_effective_options(tmp_path):
+    observer,events,provider,surface=chain(tmp_path)
+    value=request()
+    await surface.request_budget(value,model='selected-model',reasoning_effort='high',context_estimate=999)
+    await surface.complete(value,model='selected-model',reasoning_effort='high');await observer.drain()
+    assert observer.store.read()['selected']['budgetStatus']=='captured'
+
+
+@pytest.mark.parametrize('reason',['superseded_fit','evicted_fit','diagnostic_failure'])
+async def test_unavailable_ticket_has_fixed_disposition_not_changed_request(tmp_path,reason):
+    observer,events,provider,surface=chain(tmp_path)
+    value=request();await surface.request_budget(value)
+    async def admission(row):surface._capture_tickets[-1].close(reason)
+    events.admission_guard=admission
+    await surface.complete(value);await observer.drain()
+    row=observer.store.read()['selected']
+    assert row['budget']=={} and row['budgetStatus']=='ticket_unavailable'
+    assert row['budgetBinding']['scopedPreflightCount']==0
+    assert row['budgetBinding']['fitTicket']=={'observed':True,'status':'ticket_unavailable','reason':reason}
+
+
 @pytest.mark.parametrize('size',[32,1_000_100,4_000_100])
 async def test_owner_serialization_shared_one_complete_final_encoding_no_work(tmp_path,monkeypatch,size):
     observer,events,provider,surface=chain(tmp_path)

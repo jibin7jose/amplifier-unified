@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 DISPATCH = contextvars.ContextVar('amplifier_web_budget_capture_dispatch', default=None)
 FITTING = contextvars.ContextVar('amplifier_web_budget_capture_fit', default=None)
+_HOST_WRAPPERS = weakref.WeakKeyDictionary()
 
 
 def observe(operation, *args):
@@ -23,6 +24,51 @@ def observe(operation, *args):
         return operation(*args)
     except Exception:
         return None
+
+
+def bind_wrapper(wrapper, original):
+    """Called only where the host constructs its recovery wrapper."""
+    _HOST_WRAPPERS[wrapper] = weakref.ref(original)
+
+
+def provider_chain(provider):
+    """Exact registered edges only; arbitrary plugin .original is not followed."""
+    seen, chain = set(), []
+    for _ in range(8):
+        if provider is None or id(provider) in seen:return None
+        seen.add(id(provider))
+        chain.append(weakref.ref(provider))
+        edge = _HOST_WRAPPERS.get(provider)
+        if edge is None:return tuple(chain)
+        original = edge()
+        if original is None or vars(provider).get('original') is not original:return None
+        provider = original
+    return None
+
+
+def same_chain(chain, provider):
+    current = provider_chain(provider)
+    return bool(chain and current and len(chain) == len(current)
+                and all(a() is not None and a() is b() for a, b in zip(chain, current)))
+
+
+def matches_provider(execution, mounted, provider):
+    chain = provider_chain(mounted)
+    return bool(chain and (chain[-1]() is provider or
+                execution.provider_wrappers.get(id(provider)) is chain[-1]()))
+
+
+def budget_options(nested, kwargs):
+    """Mirror effective budget option merge: explicit keywords win.
+
+    context_estimate is count input, not a dispatch option. No unsupported
+    container is coerced into an empty value.
+    """
+    if nested is None:nested = {}
+    if type(nested) is not dict or type(kwargs) is not dict:return None
+    if len(nested) > 1024 or len(kwargs) > 1024:return None
+    return normalized_options({**nested, **{k: v for k, v in kwargs.items()
+                               if k not in {'context_estimate', 'request_options'}}})
 
 
 def normalized_options(options):
@@ -64,13 +110,16 @@ class FitTicket:
     request: object  # weak reference to the outer request
     task: object     # weak reference to its budget execution task
     provider: object # exact mounted budget owner, not a name/default-model guess
+    chain: object
     fitted: str | None  # same string already owned by SurfaceProvider.prepared
     options: object
     decision: dict | None = None
     valid: bool = True
     taken: bool = False
+    reason: str | None = None
 
-    def close(self):
+    def close(self, reason='consumed'):
+        if self.reason is None:self.reason = reason
         self.valid = False
         self.fitted = None
         self.decision = None
@@ -78,20 +127,21 @@ class FitTicket:
 
 def invalidate(owner, request):
     for ticket in owner._capture_tickets:
-        if ticket.request() is request:ticket.close()
+        if ticket.request() is request:ticket.close('superseded_fit')
     owner._capture_tickets[:] = [t for t in owner._capture_tickets if t.valid and t.request() is not None]
 
 
-def begin_fit(owner, original, prepared, options):
+def begin_fit(owner, original, prepared, options, kwargs=None):
     entry = next((row for row in owner.prepared if row[0] is original and row[1] is prepared), None)
     if entry is None or not isinstance(entry[2], str):return None
     try:
         ticket = FitTicket(weakref.ref(original), weakref.ref(asyncio.current_task()),
-                           weakref.ref(owner.original), entry[2], normalized_options(options))
+                           weakref.ref(owner.original), provider_chain(owner.original),
+                           entry[2], budget_options(options, kwargs or {}))
     except TypeError:
         return None
     owner._capture_tickets.append(ticket)
-    while len(owner._capture_tickets) > 4:owner._capture_tickets.pop(0).close()
+    while len(owner._capture_tickets) > 4:owner._capture_tickets.pop(0).close('evicted_fit')
     return ticket
 
 
@@ -101,18 +151,19 @@ def finish_fit(ticket, decision):
             from .context_inspection import budget_public
             ticket.decision = budget_public(decision)
         except Exception:
-            ticket.close()
+            ticket.close('diagnostic_failure')
 
 
 def take(owner, request):
-    rows = [t for t in owner._capture_tickets if t.valid and not t.taken
+    rows = [t for t in owner._capture_tickets if not t.taken
             and t.request() is request and t.task() is asyncio.current_task()]
     if len(rows) != 1:return None
     ticket = rows[0]
-    if ticket.provider() is not owner.original or not any(
+    if ticket.provider() is not owner.original or not same_chain(ticket.chain, owner.original):
+        ticket.close('provider_changed')
+    elif ticket.valid and not any(
             row[0] is request and row[2] is ticket.fitted for row in owner.prepared):
-        ticket.close()  # Its fitted generation was evicted or replaced.
-        return None
+        ticket.close('evicted_fit')
     ticket.taken = True
     return ticket
 
@@ -153,8 +204,7 @@ def owns_budget(execution, provider, request):
     value = FITTING.get()
     return bool(value is not None and value.task() is asyncio.current_task()
                 and value.request() is request
-                and (value.provider is provider or
-                     execution.provider_wrappers.get(id(provider)) is value.provider))
+                and matches_provider(execution, value.provider, provider))
 
 
 @dataclass(eq=False)
@@ -172,7 +222,7 @@ def claim(execution, sid, provider, request, call_id):
     value = DISPATCH.get()
     if value is None or value.claimed or value.task() is not asyncio.current_task():return None
     if value.request() is not request:return None
-    if value.provider is not provider and execution.provider_wrappers.get(id(provider)) is not value.provider:return None
+    if not matches_provider(execution, value.provider, provider):return None
     # Claim before ANY admission/metadata await; inherited/nested tasks cannot
     # steal or use this ticket while its intended call is suspended.
     value.claimed = True
@@ -186,10 +236,15 @@ def consume(value, execution, row, provider, request, options):
         if (value.consumed or value.execution is not execution or value.provider is not provider
                 or value.session != row['sessionId'] or value.call != row['id']
                 or value.task() is not asyncio.current_task()):
-            return {'budget': {}, 'status': status}
+            return {'budget': {}, 'status': 'ticket_unavailable', 'reason': 'dispatch_mismatch'}
         value.consumed = True
         ticket = value.ticket
-        if not ticket.valid or ticket.decision is None:return {'budget': {}, 'status': status}
+        if not ticket.valid:
+            return {'budget': {}, 'status': 'ticket_unavailable', 'reason': ticket.reason or 'unavailable'}
+        if ticket.decision is None:
+            return {'budget': {}, 'status': 'ticket_unavailable', 'reason': 'budget_unavailable'}
+        if not same_chain(ticket.chain, ticket.provider()):
+            return {'budget': {}, 'status': 'ticket_unavailable', 'reason': 'provider_changed'}
         actual_options = normalized_options(options)
         if ticket.options is None or actual_options is None:
             status = 'binding_unsupported'
@@ -200,7 +255,7 @@ def consume(value, execution, row, provider, request, options):
             if request.model_dump_json() == ticket.fitted:
                 budget = ticket.decision
                 status = 'captured' if budget else 'not_reported'
-        return {'budget': budget, 'status': status}
+        return {'budget': budget, 'status': status, 'reason': None if budget else status}
     except Exception:
         return {'budget': {}, 'status': 'binding_unsupported'}
     finally:

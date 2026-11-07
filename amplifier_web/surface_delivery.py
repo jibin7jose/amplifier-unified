@@ -305,7 +305,7 @@ class SurfaceProvider:
         except RequestFitChanged as error:
             error.local_refusal = True
             raise
-        ticket = capture.observe(capture.begin_fit, self, request, cached, request_options)
+        ticket = capture.observe(capture.begin_fit, self, request, cached, request_options, kwargs)
         try:
             with capture.fitting(ticket, self.original, cached):
                 decision = await self._budget(budget, cached, request_options=request_options, **kwargs)
@@ -375,7 +375,7 @@ class SurfaceProvider:
                 capture.observe(capture.invalidate, self, request)
                 original_request = request
                 request = await self._prepare(request, explicit_budget=True)
-                ticket = capture.observe(capture.begin_fit, self, original_request, request, request_options)
+                ticket = capture.observe(capture.begin_fit, self, original_request, request, request_options, kwargs)
                 actual = self._budget
                 if self.timing_coordinator is not None:
                     from .performance_diagnostics import time_preparation

@@ -185,7 +185,8 @@ async def test_large_real_native_chain_and_existing_witness_admission_gap(tmp_pa
             assert header['limits']['requestInputAllowance'] == 10_000
             assert header['budget']['measurement']['input_tokens'] == 100
             assert header['limits']['reservedOutput'] == 321
-        assert header['budgetBinding']['scopedPreflightCount'] == 1
+        assert header['budgetBinding']['scopedPreflightCount'] == 0
+        assert header['budgetBinding']['fitTicket']['observed'] is True
         actual = state.transports[-1]
         same = current['attempt']['requestSha256'] == hashlib.sha256(actual.encode()).hexdigest()
         assert same is (not mutation), 'pre-admission witness cannot prove mutable post-admission content'

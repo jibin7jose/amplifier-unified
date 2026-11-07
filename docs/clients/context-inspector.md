@@ -54,6 +54,9 @@ captured label and a named Copy control. Full paths do not dominate the reader.
   is not evaluated; the inspector does not traverse a request to match another
   provider or task's receipt. Older observations without these receipts say
   **not captured**, rather than inventing a historical reason from current config.
+  `scopedPreflightCount` counts the legacy candidate pool only. Ticket attribution
+  instead has an explicit `fitTicket.observed` marker and fixed status/reason;
+  superseded, evicted or failed tickets say unavailable, not request changed.
   A fixed mounted context `max_tokens` attribute is captured as well as an explicit
   configuration value. No fixed value means automatic/unspecified, not zero.
   Explicit request output options are captured; a provider's model output maximum
@@ -85,6 +88,13 @@ private capture ticket shares that exact immutable string (no second prompt copy
 with a particular budget attempt and normalized dispatch options. Original request
 and execution-task references are weak. Refitting supersedes the old ticket;
 dispatch consumes it once and then releases its serialized reference.
+The `app_guidance` construction site registers its exact recovery-wrapper edge.
+Identity follows only those weak registered edges (maximum eight, cycle-safe)
+and ExecutionEvents' immutable-provider sidecar map. It never follows arbitrary
+plugin `original` attributes or equates names/models. Replacing any registered
+edge invalidates the ticket. Modern nested and legacy flattened budget options
+use the same effective merge: explicit keywords override nested options,
+`context_estimate` is excluded, and type-sensitive bounds apply afterward.
 
 `ExecutionEvents` claims the intended provider/execution/session/call synchronously
 **before** its existing metadata and admission awaits. Nested or inherited tasks
@@ -103,6 +113,8 @@ request after that digest was made. The existing post-admission observation poin
 is synchronous through projection and provider entry; no new await is introduced.
 Streaming claims at first iteration rather than iterator construction, and no
 capture context survives an outward yield or grants a cross-task dispatch.
+Each next/close has a temporary dispatch scope; the shared ticket's taken/valid
+state, not that temporary scope alone, prevents reuse on later iterations/retries.
 
 The cost exception is one linear encoding of the current owned request at final
 admission, not one traversal per retained budget candidate and not a raised
@@ -110,7 +122,13 @@ inspector bound. `tests/test_provider_capture.py` measures encoding calls and
 characters for small, >1M and >4M requests with four retained candidates.
 `tests/test_context_inspection_binding.py` exercises the actual native
 Core/Foundation/SelectedProvider/SurfaceProvider chain and preserves the
-post-admission mutation falsifier. No request identity or serialized ticket is
+post-admission mutation falsifier, but its manually instrumented adapter omits
+the production recovery wrapper. `tests/test_provider_capture_production.py`
+qualifies actual `install_app_access` transformation through
+`WorkRecoveringProvider`, SelectedProvider and initialized Core/Foundation,
+including immutable providers, both budget signatures and session execution.
+Earlier simplified-native evidence is not production-wiring qualification.
+No request identity or serialized ticket is
 stored in request metadata or diagnostic files. Paths without a fitted owner,
 unsupported options and missing/ambiguous fallback evidence retain honest absence
 dispositions; reading the inspector still never counts or calls a provider.
