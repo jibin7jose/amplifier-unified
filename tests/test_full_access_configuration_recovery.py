@@ -13,7 +13,7 @@ from amplifier_web.configuration_recovery import evidence
 from amplifier_web.runtime_controls import override_path
 from amplifier_web.service import AppError
 from test_queued_configuration_boundary import (
-    operation, plan, process_apply, process_boundary, recovery,
+    deferred_native_evidence, operation, plan, process_apply, process_boundary, recovery,
 )
 
 
@@ -24,7 +24,8 @@ async def refused_operation(b):
     assert b.authorized is None
     assert not b.app.configuration_authority.rows(b.owner["id"])
     await b.runtime._request(b.owner["id"], "fixture.busy", count=1)
-    assert (await process_apply(b))["phase"] == "error"
+    with deferred_native_evidence():
+        assert (await process_apply(b))["phase"] == "error"
     saved = operation(b)
     # Existing records call both grant and Full authority "grant". Recovery
     # must interpret the retained authority without migrating this request.

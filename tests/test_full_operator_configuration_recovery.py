@@ -16,7 +16,7 @@ from test_configuration_authority import finished, revoke
 from test_full_access_configuration_recovery import replace_mode
 from test_full_configuration_continuation import child, system
 from test_queued_configuration_boundary import (
-    operation, plan, process_apply, process_boundary, recovery,
+    deferred_native_evidence, operation, plan, process_apply, process_boundary, recovery,
 )
 
 
@@ -26,11 +26,12 @@ async def operator_failure(b, origin='ui', outcome='none'):
     else:
         await b.runtime._request(b.owner['id'], 'fixture.partial')
     args = {'id': b.owner['id'], 'config': plan(2)}
-    if origin == 'internal':
-        await b.app.management.command('configuration.apply', args, 'operator-apply')
-    else:
-        await b.app.dispatch('configuration.apply', args, origin=origin, command_id='operator-apply')
-    assert (await finished(b.app, 'operator-apply'))['phase'] == 'error'
+    with deferred_native_evidence():
+        if origin == 'internal':
+            await b.app.management.command('configuration.apply', args, 'operator-apply')
+        else:
+            await b.app.dispatch('configuration.apply', args, origin=origin, command_id='operator-apply')
+        assert (await finished(b.app, 'operator-apply'))['phase'] == 'error'
     saved = operation(b)
     assert saved['request']['authorization'] == origin
     assert saved['request']['authority'] is None

@@ -298,14 +298,16 @@ async def probe(root, mutant):
             and sid not in app.management.pending_config_tasks)
         record = app.management.configuration_record(sid, owner["pendingConfiguration"]["operationId"])
         assert record["request"]["authorization"] == "grant"
-        assert record["state"]["effect"] == "unknown"
+        assert record["state"]["effect"] == "none"
+        assert record["state"]["stage"] == "reconciled"
         assert owner["collaborationGeneration"]["terminal"]
         attempt = record["attempts"][0]
         assert evidence(attempt, home=home)["effect"] == "none"
         assert attempt["workerPid"] == processes[0].pid
         fault = json.loads((root / "prewrite-fault.json").read_text())
         assert fault["configurationBefore"] == digest(override_path(attempt["nativeSessionId"]))
-        assert owner["configurationBusy"] and len(record["attempts"]) == 1
+        assert not owner["configurationBusy"] and len(record["attempts"]) == 1
+        assert "configurationOperationFence" not in owner
         before_calls = calls.read_bytes()
         proof = (await action("configuration.operation.read", {"sessionId": sid,
             "operationId": record["id"]}, "native-read"))["result"]

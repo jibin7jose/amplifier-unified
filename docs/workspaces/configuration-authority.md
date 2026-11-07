@@ -357,7 +357,14 @@ for evaluating peer messages. Configuration commits recheck the captured mode
 revision; turning the mode off fences delayed changes and grants derived from it.
 
 A failed configuration operation retains its original authority, including Full
-access. The agent can reconcile native evidence and explicitly resume proven
+access. If its exact authenticated terminal native receipt proves that rejection
+occurred before any write, the error path records that no-effect result and
+releases only that operation's input fence. The original error, request and
+history remain; no settings or conversation input are retried. Missing, invalid,
+nonterminal or partial evidence keeps the operation held. Redacted credentials
+remain bound to the module's source identity; a changed source requires a fresh
+inspection rather than copying hidden values from an older full plan.
+The agent can reconcile native evidence and explicitly resume proven
 no-effect work without another permission request. Recovery checks the original
 mode revision, Stop boundary, target and exact payload again; re-enabling Full
 access does not renew an older operation. Unknown or partial effects cannot resume.

@@ -116,6 +116,8 @@ def evidence(attempt, *, home=None):
     if not path.exists():
         return None
     record = json.loads(path.read_text())
+    if not isinstance(record, dict) or not isinstance(record.get("body"), dict):
+        raise ValueError("Invalid native configuration receipt.")
     body = record["body"]
     expected = {key: value for key, value in attempt.items() if key != "key"}
     if any(body.get(key) != value for key, value in expected.items()):

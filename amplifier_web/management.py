@@ -490,7 +490,21 @@ class Management:
 
     def configuration_error(self, session, operation, error):
         try:
-            return self.configuration_transition(session, operation, phase='error', error=error)
+            from .configuration_recovery import evidence, latest_attempt
+            record = self.configuration_record(session['id'], operation)
+            changes = {}
+            if record['state']['effect'] == 'unknown':
+                try:
+                    attempt = latest_attempt(record)
+                    observed = evidence(attempt, home=self.service.data_dir) if attempt else None
+                    if observed and observed['effect'] == 'none' and observed.get('terminal') is True:
+                        # The exact native attempt finished before any write.
+                        # Retain the error, but don't require manual recovery
+                        # merely to release this operation's input fence.
+                        changes = dict(stage='reconciled', effect='none', recoveryRequired=False)
+                except (OSError, ValueError, KeyError, TypeError):
+                    pass  # Unavailable or invalid proof leaves the effect unknown.
+            return self.configuration_transition(session, operation, phase='error', error=error, **changes)
         except (OSError, ValueError, KeyError, TypeError):
             # Corrupt/missing private evidence is not an empty user grant. Keep
             # it untouched, and never clear admission based on the cached phase.
