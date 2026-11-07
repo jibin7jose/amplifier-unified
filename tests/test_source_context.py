@@ -56,6 +56,12 @@ class SourceContextTests(unittest.TestCase):
             'frontend/tests/standard-ux-completion-policy.json': 'tests',
             'docs/validation/performance.md': 'documentation',
             'docs/validation/current-followup-20261015.md': 'documentation',
+            'tests/fixtures/library-performance.md': 'documentation',
+            'tests/fixtures/canonical_model_catalog_candidate.json': 'tests',
+            'tests/fixtures/model_catalog_accepted.json': 'tests',
+            'tests/fixtures/catalog_candidate_transports.py': 'tests',
+            'amplifier_web/device_client/extension/observed-dom.js': 'source',
+            'docs/workspaces/evidence/current-followup.json': 'documentation',
         }
         self.add(*expected)
         rows = {row['path']: row for row in selector.inventory(self.root)}
@@ -67,7 +73,13 @@ class SourceContextTests(unittest.TestCase):
 
     def test_generated_evidence_and_locks_are_opt_in_but_summary_accounts_for_them(self):
         names = ['amplifier_web/static/app.js', 'frontend/tests/standard-ux-controls.json',
-                 'frontend/tests/standard-ux-inventory.json', 'assets/branding/icon.png', 'uv.lock']
+                 'frontend/tests/standard-ux-inventory.json', 'assets/branding/icon.png', 'uv.lock',
+                 'tests/fixtures/model_catalog_candidates.json',
+                 'docs/workspaces/evidence/collaboration-fable-assets.json',
+                 'docs/workspaces/evidence/collaboration-fable-results.json',
+                 'docs/workspaces/evidence/collaboration-fable-runtime.json',
+                 'docs/workspaces/evidence/collaboration-gaps-assets.json',
+                 'docs/workspaces/evidence/collaboration-gaps-results.json']
         self.add(*names)
         default = json.loads(self.cli('--format', 'json').stdout)
         self.assertTrue(set(names).isdisjoint(row['path'] for row in default))

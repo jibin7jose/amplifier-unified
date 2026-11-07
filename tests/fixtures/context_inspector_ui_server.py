@@ -50,13 +50,22 @@ async def main(home):
         ], tools=[ToolSpec(name='read_file', description='Read a selected permitted file.', parameters={'type':'object','properties':{'path':{'type':'string'}}})])
         if scenario == 'unicode':
             value.messages[1].content = '😀' * 10000
-        if scenario != 'partial':
+        if scenario.startswith('long-list'):
+            value.messages[0].content = '\n'.join(
+                f'<context_file paths="@fixture:source-{i:02}.md → /synthetic/source-store/{"a"*64}/source-{i:02}.md">'
+                + (('Long reader line with captured evidence.\n' * 500) if i == 1 else f'Short captured source {i:02}.\nEnd of source.')
+                + '</context_file>' for i in range(60)
+            )
+        if scenario not in ('partial', 'long-list-unknown'):
             await provider.request_budget(value)
         await provider.complete(value)
         await observer.drain()
         if scenario == 'known-window-no-usage':
             latest = observer.store.index()[0]
             observer.store.finish(latest['callId'], 'completed', {})
+        if scenario == 'over-window':
+            latest = observer.store.index()[0]
+            observer.store.finish(latest['callId'], 'completed', {'inputTokens': 9000})
     await capture()
     service._publish()
     async def scenario(request):

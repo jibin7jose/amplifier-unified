@@ -26,6 +26,19 @@ matches exact files or directory prefixes, not globs. Select related tests and
 consumers as well as the changed implementation: this is not dependency closure.
 Use `--format paths --null` when passing filenames to another program.
 
+Ordinary `rg` searches do not apply Git's context attributes. After choosing the
+relevant roots, search their selected paths (this example uses GNU `xargs`):
+
+```sh
+python scripts/source_context.py --format paths --null --under frontend/src --under frontend/tests | xargs -0 -r rg -n --with-filename -- 'stateRevision'
+```
+
+`-r` prevents an empty selection from becoming an unrestricted search. Git also
+supports attribute-aware searches without `xargs`, for example
+`git grep -n 'stateRevision' -- ':(attr:source-context=source)frontend/src' ':(attr:source-context=tests)frontend/tests'`.
+Both searches keep tests alongside source; add the actual consumers and contracts
+for the changed behavior rather than treating directory selection as complete coverage.
+
 [.gitattributes](../.gitattributes) owns classification and generated-diff hints.
 The tool uses effective Git attributes, including local overrides, and index
 membership with current working-tree sizes. Stage intended new files to include
@@ -40,6 +53,12 @@ Source bootstrap files in `frontend/public` and shipped documentation in
 evidence; its maintained delta and completion-policy ledgers remain test inputs.
 Dated documents can contain current follow-ups, so documentation is not
 automatically historical. Labels select review context, never deletion candidates.
+The library-performance guide remains maintained documentation, including its
+historical comparison. Exact collaboration qualification records and the older
+reviewed-candidate manifest are opt-in evidence; the current canonical/accepted
+catalog manifests remain test inputs. A generated-looking source file without a
+reproducible provenance record, such as the device client's `observed-dom.js`,
+stays visible for source review.
 
 ## Follow the canonical boundary
 

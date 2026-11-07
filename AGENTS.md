@@ -1,8 +1,11 @@
 # Contributor operating guidance
 
-For source discovery, use the [source and ownership map](docs/source-context.md).
+Before broad source reads or searches, use the [source and ownership map](docs/source-context.md).
 `python scripts/source_context.py` summarizes tracked inputs without reading
-their bodies; select relevant owners, contracts and tests before expanding context.
+their bodies; use `--format paths` with `--under` to select relevant owners,
+contracts and tests. Ordinary `rg` does not apply these context classifications;
+use the map's selective-search examples, and expand to retained evidence or
+generated output when the task needs it.
 
 ## Assess scope and design before taking on issues or PRs
 

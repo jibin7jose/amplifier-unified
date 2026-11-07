@@ -23,7 +23,7 @@
 #amp-one :is(.a-canvas-head,.a-canvas-artifact-toolbar) svg{width:18px;height:18px;flex:none}
 #amp-one :is(.a-canvas-head,.a-canvas-artifact-toolbar) button{min-width:44px;min-height:44px}
 #amp-one.a-chat-shell .a-canvas-head>[aria-label="Focus canvas"]{display:inline-flex}
-#amp-one .a-open-documents{flex:none;display:flex;align-items:center;gap:5px;padding:8px}
+#amp-one .a-open-documents{flex:none;display:flex;align-items:center;gap:4px;padding:8px;white-space:nowrap}
 #amp-one .a-canvas-navigation-error{position:absolute;top:100%;left:8px;right:8px;z-index:3;padding:10px;border:1px solid var(--a-line);border-radius:8px;background:var(--a-bg);color:var(--a-ink);font-size:14px}
 #amp-one .a-open-documents small{font-variant-numeric:tabular-nums}
 #amp-one .a-open-documents-dialog{width:min(560px,calc(100vw - 24px));max-height:calc(100dvh - 24px);box-sizing:border-box;padding:16px;color:var(--a-ink);background:var(--a-bg);border:1px solid var(--a-line);border-radius:12px;box-shadow:0 12px 48px #0004;overflow:auto}
@@ -112,17 +112,22 @@
 /* Focus includes the genuine container toggle; do not leave it behind inert UI. */
 #amp-one.a-chat-shell .a-layout[data-pane-layout]>.a-canvas-panel[data-focused=true]{inset:var(--a-navigation-top,56px) 0 0;height:auto;max-height:none;z-index:70}
 #amp-one:has(.a-canvas-panel[data-focused=true]) .a-work-header{position:relative;z-index:71}
-@container canvas (max-width:700px){
- #amp-one .a-open-documents>span,#amp-one .a-canvas-common-actions .a-icon>span,#amp-one .a-canvas-details>span{display:none}
+@container canvas (max-width:1000px){
+ #amp-one .a-open-documents>span,#amp-one .a-canvas-dismiss>span,#amp-one .a-canvas-common-actions .a-icon>span,#amp-one .a-canvas-details>span{display:none}
  #amp-one .a-canvas-document-entry{max-width:180px}
 }
-/* Keep named dismissal and full tab/close hit targets at narrow pane widths.
-   This is still one document navigation strip, not a second navigation owner. */
+/* A single row, even in a narrow split. Named 44px controls remain accessible.
+   On the smallest panes closing an individual tab lives in Open documents;
+   hiding that duplicate affords the selected document a readable label. */
 @container canvas (max-width:600px){
- #amp-one.a-approachable-shell .a-canvas-panel[data-focused] .a-canvas-head{display:grid;grid-template-columns:1fr 44px auto;height:auto;min-height:100px}
- #amp-one .a-canvas-navigation{grid-column:1 / -1}
- #amp-one .a-open-documents{justify-self:start}
- #amp-one .a-open-documents>span{display:inline}
+ #amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger{width:44px;padding:12px}
+ #amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger>span{display:none}
+ #amp-one .a-canvas-document-tabs{padding-left:0}
+ #amp-one .a-canvas-document-entry{max-width:100%}
+ #amp-one .a-canvas-document-tab{padding:8px;gap:4px}
+ #amp-one .a-canvas-tab-close{display:none}
+ #amp-one .a-canvas-document-tab>svg{display:none}
+ #amp-one .a-open-documents{padding:8px 4px}
 }
 @container canvas (max-width:380px){
  #amp-one .a-canvas-artifact-toolbar>strong{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
