@@ -41,6 +41,18 @@ React and the public `useShellComponent(React, host)` helper. Bundle dependencie
 into one ESM artifact; do not import private frontend implementation files.
 See [the independent example](../../examples/shell-controls/README.md).
 
+On Linux/macOS, check the package boundary with `node scripts/qualify_shell_sdk.mjs`. It packs
+the SDK, installs it into a disposable consumer outside the checkout, builds the
+actual controls example and checks that its only bundled dependency is the SDK.
+The resulting `output/shell-sdk-proof` holds the tarball, component and receipt;
+temporary dependencies are removed. This is a package check, not host acceptance.
+Inside an owned test environment, set `AMPLIFIER_SHELL_COMPONENT_PACKAGE` to that
+output directory when running `frontend/tests/shell-components-browser.mjs` to
+exercise the same installed artifact through real host validation, preview/apply,
+dirty-edit deferral, stale callbacks and recovery. The fixture also rejects an
+unsupported API revision. Registry publication and repository extraction remain
+separate delivery steps.
+
 This profile remains **trusted same-origin code**. Capability checks constrain
 SDK operations, not arbitrary native JavaScript. Compatibility validation is
 not a security audit or an isolation boundary. Do not load untrusted code with

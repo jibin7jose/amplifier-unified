@@ -30,9 +30,11 @@ try{
  await page.getByRole('textbox',{name:'Message Amplifier'}).fill('Draft survives contribution changes');
  await page.waitForFunction(()=>window.amplifier.getState().view.draft==='Draft survives contribution changes');
  await page.evaluate(()=>{window.componentProof={root:document.getElementById('amp-one'),composer:document.querySelector('[aria-label="Message Amplifier"]'),viewer:document.querySelector('.a-canvas-viewer iframe'),session:window.amplifier.getState().selectedSessionId}});
- await import('../scripts/build-shell-controls-example.mjs');
- const manifest=JSON.parse(await readFile(root+'examples/shell-controls/dist/manifest.json','utf8'));
- const source=await readFile(root+'examples/shell-controls/dist/module.mjs','utf8');
+ const componentDirectory=process.env.AMPLIFIER_SHELL_COMPONENT_PACKAGE||root+'examples/shell-controls/dist';
+ if(!process.env.AMPLIFIER_SHELL_COMPONENT_PACKAGE)await import('../scripts/build-shell-controls-example.mjs');
+ const manifest=JSON.parse(await readFile(componentDirectory+'/manifest.json','utf8'));
+ const source=await readFile(componentDirectory+'/module.mjs','utf8');
+ await assert.rejects(()=>action('shell.packages.stage',{manifest:{...manifest,apiVersion:'99.0'},source}),/'1\.0' was expected/);
  const staged=await action('shell.packages.stage',{manifest,source});const digest=staged.result.digest;
  const validation=await action('shell.packages.validate',{digest});assert.equal(validation.result.status,'passed',JSON.stringify(validation));
  const original=(await inspect()).composition,composition=structuredClone(original);

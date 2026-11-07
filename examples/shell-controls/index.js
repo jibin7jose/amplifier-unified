@@ -1,4 +1,4 @@
-import {defineModule,useShellComponent} from '../../packages/shell-sdk/index.js';
+import {defineModule,useShellComponent} from '@amplifier/shell-sdk';
 
 export default defineModule(({React})=>{
  const h=React.createElement;

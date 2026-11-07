@@ -59,10 +59,19 @@ exclude = ["/.ci/**"]
 "context" = "amplifier_web/bundle_data/context"
 "skills" = "amplifier_web/bundle_data/skills"
 "docs/shell" = "amplifier_web/bundle_data/docs/shell"
-"packages/shell-sdk" = "amplifier_web/bundle_data/packages/shell-sdk"
+# Bound independently buildable packages: local dependencies and artifacts never ship.
+"packages/shell-sdk/index.js" = "amplifier_web/bundle_data/packages/shell-sdk/index.js"
+"packages/shell-sdk/index.d.ts" = "amplifier_web/bundle_data/packages/shell-sdk/index.d.ts"
+"packages/shell-sdk/package.json" = "amplifier_web/bundle_data/packages/shell-sdk/package.json"
+"packages/shell-sdk/README.md" = "amplifier_web/bundle_data/packages/shell-sdk/README.md"
+"packages/shell-sdk/LICENSE" = "amplifier_web/bundle_data/packages/shell-sdk/LICENSE"
 "examples/shell-navigator" = "amplifier_web/bundle_data/examples/shell-navigator"
 "examples/shell-reader" = "amplifier_web/bundle_data/examples/shell-reader"
-"examples/shell-controls" = "amplifier_web/bundle_data/examples/shell-controls"
+"examples/shell-controls/index.js" = "amplifier_web/bundle_data/examples/shell-controls/index.js"
+"examples/shell-controls/manifest.json" = "amplifier_web/bundle_data/examples/shell-controls/manifest.json"
+"examples/shell-controls/README.md" = "amplifier_web/bundle_data/examples/shell-controls/README.md"
+"examples/shell-controls/package.json" = "amplifier_web/bundle_data/examples/shell-controls/package.json"
+"examples/shell-controls/build.mjs" = "amplifier_web/bundle_data/examples/shell-controls/build.mjs"
 
 [tool.uv]
 # Core publishes native wheels; never compile it while installing this app.
