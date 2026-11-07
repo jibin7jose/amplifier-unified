@@ -264,15 +264,21 @@ def test_local_customization_does_not_mask_available_updates_or_invalid_graph(tm
 
 async def test_inspection_fence_quietly_waits_through_ten_actual_automatic_ticks(tmp_path,monkeypatch):
     from amplifier_web.updates import UpdateManager
+    import time
     m,_,_,_=mounted_fixture(tmp_path,monkeypatch)
     m.service.state['settings']={'updates':{'autoInstall':True,'autoCheck':True}}
-    m.service.state['updates'].update(phase='available',available=1)
+    m.service.state['updates'].update(phase='available',available=1,lastCheck=time.time(),
+                                    adoption={'activeWorkers':0,'pendingWorkers':0})
     m.diagnostics.state['batch']={'retry':{'mode':'inspect'}}
     m.awaiting_restart=lambda:False
+    m.lock=asyncio.Lock();m.cleanup_task=None;m._storage_last_pass=time.time()
+    m.service.runtime=SimpleNamespace(generation_usage=lambda:[])
+    m.requires_idle=lambda state:False
     # Any further work is a defect: tick must wait before checks/staging or its
     # exception handler can create another background-update failure.
     async def forbidden(*a,**kw):pytest.fail('automatic retry work')
-    m.check=m.install=m.publish=forbidden
+    m.check=m.publish=forbidden
+    m.install=lambda **kw:UpdateManager.install(m,**kw)
     before=copy.deepcopy(m.service.state)
     for _ in range(10):await UpdateManager.tick(m)
     assert m.service.state==before
