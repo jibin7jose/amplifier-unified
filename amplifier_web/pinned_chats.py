@@ -5,7 +5,7 @@ import time
 
 
 def update(service, args, command_id, fingerprint, origin, *, include_state):
-    from .service import AppError
+    from .errors import AppError
     from .session_navigation import is_top_level
     from .state_records import save
     from .pinned_navigation import ordered_ids, keep_order

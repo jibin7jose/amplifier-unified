@@ -351,6 +351,41 @@ async def test_initialization_failure_keeps_cleanup_ownership_before_session_ret
     assert h.path.read_bytes() == before
 
 
+async def test_root_routing_observes_isolated_decision_accounts_before_mount(mounted_host, monkeypatch):
+    from amplifier_web import decision_accounts, provider_isolation
+    from amplifier_web.host import model_selection
+
+    h = mounted_host
+    phases = []
+    async def isolate(session):
+        assert session is h.session
+        phases.append("isolated")
+    async def accounts_ready(session):
+        assert session is h.session and phases == ["isolated"]
+        phases.append("accounts")
+    async def route(session, *, automatic):
+        assert session is h.session and automatic is True
+        assert phases == ["isolated", "accounts"]
+        phases.append("routed")
+    adapter = SimpleNamespace(plan=h.prepared.mount_plan, aliases={}, records=["account"], failures=[],
+                              before_initialize=accounts_ready, require_complete=Mock())
+    monkeypatch.setattr(decision_accounts, "DecisionAccounts", lambda *args: adapter)
+    monkeypatch.setattr(provider_isolation.ProviderIsolation, "before_initialize", lambda self, session: isolate(session))
+    monkeypatch.setattr(model_selection, "prepare_default_routing", route)
+    h.loaded.hooks = [{"module": "hooks-routing"}]
+    h.loaded._host_automatic_routing = True
+    async def create(**kwargs):
+        await kwargs["before_initialize"](h.session)
+        assert phases == ["isolated", "accounts", "routed"]
+        adapter.require_complete.assert_not_called()
+        return h.session
+    h.prepared.create_session.side_effect = create
+
+    await h.prepare()
+    adapter.require_complete.assert_called_once_with()
+    h.session.execute.assert_not_called()
+
+
 async def test_native_only_resume_keeps_complete_history_and_repairs_receipt_without_replay(mounted_host):
     h = mounted_host
     rows = [{"role": "user", "content": "first"}, {"role": "assistant", "content": "answer"},

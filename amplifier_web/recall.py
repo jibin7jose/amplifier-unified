@@ -286,7 +286,7 @@ class Recall:
         return {'accepted': True, 'result': result}
 
     async def dispatch(self, action, args, origin, command_id=None, caller=None):
-        from .service import AppError
+        from .errors import AppError
         from .owned_history import selected, require
         try:
             if action in {'memory.configure', 'memory.create', 'memory.update', 'memory.delete'}:

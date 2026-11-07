@@ -26,7 +26,7 @@ def accepts(service, session):
 def select(service, session, command_id, fingerprint, *, include_state):
     from .managed_chats import is_managed
     from .workspace_navigation import NAV_KEYS
-    from .service import AppError
+    from .errors import AppError
     if session.get('_deleting'):
         raise AppError('This chat is being deleted. No new work was started.', 409)
     identity = service.clients.current.get()

@@ -61,7 +61,7 @@ def command_admission(request):
 
     def check():
         if devices.identify(token) != identity:
-            from .service import AppError
+            from .errors import AppError
             raise AppError('Device access was removed before this command was accepted.', 403)
     return check
 

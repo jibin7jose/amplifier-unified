@@ -20,7 +20,7 @@ def connected_clients(service, session_id):
 
 
 def target(service, session_id, client_id=None, *, required=False, allow_detached=False, connected_only=False):
-    from .service import AppError
+    from .errors import AppError
     sid, workspace_id = scope(service, session_id, required=False)
 
     def matches(record):
@@ -68,7 +68,7 @@ def target(service, session_id, client_id=None, *, required=False, allow_detache
 
 
 def selection_target(service, session_id, args):
-    from .service import AppError
+    from .errors import AppError
     sid, workspace_id = scope(service, session_id)
     artifact = next((row for row in service._state.get('canvasArtifacts', [])
                      if row['id'] == args.get('id')), None)

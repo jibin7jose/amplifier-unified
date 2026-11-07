@@ -15,7 +15,7 @@ MAX_TOOLS = 500
 def definitions(service, binding):
     tools = service.smart_tools.schemas.get(binding['serverId'], [])
     if len(tools) > MAX_TOOLS or len(json.dumps(tools).encode()) > MAX_DEFINITION_BYTES:
-        from .service import AppError
+        from .errors import AppError
         raise AppError('This tool contract exceeds the bounded review size.', 409)
     by_name = {tool['name']: tool for tool in tools}
     launcher = by_name.get(binding['tool'])
@@ -32,7 +32,7 @@ def capture(service, binding):
 
 
 def _guard(service, args):
-    from .service import AppError
+    from .errors import AppError
     canvas, row = saved(service, args['canvasId'])
     binding = canvas['mcp']
     if canvas.get('readOnlyVersion'):
@@ -78,7 +78,7 @@ async def prepare(service, args):
         catalog_revision = server.get('catalogRevision')
     app = await service.smart_tools.read_app(binding['serverId'], binding['resourceUri'])
     async with service.lock:
-        from .service import AppError
+        from .errors import AppError
         canvas, row, server, latest = _guard(service, args)
         now = (canvas['id'], canvas.get('revision', 1), canvas.get('selectedVersion'),
                service.clients.current.get(), service.clients.selection_revision(service.clients.current.get()) if service.clients.current.get() else None)
@@ -133,7 +133,7 @@ async def review(service, args):
 
 
 async def apply(service, args):
-    from .service import AppError
+    from .errors import AppError
     from .canvas_library import remember
     from .resource_files import put
     from .mcp_view_recovery import contract

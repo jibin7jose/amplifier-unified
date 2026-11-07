@@ -302,7 +302,7 @@ def saved_policy(service, sid):
 
 
 async def dispatch(service, operation, args, origin, command_id, include_state):
-    from .service import AppError
+    from .errors import AppError
     import uuid
     sid = args['sessionId']
     await service.history.ensure_loaded(sid)
@@ -365,7 +365,7 @@ def fresh_human_input(service, session, row, denial):
 
 async def admission(service, session_id, args, *, guard=None, queue_turn=None, on_wait=None, before_reserve=None):
     """Private worker-to-host gate; model actions cannot supply accounting data."""
-    from .service import AppError
+    from .errors import AppError
     async with service.lock:
         session = service._session(session_id)
         row = copy.deepcopy(args.get('call', {}))

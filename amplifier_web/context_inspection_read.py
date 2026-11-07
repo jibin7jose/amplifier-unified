@@ -15,7 +15,7 @@ def definitions(schema, string):
 
 async def read(service, args):
     from .session_files import capture_dir
-    from .service import AppError
+    from .errors import AppError
     session = service._session(args['sessionId'], hydrate=False)
     identity = session.get('runtimeSessionId') or session.get('nativeIdentity') or session['id']
     workspace = session.get('workspace')

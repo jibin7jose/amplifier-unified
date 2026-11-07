@@ -5,7 +5,7 @@ import asyncio
 import json
 from aiohttp import web
 
-from .service import AppError
+from .errors import AppError
 from .auth import with_history_scope
 
 

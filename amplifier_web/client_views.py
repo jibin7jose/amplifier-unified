@@ -64,12 +64,12 @@ class ClientViews:
     @staticmethod
     def validate(identity):
         if not isinstance(identity, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", identity):
-            from .service import AppError
+            from .errors import AppError
             raise AppError("Choose a valid client ID.")
         return identity
 
     def attach(self, identity, resume=None, kind="web", *, device=None):
-        from .service import AppError
+        from .errors import AppError
         self.validate(identity)
         if kind not in {"web", "tui", "native", "api"}:
             raise AppError("Unsupported client kind.")
@@ -248,7 +248,7 @@ class ClientViews:
         if identity is not None:
             self.validate(identity)
             if identity not in self.records:
-                from .service import AppError
+                from .errors import AppError
                 raise AppError("Attach this client before using the session service.", 409, code="client_not_attached")
             self.reconcile(identity)
         token = self.current.set(identity)
@@ -278,7 +278,7 @@ class ClientViews:
             document = None
             if previous and text:
                 if not text.startswith(old_text):
-                    from .service import AppError
+                    from .errors import AppError
                     raise AppError('Quoted content was kept. Edit its commentary in the composer.', 409)
                 document = copy.deepcopy(previous)
                 if text != old_text:
@@ -297,7 +297,7 @@ class ClientViews:
         record = self.record()
         if record is None:
             if session is None:
-                from .service import AppError
+                from .errors import AppError
                 raise AppError('Attach a client to add files before starting a chat.')
             return session.setdefault("draftAttachments", [])
         return record.setdefault("attachments", {}).setdefault(session["id"] if session else "", [])
@@ -327,7 +327,7 @@ class ClientViews:
     def attachment_target(self, target, expected_draft_id):
         if expected_draft_id is None:
             return target  # Public explicit-chat API retains its existing contract.
-        from .service import AppError
+        from .errors import AppError
         record = self.record()
         if record is None or target is not None:
             raise AppError('This upload is not bound to an unnamed draft.', 409)

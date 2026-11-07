@@ -93,7 +93,7 @@ class ConfigurationAuthority:
         service.db.commit()
 
     def error(self, text, status=403):
-        from .service import AppError
+        from .errors import AppError
         raise AppError(text, status)
 
     async def notify_waiter(self, grant, *, dismissal=False):
@@ -433,7 +433,7 @@ class ConfigurationAuthority:
                     'origin': origin, 'runtimeSessionId': PRINCIPAL.get(),
                     'generationId': binding.get('_generationId'),
                     'inputIds': input_ids, 'inputCoverage': 'complete' if input_ids else 'unavailable'}
-        from .service import AppError
+        from .errors import AppError
         grant, peer_grants, failure = None, [], None
         for candidate in self.eligible(source):
             if effect not in candidate['effects'] or scope not in candidate['scopes'] or not self.valid(candidate, source):

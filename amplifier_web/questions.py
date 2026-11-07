@@ -55,7 +55,7 @@ class QuestionStore:
         self.version += 1
 
     def get(self, session_id, identity):
-        from .service import AppError
+        from .errors import AppError
         row = self.db.execute("SELECT value FROM questions WHERE id=? AND session_id=?", (identity, session_id)).fetchone()
         if row is None:
             raise AppError("This question does not belong to that conversation.", 404)
@@ -96,7 +96,7 @@ class Questions:
 
     def for_input(self, session_id, input_id):
         """Find one immutable answer by its exact session/input binding."""
-        from .service import AppError
+        from .errors import AppError
         if not isinstance(input_id, str) or not input_id.startswith("question:") or not input_id.endswith(":answer"):
             return None
         identity = input_id[len("question:"):-len(":answer")]
@@ -178,14 +178,14 @@ class Questions:
         The caller decides which operation depends on a question. A cancelled
         or superseded question never releases that dependency by itself.
         """
-        from .service import AppError
+        from .errors import AppError
         record = self.store.get(session_id, question_id)
         if record["status"] != "answered":
             raise AppError("The dependent work needs an explicit answer to this question.", 409, code="question_unanswered")
         return copy.deepcopy(record["answer"])
 
     def _new(self, args, origin, client_id):
-        from .service import AppError
+        from .errors import AppError
         prompt, dependency = args["prompt"], args["dependency"]
         options = copy.deepcopy(args.get("options", []))
         if not prompt.strip() or not dependency.strip():
@@ -206,7 +206,7 @@ class Questions:
     def _artifacts(self, session_id, references):
         """Freeze bounded metadata, never copy a body or infer access from a URL."""
         from .canvas_versions import definition
-        from .service import AppError
+        from .errors import AppError
         result, seen = [], set()
         for ref in references:
             key = (ref["id"], ref["version"])
@@ -227,7 +227,7 @@ class Questions:
 
     def review_artifact(self, session_id, question_id, question_revision, artifact_id, version):
         """Validate the immutable question binding on every preview resource read."""
-        from .service import AppError
+        from .errors import AppError
         record = self.store.get(session_id, question_id)
         if record.get("contentRevision", 1) != question_revision:
             raise AppError("This question revision does not match the saved review.", 409)
@@ -249,7 +249,7 @@ class Questions:
         """
         from .collaboration import PROTOCOL
         from .peer_scope import participant_matches
-        from .service import AppError
+        from .errors import AppError
 
         source_session, request = session, None
         if args.get('sourceRequestId'):
@@ -288,7 +288,7 @@ class Questions:
         return source, source_session['id']
 
     def dispatch(self, action, args, origin, client_id, pending):
-        from .service import AppError
+        from .errors import AppError
         app = self.app
         session = app._session(args["sessionId"])
         if action == "question.create":
@@ -357,7 +357,7 @@ class Questions:
         return copy.deepcopy(record)
 
     async def deliver(self, session, text, input_id, previous_activity, question_id):
-        from .service import AppError
+        from .errors import AppError
         status, message = "accepted", None
         cancelled = False
         try:

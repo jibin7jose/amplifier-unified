@@ -132,7 +132,7 @@ def write(app, policy):
 
 
 async def dispatch(app, action, args, authority):
-    from .service import AppError
+    from .errors import AppError
     try:
         async with app.lock:
             if action.startswith('testing.machine.'):

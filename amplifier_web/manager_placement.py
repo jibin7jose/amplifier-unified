@@ -11,7 +11,7 @@ def task_binding(app, session):
 
 
 def member(app, source, target):
-    from .service import AppError
+    from .errors import AppError
     assignment = app.assignments.current(source)
     membership = (assignment or {}).get('members', {}).get(target['id'], {})
     if (assignment and assignment['status'] == 'active'

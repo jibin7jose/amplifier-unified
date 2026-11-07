@@ -68,7 +68,7 @@ def read_removal(app, args, origin, caller, *, listing=False):
     """
     from . import task_resources as storage
     from .collaboration import BINDING, PRINCIPAL
-    from .service import AppError
+    from .errors import AppError
 
     def root_binding():
         sid = args['sessionId']

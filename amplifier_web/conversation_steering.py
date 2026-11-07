@@ -40,7 +40,7 @@ def recover_failed_generation(service, session, boundary):
 
 
 def target(session, expected=None, allow_next_turn=False):
-    from .service import AppError
+    from .errors import AppError
     active = session.get('collaborationGeneration') or {}
     identity = active.get('id') if not active.get('terminal') else None
     if (allow_next_turn and expected is not None and active.get('id') == expected

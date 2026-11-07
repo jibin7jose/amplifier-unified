@@ -41,7 +41,7 @@ def definitions(schema, string):
 
 
 def _open(service, page='ai-connections', surface=None):
-    from .service import AppError
+    from .errors import AppError
     state = service.state
     current = settings_state(state)['surface']
     surface = surface or (current if current != 'closed' else 'canvas' if state.get('selectedSessionId') else 'dialog')
@@ -60,7 +60,7 @@ def _open(service, page='ai-connections', surface=None):
 
 def command(service, action, args, pending, command_id):
     """Called under dispatch's lock, after authorization and command replay."""
-    from .service import AppError
+    from .errors import AppError
     state, view = service.state, service.state['view']
     if action == 'settings.connection.services':
         return {'services': services(), 'kind': 'supported-services', 'savedConnections': False}

@@ -1,6 +1,6 @@
 """Temporary preview adapter. Public clients use the observation resources."""
 from .auth import data_identity
-from .service import AppError
+from .errors import AppError
 
 
 def snapshot(service, observations, params):

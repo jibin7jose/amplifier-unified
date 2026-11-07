@@ -272,7 +272,7 @@ async def _collect(app, args, origin, identity, digest, captured, files):
 
 
 async def dispatch(app, action, args, origin, command_id, caller):
-    from .service import AppError
+    from .errors import AppError
     try:
         sid = args['sessionId']
         identity = command_id or str(uuid.uuid4())

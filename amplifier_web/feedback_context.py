@@ -23,7 +23,7 @@ def capture(service, origin, caller):
 
 def check(service, authority):
     """Accepted background delivery outlives a turn, but never its Stop boundary."""
-    from .service import AppError
+    from .errors import AppError
     source = service._session(authority['sessionId'], hydrate=False)
     if (not service.access_mode.full(source, authority['accessRevision'])
             or source['workspace'] != authority['workspace']

@@ -153,7 +153,7 @@ class Feedback:
         """Local-only staging; identical accepted add retries never resurrect removals."""
         if args.get("feedbackId"):
             return self.additions.stage(action, args, origin, caller)
-        from .service import AppError
+        from .errors import AppError
         if action == 'feedback.attachment.add':
             previous = self.service.db.execute('SELECT fingerprint,metadata FROM feedback_attachments WHERE request_id=?', (args['requestId'],)).fetchone()
             if previous:
@@ -270,7 +270,7 @@ class Feedback:
 
     def accept(self, args, origin=None, caller=None):
         """Called under service.lock, committed with the shared action receipt."""
-        from .service import AppError
+        from .errors import AppError
         args = copy.deepcopy(args)
         if not args["title"].strip() or not args["body"].strip():
             raise AppError("Enter a title and feedback before sending.")

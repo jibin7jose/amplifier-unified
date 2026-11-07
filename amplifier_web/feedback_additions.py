@@ -101,7 +101,7 @@ class Additions:
                 self.store(identity, receipt)
 
     def client(self):
-        from .service import AppError
+        from .errors import AppError
         client = self.service.clients.current.get()
         if not client:
             raise AppError("Attach the intended browser before staging or reviewing follow-up files.", 409)
@@ -153,7 +153,7 @@ class Additions:
 
     def operation(self, identity, *, review_only=False):
         """Return a canonically bound operation, not a guessed receipt ID."""
-        from .service import AppError
+        from .errors import AppError
         raw = self.service.db.execute(
             "SELECT fingerprint,payload,receipt FROM feedback_followups WHERE id=?", (identity,)).fetchone()
         if not raw:
@@ -397,7 +397,7 @@ class Additions:
         return [(row, transport.read_verified(self.service.data_dir, row)) for row in rows]
 
     def stage(self, action, args, origin=None, caller=None):
-        from .service import AppError
+        from .errors import AppError
         previous = self.service.db.execute('SELECT fingerprint,metadata FROM feedback_attachments WHERE request_id=?',
             (args['requestId'],)).fetchone() if action == 'feedback.attachment.add' else None
         client = self.scope(origin, caller, conversation=bool(previous and json.loads(previous[1]).get('_sessionId')))
@@ -500,7 +500,7 @@ class Additions:
                 "attachmentRecovery": recovery}
 
     def accept(self, action, args, origin, caller=None):
-        from .service import AppError
+        from .errors import AppError
         previous = self.service.db.execute('SELECT fingerprint,receipt FROM feedback_followups WHERE id=?',
             (args['requestId'],)).fetchone()
         addition = None

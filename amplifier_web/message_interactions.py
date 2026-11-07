@@ -35,7 +35,7 @@ def definitions(schema, string):
 
 
 def message(session, identity):
-    from .service import AppError
+    from .errors import AppError
     row = next((m for m in session.get('messages', []) if m.get('id') == identity or m.get('nativeMessageId') == identity), None)
     if row is None or row.get('role') not in {'user', 'assistant'} or row.get('observation'):
         raise AppError('The original message is not available in this chat. Load earlier history if needed; its saved quote is still available.', 404)
@@ -44,7 +44,7 @@ def message(session, identity):
 
 def reconcile_native_reveal(session, native):
     """Attach a canonical alias only to an exact index or observed generation."""
-    from .service import AppError
+    from .errors import AppError
     from amplifier_operations.coordination import fingerprint
     indexed = [row for row in session["messages"] if row.get("nativeIndex") == native["nativeIndex"]]
     if indexed:
@@ -77,7 +77,7 @@ def reconcile_native_reveal(session, native):
 
 def _selection_spans(selection, digest, text_length):
     """Validate raw code-point intervals; canonicalize only adjacent spans."""
-    from .service import AppError
+    from .errors import AppError
     if (not isinstance(selection, dict) or set(selection) not in (
             {'sourceDigest', 'start', 'end'}, {'sourceDigest', 'spans'})):
         raise AppError('Choose either sourceDigest with start/end or sourceDigest with spans.')
@@ -105,7 +105,7 @@ def _selection_spans(selection, digest, text_length):
 
 
 def command(service, action, args, *, origin="ui"):
-    from .service import AppError
+    from .errors import AppError
     session = service._session(args['sessionId'])
     if action == 'message.reaction':
         row = message(session, args['messageId'])
@@ -189,7 +189,7 @@ def command(service, action, args, *, origin="ui"):
 
 
 def resolve_quote(session, identity):
-    from .service import AppError
+    from .errors import AppError
     if identity is None:
         return None
     quote = session.get('messageQuotes', {}).get(identity)
@@ -200,7 +200,7 @@ def resolve_quote(session, identity):
 
 def _commentary_content(content):
     """Bound existing editor JSON; it can never contain attributed references."""
-    from .service import AppError
+    from .errors import AppError
     allowed = {'paragraph', 'blockquote', 'horizontal_rule', 'heading', 'code_block',
                'ordered_list', 'bullet_list', 'list_item', 'text', 'image', 'hard_break'}
     count = 0
@@ -243,7 +243,7 @@ def _commentary_content(content):
 
 def _draft_commentary_content(content):
     """Validate a lossless, inert editor checkpoint, not a send-time document."""
-    from .service import AppError
+    from .errors import AppError
     blocks = {'paragraph', 'blockquote', 'horizontal_rule', 'heading', 'code_block',
               'ordered_list', 'bullet_list', 'table', 'markdown_source'}
     inline = {'text', 'image', 'hard_break'}
@@ -344,7 +344,7 @@ def _draft_commentary_content(content):
 
 def resolve_document(session, document, *, draft=False):
     """Resolve canonical quotes; expanded editor JSON is private draft-only."""
-    from .service import AppError
+    from .errors import AppError
     if document is None:
         return None
     if (not isinstance(document, dict) or set(document) != {'version', 'segments'}

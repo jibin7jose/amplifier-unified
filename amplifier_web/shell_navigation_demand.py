@@ -11,7 +11,7 @@ NAVIGATION_RESOURCES = frozenset({
 
 def parse_navigation_resources(value):
     """Require a bounded HTTP JSON array before constructing navigation."""
-    from .service import AppError
+    from .errors import AppError
     if not isinstance(value, str) or len(value) > 4096:
         raise AppError('Invalid navigation resources.', 400)
     try:

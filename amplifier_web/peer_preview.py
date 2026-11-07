@@ -20,7 +20,7 @@ class PeerPreview:
         return self.service.history.windows
 
     def _target(self, identity, parent, receipt):
-        from .service import AppError
+        from .errors import AppError
         target = self.service.directory.resolve(identity)
         if (not target or target.get('sessionKind', 'root') != 'root'
                 or not participant_matches(receipt, parent) or not participant_matches(receipt, target)
@@ -48,7 +48,7 @@ class PeerPreview:
         client = self.service.clients.record()
         if not client or client.get('kind') != 'web' or client.get('selectedSessionId') != parent['id']:
             return None
-        from .service import AppError
+        from .errors import AppError
         try:
             parent = self.service._session(parent['id'], hydrate=False)
             target = self._target(receipt['senderSessionId'], parent, receipt)
@@ -63,7 +63,7 @@ class PeerPreview:
                 'delivery': receipt.get('delivery', 'unknown')}
 
     def guard(self, proof, *, parent_id=None):
-        from .service import AppError
+        from .errors import AppError
         client = self.service.clients.record()
         try:
             value = self.windows.reader._parse(proof)
@@ -98,7 +98,7 @@ class PeerPreview:
         return value, target
 
     def open(self, args, origin):
-        from .service import AppError
+        from .errors import AppError
         if origin != 'ui':
             raise AppError('A source preview requires a browser click.', 403)
         _, target = self.guard(args['proof'], parent_id=args['sourceSessionId'])
@@ -135,7 +135,7 @@ class PeerPreview:
         async with self.service.lock:
             _, target = self.guard(args['peerPreview'])
             if target['id'] != args.get('sessionId'):
-                from .service import AppError
+                from .errors import AppError
                 raise AppError('The field belongs to another source.', 403)
         result = await self.windows.read_text(target['id'], args)
         async with self.service.lock:
@@ -143,7 +143,7 @@ class PeerPreview:
         return result
 
     def select(self, args, origin):
-        from .service import AppError
+        from .errors import AppError
         if origin != 'ui':
             raise AppError('Open chat requires a browser click.', 403)
         _, target = self.guard(args['peerPreview']['proof'], parent_id=args['peerPreview']['sourceSessionId'])

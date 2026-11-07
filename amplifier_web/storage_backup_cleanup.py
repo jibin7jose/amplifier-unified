@@ -26,7 +26,7 @@ def candidates(home):
 
 
 async def dispatch(app, action, args):
-    from .service import AppError
+    from .errors import AppError
     from .storage_usage import _remove
     try:
         async with app.lock:

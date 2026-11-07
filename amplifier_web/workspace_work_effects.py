@@ -98,7 +98,7 @@ def guard(service, action, arguments, origin, caller, *, final=False):
     request = APP_EFFECT.get()
     if request is None or origin != 'agent':
         return
-    from .service import AppError
+    from .errors import AppError
     if caller != request['sessionId']:
         raise AppError('Work effect calling root changed.', 409)
     query = {key: copy.deepcopy(request[key]) for key in ('toolName', 'toolInput', 'toolCallId')}
@@ -164,7 +164,7 @@ def applicability(invocation, target):
 
 def check(invocation, sid, args):
     """Return a current Work precondition only; no I/O, admission, or permission."""
-    from .service import AppError
+    from .errors import AppError
     if (set(args) != {'toolName', 'toolInput', 'toolCallId'}
             or not isinstance(args['toolName'], str) or not 1 <= len(args['toolName']) <= 200
             or not isinstance(args['toolInput'], dict)

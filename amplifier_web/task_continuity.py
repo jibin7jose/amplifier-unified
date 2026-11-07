@@ -729,7 +729,7 @@ def _public_unavailable(reason):
 
 async def dispatch(service, operation, args, origin, command_id, include_state, *, guard=None):
     """Shared UI/agent path. Worker owns CAS and persists before acknowledging."""
-    from .service import AppError
+    from .errors import AppError
     sid = args["sessionId"]
     if operation == "task.waitForUpdate":
         from .update_drain import wait_for_update

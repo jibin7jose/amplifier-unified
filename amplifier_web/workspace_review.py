@@ -89,7 +89,7 @@ def _chat(directory, row, live):
 
 
 def review(app, args, origin, caller):
-    from .service import AppError
+    from .errors import AppError
     if origin not in {'ui', 'user'} and (not caller or args['sessionId'] != caller):
         raise AppError('Review work from the calling conversation.', 403)
     residents = {row['id']: row for row in app.state['sessions']}

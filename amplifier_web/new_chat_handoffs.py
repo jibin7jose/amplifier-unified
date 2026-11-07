@@ -73,7 +73,7 @@ class NewChatHandoffs:
 
     @staticmethod
     def error(message, status=409):
-        from .service import AppError
+        from .errors import AppError
         raise AppError(message, status)
 
     def load(self, identity):
@@ -311,7 +311,7 @@ class NewChatHandoffs:
 
     def input_guard(self, sid, input_id):
         """Recheck accepted Full work at native preparation/transport, without replay."""
-        from .service import AppError
+        from .errors import AppError
         from .runtime import RuntimeStartupError
         found = self.service.db.execute(
             "SELECT value FROM new_chat_handoffs WHERE json_extract(value,'$.inputId')=?", (input_id,)).fetchone()
@@ -522,7 +522,7 @@ class NewChatHandoffs:
 
     def record_failure(self, row, exc):
         from .message_delivery import find_message
-        from .service import AppError
+        from .errors import AppError
         create = self.service.db.execute("SELECT receipt FROM commands WHERE id=?", (row["createCommandId"],)).fetchone()
         if create:
             row["creation"] = "created"

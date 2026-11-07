@@ -78,7 +78,7 @@ def commands():
 
 async def command(shell, client, instance, args, origin, command_id):
     """Small semantic operations; raw view patches never escape module state."""
-    from .service import AppError
+    from .errors import AppError
     from jsonschema import validate, ValidationError
     from .shell_modules import COMPOSITION
     action, values = args['action'], args.get('args', {})

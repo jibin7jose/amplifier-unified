@@ -1167,26 +1167,20 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
     catalog_keys=mounted_catalog_keys(config.home,config.workspace,prepared.mount_plan.get('providers',[]),catalog_sources)
     connection_keys=mounted_catalog_keys(config.home,config.workspace,prepared.mount_plan.get('providers',[]),catalog_sources,binding=True)
     try:
+        from .initialization import initialization_hooks
         from .model_selection import prepare_default_routing
-        routing_policy = ({"before_initialize": partial(
-            prepare_default_routing, automatic=getattr(loaded, "_host_automatic_routing", False))}
-                          if not snapshot and any(row.get("module") == "hooks-routing" for row in loaded.hooks) else {})
-        if isolation or decision_accounts.records:
-            routing_callback = routing_policy.get("before_initialize")
-            async def initialize_with_isolation(constructing):
-                nonlocal session
-                session = constructing  # Retain cleanup ownership if initialize raises.
-                if isolation:
-                    await isolation.before_initialize(constructing)
-                if decision_accounts.records:
-                    await decision_accounts.before_initialize(constructing)
-                if routing_callback:
-                    await routing_callback(constructing)
-            routing_policy["before_initialize"] = initialize_with_isolation
+        routing = (partial(prepare_default_routing,
+                           automatic=getattr(loaded, "_host_automatic_routing", False))
+                   if not snapshot and any(row.get("module") == "hooks-routing" for row in loaded.hooks) else None)
+        def retain_session(constructing):
+            nonlocal session
+            session = constructing
+        initialization = initialization_hooks(isolation=isolation, decision_accounts=decision_accounts,
+                                              routing=routing, retain=retain_session)
         with startup_timing.phase('manager.session.create'):
             session = await prepared.create_session(session_id=runtime.session_id,
                 session_cwd=execution_workspace, approval_system=approvals, is_resumed=messages is not None,
-                **routing_policy)
+                **initialization)
         decision_accounts.require_complete()
         coordinator = session.coordinator
         coordinator.register_capability("approval.interactive", approvals.interactive)

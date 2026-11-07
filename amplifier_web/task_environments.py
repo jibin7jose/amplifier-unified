@@ -1103,7 +1103,7 @@ def read(app, sid, config, offset=0, limit=10):
 
 async def dispatch_full_setup(app, action, args, origin, caller, authority):
     """Accept owned setup once; native turn completion is not revocation."""
-    from .service import AppError
+    from .errors import AppError
     # Reconciliation is observational in Ask. Full still captures its existing
     # setup authority so a late observation cannot settle a revoked operation.
     authority = authority or app.configuration_authority.capture(
@@ -1143,7 +1143,7 @@ async def dispatch(app, action, args, origin, caller, authority):
         return {'accepted': True, 'result': recovery.read_removal(app, args, origin, caller)}
     if action == 'workspace.environments.removal.list':
         return {'accepted': True, 'result': recovery.read_removal(app, args, origin, caller, listing=True)}
-    from .service import AppError
+    from .errors import AppError
     from .collaboration import BINDING, PRINCIPAL
     sid, user = args['sessionId'], origin in {'ui', 'user'}
     if not user and sid != caller:

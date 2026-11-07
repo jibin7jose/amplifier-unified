@@ -121,7 +121,7 @@ class Coordination:
                 require(self.service, owner['id'], args['sessionId'], scope)
             metadata = directory.resolve(args['sessionId'])
             if metadata is None:
-                from .service import AppError
+                from .errors import AppError
                 raise AppError('Conversation not found.', 404)
             sessions = [metadata] if not workspace or metadata.get('workspace') == workspace else []
             sessions = sessions[offset:offset + limit + 1]
@@ -194,7 +194,7 @@ class Coordination:
         if len(set(identities)) != len(identities):
             raise ValueError("Wait targets must be distinct")
         max_bytes = args.get("maxBytes", 32768) // len(targets)
-        from .service import AppError
+        from .errors import AppError
         def read():
             results, errors = [], []
             for target in targets:
@@ -208,7 +208,7 @@ class Coordination:
         return await self.signal.wait(read, wait_ms=args.get("waitMs", 0))
 
     async def dispatch(self, action, args, origin, command_id, include_state, caller_session_id, *, admission_check=None):
-        from .service import AppError
+        from .errors import AppError
         if action == "coordination.review":
             from .workspace_review import review
             async with self.service.lock:

@@ -24,7 +24,7 @@ def completed_receipt(result):
 
 async def attach_completed(app, payload):
     from .image_generation import project
-    from .service import AppError
+    from .errors import AppError
     sid, node_id, receipt = payload.get('sessionId'), payload.get('nodeId'), payload.get('receipt')
     if not isinstance(receipt, dict) or not isinstance(node_id, str):
         return

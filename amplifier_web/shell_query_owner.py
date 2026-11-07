@@ -262,7 +262,7 @@ class ShellQueryOwner:
         failures = [(key, value) for key, value in self.failures.items()
                     if any(item[0] == identity and self._current(item) for item in value['interests'].values())]
         if any(value['delay'] and time.monotonic() < value['until'] for _, value in failures):
-            from .service import AppError
+            from .errors import AppError
             raise AppError('Navigation is still recovering. Try again shortly.', 429)
         for key, failure in failures:
             self.failures.pop(key, None)

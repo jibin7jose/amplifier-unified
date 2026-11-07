@@ -112,7 +112,7 @@ def retained_receipt(management, args, origin, caller_id, command_id, request_fi
     if previous is None:
         return None
     if previous[0] != request_fingerprint:
-        from .service import AppError
+        from .errors import AppError
         raise AppError('This command ID was already used with different contents.', 409)
     receipt = json.loads(previous[1])
     result = receipt['result']

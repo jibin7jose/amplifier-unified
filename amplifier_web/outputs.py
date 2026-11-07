@@ -290,7 +290,7 @@ class Outputs:
                 self.store.comment(clone['id'],{**comment,'forkSourceCommentId':comment['id']})
 
     async def dispatch(self,action,args,origin,command_id,*,image_identity=None):
-        from .service import AppError
+        from .errors import AppError
         try:
             if action == 'outputs.attachChatReference':
                 return await self.chat_references.attach(args, origin, command_id)

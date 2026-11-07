@@ -130,7 +130,7 @@ def encoded(value):
 
 
 def fail(message, status=400):
-    from .service import AppError
+    from .errors import AppError
     raise AppError(message, status)
 
 

@@ -293,7 +293,7 @@ class AccessMode:
         return authority
 
     async def dispatch(self, action, args, origin, command_id, caller, *, admission_check=None, expected_revision=None):
-        from .service import AppError
+        from .errors import AppError
         if action == 'access.set' and origin not in {'ui', 'user'}:
             raise AppError('Only the user can change access mode.', 403)
         global_only = args.get('scope') == 'app' and not args.get('sessionId')

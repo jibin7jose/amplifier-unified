@@ -49,7 +49,7 @@ def pending_input(service, session):
 
 def save(service, args, authority=None):
     """Under the normal host commit lock and command dedup, with no await."""
-    from .service import AppError
+    from .errors import AppError
     from .new_chat import selection
     session = service._session(args['sessionId'], hydrate=False)
     revision = session.get('nextMessageRevision', 0)

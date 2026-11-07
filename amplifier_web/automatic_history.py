@@ -997,7 +997,7 @@ class AutomaticHistory:
                 await self.windows.load(session_id, only_if_changed=only_if_changed)
                 return
             if getattr(self.service, 'directory', None) is not None:
-                from .service import AppError
+                from .errors import AppError
                 async with self.service.lock:
                     try:
                         session_id = self.service._session(session_id, hydrate=False)['id']

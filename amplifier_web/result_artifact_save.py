@@ -103,7 +103,7 @@ async def save(collaboration, source, args, origin, caller, *, admission_check=N
     No durable exactly-once promise: after a lost return, inspect the destination.
     An explicit repeat verifies identical existing bytes without transferring them.
     """
-    from .service import AppError
+    from .errors import AppError
     from .task_resources import access
     from .workspace_work_effects import guard as work_guard
 

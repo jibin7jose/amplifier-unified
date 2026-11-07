@@ -62,7 +62,7 @@ class ComputerVisuals:
         self.service, self.clients = service, {}
 
     def for_client(self, sid, client_id=None):
-        from .service import AppError
+        from .errors import AppError
         current = self.service.clients.current.get()
         if current is None or client_id not in (None, current):
             raise AppError("Use the browser displaying this conversation; another client's consent cannot be borrowed.", 409, code="visual_owner")
@@ -102,7 +102,7 @@ class ComputerVisuals:
         for visual in self.clients.values():
             if identity in visual.receipts:
                 return visual.read(sid, identity)
-        from .service import AppError
+        from .errors import AppError
         raise AppError("This screen capture is no longer available.", 409)
 
     def bind_input(self, sid, input_id):

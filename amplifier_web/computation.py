@@ -192,7 +192,7 @@ def saved(service, session_id, identity):
 
 
 async def dispatch(service, action, args, origin):
-    from .service import AppError
+    from .errors import AppError
 
     sid = args["sessionId"]
     session = service._session(sid)

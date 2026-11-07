@@ -142,7 +142,7 @@ class Observations:
     def reason(self, watch):
         from .updates import work_paused
         if work_paused(self.app.state): return 'Work is paused for an application or ecosystem update'
-        from .service import AppError
+        from .errors import AppError
         try: session = self.app._session(watch['sessionId'])
         except AppError: return 'The authorizing conversation is no longer available'
         if session.get('configurationBusy') or session.get('fileAccessPending'): return 'The execution configuration is changing'

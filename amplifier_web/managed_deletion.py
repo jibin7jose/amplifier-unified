@@ -725,7 +725,7 @@ async def reviewed_plan(app, sid, history=None):
 
 
 async def dispatch(app, action, args, origin, include_state, history=None):
-    from .service import AppError
+    from .errors import AppError
     sid = args['id']
     held = []
     fenced_ids = set()

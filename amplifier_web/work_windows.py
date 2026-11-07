@@ -94,7 +94,7 @@ class WorkWindows:
         if (self.closed or getattr(self.service, 'closed', False)
                 or self.epochs.get(identity) != fence):
             raise _SupersededRead('The requested conversation changed. Open it again.')
-        from .service import AppError
+        from .errors import AppError
         try:
             current = self._owner(identity)
         except AppError as error:

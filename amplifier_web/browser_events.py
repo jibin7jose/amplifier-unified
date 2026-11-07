@@ -35,7 +35,7 @@ async def _next_snapshot(queue, reader):
 async def serve(request, service, streams):
     socket = request.path.endswith('/ws')
     if socket and service.clients.current.get() is None:
-        from .service import AppError
+        from .errors import AppError
         raise AppError('Attach a client before opening its state socket.', 400)
     response = (web.WebSocketResponse(heartbeat=20, max_msg_size=1024) if socket else
                 web.StreamResponse(headers={'Content-Type': 'text/event-stream',

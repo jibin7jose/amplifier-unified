@@ -16,7 +16,7 @@ from aiohttp import web
 
 from .attention import session_item_at, session_item_count
 from .auth import data_identity
-from .service import AppError
+from .errors import AppError
 from .session_activity import activity_flags
 from .session_navigation import is_top_level, is_agent_created
 

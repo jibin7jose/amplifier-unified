@@ -21,7 +21,7 @@ def includes(owner, target, scope='workspace'):
 
 def metadata(service, identity):
     """Read current scope facts without admitting or decoding a dormant owner."""
-    from .service import AppError
+    from .errors import AppError
     identity = identity or service.state.get('selectedSessionId')
     # Match _session's exact admitted identity and in-progress deletion guard.
     resident = next((row for row in service.state.get('sessions', ()) if row['id'] == identity), None)
@@ -48,7 +48,7 @@ def require(service, owner_id, target_id, scope='workspace'):
     owner = metadata(service, owner_id)
     target = metadata(service, target_id)
     if not includes(owner, target, scope):
-        from .service import AppError
+        from .errors import AppError
         raise AppError('Conversation is outside the requested history scope. Use explicit scope=all for registered own-history.', 403)
     return target
 
@@ -70,6 +70,6 @@ def guard_action(service, action, args, origin, caller):
     if origin in {'ui', 'user'}:
         caller = service.state.get('selectedSessionId') or args.get(key)
     if not caller:
-        from .service import AppError
+        from .errors import AppError
         raise AppError('History reads require a registered calling conversation.', 403)
     require(service, caller, args.get(key) or caller, selected(args))

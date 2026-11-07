@@ -9,7 +9,7 @@ SECTIONS = {
 def update(view, patch):
     if "runtimeDraft" not in patch:
         return patch
-    from .service import AppError
+    from .errors import AppError
     change = patch["runtimeDraft"]
     if not isinstance(change, dict):
         raise AppError("Chat controls settings must be an object.")

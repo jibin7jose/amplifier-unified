@@ -53,7 +53,7 @@ def update_pins(service, action, args, command_id, fingerprint, origin, *, inclu
     """Commit only preference + receipt, never conversation/Canvas/client data."""
     import json
     import time
-    from .service import AppError
+    from .errors import AppError
     from .state_records import save
     from .pinned_navigation import ordered_ids, keep_order, reorder_kind, reorder
 

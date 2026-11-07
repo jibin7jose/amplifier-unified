@@ -103,7 +103,7 @@ async def inspect(service, sid):
 
 
 async def dispatch(service, args, origin, expected_revision, caller_session_id):
-    from .service import AppError
+    from .errors import AppError
     async with service.lock:
         if expected_revision is not None and expected_revision != service.state["revision"]:
             raise AppError("The app changed. Refresh its state and retry.", 409)

@@ -104,7 +104,7 @@ def save_wait(service, row, status):
 
 async def wait_for_update(service, args, command_id, *, origin, guard=None):
     """Enroll one caller, not all active work, in the existing native boundary."""
-    from .service import AppError
+    from .errors import AppError
     from .update_restart import target
     if not isinstance(command_id, str) or not command_id:
         raise AppError('An update wait requires a stable command ID.', 400)

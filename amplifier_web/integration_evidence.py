@@ -98,7 +98,7 @@ def compare(repositories, dependencies, observed, worker):
 
 
 async def _dispatch(app, action, args, origin, command_id, caller):
-    from .service import AppError
+    from .errors import AppError
     sid = args['sessionId']
     try:
         async with app.lock:
@@ -229,7 +229,7 @@ async def dispatch(app, action, args, origin, command_id, caller):
     from .integration_validation import ACTIONS, dispatch as validation_dispatch
     if action in ACTIONS:
         return await validation_dispatch(app, action, args, origin, command_id, caller)
-    from .service import AppError
+    from .errors import AppError
     try:
         async with asyncio.timeout(MAX_INSPECTION_SECONDS):
             return await _dispatch(app, action, args, origin, command_id, caller)

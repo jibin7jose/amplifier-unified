@@ -31,7 +31,7 @@ EXTENSIONS = {'.pdf':'pdf', '.md':'markdown', '.markdown':'markdown', '.html':'h
 
 
 def _error(message):
-    from .service import AppError
+    from .errors import AppError
     raise AppError(message)
 
 

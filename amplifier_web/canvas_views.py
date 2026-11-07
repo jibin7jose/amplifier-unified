@@ -124,7 +124,7 @@ class CanvasViews:
         required to move a mounted scriptable preview, never an agent assertion.
         This does not clear a renderer's dirty flag or touch another artifact.
         """
-        from .service import AppError
+        from .errors import AppError
         client = self.service.clients.record()
         if client is None:
             if destination == 'inline':
@@ -181,7 +181,7 @@ class CanvasViews:
         external work change. View-specific replacements retain their existing
         deferred receipts; explicit recovery is the deliberate discard route.
         """
-        from .service import AppError
+        from .errors import AppError
 
         def check(client, view_ids):
             if not client:
@@ -365,7 +365,7 @@ class CanvasViews:
                 **{key: copy.deepcopy(preference[key]) for key in ('document', 'interaction', 'events') if key in preference}}
 
     def project(self):
-        from .service import AppError
+        from .errors import AppError
         views = []
         try:
             identities = ['primary', *self.record().get('inline', {})]
@@ -459,7 +459,7 @@ class CanvasViews:
         if action == 'canvas.views.loadVersion':
             from .canvas_versions import definition, ordinary_preview
             from .canvas_library import load, scope
-            from .service import AppError
+            from .errors import AppError
             if args['viewId'] != 'primary' or not ordinary_preview(row) or not scope(self.service.state, row):
                 fail('Load a saved version from the primary HTML or 3D preview.', 409)
             if preference['dirty']:

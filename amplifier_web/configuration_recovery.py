@@ -371,7 +371,7 @@ def validate_recovery(management, session, record, attempt, observed, action, ar
 
 
 def recovery_status(management, session, record, attempt, observed, origin):
-    from .service import AppError
+    from .errors import AppError
     status = {"canReconcile": False, "canResume": False,
               "reason": "This change remains held. Its original permission, target or evidence is not currently valid."}
     for verb, key in (("reconcile", "canReconcile"), ("resume", "canResume")):

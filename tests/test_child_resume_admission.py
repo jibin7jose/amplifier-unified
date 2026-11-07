@@ -70,6 +70,23 @@ def assert_original(h):
     h.child.cleanup.assert_awaited_once()
 
 
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
+async def test_initialization_failure_keeps_child_cleanup_and_native_history(admission, monkeypatch, failure):
+    h = admission
+    h.parent_capabilities["web.provider_isolation"] = SimpleNamespace(preparation={})
+
+    async def create(self, **kwargs):
+        await kwargs["before_initialize"](self.child)
+        assert "provider.before_load" in h.capabilities
+        raise failure("Later initialization failed before create_session returned")
+
+    monkeypatch.setattr(Prepared, "create_session", create)
+    with pytest.raises(failure):
+        await h.children.resume(h.identity, "Do not execute", h.parent)
+    assert_original(h)
+    assert h.children.sessions == {}
+
+
 @pytest.mark.parametrize("failure", ["selection", "activity", "restore", "partial_restore", "install", "app_access",
                                       "cancel_activity", "cancel_restore", "cancel_app_access"])
 async def test_failed_child_resume_keeps_transcript_and_metadata_bytes(admission, failure):

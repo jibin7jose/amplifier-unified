@@ -411,7 +411,7 @@ async def require_allocation_access(app, sid, row):
 
 
 async def dispatch(app, action, args, origin, command_id, caller):
-    from .service import AppError
+    from .errors import AppError
     from .collaboration import PRINCIPAL
     user = origin in {'ui', 'user'}
     sid = args['sessionId']

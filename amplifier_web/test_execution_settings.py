@@ -121,7 +121,7 @@ def write(app, policy):
 
 
 async def dispatch(app, action, args, authority):
-    from .service import AppError
+    from .errors import AppError
     async with app.lock:
         try:
             current = snapshot(app)

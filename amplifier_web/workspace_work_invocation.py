@@ -154,7 +154,7 @@ class WorkInvocation:
     def plan_reason(self, operation):
         if not operation.get('workReferences') or operation.get('phase') == 'input_committed':
             return None
-        from .service import AppError
+        from .errors import AppError
         try:
             source = self.service._session(operation['senderSessionId'], hydrate=False)
             self.validate_references(source, operation['workReferences'])
@@ -316,7 +316,7 @@ class WorkInvocation:
         return association, items, [owner_facts, target_facts]
 
     def required(self, sid):
-        from .service import AppError
+        from .errors import AppError
         target = self.bound_root(sid)
         binding, active = BINDING.get() or {}, execution_generation(self.service, target)
         header = {'status': 'unavailable', 'reason': None, 'version': None,
@@ -389,7 +389,7 @@ class WorkInvocation:
             return header, []
 
     def current(self, sid):
-        from .service import AppError
+        from .errors import AppError
         try:
             target = self.bound_root(sid)
             required, _ = self.required(sid)

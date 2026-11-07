@@ -39,7 +39,7 @@ class VoiceVisual:
         self.native = NativeForeground()
 
     def fail(self, message, code="visual_unavailable"):
-        from .service import AppError
+        from .errors import AppError
         raise AppError(message, 409, code=code)
 
     def active(self, sid, call_id):
@@ -78,7 +78,7 @@ class VoiceVisual:
             return {"available": True, **copy.deepcopy(grant), "pending": bool(self.pending),
                     "nativeForeground": grant["source"]["kind"] == "native-foreground", "captureMode": "explicit-frame"}
         except Exception as exc:
-            from .service import AppError
+            from .errors import AppError
             if not isinstance(exc, AppError):
                 raise
             return {"available": False, "reason": str(exc), "nativeForeground": False,
@@ -282,7 +282,7 @@ class VoiceVisual:
         identity, self.next_input = self.next_input, None
         if not identity:
             return
-        from .service import AppError
+        from .errors import AppError
         try:
             row = self.read(sid, identity)
         except (AppError, OSError, ValueError):

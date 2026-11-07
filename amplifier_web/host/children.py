@@ -681,21 +681,14 @@ class Children:
             completion.update(data)
             return HookResult()
         try:
-            initialization = ({"before_initialize": partial(
-                prepare_default_routing, automatic=metadata["automatic_default_routing"])}
-                if routing_policy else {})
-            if isolation or decision_accounts.records:
-                routing_callback = initialization.get("before_initialize")
-                async def initialize_with_isolation(constructing):
-                    nonlocal child
-                    child = constructing  # Also own cleanup before create_session returns.
-                    if isolation:
-                        await isolation.before_initialize(constructing)
-                    if decision_accounts.records:
-                        await decision_accounts.before_initialize(constructing)
-                    if routing_callback:
-                        await routing_callback(constructing)
-                initialization["before_initialize"] = initialize_with_isolation
+            from .initialization import initialization_hooks
+            routing = (partial(prepare_default_routing, automatic=metadata["automatic_default_routing"])
+                       if routing_policy else None)
+            def retain_child(constructing):
+                nonlocal child
+                child = constructing
+            initialization = initialization_hooks(isolation=isolation, decision_accounts=decision_accounts,
+                                                  routing=routing, retain=retain_child)
             from .approvals import Approvals
             approvals = (self.approvals.for_context(lambda: child.coordinator.get('context') if child else None)
                          if isinstance(self.approvals, Approvals) else self.approvals)

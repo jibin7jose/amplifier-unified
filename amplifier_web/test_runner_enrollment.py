@@ -118,7 +118,7 @@ def request_cancel(app, identity):
 
 async def request(app, action, args, authority):
     """Commit the settings intent before installing or dispatching any work."""
-    from .service import AppError
+    from .errors import AppError
     async with app.lock:
         app.configuration_authority.check(authority)
         if action.endswith(('.cancel', '.reconcile')):

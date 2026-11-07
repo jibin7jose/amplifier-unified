@@ -96,7 +96,7 @@ class ProfilingHost:
                 "scope": "serving-host-process", "persistentResults": False}
 
     async def dispatch(self, action, args, command_id=None):
-        from .service import AppError
+        from .errors import AppError
         async with self.lock:
             await self._refresh()
             if action == "profiling.status":
@@ -172,7 +172,7 @@ class ProfilingHost:
             return receipt
 
     async def content(self, identity):
-        from .service import AppError
+        from .errors import AppError
         async with self.lock:
             await self._refresh()
             if not self.settings or not self.controller:

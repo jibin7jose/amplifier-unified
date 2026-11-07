@@ -221,7 +221,7 @@ async def query_history(service, args, caller_id):
             except (OSError, ValueError):
                 errors.append({"session_id": session["id"], "reason": "History unavailable or changing; retry this session."})
                 rows, revision = [], None
-            from .service import AppError
+            from .errors import AppError
             try:
                 require(service, caller_id, session['id'], scope)
             except AppError:

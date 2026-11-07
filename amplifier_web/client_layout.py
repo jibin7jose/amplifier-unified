@@ -14,7 +14,7 @@ def accepts(patch):
 
 
 def update(service, patch, command_id, fingerprint, *, include_state):
-    from .service import AppError
+    from .errors import AppError
     for key, minimum in DIMENSIONS.items():
         if key in patch and (type(patch[key]) not in {int, float} or not minimum <= patch[key] <= 16384):
             raise AppError(f'{key} must be between {minimum} and 16384 pixels.')

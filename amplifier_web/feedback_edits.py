@@ -7,7 +7,7 @@ ACTION = "feedback.edits.review"
 
 
 def client(followups):
-    from .service import AppError
+    from .errors import AppError
     identity = followups.service.clients.current.get()
     if not identity:
         raise AppError("Open feedback in an attached client to review changes.", 409)
@@ -20,7 +20,7 @@ def receipt(followups, identity):
 
 
 def baseline(followups, args):
-    from .service import AppError
+    from .errors import AppError
     read = receipt(followups, args["readRequestId"])
     if read.get("action") != "feedback.get" or read.get("status") != "completed" or read.get("feedbackId") != args["feedbackId"]:
         raise AppError("Refresh this report before reviewing changes.", 409)
@@ -28,7 +28,7 @@ def baseline(followups, args):
 
 
 def reviewed(followups, args, owner):
-    from .service import AppError
+    from .errors import AppError
     review = receipt(followups, args["reviewRequestId"])
     proposal = review.get("review", {}).get("proposed", {})
     latest = review.get("review", {}).get("latest", {})

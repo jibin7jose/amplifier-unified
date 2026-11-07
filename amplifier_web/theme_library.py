@@ -188,7 +188,7 @@ def folder(service):
 @contextmanager
 def directory(service, *, create=False, writing=False):
     """Anchor file operations to one real library directory, never a symlink."""
-    from .service import AppError
+    from .errors import AppError
     root = folder(service)
     if create:
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -279,7 +279,7 @@ def read_file(path, descriptor):
 
 
 def read_package_bytes(path, descriptor):
-    from .service import AppError
+    from .errors import AppError
     fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
     with os.fdopen(fd, 'rb') as stream:
         info = os.fstat(stream.fileno())
@@ -336,7 +336,7 @@ def package_listing_row(service, path, descriptor):
 
 
 def saved_name(identity):
-    from .service import AppError
+    from .errors import AppError
     name = identity.removeprefix('saved:')
     if (not identity.startswith('saved:') or Path(name).name != name
             or not name.endswith(('.css', '.zip')) or '/' in name or '\\' in name or '\0' in name):
@@ -345,7 +345,7 @@ def saved_name(identity):
 
 
 def read(service, identity):
-    from .service import AppError
+    from .errors import AppError
     if identity.startswith('builtin:') and identity[8:] in ('default', *PRESETS, *RESOURCE_PRESETS):
         row = preset(service, identity[8:])
         return {**row, 'fingerprint': fingerprint(row['css'])}
@@ -358,7 +358,7 @@ def read(service, identity):
 
 
 def listing(service):
-    from .service import AppError
+    from .errors import AppError
     rows = [preset(service, key) for key in ('default', *PRESETS, *RESOURCE_PRESETS)]
     errors = []
     root = folder(service)
@@ -384,7 +384,7 @@ def slug(name):
 
 
 def publish(descriptor, name, content, *, replace=False):
-    from .service import AppError
+    from .errors import AppError
     temporary = '.' + uuid.uuid4().hex + '.tmp'
     fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
     try:
@@ -419,7 +419,7 @@ def summary(service, row):
 
 def import_name(descriptor, name, content):
     """An updated entry may still own its old content-addressed file name."""
-    from .service import AppError
+    from .errors import AppError
     extension = '.zip' if isinstance(content, bytes) else '.amplifier.css'
     stem = name.removesuffix(extension)
     candidates = {name if index == 1 else f'{stem}-{index}{extension}': index
@@ -463,7 +463,7 @@ def save(service, args):
 
 
 def import_appearance(service, args):
-    from .service import AppError
+    from .errors import AppError
     if ('css' in args) == ('packageBase64' in args):
         raise AppError('Import exactly one of css or packageBase64.')
     if 'css' in args:
@@ -480,7 +480,7 @@ def import_appearance(service, args):
 
 
 def mutate(service, args, *, deleting=False):
-    from .service import AppError
+    from .errors import AppError
     filename = saved_name(args['id'])
     with directory(service, writing=True) as descriptor:
         try:
@@ -509,7 +509,7 @@ def mutate(service, args, *, deleting=False):
 
 
 def export(service, identity=None, format='css'):
-    from .service import AppError
+    from .errors import AppError
     if format not in ('css', 'zip'):
         raise AppError('Choose css or zip for an appearance export.')
     if format == 'zip' and identity and identity.startswith('saved:') and saved_name(identity).endswith('.zip'):

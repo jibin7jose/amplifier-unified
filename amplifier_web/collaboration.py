@@ -346,7 +346,7 @@ class Collaboration:
                     self.save(value['requestId'], value)
 
     def error(self, text, status=403):
-        from .service import AppError
+        from .errors import AppError
         raise AppError(text, status)
 
     def source(self, args, origin, caller, *, hydrate=True, allow_descendant=False):
@@ -589,7 +589,7 @@ class Collaboration:
 
     def current_human_input(self, source):
         """Expose a bounded current-input identity, never a permission grant."""
-        from .service import AppError
+        from .errors import AppError
         from .schedule_handoff import latest_human
         try:
             binding, active = self.active_binding(source)
@@ -1449,7 +1449,7 @@ class Collaboration:
                      and bool(payload.get("text", "").strip())
                      and payload.get("disposition") == "manager_turn_finished"
                      and receipt.get("delivery") in {"accepted", "applied", "submitting"})
-            from .service import AppError
+            from .errors import AppError
             try:
                 linked = [self.resolve_message(session, mid) for mid in response.get("messageIds", [])]
             except AppError:
@@ -1623,7 +1623,7 @@ class Collaboration:
         prior_history = sender.get('historyManaged')
         try:
             if versioned:
-                from .service import AppError
+                from .errors import AppError
                 # Temporarily release this wait's reserved slot before exchanging it
                 # for a queued notification. Preserve a slot for further interim reports.
                 wait['open'] = response.get('outcome') in {'deferred', 'question', 'conflict'}

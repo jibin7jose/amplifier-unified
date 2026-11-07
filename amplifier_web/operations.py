@@ -282,7 +282,7 @@ class Operations:
         return result
 
     async def dispatch(self, action, args, origin, command_id=None):
-        from .service import AppError
+        from .errors import AppError
 
         sid = args["sessionId"]
         self.service._session(sid)

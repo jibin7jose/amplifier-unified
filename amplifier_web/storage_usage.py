@@ -229,7 +229,7 @@ def _remove(path,inventory,quarantine):
 
 
 async def dispatch(app,action,args,include_state):
-    from .service import AppError
+    from .errors import AppError
     try:
         if action=='storage.inspect':
             from .workspace_placement import defaults

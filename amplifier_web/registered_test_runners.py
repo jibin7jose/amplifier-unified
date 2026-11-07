@@ -277,7 +277,7 @@ def invoke(config, folder, payload):
 
 
 async def dispatch(app, action, args, authority):
-    from .service import AppError
+    from .errors import AppError
     try:
         if action.endswith('.read') and action == 'testing.runners.read':
             return {'accepted': True, 'result': snapshot(app)}

@@ -102,7 +102,7 @@ class Followups:
         return result
 
     def target(self, identity):
-        from .service import AppError
+        from .errors import AppError
         row = self.service.db.execute("SELECT receipt FROM feedback_requests WHERE id=?", (identity,)).fetchone()
         receipt = json.loads(row[0]) if row else {}
         url = receipt.get("url", "")
@@ -117,7 +117,7 @@ class Followups:
     def accept(self, action, args, origin, caller=None):
         if action.startswith("feedback.attachments."):
             return self.owner.additions.accept(action, args, origin, caller)
-        from .service import AppError
+        from .errors import AppError
         scoped = action == feedback_edits.ACTION or action == "feedback.update" and "reviewRequestId" in args
         owner = feedback_edits.client(self) if scoped else None
         fingerprint = hashlib.sha256(json.dumps([action, args, owner] if scoped else [action, args], sort_keys=True).encode()).hexdigest()

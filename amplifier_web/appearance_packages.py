@@ -49,7 +49,7 @@ LITERAL_IMAGE_FUNCTIONS = frozenset({
 
 def literal_image_functions(node, depth=0):
     """Reject substitutions at any depth within a URL-bearing image function."""
-    from .service import AppError
+    from .errors import AppError
     if depth > 64:
         raise AppError('Image function nesting exceeds 64 levels.')
     for argument in node.arguments:
@@ -62,7 +62,7 @@ def literal_image_functions(node, depth=0):
 
 
 def reject(message):
-    from .service import AppError
+    from .errors import AppError
     raise AppError('Invalid appearance package: ' + message)
 
 

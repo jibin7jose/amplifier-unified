@@ -1,7 +1,8 @@
 """Bind provider-owned decision models to optional consumers. No credential I/O."""
 import copy
-import re
 from importlib.metadata import entry_points
+
+from .decision_account_catalog import backend_metadata, runtime_metadata
 
 
 def row_id(row):
@@ -13,21 +14,24 @@ def catalogs():
     for entry in entry_points(group='amplifier.decision_backends'):
         try:
             value = entry.load()()
-            if value.get('schema_version') != 2 or not callable(value.get('validate')):
+            metadata = backend_metadata(value)
+            if metadata is None:
                 continue
-            module = value.get('provider_module')
-            if not isinstance(module, str) or module in result:
+            module, definition, validate = metadata
+            # Preserve the settings catalog's first valid declaration. Runtime
+            # discovery separately refuses ambiguous mounts of the same module.
+            if module in result:
                 continue
-            rows = value.get('backends', [])
-            if len(rows) == 1 and rows[0].get('configuration_key') == 'decisions':
-                row = copy.deepcopy(rows[0])
+            if definition.get('configuration_key') == 'decisions':
+                row = copy.deepcopy(definition)
                 runtime = value.get('runtime') or {}
-                if (set(runtime) == {'kind', 'module', 'when'} and runtime.get('kind') == 'hook'
-                        and isinstance(runtime.get('module'), str) and re.fullmatch(r'hooks-[a-z0-9-]+', runtime['module'])
-                        and runtime.get('when') == {'chat_enabled': False}
-                        and runtime['when']['chat_enabled'] is False):
-                    row['decision_only_when'] = {'chat_enabled': False}
-                result[module] = (row, value['validate'])
+                # Settings only consumes this optional conditional hint. Other
+                # runtime shapes have never hidden an otherwise usable account.
+                if set(runtime) == {'kind', 'module', 'when'}:
+                    hook, conditional = runtime_metadata(value)
+                    if hook and conditional:
+                        row['decision_only_when'] = {'chat_enabled': False}
+                result[module] = (row, validate)
         except Exception:
             continue  # A broken optional provider cannot break ordinary setup.
     return result

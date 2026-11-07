@@ -66,7 +66,7 @@ def prepare_human_post(session):
     """Capture presence as well as values, before the durable input touches activity."""
     chain = session.get('navigationPostAdmissions', {})
     if len(chain.get('posts', [])) >= MAX_POST_ADMISSIONS:
-        from .service import AppError
+        from .errors import AppError
         raise AppError('Wait for a pending message admission to settle before posting again.', 409,
                        code='post_admission_pending')
     return {'fields': {key: copy.deepcopy(session[key]) for key in

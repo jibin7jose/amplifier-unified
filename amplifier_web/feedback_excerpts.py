@@ -110,7 +110,7 @@ class Excerpts:
         return value
 
     def stage(self, args, origin=None, caller=None):
-        from .service import AppError
+        from .errors import AppError
         from . import feedback_context
         authority = feedback_context.capture(self.service, origin, caller)
         row = self.service.db.execute('SELECT session_id,payload FROM feedback_excerpts WHERE id=?', (args['reviewId'],)).fetchone()

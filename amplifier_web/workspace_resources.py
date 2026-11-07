@@ -132,7 +132,7 @@ def reservation_command(home, workspace_id, action, args, actor, command_id=None
 async def dispatch_reservation(app, action, args, origin, command_id, caller):
     """Bind authority before entering the shared resource owner."""
     from .collaboration import PRINCIPAL
-    from .service import AppError
+    from .errors import AppError
     workspace = next((w for w in app.state['workspaces'] if w['id'] == args['workspaceId']), None)
     if action in {'workspace.resources.provision', 'workspace.resources.read', 'workspace.resources.retire'}:
         from .task_resources import dispatch
@@ -168,7 +168,7 @@ async def dispatch_reservation(app, action, args, origin, command_id, caller):
 
 async def managed(app, workspace, args, origin, caller):
     """Select explicit task scope without hydrating history or warming runtime."""
-    from .service import AppError
+    from .errors import AppError
     sid = args['sessionId']
     if origin not in {'ui', 'user'} and sid != caller:
         raise AppError('Inspect resources through the calling conversation.', 403)
