@@ -1,13 +1,10 @@
-import {createHash} from 'node:crypto';
 import {defineConfig} from 'vite';
-import {copyFileSync,cpSync,mkdirSync,readFileSync,writeFileSync,readdirSync} from 'node:fs';
+import {copyFileSync,cpSync,mkdirSync,writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
+import {buildIdentity as identifyBuild} from './scripts/build-identity.mjs';
 const source=fileURLToPath(new URL('./src/unified.css',import.meta.url));
 const destination=fileURLToPath(new URL('../amplifier_web/static/unified.amplifier.css',import.meta.url));
-function sources(path){return readdirSync(path,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name,'en')).flatMap(row=>row.isDirectory()?sources(`${path}/${row.name}`):[`${path}/${row.name}`])}
-const hash=createHash('sha256');for(const file of [...sources(fileURLToPath(new URL('./src',import.meta.url))),fileURLToPath(new URL('../amplifier_web/provider_sources.json',import.meta.url)),fileURLToPath(new URL('../amplifier_web/voice_options.json',import.meta.url)),fileURLToPath(import.meta.url),fileURLToPath(new URL('./package-lock.json',import.meta.url))])hash.update(readFileSync(file));
-const version=readFileSync(fileURLToPath(new URL('../pyproject.toml',import.meta.url)),'utf8').match(/^version = "([^"]+)"/m)[1];
-const buildIdentity={version,id:hash.digest('hex').slice(0,16)};
+const buildIdentity=identifyBuild(fileURLToPath(new URL('../',import.meta.url)));
 export default defineConfig({
  define:{__AMPLIFIER_BUILD__:JSON.stringify(buildIdentity)},
 

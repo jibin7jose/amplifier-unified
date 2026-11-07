@@ -70,3 +70,9 @@ results and limitations; a fixture pass does not prove live-provider or device
 acceptance. Follow the [release qualification policy](../docs/validation/release-qualification.md)
 for focused local checks, generated-asset parity and separate broad background
 coverage.
+
+The [build identity owner](scripts/build-identity.mjs) includes authored browser,
+public, branding and imported sibling inputs so a same-version rebuild can offer
+reload. Add new cross-root build dependencies there. Generated copies are excluded;
+the locked dependencies and normal build environment are assumed. This source ID
+does not replace release qualification's full-tree, toolchain and exact-asset proof.

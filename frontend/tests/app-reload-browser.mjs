@@ -35,7 +35,8 @@ try{
  // Keep the composer debounce pending until the reload action explicitly flushes it.
  await page.addInitScript(()=>{const native=window.setTimeout.bind(window);window.setTimeout=(fn,delay,...args)=>native(fn,delay===220?60000:delay,...args)});
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
- await page.goto(url);const composer=page.getByRole('textbox',{name:'Message Amplifier'});await composer.waitFor();
+ await page.goto(url);await page.locator('.a-adaptive-home').getByRole('button',{name:'New chat',exact:true}).click();
+ const composer=page.getByRole('textbox',{name:'Message Amplifier'});await composer.waitFor();
  await page.evaluate(()=>window.amplifier.dispatch('session.create'));
  await page.evaluate(()=>window.dispatchEvent(new Event('amplifier-reconnected')));
  await expect(page.locator('[data-part=app-reload]')).toHaveCount(0);
