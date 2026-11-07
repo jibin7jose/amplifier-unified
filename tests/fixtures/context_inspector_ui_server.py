@@ -63,6 +63,9 @@ async def main(home):
         if scenario == 'known-window-no-usage':
             latest = observer.store.index()[0]
             observer.store.finish(latest['callId'], 'completed', {})
+        if scenario == 'over-window':
+            latest = observer.store.index()[0]
+            observer.store.finish(latest['callId'], 'completed', {'inputTokens': 9000})
     await capture()
     service._publish()
     async def scenario(request):

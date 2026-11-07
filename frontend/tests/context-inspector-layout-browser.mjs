@@ -38,6 +38,115 @@ try{
   await panel.locator('.a-context-item').filter({hasText:'source-59.md'}).scrollIntoViewIfNeeded();
   await geometry('long-list-end');await capture('long-list-end');
   await page.setViewportSize({width:390,height:844});await capture('mobile-header');
+ }else if(process.env.CONTEXT_LAYOUT_MOBILE==='1'){
+  const reader=panel.getByRole('region',{name:'Captured item reader',exact:true});
+  await panel.locator('.a-context-item').filter({hasText:'source-01.md'}).click();
+  const call=await panel.getAttribute('data-selected-call');
+  const measured=async name=>{
+   const g=await geometry(name);
+   const metrics=await panel.evaluate(el=>{
+    const rect=n=>n.getBoundingClientRect(),summary=rect(el.querySelector('.a-context-summary')),reader=rect(el.querySelector('.a-context-reader')),pre=rect(el.querySelector('pre')),nav=rect(el.querySelector('.a-context-reader-nav'));
+    return {summaryHeight:summary.height,readerHeight:reader.height,readerTop:reader.top,preTop:pre.top,visibleTextHeight:Math.max(0,Math.min(pre.bottom,reader.bottom)-Math.max(pre.top,nav.bottom)),viewport:innerHeight};
+   });report.geometry.push({name:name+'-reading',...metrics});
+   const overflow=await panel.evaluate(el=>[...el.querySelectorAll('.a-context-summary,.a-context-items,.a-context-reader,.a-context-evidence')].filter(n=>n.getClientRects().length).map(n=>({className:n.className,width:n.clientWidth,scroll:n.scrollWidth})));
+   report.geometry.push({name:name+'-horizontal',regions:overflow});
+   assert.ok(overflow.every(r=>r.scroll<=r.width+1),JSON.stringify(overflow));
+   assert.ok(g.outer.scrollHeight<=g.outer.clientHeight+1);
+   assert.ok(g.panel.scrollWidth<=g.panel.clientWidth+1);
+   assert.ok(metrics.summaryHeight<=49,'collapsed usage is one row');
+   assert.ok(metrics.visibleTextHeight>=340,JSON.stringify(metrics));
+  };
+  const showSummary=()=>panel.getByRole('button',{name:'Expand request summary',exact:true});
+  const hideSummary=()=>panel.getByRole('button',{name:'Collapse request summary',exact:true});
+  for(const width of [320,390]){
+   await page.setViewportSize({width,height:844});
+   await reader.focus();await reader.press('Control+Home');await expect.poll(()=>reader.evaluate(el=>el.scrollTop)).toBeLessThan(2);
+   await measured('reading-'+width);await capture('reading-'+width+'-start');
+   await expect(showSummary()).toHaveAccessibleDescription('1,000 input · 8,000 window');
+   await showSummary().focus();await showSummary().press('Enter');
+   await expect(panel.getByLabel('Observed request')).toBeVisible();
+   await expect(panel.locator('.a-context-capacity-track')).toBeVisible();
+   await expect(panel.locator('.a-context-window')).toContainText('Model window 8,000');
+   await panel.getByRole('button',{name:'Canvas details',exact:true}).click();
+   await page.getByRole('button',{name:'Close canvas details',exact:true}).click();
+   await expect(panel.getByRole('button',{name:'Canvas details',exact:true})).toBeFocused();
+   await hideSummary().click();await expect(showSummary()).toBeFocused();
+   await panel.getByRole('button',{name:'Show item measurements',exact:true}).click();
+   await expect(panel.locator('.a-context-shares')).toBeVisible();
+   await panel.getByRole('button',{name:'Hide item measurements',exact:true}).click();
+   await expect(panel.locator('.a-context-shares')).not.toBeVisible();
+   const box=await reader.boundingBox();await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.wheel(0,500);
+   await expect.poll(()=>reader.evaluate(el=>el.scrollTop)).toBeGreaterThan(100);
+   const position=await reader.evaluate(el=>el.scrollTop);
+   await showSummary().click();await hideSummary().click();
+   await expect.poll(()=>reader.evaluate(el=>el.scrollTop)).toBe(position);
+   await reader.focus();await reader.press('Control+End');
+   await expect(panel.getByRole('button',{name:'Next page',exact:true})).toBeInViewport();
+   await capture('reading-'+width+'-end');
+   await panel.getByRole('button',{name:'Next page',exact:true}).click();
+   await expect.poll(()=>reader.evaluate(el=>el.scrollTop)).toBeLessThan(2);
+   await expect(panel.locator('.a-context-pagination')).toContainText(width===320?'6001':'12001');
+   await measured('page-'+width);
+  }
+  await page.getByRole('button',{name:/Open documents, /}).click();
+  await page.getByRole('dialog',{name:'Open documents',exact:true}).getByRole('button',{name:/Keep this document markdown/}).click();
+  await page.getByRole('button',{name:/Open documents, /}).click();
+  await page.getByRole('dialog',{name:'Open documents',exact:true}).getByRole('button',{name:/Context inspector context-inspector/}).click();
+  await expect(panel.locator('.a-context-pagination')).toContainText('12001');
+  await expect(panel).toHaveAttribute('data-selected-call',call);
+  await expect(showSummary()).toBeVisible();
+  await panel.getByRole('button',{name:'Back to items'}).click();
+  await expect(panel.locator('.a-context-item').filter({hasText:'source-01.md'})).toBeFocused();
+  await expect(panel.getByLabel('Observed request')).toBeVisible();
+  await page.request.post(url+'/fixture/context',{data:{scenario:'long-list-unknown'}});
+  await panel.getByRole('button',{name:'Refresh',exact:true}).click();
+  await panel.locator('.a-context-category').filter({hasText:'Instructions & files'}).click();
+  await panel.locator('.a-context-item').filter({hasText:'source-01.md'}).click();
+  await page.setViewportSize({width:320,height:844});
+  await expect(showSummary()).toContainText('window unknown');
+  await expect(showSummary()).toHaveAccessibleDescription('1,000 input · window unknown');
+  await measured('unknown-reading-320');await capture('unknown-reading-320');
+  await showSummary().click();
+  await expect(panel.locator('.a-context-window')).toContainText('Model window unknown');
+  await expect(panel.locator('.a-context-capacity-track')).toHaveCount(0);
+  await panel.locator('.a-context-evidence summary').click();
+  const summaryOverflow=await panel.locator('.a-context-summary').evaluate(el=>({width:el.clientWidth,scroll:el.scrollWidth}));
+  assert.ok(summaryOverflow.scroll<=summaryOverflow.width+1,JSON.stringify(summaryOverflow));
+  await capture('unknown-summary-expanded-320');
+  await panel.locator('.a-context-evidence summary').click();
+  // A held passive refresh must retain focus and admit exactly one read.
+  for(const target of ['Refresh','Observed request']){
+   let release,entered,observed=0;const gate=new Promise(resolve=>release=resolve),held=new Promise(resolve=>entered=resolve);
+   await page.route('**/api/actions',async route=>{const payload=route.request().postDataJSON();if(payload?.action==='context.inspect'){observed++;const response=await route.fetch();entered();await gate;await route.fulfill({response})}else await route.continue()});
+   const control=target==='Refresh'?panel.getByRole('button',{name:'Refresh',exact:true}):panel.getByLabel('Observed request');
+   await control.focus();
+   if(target==='Refresh')await control.press('Enter');else await control.selectOption({index:2});
+   await expect(control).toHaveAttribute('aria-disabled','true');await held;await expect(control).toBeFocused();assert.equal(await control.evaluate(el=>el.disabled),false,'busy control stays natively focusable');
+   // selectOption deliberately treats aria-disabled as disabled. Exercise real
+   // keyboard input on the still-focusable native select during the held read.
+   if(target==='Refresh')await control.press('Enter');else await control.press('ArrowUp');
+   release();await page.unrouteAll({behavior:'wait'});
+   await expect(control).toHaveAttribute('aria-disabled','false');await expect(control).toBeFocused();assert.equal(observed,1);
+  }
+  await page.request.post(url+'/fixture/context',{data:{scenario:'over-window'}});
+  await panel.getByRole('button',{name:'Refresh',exact:true}).click();
+  await expect(panel.locator('.a-context-window')).toContainText('1,200 over window');
+  await expect(panel.locator('.a-context-capacity-track')).toHaveAttribute('aria-label',/1,200 over window/);
+  await expect(panel.locator('.a-context-window')).not.toContainText('0 remaining');
+  await capture('over-window-320');
+  await panel.locator('.a-context-category').filter({hasText:'Conversation & results'}).click();
+  await panel.locator('.a-context-item').filter({hasText:'User 2'}).click();
+  await showSummary().click();
+  await hideSummary().click();
+  await page.setViewportSize({width:1440,height:1000});
+  await expect(panel.getByLabel('Observed request')).toBeVisible();
+  await expect(panel.locator('.a-context-shares')).toBeVisible();
+  await expect(showSummary()).not.toBeVisible();
+  await page.setViewportSize({width:320,height:844});await measured('resize-return-320');
+  report.checks.push('320/390 selected reading gains >=340px of actual visible source text with <=49px usage row',
+   'keyboard and pointer expansion exposes known/unknown capacity and shell Details without changing selected request/page/scroll',
+   'measurements disclosure, Back focus, other-document visit and desktop resize retain identity and reveal full summaries appropriately',
+   'busy request selector and Refresh retain focus and suppress duplicate reads; each scroller fits horizontally; over-window balance is explicit in text and aria');
  }else{
   const list=panel.getByRole('region',{name:'Captured items',exact:true}),reader=panel.getByRole('region',{name:'Captured item reader',exact:true});
   const scrollTop=locator=>locator.evaluate(el=>el.scrollTop);
@@ -124,10 +233,12 @@ try{
   }
   await keyEnd(reader);await expect(panel.getByRole('button',{name:'Next page',exact:true})).toBeDisabled();
   await capture('mobile-final-page');
+  await panel.getByRole('button',{name:'Expand request summary',exact:true}).click();
   await panel.getByRole('button',{name:'Canvas details',exact:true}).click();
   await expect(page.getByRole('button',{name:'Close canvas details',exact:true})).toBeFocused();
   await page.getByRole('button',{name:'Close canvas details',exact:true}).click();
   await expect(panel.getByRole('button',{name:'Canvas details',exact:true})).toBeFocused();
+  await panel.getByRole('button',{name:'Collapse request summary',exact:true}).click();
   await expect(page.locator('#workspace-canvas .a-canvas-artifact-toolbar')).not.toBeVisible();
   await expect(panel.locator('.a-context-pagination')).toContainText('18001');
   report.checks.push('Open documents stays usable for non-inspector navigation; selected request/item/page survives');

@@ -8,6 +8,7 @@
 #amp-one .a-context-inspector h3{margin:0 0 8px;font-size:1rem;overflow-wrap:anywhere}
 #amp-one .a-context-inspector p{margin:8px 0}#amp-one .a-context-inspector small{color:var(--a-muted);font-size:.8rem}
 #amp-one .a-context-summary{flex:none;max-height:45%;overflow:auto;overscroll-behavior:contain;padding:8px 16px;border-bottom:1px solid var(--a-line);scrollbar-gutter:stable}
+#amp-one .a-context-summary-toggle,#amp-one .a-context-measure-toggle,#amp-one .a-context-summary-error{display:none}
 #amp-one .a-context-top{display:flex;align-items:center;gap:8px}
 #amp-one .a-context-top>.a-icon{width:44px;height:44px;flex:none}
 #amp-one .a-context-request{display:flex;align-items:center;gap:8px;flex:1;min-width:0;font-size:.8rem;color:var(--a-muted)}
@@ -48,7 +49,7 @@
 #amp-one .a-context-source-summary{color:var(--a-muted);font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 #amp-one .a-context-reader{min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:0 24px 24px}
 #amp-one .a-context-reader-nav{display:flex;align-items:center;gap:8px;justify-content:space-between;position:sticky;top:0;background:var(--a-bg);padding:8px 0;z-index:1;border-bottom:1px solid var(--a-line);margin-bottom:16px}
-#amp-one .a-context-reader-nav small{text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#amp-one .a-context-reader-nav h3{text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;font-size:1rem}
 #amp-one .a-context-reader-nav button{flex:none}
 #amp-one .a-context-reader h3{font-size:1.15rem}
 #amp-one .a-context-reader-empty{padding:24px 0;color:var(--a-muted);max-width:480px}#amp-one .a-context-reader-empty svg{width:24px;height:24px;margin-bottom:16px}
@@ -64,6 +65,15 @@
 #amp-one .a-context-inspector :is(button,input,select,summary,[tabindex]):focus-visible{outline:2px solid var(--a-accent);outline-offset:-2px}
 @container(min-width:1100px){#amp-one .a-context-explore{grid-template-columns:320px minmax(0,1fr)}}
 @container(max-width:650px){
+ #amp-one .a-context-inspector[data-reading=true] .a-context-summary{padding:0 12px}
+ #amp-one .a-context-summary-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:4px 0;border:0;background:transparent;color:var(--a-ink);text-align:left;font-size:.8rem}
+ #amp-one .a-context-summary-toggle>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ #amp-one .a-context-summary-toggle>svg{width:16px;height:16px;flex:none}
+ #amp-one .a-context-inspector[data-reading=true] .a-context-summary[data-expanded=false]>.a-context-summary-full{display:none}
+ #amp-one .a-context-inspector[data-reading=true] .a-context-summary[data-expanded=false]>.a-context-summary-error{display:block}
+ #amp-one .a-context-measure-toggle{display:flex;align-items:center;gap:4px;font-size:.75rem}
+ #amp-one .a-context-measure-toggle>svg{width:14px;height:14px}
+ #amp-one .a-context-reader-metadata[data-expanded=false]>.a-context-measure-full{display:none}
  #amp-one .a-context-explore{grid-template-columns:minmax(0,1fr)}
  #amp-one .a-context-explore[data-item-selected=true]>.a-context-nav,#amp-one .a-context-explore[data-item-selected=false]>.a-context-reader{display:none}
  #amp-one .a-context-nav{border:0}
@@ -74,9 +84,10 @@
  #amp-one .a-context-metric small{font-size:.7rem}
  #amp-one .a-context-window{width:100%}
  #amp-one .a-context-window>strong{font-size:.75rem}#amp-one .a-context-window small{font-size:.7rem;line-height:1.4}
- #amp-one .a-context-evidence>summary{font-size:.75rem;white-space:nowrap}
+ #amp-one .a-context-evidence>summary{font-size:.75rem;white-space:normal;overflow-wrap:anywhere}
  #amp-one .a-context-reader{padding:0 16px 16px}
- #amp-one .a-context-reader-nav{margin-bottom:12px}
+ #amp-one .a-context-reader-nav{margin-bottom:0;padding:0}
+ #amp-one .a-context-reader-nav h3{font-size:.9rem}
  #amp-one .a-context-facts{grid-template-columns:minmax(0,1fr);gap:4px}#amp-one .a-context-facts dd{margin-bottom:8px}
  #amp-one .a-context-inspector button:not(.a-context-stack button),#amp-one .a-context-inspector summary{min-height:44px}
  #amp-one .a-context-inspector input,#amp-one .a-context-inspector select{font-size:16px}

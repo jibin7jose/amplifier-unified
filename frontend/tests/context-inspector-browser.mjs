@@ -99,11 +99,13 @@ try{
  await expect(panel).not.toHaveAttribute('data-selected-call',initial);await expect(panel).toContainText('Model window unknown');
  await panel.locator('.a-context-category').filter({hasText:'Instructions & files'}).click();await panel.locator('.a-context-item').first().click();await expect(panel).toContainText('No current file is substituted.');assert.equal(await panel.getByLabel('Captured text').count(),0);record('new no-record cycle has real estimates, unknown window and no body');
  await page.screenshot({path:path.join(artifacts,'narrow-partial.png'),fullPage:true,animations:'disabled'});
+ await panel.getByRole('button',{name:'Back to items'}).click();
  const after=await (await page.request.get(url+'/fixture/context')).json();assert.equal(after.providerCalls,2);record('reads and refresh made no provider calls');
  await page.request.post(url+'/fixture/context',{data:{scenario:'unicode'}});await panel.getByRole('button',{name:'Refresh',exact:true}).click();
  await panel.locator('.a-context-category').filter({hasText:'Conversation & results'}).click();await panel.locator('.a-context-item').filter({hasText:'User 2'}).click();
  await expect(panel.locator('.a-context-pagination')).toContainText('1–6000 of 10000');
  await panel.getByRole('button',{name:'Next page'}).click();await expect(panel.locator('.a-context-pagination')).toContainText('6001–10000 of 10000');record('astral characters retain Unicode page ranges');
+ await panel.getByRole('button',{name:'Expand request summary',exact:true}).click();
  await page.request.post(url+'/fixture/context',{data:{scenario:'known-window-no-usage'}});await panel.getByRole('button',{name:'Refresh',exact:true}).click();
  await expect(panel.locator('.a-context-capacity')).toContainText('Model window 8,000');
  await expect(panel.locator('.a-context-capacity')).toContainText('Input usage unavailable');

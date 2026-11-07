@@ -35,6 +35,15 @@ Canvas selection and dirty-view guards.
 The inspector places the shell-owned Details toggle beside its request selector,
 instead of spending a second empty toolbar row on it; the shell still owns
 Details focus, narrow overlay inertness and dismissal.
+Below 650px, selecting an item condenses the request and capacity summary into
+one expandable row. It keeps reported input and known/unknown model window visible;
+expanding restores the selector, full capacity visualization and evidence.
+Secondary item measurements disclose separately. Back restores the full overview,
+while width changes and these disclosures retain the selected request and text page.
+If reported input plus the captured reserve exceeds the known model window,
+the comparison names the excess in text and its accessible description rather
+than reporting zero remaining. Busy passive refresh retains keyboard focus on
+the request controls and suppresses duplicate requests.
 
 Item headings show a short source name. A compact label helps distinguish
 same-name sources; the expandable provenance section retains the complete
