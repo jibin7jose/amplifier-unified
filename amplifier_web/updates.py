@@ -481,6 +481,10 @@ class UpdateManager:
         state['canRollback'] = 'previous' in active_release(self.home)
         from .update_diagnostics import UpdateDiagnostics
         self.diagnostics=UpdateDiagnostics(self)
+        from .update_health import publish as publish_health
+        self._active_update_evidence = {}
+        self._update_health_initial = True
+        publish_health(self)
         if restart_repair:
             self.diagnostics.record('restart-repair','failed',errorType='ValueError',preserve_last_failure=True)
         else:
@@ -511,6 +515,8 @@ class UpdateManager:
                 self.diagnostics._pending_failure = None
             self.service.state['updates'].update(values)
             state = self.service.state['updates']
+            from .update_health import publish as publish_health
+            publish_health(self)
             state['blockers'] = self.blockers() if self.requires_idle(state) else []
             from .update_restart import target
             state['forceRestartTarget'] = target(self)
@@ -846,6 +852,8 @@ class UpdateManager:
                 available = sum(row.get('status') == 'update' for row in public)
                 blocked = sequence['stage'] == 'included' and sequence['included']['issues']
                 if not available and not blocked:sequence['stage'] = 'complete';sequence['install'] = False
+                from .update_health import refresh as refresh_health
+                await refresh_health(self)
                 await self.publish(phase='error' if blocked else 'available' if available else 'checked',
                     sequence=sequence, items=public+[application], application=application, appAvailable=False,
                     available=available, lastCheck=time.time(),
@@ -910,7 +918,7 @@ class UpdateManager:
                 await stage(self)
         await activate(self)
 
-    async def install(self):
+    async def install(self, *, automatic=False):
         if self.awaiting_restart() or self.lock.locked():return
         state = self.service.state['updates']
         if state.get('sequence', {}).get('stage') == 'included' and state['sequence'].get('included', {}).get('issues'):
@@ -961,9 +969,17 @@ class UpdateManager:
             if not candidates:
                 await self.publish(detail='Check for updates before installing. No eligible updates are available.')
                 return
+            from .update_health import preparation_key, retry_decision
+            input_key = preparation_key(self, self.inventory)
+            prior_retry = self.diagnostics.state.get('batch', {}).get('retry') or {}
+            if automatic and retry_decision(self.diagnostics.state.get('batch', {}), input_key):
+                await self.publish()
+                return  # No candidate directory, copy, resolution or installation.
             release=uuid.uuid4().hex
             self.diagnostics.begin('ecosystem',release,tier=state.get('sequence',{}).get('stage'),
-                                   components=[safe_label(row.get('url','')).rsplit('/',1)[-1] for row in candidates])
+                                   components=[row.get('package') or row.get('id') if not row.get('url') else
+                                               safe_label(row['url']).rsplit('/',1)[-1] for row in candidates])
+            self.diagnostics.state['batch']['inputKey'] = input_key
             stage_id=uuid.uuid4().hex
             self.diagnostics.record('ecosystem-stage','started',commandId=stage_id)
             stage=self.directory/'releases'/release
@@ -1033,6 +1049,8 @@ class UpdateManager:
                 if failure.get('attemptId')!=self.diagnostics.state.get('attemptId'):
                     self.diagnostics.record(phase,status,**{**getattr(error,'diagnostic_facts',{}),**exception_facts(error)})
                 failure=self.diagnostics.state['lastFailure']
+                from .update_health import record_retry
+                record_retry(self.diagnostics.state['batch'], input_key, failure, prior_retry)
                 self.diagnostics.record('ecosystem-stage',status,commandId=stage_id,preserve_last_failure=True)
                 await self.publish(phase='interrupted' if interrupted else 'error',pendingRelease=None,
                     detail='Component update preparation '+('was interrupted' if interrupted else 'failed')+'. Current components remain active.',
@@ -1171,25 +1189,32 @@ class UpdateManager:
                     if not task.done(): task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
         if fresh:
-            from .runtime_policy_reconciliation import reconcile, legacy_candidates, RECEIPT
+            from .runtime_policy_reconciliation import reconcile, legacy_candidates, RECEIPT, policy_inputs, reuse_collection
             from .runtime_source_alignment import align_checked_sources
+            collection_inputs = None
             async def collect_source_policy():
+                nonlocal collection_inputs
                 target = stage / 'selected-source-declarations.json'
                 overrides = await self.diagnostics.run('ecosystem-runtime-policy', prepare_overrides,
                     project, receipt / 'runtime-install-overrides.txt')
                 command = [shutil.which('uv'), 'run', '--locked', '--no-sync', '--project', str(project),
                            '--python', '3.13', 'python', str(Path(__file__).with_name('update_probe.py'))]
+                before = policy_inputs(stage, project)
                 await self.diagnostics.run('ecosystem-source-policy', process, *command, str(workspace), profiles[0],
                     '--install-overrides', str(overrides), '--global-only', '--profiles', str(profiles_file),
                     '--source-policy-only', str(target), env=env, timeout=900)
+                collection_inputs = before if policy_inputs(stage, project) == before else None
                 return json.loads(target.read_text())
             previous = receipt_directory(self.home, active_release(self.home).get('current'))
+            selection = None
             if legacy_candidates(self.inventory) or (previous / RECEIPT).exists():
-                await self.diagnostics.run('ecosystem-source-policy', reconcile, self, stage, project, collect_source_policy)
+                selection = await self.diagnostics.run('ecosystem-source-policy', reconcile, self, stage, project, collect_source_policy)
             # Source paths first materialized during composition were absent
             # from the early cache scan. Align them before a fresh composition;
             # never install the batch captured before a binding/checkout moved.
-            selection = await collect_source_policy()
+            selection = await reuse_collection(self, stage, project, selection, collection_inputs)
+            if selection is None:
+                selection = await collect_source_policy()
             await self.diagnostics.run('ecosystem-source-preflight', align_checked_sources,
                                        self, stage, selection=selection)
             if shared:
@@ -1317,6 +1342,8 @@ class UpdateManager:
                         self.service._publish_changes(globals={'updates','settings'})
                 self.diagnostics.clear_failure()
                 self.diagnostics.record('ecosystem-rollback' if rollback else 'ecosystem-activation','succeeded')
+                from .update_health import refresh as refresh_health
+                await refresh_health(self)
                 await self.publish()  # Publish settled attention, not just the preceding installed status.
                 self.inventory=[]
                 if self.cleanup_task is None or self.cleanup_task.done():
@@ -1385,6 +1412,11 @@ class UpdateManager:
         from .update_drain import observe_waiters
         await observe_waiters(self)
         if self.awaiting_restart():return
+        if getattr(self, '_update_health_initial', False):
+            self._update_health_initial = False
+            from .update_health import refresh as refresh_health
+            await refresh_health(self)
+            await self.publish()
         from .update_drain import finish
         drain = state.get('drain') or {}
         if drain.get('phase') in {'draining', 'replacing', 'releasing'}:
@@ -1437,7 +1469,7 @@ class UpdateManager:
         state=self.service.state['updates']
         managed_preview=state.get('appAvailable') and state.get('application',{}).get('canInstall') is False
         if not managed_preview and (settings.get('autoInstall',True) or state.get('sequence', {}).get('install')) and state.get('phase')=='available' and state.get('available',0):
-            await self.install()
+            await self.install(automatic=True)
             return
         if self.independent_tool_results(state) and (state.get('phase') not in {'error', 'interrupted'} or any(
                 row.get('runnerUpdate') and not row.get('failure') for row in state['pendingSmartTools'])):

@@ -218,24 +218,31 @@ do not block chat or the update page while settings are inspected.
 
 Each application update has an attempt ID and separate receipts for candidate installation, candidate probe, installed-tool discovery, runtime shutdown, tool replacement, installed-package probe/version comparison, and restart. Ecosystem copying, fetching, checkout, compatibility probes and activation use the same receipt format. Failure history remains available independently of present installation health. Staging, checking, or dismissing a notice does not establish recovery. The user and agent read the same state.
 
-For component source-policy failures, recovery follows the qualified active
-generation, including after reload. Its exact activation receipt, validation and
-installed dependency graph must cover the older failure's complete component
-scope and update tier. A dependency package need not share its parent bundle's
-name. The existing diagnostic journal records which original occurrences were
-resolved; no install or conversation work is repeated to clear the warning.
-Unknown, truncated legacy scope, unrelated activations and newer failures remain
-unresolved. Keep full component scope in canonical receipts; truncate only the
-displayed preview, never the data used to decide recovery.
+The update owner publishes one derived `currentStatus` from its current operation,
+desired sources and verified active generation. Earlier diagnostic failures are
+history, not an independent health registry. For a legacy component-source
+failure, positive current configuration, recorded/actual graph and exact activation
+evidence can establish current health without matching old requested URL labels
+or update-tier batch counts. This does not rewrite or resolve the historical
+attempt. A missing package, changed configuration/source, newer failure, incomplete
+desired check, partial or uncertain activation remains a current limitation.
+No installation or model call runs just to clear old attention.
 
-The client has one update-status projection for the headline, status icon,
-application result, details disclosure and operation notice. A current operation
-or an unconfirmed restart takes precedence over older failure attention; those
-unresolved occurrences remain visible alongside it. When no operation is active,
-canonical actionable attention prevents an all-current presentation. Rendering
-must not resolve failures, recheck installation identity, or reinterpret a
-successful application update as success of its later component batch. Reload
-uses the same projection of saved host state, not a client recovery cache.
+Automatic preparation remembers the input witness and disposition of its last
+attempt. An unchanged deterministic source/configuration conflict performs no
+duplicate copy, resolver or installer work. Changed source/configuration/application
+inputs or an explicit install request can re-evaluate; transient failures use a
+bounded backoff. Interrupted or unknown effects are not automatically replayed.
+These are preparation scheduling decisions, never authority to bypass source,
+qualification, activation or restart guards.
+
+The bundled client consumes that same current status for the headline and
+action-required badge. Historical attempts have a separate disclosure, not red
+chores with no action. Reading or acknowledging history does not change health.
+Rendering performs no source scans or installation checks. The update owner
+revalidates retained activation evidence on startup and relevant check/activation
+boundaries; an unavailable proof is labeled rather than inferred. Application
+readiness and pending replacement fences keep their existing exact-identity rules.
 
 The main update card identifies the current component batch and shows successful
 configuration checks out of the total admitted for that attempt. Preparation and
