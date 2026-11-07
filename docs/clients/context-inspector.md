@@ -65,12 +65,11 @@ captured label and a named Copy control. Full paths do not dominate the reader.
   optional evidence themselves; Unified does not guess from model names or call
   a catalog/count endpoint to fill the gap.
 - Host revalidation may copy an unchanged fitted request. A retained preflight
-  may follow that copy only within the same provider and execution task with an
-  exact bounded fingerprint of all request fields and options. Exceeding a bound
-  returns no fingerprint, never a truncated-prefix digest. Ambiguous identical
-  candidates are not matched by arrival order. Every dispatch retires that
-  provider/task's preflight interval; an identical concurrent or later request
-  cannot borrow its receipt.
+  follows that copy through the host fitted-owner ticket described below, or
+  through an exact bounded fingerprint for paths without that owner. Exceeding
+  the fallback bound returns no fingerprint, never a truncated-prefix digest.
+  Ambiguous identical candidates are not matched by arrival order. Every dispatch
+  retires its receipt; an identical concurrent or later request cannot borrow it.
 
 The composition `bounded` flag is independent of fingerprint eligibility. Text
 attribution has per-item, item-count, visit and scanned-character bounds; exact
@@ -79,49 +78,42 @@ character/node/depth/container budget. Provider input totals and the local text
 estimate do not establish which bound fired. Only observed fixed reason codes
 can explain a future capture. Existing captures are never backfilled.
 
-### Current limit: large-request numeric attribution
+### Passive final-fit budget attribution
 
-The status repair does **not** recover budget numbers for large/opaque copies.
-`tests/test_context_inspection_binding.py` qualifies the actual native
-Core/Foundation/SelectedProvider/SurfaceProvider path with synthetic input above
-the fingerprint allowance, including a deliberately mutated admission suffix.
-Its retained evidence distinguishes a real preflight from proven request equality.
+`SurfaceProvider` already owns a full fitted `ChatRequest` serialization. Its
+private capture ticket shares that exact immutable string (no second prompt copy)
+with a particular budget attempt and normalized dispatch options. Original request
+and execution-task references are weak. Refitting supersedes the old ticket;
+dispatch consumes it once and then releases its serialized reference.
 
-An existing Work digest is not a drop-in witness for this inspector:
+`ExecutionEvents` claims the intended provider/execution/session/call synchronously
+**before** its existing metadata and admission awaits. Nested or inherited tasks
+cannot take that claim. After those same awaits and the unchanged Work admission
+join, it performs at most one complete current encoding and compares it to the
+fitted owner's value. Options are type-sensitive, JSON-like and bounded separately
+(4,096 nodes, 65,536 characters, depth 16, containers 1,024); opaque values fail
+closed. Only a verified, allowlisted decision reaches the inspector. A changed
+suffix, nested field, options or superseded fit suppresses numeric attribution,
+never execution, quota admission, refitting or retries.
 
-- `SurfaceProvider` retains a full fitted serialization. `finalize_work` compares
-  requests before/after its authority await, but can return early with no Work
-  binding. Its equality covers the ChatRequest, not all dispatch option kwargs.
-- `begin_work` computes a request digest before the provider telemetry wrapper's
-  awaited `get_info`/admission guard. `admit_work` binds call/scope identity; it
-  does not revalidate mutable request contents after that await.
-- A synthetic mutation in that admission interval can leave the old Work digest
-  different from the actual provider input. Treating it as a budget witness
-  would publish another payload's count. Diagnostic observation must not repair
-  this by adding another unbounded scan or changing execution authority.
+This is not an admitted-call lease or new Core/Provider API. No guard is moved,
+Work finalization is unchanged, and no Work obligation is needed. In particular,
+Work's pre-admission digest is not borrowed: an admission callback can mutate the
+request after that digest was made. The existing post-admission observation point
+is synchronous through projection and provider entry; no new await is introduced.
+Streaming claims at first iteration rather than iterator construction, and no
+capture context survives an outward yield or grants a cross-task dispatch.
 
-A follow-up needs the canonical final-fit/admission owners to define one
-consumable, exact **post-admission** request-and-options witness, with unchanged
-copy lineage and no intervening mutation window. Prefer reusing or relocating
-the owner's existing serialization/equality work over adding inspector scans.
-The witness must bind the specific budget attempt, provider, execution/call and
-options, reject changed suffixes and invalidate on refit/cancellation/retry.
-This is a proposed internal owner contract, not implemented numeric support or
-a new public API. Until that boundary is agreed, counts remain unavailable.
-
-Concrete owner decision: split `ExecutionEvents` admission from provider entry
-using a host-private, single-use admitted-call lease. Complete the existing
-metadata/capacity await first; then let `SurfaceProvider` and its final-fit owner
-validate the exact request **and normalized dispatch options** for that lease,
-and enter the provider without another intervening await. A private fit ticket
-must identify the budget attempt and preserve the already-owned fitted input,
-not store another prompt copy or put a reusable token in request metadata.
-The lease must reject another provider/call/task, a superseded fit, changed
-options, cancellation, a second consumption and late or nested dispatch.
-Streaming needs an explicit first-entry lease with no context variable carried
-over outward yields. Admission failures must retain current quota/usage/Stop
-semantics; moving guards is not a diagnostic-only change. The decision belongs
-to those execution owners before this inspector may consume the witness.
+The cost exception is one linear encoding of the current owned request at final
+admission, not one traversal per retained budget candidate and not a raised
+inspector bound. `tests/test_provider_capture.py` measures encoding calls and
+characters for small, >1M and >4M requests with four retained candidates.
+`tests/test_context_inspection_binding.py` exercises the actual native
+Core/Foundation/SelectedProvider/SurfaceProvider chain and preserves the
+post-admission mutation falsifier. No request identity or serialized ticket is
+stored in request metadata or diagnostic files. Paths without a fitted owner,
+unsupported options and missing/ambiguous fallback evidence retain honest absence
+dispositions; reading the inspector still never counts or calls a provider.
 
 ### Separate provider-owner proposal: exact model window
 

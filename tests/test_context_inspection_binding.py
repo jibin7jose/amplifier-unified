@@ -134,7 +134,7 @@ def test_fingerprint_failure_work_stays_bounded_and_never_returns_prefix_hash():
 
 @pytest.mark.parametrize('mutation', [False, True])
 async def test_large_real_native_chain_and_existing_witness_admission_gap(tmp_path, mutation):
-    """No new production witness: demonstrate why the existing one is insufficient.
+    """The passive post-admission ticket, not the stale Work digest, binds budget.
 
     The Work digest is generated before an awaited admission callback. The
     callback below deliberately mutates a synthetic suffix after final fit; a
@@ -177,10 +177,15 @@ async def test_large_real_native_chain_and_existing_witness_admission_gap(tmp_pa
         result = observer.store.read()
         assert len(state.transports) == 2 and len(state.measurements) == 3
         assert all(len(s) > MAX_TEXT_CHARS for s in state.transports)
-        assert result['selected']['budgetStatus'] == 'binding_bounded'
-        assert result['selected']['budget'] == {}
-        assert result['selected']['budgetBinding']['dispatchFingerprint']['reason'] == 'character_limit'
-        assert result['selected']['budgetBinding']['scopedPreflightCount'] >= 1
+        header = result['selected']
+        assert header['budgetStatus'] == ('request_changed' if mutation else 'captured')
+        if mutation:
+            assert header['budget'] == {}
+        else:
+            assert header['limits']['requestInputAllowance'] == 10_000
+            assert header['budget']['measurement']['input_tokens'] == 100
+            assert header['limits']['reservedOutput'] == 321
+        assert header['budgetBinding']['scopedPreflightCount'] == 1
         actual = state.transports[-1]
         same = current['attempt']['requestSha256'] == hashlib.sha256(actual.encode()).hexdigest()
         assert same is (not mutation), 'pre-admission witness cannot prove mutable post-admission content'
@@ -190,7 +195,7 @@ async def test_large_real_native_chain_and_existing_witness_admission_gap(tmp_pa
             'requestCharacters': len(actual), 'providerCalls': len(state.transports),
             'budgetCalls': len(state.measurements), 'header': result['selected'],
             'workDigestMatchesActualTransport': same, 'mutationAfterFinalFit': mutation,
-            'providerApiCalls': 0, 'productionWitnessAdded': False,
+            'providerApiCalls': 0, 'passivePostAdmissionTicket': True,
         })
     finally:
         await session.cleanup()

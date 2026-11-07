@@ -44,7 +44,7 @@ class ContextInspection:
         self.budgets = (self.budgets + [(reference, fingerprint, budget_public(decision),
                                        provider, weakref.ref(asyncio.current_task()))])[-4:]
 
-    async def begin(self, row, request, provider, options, provider_defaults=None):
+    async def begin(self, row, request, provider, options, provider_defaults=None, captured_budget=None):
         config = preferences(self.home)
         metadata, bodies = provider_policy(provider)
         enabled = config['enabled'] and metadata
@@ -59,6 +59,8 @@ class ContextInspection:
         # bounded fingerprint includes all fields/options, not merely its text.
         # Never borrow a receipt from another provider or concurrent task.
         scoped = [v for v in self.budgets if v[3] is provider and v[4]() is task]
+        if captured_budget is not None:
+            scoped = []  # The final-fit owner already validated; do not rescan.
         # Cross-provider/task receipts cannot match. Do not traverse this request
         # merely because some unrelated task has a pending preflight.
         fingerprint = (fingerprint_request(request, options) if scoped else
@@ -95,6 +97,15 @@ class ContextInspection:
         # Any dispatch ends this provider/task's preflight interval. A later
         # identical call must not inherit a receipt left by an earlier attempt.
         self.budgets = [v for v in self.budgets if v[4]() is not None and not (v[3] is provider and v[4]() is task)]
+        if captured_budget is not None:
+            budget = captured_budget['budget']
+            budget_status = captured_budget['status']
+            binding_evidence = {
+                'scopedPreflightCount': 1,
+                'dispatchFingerprint': {'status': 'not_evaluated', 'reason': 'fitted_owner_ticket'},
+                'preflightFingerprints': [],
+                'association': 'fitted_owner_ticket' if budget_status in {'captured', 'not_reported'} else 'unproven',
+            }
         context = self.coordinator.get('context')
         context_config = getattr(context, 'config', {}) or {}
         context_limit = number(getattr(context, 'max_tokens', None))
