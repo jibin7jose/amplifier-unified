@@ -156,6 +156,12 @@ class ClientViews:
                 if shell:
                     shell.update(preview=None, reported=None)
                     self.service.shell.put("client", identity, shell)
+        # Retire the saved modal route on upgrade. Do not auto-open a new
+        # Canvas document over a retained viewer or its edits; the existing
+        # Overview/Chat info entry opens the inspector when requested.
+        if self.records[identity].get('view', {}).get('panel') == 'context-inspector':
+            self.records[identity]['view']['panel'] = None
+            self.dirty.add(identity)
         self.reconcile(identity)
         self.selection_revision(identity)
         return self.records[identity]

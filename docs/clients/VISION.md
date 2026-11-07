@@ -115,6 +115,13 @@ the assessment says how much of it has actually been demonstrated.
 
 ## Current desktop consumers
 
+The bundled web client's context inspector belongs in the native resizable
+Canvas alongside documents, rather than a separate modal. Its captured request
+identity survives layout changes from mobile single-column to full-window
+master/detail; missing model-budget evidence remains explicit. This applies
+principles 2, 3 and 8 without changing independent-client protocol requirements.
+See the [inspector contract](context-inspector.md) for the scoped direction.
+
 [Amplifier for Mac and the planned Windows client](desktop-clients.md) apply this
 vision through the shared desktop contract. The Mac companion preview is released;
 the integrated workspace and Windows implementation remain future work. This

@@ -5,6 +5,7 @@ import {filterList} from './list-filter';
 import {useCanvasReading} from './canvas-overview-state';
 const inChat=(state,row)=>row.sessionId===state.selectedSessionId&&row.workspaceId===state.selectedWorkspaceId;
 export function chatArtifacts(state){return (state.canvasArtifacts||[]).filter(r=>inChat(state,r))}
+const artifactDescription=row=>row.kind==='browser'?'Saved address':row.kind==='settings'?'Live settings':row.kind==='context-inspector'?'Live request inspector':row.app?'Interactive surface':'Saved snapshot';
 // Native close removes modal inertness and restores its previous focus first.
 // A React state update alone does neither until the passive effect has run.
 export function closeCanvasDialog(dialog,focus){
@@ -94,7 +95,7 @@ export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview}){
 }
 export function SavedArtifacts({state,act,compact=false,onFilter}){
  const draft=state.view?.canvasDraft||{},rows=chatArtifacts(state),filtered=filterList(rows,draft.filter||'',r=>[r.title,r.kind,r.path||'',r.url||'']);
- return <section className="a-canvas-library" aria-label="Saved canvas artifacts">{!compact&&<h3>Saved in this chat <small>{rows.length}</small></h3>}{(!compact||rows.length>5||draft.filter)&&<input type="search" aria-label="Filter saved artifacts" placeholder="Find artifacts · * ? patterns" value={draft.filter||''} onChange={e=>onFilter?onFilter(e.target.value):act('view.update',{patch:{canvasDraft:{...draft,filter:e.target.value}}})}/>} {filtered.slice().reverse().map(r=><button key={r.id} type="button" className="a-saved-artifact" data-action="canvas.select" onClick={()=>act('canvas.select',{id:r.id})}>{r.kind==='browser'?<Globe/>:r.kind==='settings'?<Settings/>:<FileText/>}<span><strong>{r.title}</strong><small>{r.kind} · {r.kind==='browser'?'Saved address':r.kind==='settings'?'Live settings':r.app?'Interactive surface':'Saved snapshot'}</small></span><ArrowRight/></button>)}{!filtered.length&&<p>{rows.length?'No matching artifacts.':'Files and visuals you open will stay here, even after closing their tabs.'}</p>}</section>;
+ return <section className="a-canvas-library" aria-label="Saved canvas artifacts">{!compact&&<h3>Saved in this chat <small>{rows.length}</small></h3>}{(!compact||rows.length>5||draft.filter)&&<input type="search" aria-label="Filter saved artifacts" placeholder="Find artifacts · * ? patterns" value={draft.filter||''} onChange={e=>onFilter?onFilter(e.target.value):act('view.update',{patch:{canvasDraft:{...draft,filter:e.target.value}}})}/>} {filtered.slice().reverse().map(r=><button key={r.id} type="button" className="a-saved-artifact" data-action="canvas.select" onClick={()=>act('canvas.select',{id:r.id})}>{r.kind==='browser'?<Globe/>:r.kind==='settings'?<Settings/>:<FileText/>}<span><strong>{r.title}</strong><small>{r.kind} · {artifactDescription(r)}</small></span><ArrowRight/></button>)}{!filtered.length&&<p>{rows.length?'No matching artifacts.':'Files and visuals you open will stay here, even after closing their tabs.'}</p>}</section>;
 }
 export function BrowserAddress({state,act}){
  const draft=state.view?.canvasDraft||{},[url,setUrl]=useState(draft.url||''),pending=useRef(null);

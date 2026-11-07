@@ -40,7 +40,7 @@ async def main(home):
     async def capture(scenario='normal'):
         config(home, recording=scenario != 'partial')
         value = ChatRequest(model='fixture', max_output_tokens=200, messages=[
-            Message(role='system', content='Respond with attributable evidence.\n<context_file paths="AGENTS.md → /synthetic/AGENTS.md">Keep original documents.\n'+('Check the captured request, not current disk.\n'*80)+'</context_file>'),
+            Message(role='system', content='Respond with attributable evidence.\n<context_file paths="@work:context/AGENTS.md → /synthetic/source-store/objects/'+('a'*64)+'/'+('b'*64)+'/context/AGENTS.md">Keep original documents.\n'+('Check the captured request, not current disk.\n'*80)+'</context_file>'),
             Message(role='user', content='Compare the rollout alternatives and retain the supporting evidence.\n' * 140),
             Message(role='assistant', content='Research observations.\n' * 400),
             Message(role='user', content='Continuation note: preserve the accepted scope.\n'*30, metadata={'source':'context-managed','ephemeral':True}),

@@ -35,15 +35,15 @@ def settings_state(state):
             **({'setupGuide': 'Ask what the user wants to work on. Offer to finish settings, then an optional tour: file attachments, Canvas outputs, workspaces and pins, plans and Chat overview, dictation or voice, and images. Demonstrate only chosen features. Explain changes and any paid or external action first. Offer to skip to a new chat. Credentials must be entered privately in Settings.'} if view.get('setupJourney') == 'assisted' else {})}
 
 
-def open_canvas(state, db):
-    """Open the chat's live Settings artifact; never snapshot settings or secrets."""
+def open_canvas(state, db, *, kind='settings'):
+    """Reopen a chat-owned native live view without snapshotting its private data."""
     from .canvas_library import remember, load, scope
     from .workspace_canvas import canvas_command
     remember(state, db)
     row = next((row for row in state.get('canvasArtifacts', [])
-                if row.get('kind') == 'settings' and scope(state, row)), None)
+                if row.get('kind') == kind and scope(state, row)), None)
     if row:
         load(state, db, row['id'])
     else:
-        canvas_command(state, 'canvas.show', {'kind': 'settings'}, 'app')
+        canvas_command(state, 'canvas.show', {'kind': kind}, 'app')
         remember(state, db)

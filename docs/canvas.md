@@ -39,6 +39,13 @@ resizing persists normally.
 
 ## Workspace layout
 
+**Context inspector** is another native chat-owned live tab, opened from Chat
+overview or Chat info through `canvas.show {"kind":"context-inspector"}`. It uses
+the same panel resizing, focus, tabs and close controls as documents. Only its
+identity is saved in the Canvas library, not captured prompt bodies. Its
+[request evidence and privacy contract](clients/context-inspector.md) remains
+independent of Canvas presentation. It accepts no supplied content, path or URL.
+
 Drag the canvas's left divider or pinned navigation's right divider. Chat keeps
 360 pixels, canvas keeps 300, and pinned navigation keeps 216; the pane being
 resized gets the remaining room. Keyboard users can focus a divider and use

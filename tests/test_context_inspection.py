@@ -239,6 +239,7 @@ async def test_real_core_foundation_final_refit_matches_independent_transport(tm
         assert len(state.measurements) == 3  # refused preflight is not a call
         result = observer.store.read(bodies=True)
         assert len(result['requests']) == 2
+        assert result['selected']['budget'].get('measurement', {}).get('input_tokens') == 100, result['selected']
         actual = json.loads(state.transports[-1])
         captured = []
         for item in result['items']:
@@ -328,6 +329,118 @@ async def test_actual_managed_compaction_projects_summary_not_full_saved_history
     assert any('Original task' in text for text in texts.values())
     evidence('managed-compaction', {'originalMessages':len(original), 'requestMessages':len(rows),
         'categories':manifest['categories'], 'originalHistoryUnchanged':True, 'oldResearchAbsent':True})
+
+
+async def test_runtime_attribute_budget_and_unavailable_reasons_are_frozen(tmp_path):
+    observer, _, provider = observed(tmp_path)
+    context = SimpleNamespace(max_tokens=7000, config={'summarize_trigger': .7})
+    observer.coordinator = SimpleNamespace(get=lambda name: context)
+    value = request(); value.max_output_tokens = None
+    await provider.complete(value, max_output_tokens=321)
+    await observer.drain()
+    header = observer.store.read()['selected']
+    assert header['limits']['configuredContextBudget'] == 7000
+    assert header['limits']['compactionThreshold'] == 4900
+    assert header['limits']['reservedOutput'] == 321
+    assert header['budgetStatus'] == 'not_captured'
+    assert 'No matching' in header['limitEvidence']['providerCount']['reason']
+    context.max_tokens = 9999
+    assert observer.store.read()['selected']['limits'] == header['limits']
+
+
+@pytest.mark.parametrize('mode', ['none', 'changed', 'bounded', 'other_model'])
+async def test_missing_preflight_is_not_a_fake_zero_or_current_model_fallback(tmp_path, mode):
+    observer, _, provider = observed(tmp_path)
+    value = request('x' * 1_000_001 if mode == 'bounded' else 'test')
+    if mode == 'none':
+        observer.budget(value, {}, None, provider)
+    else:
+        await provider.request_budget(value)
+    if mode == 'changed':
+        value.messages[-1].content = 'changed after preflight'
+    if mode == 'other_model':
+        value.model = 'not-the-default'
+        provider.get_info = lambda: {'id':'fixture','defaults':{'model':'fixture','context_window':8000}}
+    await provider.complete(value)
+    await observer.drain()
+    header = observer.store.read()['selected']
+    assert header['limits']['modelWindow'] is None
+    assert header['limits']['requestInputAllowance'] is None
+    assert header['budgetStatus'] == {'none':'not_reported','changed':'request_changed','bounded':'binding_bounded','other_model':'request_changed'}[mode]
+    assert header['limitEvidence']['providerCount']['reason']
+    if mode == 'other_model':
+        assert 'different model' in header['limitEvidence']['modelWindow']['reason']
+
+
+async def test_copied_request_receipt_never_crosses_provider_task_or_options(tmp_path):
+    observer, events, provider = observed(tmp_path)
+    value = request()
+    await provider.request_budget(value)
+    # An identical request in another task has no authority to consume this
+    # task's measurement, even though its value fingerprint matches.
+    await asyncio.create_task(provider.complete(value.model_copy(deep=True)))
+    await observer.drain()
+    assert observer.store.read()['selected']['budgetStatus'] == 'not_captured'
+    other = events.instrument_provider('root', Provider())
+    await other.complete(value.model_copy(deep=True))
+    await observer.drain()
+    assert observer.store.read()['selected']['budgetStatus'] == 'not_captured'
+    await provider.complete(value.model_copy(deep=True), temperature=.5)
+    await observer.drain()
+    assert observer.store.read()['selected']['budgetStatus'] == 'not_captured'
+    await provider.complete(value.model_copy(deep=True))
+    await observer.drain()
+    assert observer.store.read()['selected']['budgetStatus'] == 'not_captured', 'unmatched dispatch retires old preflight'
+    await provider.request_budget(value)
+    await provider.complete(value.model_copy(deep=True))
+    await observer.drain()
+    assert observer.store.read()['selected']['budget']['measurement']['input_tokens'] == 980
+    await provider.complete(value.model_copy(deep=True))
+    await observer.drain()
+    assert observer.store.read()['selected']['budgetStatus'] == 'not_captured', 'a receipt is consumed once'
+
+
+async def test_same_task_identical_candidates_and_unseen_suffix_cannot_claim_equality(tmp_path):
+    observer, _, provider = observed(tmp_path)
+    value = request()
+    await provider.request_budget(value)
+    await provider.request_budget(value.model_copy(deep=True))
+    await provider.complete(value.model_copy(deep=True))
+    await observer.drain()
+    assert observer.store.read()['selected']['budgetStatus'] == 'ambiguous'
+    # Past both the item display limit and the whole fingerprint work budget:
+    # the fingerprint returns None, never a truncated-prefix digest.
+    for oversized_options in (False, True):
+        value = request('x' * 1_000_001 if not oversized_options else 'small')
+        options = {'extra': 'y' * 1_000_001} if oversized_options else {}
+        await provider.request_budget(value, request_options=options)
+        sent = value.model_copy(deep=True)
+        if oversized_options:
+            options['extra'] += 'changed'
+        else:
+            sent.messages[1].content += 'changed'
+        await provider.complete(sent, **options)
+        await observer.drain()
+        assert observer.store.read()['selected']['budget'] == {}
+    value = request('x' * 130_000)
+    await provider.request_budget(value)
+    value.messages[1].content += 'changed beyond display limit'
+    await provider.complete(value)
+    await observer.drain()
+    assert observer.store.read()['selected']['budgetStatus'] == 'request_changed'
+
+
+async def test_budget_binding_does_not_keep_oversized_requests_alive(tmp_path):
+    import gc
+    import weakref
+    observer, _, provider = observed(tmp_path)
+    value = request('x' * 1_000_001)
+    reference = weakref.ref(value)
+    await provider.request_budget(value)
+    del value
+    gc.collect()
+    assert reference() is None
+    assert len(observer.budgets) == 1
 
 
 async def test_storage_wait_cannot_yield_between_final_guard_and_provider_entry(tmp_path, monkeypatch):

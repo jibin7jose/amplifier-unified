@@ -87,7 +87,7 @@ ACTION_DEFINITIONS = {
     "workspace.resources.list": ("Read retained external resource inventory; recording is not teardown.", schema({"workspaceId":string(100)})),
     "workspace.resources.add": ("Record an external resource and its owner. Does not create or delete infrastructure.", schema({"workspaceId":string(100),"kind":string(1000),"resourceId":string(1000),"owner":string(1000),"note":string(1000)},["workspaceId","kind","resourceId","owner"])),
     "workspace.resources.update": ("Record observed resource status with evidence at an exact revision. Never performs teardown or treats observation as ownership.", schema({"workspaceId":string(100),"id":string(100),"expectedRevision":{"type":"integer","minimum":1},"status":{"enum":["active","reaped","observed_absent"]},"evidence":string(4000)})),
-    "canvas.show": ("Save a durable artifact and choose one full presentation: canvas (default), inline, or saved (compact card only). Inline needs an attached client and an originating turn, and preserves unrelated Canvas work. Direct content creates an artifact; a canonical file reuses its tab and versions changes. Formats: sandboxed HTML, Markdown, Mermaid, DOT, structured data, text, code, image, PDF workspace files (20 MB, read-only original download), auto-detected file, Babylon.js HTML, A2UI, browser URL, or live Settings. PDF/browser/A2UI/Settings open in Canvas, not inline. HTML/Babylon files support 20 MB; embedded data/blob media only, no remote media. Browser embedding can fail; inspect render reports. A2UI supports Text, Row, Column, Card, Button and Divider. Saving is not render verification.", schema({"kind":{"enum":["auto","text","markdown","code","html","mermaid","dot","json","jsonl","image","pdf","a2ui","browser","babylon","settings"]},"title":string(200),"content":string(7000000),"path":string(4000),"url":string(4000),"sessionId":string(200),"clientId":string(100),"surface":{"type":"object"},"presentation":{"enum":["canvas","inline","saved"],"default":"canvas"}},["kind"])),
+    "canvas.show": ("Save a durable artifact and choose one full presentation: canvas (default), inline, or saved (compact card only). Inline needs an attached client and an originating turn, and preserves unrelated Canvas work. Direct content creates an artifact; a canonical file reuses its tab and versions changes. Formats: sandboxed HTML, Markdown, Mermaid, DOT, structured data, text, code, image, PDF workspace files (20 MB, read-only original download), auto-detected file, Babylon.js HTML, A2UI, browser URL, live Settings or context-inspector. PDF/browser/A2UI/Settings/context-inspector open in Canvas, not inline. Live views accept no body or path. HTML/Babylon files support 20 MB; embedded data/blob media only, no remote media. Browser embedding can fail; inspect render reports. A2UI supports Text, Row, Column, Card, Button and Divider. Saving is not render verification.", schema({"kind":{"enum":["auto","text","markdown","code","html","mermaid","dot","json","jsonl","image","pdf","a2ui","browser","babylon","settings","context-inspector"]},"title":string(200),"content":string(7000000),"path":string(4000),"url":string(4000),"sessionId":string(200),"clientId":string(100),"surface":{"type":"object"},"presentation":{"enum":["canvas","inline","saved"],"default":"canvas"}},["kind"])),
     "canvas.view": ("Adjust shared canvas viewer controls", schema({"id":string(100),"patch":schema({"source":{"type":"boolean"},"help":{"type":"boolean"},"reload":{"type":"number","minimum":0},"zoom":{"type":"number","minimum":0.2,"maximum":4},"panX":{"type":"number","minimum":-10000,"maximum":10000},"panY":{"type":"number","minimum":-10000,"maximum":10000},"engine":{"enum":["dot","neato","fdp","sfdp","circo","twopi"]},"node":string(500),"query":string(500)}, [])})),
     "canvas.report": ("Report browser rendering success or failure for a canvas part; this is display evidence only", schema({"id":string(100),"part":string(100),"status":{"enum":["pending","ready","unverified","error"]},"message":string(2000)},["id","part","status"])),
     "canvas.snapshot": ("Report visible HTML preview text and standard controls as untrusted display data", schema({"id":string(100),"document":schema({"text":string(16000),"controls":{"type":"array","maxItems":100,"items":schema({"id":string(100),"tag":string(30),"type":string(30),"label":string(200),"value":string(4000),"disabled":{"type":"boolean"}},["id","tag","type","label","value","disabled"])}})})),
@@ -2928,18 +2928,20 @@ class AppService:
                 elif action=='canvas.show':
                     sid=args.get('sessionId',self.state.get('selectedSessionId'))
                     destination = args.get('presentation', 'canvas')
-                    if args.get('kind') == 'settings' and destination != 'canvas':
-                        raise AppError('Settings opens in Canvas.', 409)
+                    live_view = args.get('kind') in {'settings', 'context-inspector'}
+                    label = 'Settings' if args.get('kind') == 'settings' else 'Context inspector'
+                    if live_view and destination != 'canvas':
+                        raise AppError(f'{label} opens in Canvas.', 409)
                     from .agent_canvas import scope
                     workspace_id=scope(self,sid)[1] if sid else self.state['selectedWorkspaceId']
                     scoped={**self.state,'selectedSessionId':sid,'selectedWorkspaceId':workspace_id}
-                    if args.get('kind') == 'settings':
+                    if live_view:
                         if any(key in args for key in ('content', 'path', 'url', 'surface')):
-                            raise AppError('Settings is a live app view; do not supply content or credentials.')
+                            raise AppError(f'{label} is a live app view; do not supply content or credentials.')
                         if not sid:
-                            raise AppError('Create or select a chat before opening Settings in Canvas.')
+                            raise AppError(f'Create or select a chat before opening {label} in Canvas.')
                         from .settings_navigation import open_canvas
-                        open_canvas(scoped, self.db)
+                        open_canvas(scoped, self.db, kind=args['kind'])
                     else:
                         owner = self._session(sid) if sid else None
                         file_root = (owner.get('workingDirectory') or owner.get('workspace')) if owner else None
@@ -2975,7 +2977,7 @@ class AppService:
                                 self.state['canvas']=scoped['canvas']
                             elif current['id'] in scoped.get('canvasTabs', {}):
                                 scoped['canvasTabs'][current['id']]['view'] = copy.deepcopy(current.get('view', {}))
-                            if args.get('kind') == 'settings':
+                            if live_view:
                                 self.state['view']['panel'] = None
                             self.state['view'].setdefault('canvasDraft',{}).update(library=False,open=False,browser=False,overview=False)
                     self.state['canvasArtifacts'] = scoped['canvasArtifacts']
