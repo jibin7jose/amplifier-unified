@@ -29,7 +29,7 @@ from test_context_inspection import config, request, evidence
 @asynccontextmanager
 async def production(tmp_path, *, legacy=False, immutable=False):
     plan={'session':{'orchestrator':{'module':'loop-streaming','config':{
-        'use_streaming':False,'min_delay_between_calls_ms':0,'max_iterations':2}},
+        'min_delay_between_calls_ms':0,'max_iterations':2}},
         'context':{'module':'context-simple'}}}
     paths={name:Path(importlib.util.find_spec('amplifier_module_'+name.replace('-','_')).origin).parent
            for name in ('loop-streaming','context-simple')}
@@ -61,8 +61,8 @@ async def production(tmp_path, *, legacy=False, immutable=False):
             return ChatResponse(content=[TextBlock(text='Done')],usage=Usage(input_tokens=100,output_tokens=1,total_tokens=101))
         async def stream(self,value,**kwargs):
             state.calls+=1;state.transports.append(value.model_dump_json())
-            yield {'text':'one'}
-            yield {'text':'two'}
+            yield {'content':'Do'}
+            yield {'content':'ne'}
     if legacy:
         async def budget(self,value,*,context_estimate=0,**kwargs):
             assert 'request_options' not in kwargs
