@@ -28,6 +28,11 @@ export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview}){
  useCanvasReading(strip,state.selectedSessionId,'tabs',!!state.canvas?.open);
  const reveal=id=>{const node=strip.current,tab=[...(node?.querySelectorAll('[role=tab]')||[])].find(el=>el.dataset.artifactId===id);if(!tab)return;const outer=node.getBoundingClientRect(),inner=(tab.closest?.('.a-canvas-document-entry')||tab).getBoundingClientRect();if(inner.left<outer.left)node.scrollLeft+=inner.left-outer.left;else if(inner.right>outer.right)node.scrollLeft+=Math.min(inner.left-outer.left,inner.right-outer.right)};
  useLayoutEffect(()=>{if(state.canvas?.open&&!overview)reveal(state.canvas?.id)},[state.canvas?.id]);
+ useLayoutEffect(()=>{
+  const node=strip.current;if(!node||!state.canvas?.open||overview)return;
+  const observer=new ResizeObserver(()=>reveal(state.canvas?.id));observer.observe(node);
+  return()=>observer.disconnect();
+ },[state.canvas?.id,state.canvas?.open,overview]);
  useLayoutEffect(()=>{if(strip.current)setScrolled(strip.current.scrollLeft>4)},[state.selectedSessionId,state.canvas?.open]);
  useEffect(()=>{if(open&&!dialog.current?.open)dialog.current?.showModal();else if(!open&&dialog.current?.open)dialog.current.close()},[open]);
  useEffect(()=>{focusIntent.current++;dialogGeneration.current++;setOpen(false);setQuery('');setError('')},[state.selectedSessionId,state.selectedWorkspaceId]);

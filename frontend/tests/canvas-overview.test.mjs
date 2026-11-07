@@ -74,7 +74,7 @@ test('accepted document selection closes native modality before scheduling tab f
 // Real CanvasTabs handlers/hooks with mocked host nodes and deterministic receipt
 // and frame delivery. This does not substitute for the real browser focus oracle.
 async function controlledTabs(Component,run){
- const keys=['window','document','requestAnimationFrame','IS_REACT_ACT_ENVIRONMENT'];
+ const keys=['window','document','requestAnimationFrame','ResizeObserver','IS_REACT_ACT_ENVIRONMENT'];
  const previous=Object.fromEntries(keys.map(key=>[key,globalThis[key]]));
  const listeners=new Map(),frames=[],calls=[],events=[];
  let focused=null,root,pending,model={...state,canvas:{open:true,id:'a',selectedVersion:2},canvasArtifacts:['a','b'].map(id=>({id,title:'Document '+id,kind:'markdown',tabOpen:true,sessionId:'chat-a',workspaceId:'workspace-a'}))};
@@ -90,6 +90,7 @@ async function controlledTabs(Component,run){
  globalThis.window={addEventListener(){},removeEventListener(){}};
  globalThis.document={get activeElement(){return focused},addEventListener(type,fn){listeners.set(type,fn)},removeEventListener(type){listeners.delete(type)}};
  globalThis.requestAnimationFrame=fn=>{frames.push(fn);return frames.length};
+ globalThis.ResizeObserver=class{observe(){}disconnect(){}};
  const dispatch=(action,args)=>{calls.push({action,args});return new Promise((resolve,reject)=>{pending={resolve,reject,args,action}})};
  const render=()=>React.createElement(Component,{state:model,dispatch});
  const findTab=id=>root.root.findAllByType('button').find(n=>id==='overview'?n.props['aria-label']==='Chat overview':n.props['data-artifact-id']===id);

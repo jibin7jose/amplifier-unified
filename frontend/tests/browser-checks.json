@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "scenarios": [
     {"id": "context-inspector", "command": ["node", "tests/context-inspector-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/context-inspector"}},
+    {"id": "context-inspector-layout", "command": ["node", "tests/context-inspector-layout-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/context-inspector-layout"}},
     {"id": "adaptive-work", "command": ["node", "tests/adaptive-work-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/adaptive-work"}},
     {"id": "home-sidebar", "command": ["node", "tests/home-sidebar-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/home-sidebar"}},
     {"id": "shared-landing", "command": ["node", "tests/shared-landing-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/shared-landing"}},

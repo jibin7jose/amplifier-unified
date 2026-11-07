@@ -4,7 +4,7 @@ import {PublishingSettings} from './publishing';
 import {ChatOverview} from './work-overview';
 import {PermissionHistory,approvalGroups} from './approval-card';
 import {NavigationOpen,useModalFocus,navigationExpanded} from './responsive-navigation';
-import {CanvasControlsHost,CanvasPrimaryActionsHost,CanvasDocumentRefresh,CanvasVersionLoadProvider} from './canvas-controls';
+import {CanvasControlsHost,CanvasPrimaryActionsHost,CanvasDocumentRefresh,CanvasVersionLoadProvider,CanvasDetailsAction} from './canvas-controls';
 import {CanvasOverviewSection,useCanvasReading,useCanvasOverviewState} from './canvas-overview-state';
 import {CanvasWorkspace} from './canvas-workspace';
 import {McpAppVisibilityProvider} from './mcp-app-lifecycle';
@@ -183,9 +183,9 @@ export function AgentCanvas({state,act,dispatch=act,suppressed=false,settingsSur
     <button type="button" className="a-soft a-canvas-dismiss" aria-label="Close canvas panel" title="Return to chat — keeps open documents and edits" data-action="canvas.visibility" onClick={()=>act('canvas.visibility',{open:false})}><X aria-hidden="true"/><span>Close Canvas</span></button>
    </header>
   </div>
-  <div ref={contentRef} className="a-canvas-content" data-details-overlay={detailsOverlay}>
+  <CanvasDetailsAction.Provider value={{expanded:controls,toggle:()=>controls?closeControls():openControls()}}><div ref={contentRef} className="a-canvas-content" data-details-overlay={detailsOverlay}>
    <div ref={readerRef} className="a-canvas-reader" inert={covered} aria-hidden={covered||undefined}>
-   <div className="a-canvas-artifact-toolbar" hidden={overview||!hasContent}>
+   <div className="a-canvas-artifact-toolbar" hidden={overview||!hasContent||canvas.kind==='context-inspector'}>
     <strong title={canvas.title}>{canvas.title}</strong>
     {resourceView?.versions?.length>0&&canvas.kind!=='context-inspector'&&<button type="button" className="a-canvas-version-shortcut a-soft" aria-label="Choose artifact version" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>openControls('version')}>v{resourceView.runningVersion??resourceView.selectedVersion??resourceView.latestVersion}{resourceView.selectedVersion!=null?' · Saved':''}</button>}
     {resourceView?.versions?.length>0&&!canvas.app&&!['settings','context-inspector','browser','mcp-app'].includes(canvas.kind)&&<CanvasDocumentRefresh key={state.selectedSessionId+':'+resourceView.resourceId+':'+(resourceView.selectedVersion??'latest')} view={resourceView} dispatch={dispatch}/>}
@@ -218,5 +218,5 @@ export function AgentCanvas({state,act,dispatch=act,suppressed=false,settingsSur
    </aside>
   </div>
   {latestEvent&&<div className="a-canvas-event" role="status"><Check/><span>Response recorded · {latestEvent.name}</span><small>The agent can see this response in app state.</small></div>}
- </aside></CanvasControlsHost.Provider></CanvasPrimaryActionsHost.Provider></CanvasVersionLoadProvider>;
+ </CanvasDetailsAction.Provider></aside></CanvasControlsHost.Provider></CanvasPrimaryActionsHost.Provider></CanvasVersionLoadProvider>;
 }
