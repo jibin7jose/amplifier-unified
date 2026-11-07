@@ -555,6 +555,46 @@ async def test_non_ready_status_does_not_hide_unresolved_runtime_failure(service
     assert service.get_state()['attention']['unread']==1
 
 
+async def test_authentication_error_publishes_and_refreshes_its_own_connections(service, monkeypatch):
+    from amplifier_web.management import Management
+    from amplifier_web.setup import SetupManager
+
+    failed_id = service.get_state()['selectedSessionId']
+    await service.dispatch('session.create', {})
+    selected_id = service.get_state()['selectedSessionId']
+    assert selected_id != failed_id
+    service.management = Management(service)
+    refreshed = asyncio.Event()
+    reads = []
+
+    async def perform(manager, action, args):
+        assert not service.lock.locked()
+        reads.append((action, args))
+        return {'providers': [], 'providersWorkspace': args['workspace']}
+
+    async def warm(manager, workspace, *, refresh=False):
+        assert refresh is True
+        refreshed.set()
+
+    monkeypatch.setattr(SetupManager, 'perform', perform)
+    monkeypatch.setattr(service.management, 'warm_providers', warm)
+    revision = service.state['revision']
+    await service.on_runtime_event('runtime.error', {
+        'sessionId': failed_id, 'error': 'Provider authentication failed',
+    })
+    assert service.state['revision'] > revision
+    assert service._session(failed_id)['failure']['category'] == 'authentication'
+    assert service._session(failed_id)['status'] == 'error'
+    assert service.state['selectedSessionId'] == selected_id
+    assert not service._session(selected_id).get('error')
+    await asyncio.wait_for(refreshed.wait(), 3)
+    assert len(reads) == 1
+    assert reads[0][0] == 'providers.list'
+    assert reads[0][1]['sessionId'] == failed_id
+    assert reads[0][1]['refresh'] is True
+    assert service.state['actionStatus']['providers.list']['phase'] == 'ready'
+
+
 @pytest.mark.parametrize('status', ['idle', 'stopped'])
 async def test_late_settled_status_preserves_terminal_error_and_execution(service, status):
     from amplifier_web.execution import ensure_turn

@@ -4837,7 +4837,7 @@ class AppService:
                 if projected['category']=='authentication' and self.management is not None:
                     # Recheck current connections outside the event lock. A late
                     # failure from an old worker must not label a newly signed-in account.
-                    self.management.background(self.management.command('providers.list',{'sessionId':sid,'refresh':True}))
+                    self.management.background(self.management.command('providers.list',{'sessionId':session['id'],'refresh':True}))
                 session.pop('health', None)
                 self._activity(session, "error", session["error"])["activeTools"] = []
             elif kind == "runtime.generation":
