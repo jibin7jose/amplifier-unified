@@ -1,5 +1,10 @@
 # Amplifier shell SDK
 
+TypeScript authors can annotate the factory's host-provided React type;
+`defineModule` preserves that type and the returned component signature. The
+package qualification compiles a strict installed consumer and checks that
+unsupported commands, snapshot mutation and invalid factories remain errors.
+
 `@amplifier/shell-sdk` contains dependency-free helpers and TypeScript declarations
 for independently authored navigation, Canvas renderers and shell components.
 Package version `1.0.0` describes the existing host interface `apiVersion: "1.0"`.

@@ -17,7 +17,7 @@ export interface NavigationSnapshot {
  readonly workspaceExplorer: {rows:readonly {path:string;name:string;workspaceId?:string;chatCount?:number}[];page:number;pages:number;filter:string};
 }
 /** React is supplied by the host; native packages must not bundle another copy. */
-export function defineModule<T>(factory: (runtime: {React: unknown}) => T): typeof factory;
+export function defineModule<T, R = unknown>(factory: (runtime: {React: R}) => T): typeof factory;
 export function useNavigation(React: any, host: ShellHost): NavigationSnapshot;
 export interface CanvasSnapshot {
  readonly viewId: string;

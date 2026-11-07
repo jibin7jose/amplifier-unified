@@ -8,6 +8,7 @@ import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
+const typescriptVersion='5.9.3';
 const output=resolve(process.argv[2]||join(root,'output/shell-sdk-proof'));
 if(process.platform==='win32')throw new Error('This qualification helper runs on Linux/macOS. Use npm run build in the standalone example on Windows.');
 const scratch=await mkdtemp(join(tmpdir(),'amplifier-shell-sdk-'));
@@ -19,8 +20,15 @@ try{
  await mkdir(consumer);
  for(const name of ['index.js','manifest.json','package.json','build.mjs','README.md'])
   await copyFile(join(root,'examples/shell-controls',name),join(consumer,name));
+ const example=JSON.parse(await readFile(join(consumer,'package.json'),'utf8'));
+ await writeFile(join(consumer,'package.json'),JSON.stringify({...example,
+  devDependencies:{...example.devDependencies,typescript:typescriptVersion}}));
  // Explicit artifact installation also replaces the not-yet-published registry reference.
  run(['install',archive,'--save-exact','--no-audit','--no-fund'],consumer);
+ await copyFile(join(root,'tests/fixtures/shell_sdk_consumer.ts'),join(consumer,'consumer.ts'));
+ execFileSync(process.execPath,[join(consumer,'node_modules/typescript/bin/tsc'),
+  '--strict','--noEmit','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','consumer.ts'],
+  {cwd:consumer,stdio:'inherit'});
  run(['run','build'],consumer);
  const meta=JSON.parse(await readFile(join(consumer,'dist/build-inputs.json'),'utf8'));
  assert.deepEqual(Object.keys(meta.inputs).sort(),['index.js','node_modules/@amplifier/shell-sdk/index.js']);
@@ -31,7 +39,8 @@ try{
  const receipt={package:packed.name,version:packed.version,files:packed.files.map(({path,size})=>({path,size})),
   tarball:packed.filename,tarballSha256:await hash(archive),moduleSha256:await hash(join(consumer,'dist/module.mjs')),
   node:process.version,npm:run(['--version'],consumer).trim(),inputs:Object.keys(meta.inputs),
-  apiVersion:manifest.apiVersion,standaloneBuild:true,hostAcceptance:'Run shell-components-browser with AMPLIFIER_SHELL_COMPONENT_PACKAGE pointing here'};
+  apiVersion:manifest.apiVersion,standaloneBuild:true,typescript:typescriptVersion,strictConsumer:true,
+  hostAcceptance:'Run shell-components-browser with AMPLIFIER_SHELL_COMPONENT_PACKAGE pointing here'};
  await mkdir(output,{recursive:true});
  for(const name of ['module.mjs','manifest.json','build-inputs.json'])await copyFile(join(consumer,'dist',name),join(output,name));
  await copyFile(archive,join(output,packed.filename));
