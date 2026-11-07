@@ -72,8 +72,82 @@ directory. Immutable canvas/result bodies live in `artifacts/<sha256>.json`, wit
 small SQLite references. Live MCP context is separate from static HTML, preventing
 every polling update from duplicating an entire application. Reachability collection
 keeps saved artifacts and retained results, including transitive references.
-Completed operation results expire after 30 days, 200 results or 32 MB; small
-execution receipts remain to prevent replay. Running operations are never expired.
+Smart Tool result and argument bodies expire after 30 days, 200 retained results
+or 32,000,000 logical bytes. This budget belongs to `smart_tool_operations`,
+not every operation, command or saved test. It runs during storage upgrade, completed Smart Tool writes, and the existing
+hourly Storage maintenance pass while the app is open, independently of the
+unused-code cleanup setting. Each periodic pass expires at most 32 settled
+results; its candidate index excludes receipt-only history. Queued, running,
+interrupted and unknown outcomes, and records without a settlement timestamp,
+are excluded. Small execution receipts remain to prevent replay. Bodies still
+referenced by another owner remain protected by ordinary resource collection.
+
+Storage accounting distinguishes current logical record/body bytes from historical
+archive sizes and allocated disk space. Shared body references can repeat the same
+logical bytes; their sum is not unique storage or guaranteed reclaimable space.
+`storage.cleanup.evidence` defaults to saved-test receipts; `owner: "smartTools"`
+returns a bounded page of Smart Tool receipt/body sizes without opening resources
+or starting tools. Oversized or incomplete records remain explicitly unaccounted.
+The read does not reset retention, change policy, or delete anything.
+
+| Owner | Existing retention | What remains protected |
+| --- | --- | --- |
+| Smart Tools | 30 days / 200 full results / 32,000,000 bytes; qualifying writes and bounded periodic expiry | Execution identities; active/uncertain bodies |
+| Process operations | Output bounded per operation; no terminal lifetime expiry | Admission, outcomes, cancellation and unknown-effect recovery |
+| Schedules | 100 terminal runs per schedule | Current schedule, active/unknown runs and command identities |
+| Saved tests | Optional prospective final-workspace expiry | Original source, results, legacy/manual/unknown custody |
+| Publishing and outputs | No general age expiry | Current/pinned/referenced content; unlink/remove does not imply content deletion |
+| Diagnostics | 30 days / 25,000 records by default | Native transcripts and event files are separate owners |
+
+Current policy, grants, Work records and unsettled effects also live in the
+`commands` table. A table-wide TTL would remove current authority or let an old
+request look new; it is not a retention mechanism.
+
+### Approved prospective retention policy
+
+The operator-approved direction is one standing Storage choice, available through
+user controls or an authorized Full agent/system, with no approval per expiry.
+The defaults below are approved for incremental implementation; the owner table
+above describes current behavior. Approval of the direction does not relabel
+legacy records or enable every listed mechanism on upgrade.
+
+| Explicitly disposable kind | Approved default | Required boundary |
+| --- | --- | --- |
+| Completed operation output and Smart Tool result/argument bodies | 30 days after settlement | Retain small outcome/retry identity and explicit expired detail; existing Smart Tool 200-result/32,000,000-byte budget remains |
+| Settled, acknowledged collaboration payloads | 30 days | All notifications, continuations and consumer cursors settled; native conversation input stays |
+| New queued-test final workspace copies | 7 days after confirmed guest removal | Capture the selected policy on submission; `keepWorkspace` and longer existing promises stay protected |
+| Test source/log/artifact evidence explicitly classified disposable | 30 days after test and cleanup settlement | No durable output, active review, unresolved effect or Work reference needs it |
+| Disposable publishing releases | 30 days without a retained consumer | Protect current deployment, live preview, named pins and selected rollback releases |
+| Prior successfully deployed rollback releases | Two prior releases for 30 days after supersession | Current release is separate; operators may change the policy or pin more |
+| Explicitly temporary outputs | 30 days once unreferenced | Promotion makes them durable; unlink alone is never deletion |
+
+Native history, ordinary outputs and selected durable deliverables remain durable.
+Current policy, grants, Stop/execution ownership and unfinished/unknown effects
+remain under their existing owners. Legacy compact request identities remain;
+no request-epoch expiration is enabled by this policy. Diagnostics retain their
+existing controls and 30-day/25,000-record defaults; native event files are outside
+these initial batches.
+
+Each new disposable kind records its disposition and applicable policy when
+admitted or exported. Enabling a policy affects future eligible work; applying it
+to older material requires an explicit scoped classification. Merely viewing a
+record cannot extend its lifetime. Retained references and explicit promotion/pins
+can protect a body. Owners use bounded maintenance and existing resource/file
+reclamation, rechecking policy and references before removal. There is no global
+`commands` TTL, duplicate authority store or generic retention engine.
+
+Small receipts retain identity, fingerprint, owner/action, admission/outcome,
+relevant revision, uncertainty and availability. Expired detail is unavailable,
+not an empty result or permission to repeat the action. Unknown cleanup retains
+its exact intent until reconciled. Disabling policy prevents new expiry admissions;
+completed deletion does not pretend to roll back. Current logical bytes,
+historical sizes and actual filesystem reclamation remain separate measures.
+
+Contract and reader support precede each new deletion mechanism. Independent or
+older readers must interpret unavailable detail safely; otherwise incompatible
+rollback is unavailable while that policy is enabled. Restoring a backup does not
+authorize replay or silently override a completed deletion. Broader storage
+redesign and optional versioned request horizons remain separate work.
 
 ### Incremental application state
 

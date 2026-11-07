@@ -11,22 +11,42 @@ from .state_storage import resource
 RESULT_LIMIT = 200
 RESULT_BYTES = 32_000_000
 RESULT_DAYS = 30
+RESULT_EXPIRY_BATCH = 32
+# Exclude unresolved outcomes and receipt-only history before ordering candidates.
+RESULT_CANDIDATE = """json_extract(value,'$.status') IN ('completed','failed')
+    AND json_extract(value,'$.resultExpired') IS NOT 1
+    AND (json_type(value,'$.result') IS NOT NULL OR json_type(value,'$.arguments') IS NOT NULL)
+    AND json_type(value,'$.updatedAt') IN ('integer','real')"""
 BACKGROUND_PRUNE_LIMIT = 1024
 BACKGROUND_ROOT_CATCHUPS = 3
 BACKGROUND_EDGE_BATCH = 64
 
 
-def trim_operations(db, state):
+def index_operations(db):
+    db.execute("CREATE INDEX IF NOT EXISTS smart_tool_result_retention ON smart_tool_operations "
+               "(json_extract(value,'$.updatedAt') DESC) WHERE " + RESULT_CANDIDATE)
+
+
+def refresh_operations(db, state):
+    smart = state.get('smartTools', {})
+    for item in [*smart.get('operations', []), smart.get('inspectedOperation', {})]:
+        row = db.execute('SELECT value FROM smart_tool_operations WHERE id=?', (item.get('id'),)).fetchone()
+        if row:
+            item.clear()
+            item.update(json.loads(row[0]))
+
+
+def trim_operations(db, state, *, expire_limit=None):
     """Keep small at-most-once receipts forever, recent full results within budget."""
     retained = size = 0
-    expired = set()
-    # Stream rows; an old installation can have gigabytes of full results.
-    cursor = db.execute("SELECT id FROM smart_tool_operations WHERE json_extract(value,'$.resultExpired') IS NOT 1 ORDER BY json_extract(value,'$.updatedAt') DESC")
+    expired = 0
+    changed = False
+    # The partial index skips receipt-only history and unresolved operations.
+    cursor = db.execute("SELECT id FROM smart_tool_operations WHERE " + RESULT_CANDIDATE
+                        + " ORDER BY json_extract(value,'$.updatedAt') DESC")
     for (identity,) in cursor:
         text = db.execute('SELECT value FROM smart_tool_operations WHERE id=?', (identity,)).fetchone()[0]
         operation = json.loads(text)
-        if operation.get('status') in {'running', 'queued'}:
-            continue
         fields = {key: operation[key] for key in ('result', 'arguments') if key in operation}
         if not fields:
             continue
@@ -45,16 +65,16 @@ def trim_operations(db, state):
                 operation.pop(key, None)
             operation['resultExpired'] = True
             operation['detail'] = 'Full result retention expired. The execution receipt remains; work is never replayed.'
-            expired.add(identity)
+            expired += 1
         encoded = json.dumps(operation)
         if encoded != text:
             db.execute('UPDATE smart_tool_operations SET value=? WHERE id=?', (encoded, identity))
-    smart = state.get('smartTools', {})
-    for item in [*smart.get('operations', []), smart.get('inspectedOperation', {})]:
-        row = db.execute('SELECT value FROM smart_tool_operations WHERE id=?', (item.get('id'),)).fetchone()
-        if row:
-            item.clear()
-            item.update(json.loads(row[0]))
+            changed = True
+        if expire_limit is not None and expired >= expire_limit:
+            break
+    if changed:
+        refresh_operations(db, state)
+    return {'expired': expired, 'changed': changed}
 
 
 def upgrade(service):
@@ -84,6 +104,7 @@ def upgrade(service):
             item['mcpState'] = put(db, body['mcp'])
             item['body'] = put(db, {key: value for key, value in body.items() if key != 'mcp'})
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='smart_tool_operations'").fetchone():
+        index_operations(db)
         trim_operations(db, state)
     from .state_storage import normalize_state
     normalize_state(state, db)

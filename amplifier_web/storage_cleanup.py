@@ -22,7 +22,7 @@ LATEST = 'storage-cleanup-latest'
 def definitions(schema, string):
     return {
         'storage.cleanup.read': ('Read global automatic cleanup settings and the last receipt without scanning or starting work.', schema({}, [])),
-        'storage.cleanup.evidence': ('Read one bounded page of recorded saved test sizes. Does not measure current files, connect to machines, start work or delete evidence.', schema({'before': {'type': 'integer', 'minimum': 1, 'maximum': 2**53-1}}, [])),
+        'storage.cleanup.evidence': ('Read one bounded page of saved-test historical sizes or Smart Tool receipt/body accounting. Does not open bodies, measure current files, start work or delete evidence.', schema({'owner': {'enum': ['tests', 'smartTools']}, 'before': {'type': 'integer', 'minimum': 1, 'maximum': 2**53-1}}, [])),
         'storage.cleanup.save': ('Save global unused component/test-runner code retention under standing Full or user control. Sources, results, chats and project folders stay. Optional temporary queued-test workspace expiry applies only to newly submitted checks.', schema({
             'expectedRevision': {'type': 'integer', 'minimum': 0}, 'enabled': {'type': 'boolean'},
             'keepDays': {'type': 'integer', 'minimum': 0, 'maximum': 3650},
@@ -411,6 +411,10 @@ async def dispatch(app, action, args, origin, command_id, caller_session_id=None
     if action == 'storage.cleanup.evidence':
         from .saved_test_storage import read as evidence
         try:
+            if args.get('owner', 'tests') == 'smartTools':
+                return {'accepted': True, 'result': app.smart_tools.retention_accounting(args.get('before'))}
+            if args.get('owner', 'tests') != 'tests':
+                raise ValueError('Choose a supported storage evidence owner.')
             return {'accepted': True, 'result': await asyncio.to_thread(evidence, app, args.get('before'))}
         except ValueError as exc:
             raise AppError(str(exc), 400) from None

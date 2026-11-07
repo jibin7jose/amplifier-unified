@@ -37,7 +37,8 @@ accepted execution -> runtime admission -> working -> safely evictable when idle
    not initialize an agent. AHP retention and window semantics remain authoritative.
    Routine current-state projections preserve fields their consumers need without
    repeating unused historical bodies. Omitted detail retains its authorized read
-   path; projection never truncates the canonical record or invents empty coverage.
+   path until an explicit WS7 retention policy expires it; projection alone never
+   truncates the canonical record or invents empty coverage.
    Broken: opening the sidebar starts dormant workers. Affected: people and active executions.
 
 4. **WS4 — Bound resident work.** Runtime, projection, replay and subscriber caches
@@ -71,6 +72,24 @@ accepted execution -> runtime admission -> working -> safely evictable when idle
    initial migration can scan in the background with visible progress and throttling.
    Broken: every refresh parses every events file or missing a watcher loses a session forever. Affected: legacy users.
 
+7. **WS7 — Give disposable payloads an explicit lifetime.** A standing Storage
+   policy may expire explicitly disposable completed bodies at their canonical
+   owner, independently of the small admission/outcome receipt. First activation
+   applies prospectively; legacy records need an explicit scoped disposition.
+   Preserve current policy/grants, active or unknown effects, native history and
+   durable deliverables. Retained consumers, review pins and recovery needs protect
+   their required bodies. Reads and metadata inspection never restart a lifetime.
+   Expired detail remains distinguishable from missing work and from an empty
+   result; inspection never reexecutes or fetches an effect to reconstruct it.
+   Disabling policy stops new expiry admissions, and size pressure never shortens
+   a promised lifetime. Existing explicitly documented Smart Tool result budgets
+   retain their count/byte limits. Bounded owner passes recheck references and
+   policy at commit/removal; uncertain removal remains recoverable.
+   [Storage policy](../docs/STORAGE.md#approved-prospective-retention-policy) names
+   approved defaults and separates implemented behavior from subsequent batches.
+   Broken: an old receipt looks like a new request or unlink deletes a deliverable.
+   Affected: unattended work, recovery and retained results.
+
 ### Nested tool checkpoint boundary
 
 A verified active `tools.dispatch` child does not append a conversation result.
@@ -87,8 +106,9 @@ the enclosing transcript checkpoint without changing their assurance eligibility
 
 ## Not in v1
 
-Automatic deletion or archival compression; promote only under a separate retention
-decision. Cross-machine path equivalence is not inferred from a matching path string.
+Automatic native-history deletion and archival compression remain separate retention
+decisions. WS7 applies only to explicitly disposable kinds under the approved Storage
+policy. Cross-machine path equivalence is not inferred from a matching path string.
 
 ## How the kit checks it
 
@@ -98,6 +118,8 @@ decision. Cross-machine path equivalence is not inferred from a matching path st
 - WS5: compare update work as stored sessions grow with the active set fixed, and
   as one active conversation's completed history grows with its current work fixed.
 - WS6: duplicate/drop hints, interrupt rebuild and restart the legacy writer.
+- WS7: expire settled bodies without replay; preserve active/unknown and referenced
+  content, race policy disable/promotion with expiry, and distinguish expired detail.
 
 Use [performance validation](../docs/validation/performance.md) to declare workload
 shape, operation counts and candidate budgets alongside semantic regression checks.
@@ -112,14 +134,9 @@ Which directory freshness policy handles offline mounts without noisy catalog ch
 
 | Date | Change | Evidence |
 | --- | --- | --- |
+| 2026-11-07 | Ratify prospective owner-specific disposable payload lifetimes; preserve current authority, durable/native content and exact retry identities. | User-approved finite-lifetime design; [Storage policy](../docs/STORAGE.md#approved-prospective-retention-policy). |
 | 2026-10-30 | Clarify same-conversation history scaling and distinguish protected execution from completed-body residency. | [Long-lived conversations](../docs/architecture/state-and-storage.md#long-lived-conversations); diagnostic fixture in [performance validation](../docs/validation/performance.md#long-lived-conversation-baseline). |
 | 2026-10-30 | Clarify diagnostic ownership and request-scoped preparation under WS5. | Focused runtime progress and preparation checks in [performance validation](../docs/validation/performance.md). |
 | 2026-10-29 | Clarify current-state/history projection and accountable full-history work in WS3/WS5. | [Performance validation](../docs/validation/performance.md); user-requested guardrails. |
 | 2026-10-02 | Ratified for implementation; exclude amplifier-agent as the native backend. | User approval of the plan and direction; implementation evidence remains separate. |
 | 2026-10-02 | Initial WS1–6. | [Scale requirements and measurements](../docs/architecture/evidence.md). |
-
-The separately authorized Storage temporary-test retention policy may expire a
-new queued check's explicitly disposable, retired local workspace export. It
-uses bounded ledger inspection and the existing cleanup/ownership boundary; it
-does not authorize source/results/history deletion or apply retroactively to
-legacy records. See [temporary test workspace copies](../docs/STORAGE.md#temporary-queued-test-workspace-copies).

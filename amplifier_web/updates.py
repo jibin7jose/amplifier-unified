@@ -1574,6 +1574,11 @@ class UpdateManager:
             return
         started = time.monotonic()
         try:
+            # Tool result retention is its own existing promise, independent of
+            # whether unused-code cleanup is enabled in Settings.
+            smart_tools = getattr(self.service, 'smart_tools', None)
+            if smart_tools is not None:
+                await smart_tools.expire_results()
             from .storage_cleanup import run
             storage = await run(self.service, uuid.uuid4().hex, automatic=True)
             await self.publish(storage={**storage, 'durationMs': round((time.monotonic() - started) * 1000)})

@@ -51,6 +51,15 @@ The [protocol design](../docs/architecture/protocol-fit.md) cites upstream autho
 6. **HP6 — Keep admission independently recoverable.** Persist host command identity
    and admission outcome before dispatching accepted execution. Reconcile unknown
    outcomes without automatic resubmission. AHP echo is not proof of completed effects.
+   Disposable body expiry preserves request identity, fingerprint, scoped owner and
+   truthful admission/outcome, including uncertainty and detail availability. An
+   exact legacy retry still returns its saved outcome or explicit expired detail;
+   conflicting contents still reject. Expiry never regenerates content by replaying
+   an effect and never turns a receipt into a permission grant. Current authority
+   and unresolved recovery bindings cannot expire merely through age. Legacy
+   arbitrary request IDs keep compact no-replay identities indefinitely; a future
+   retry horizon requires a separately versioned, negotiated protocol and durable
+   closed-epoch boundary before any identity can be forgotten.
    Broken: retry after a lost response starts another turn. Affected: people with unstable connections.
 
 ## Not in v1
@@ -65,6 +74,8 @@ ownership and recovery contracts. No private replacement for AHP's reconciliatio
 - HP3: drop/reorder connections, expire replay and remove the client baseline.
 - HP4: disconnect every viewer during work; deny an unauthorized operation.
 - HP6: kill around admission/dispatch and lose replies; count accepted turns and effects.
+  Repeat exact/conflicting requests after body expiry, restart and backup recovery;
+  preserve unknown outcomes and verify no additional execution.
 
 Implementation is not yet verified. [The plan](../docs/architecture/delivery-plan.md) records delivery gates.
 
@@ -77,5 +88,6 @@ Which command receipts can be recovered with upstream identities alone before an
 
 | Date | Change | Evidence |
 | --- | --- | --- |
+| 2026-11-07 | Preserve admission and legacy exact retries independently of disposable detail expiry. | User-approved finite-lifetime design; [Storage policy](../docs/STORAGE.md#approved-prospective-retention-policy). |
 | 2026-10-02 | Ratified for implementation; exclude amplifier-agent as the native backend. | User approval of the plan and direction; implementation evidence remains separate. |
 | 2026-10-02 | Initial HP1–6. | [Protocol review](../docs/architecture/protocol-fit.md). |
