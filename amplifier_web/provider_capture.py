@@ -62,6 +62,7 @@ def normalized_options(options):
 class FitTicket:
     request: object  # weak reference to the outer request
     task: object     # weak reference to its budget execution task
+    provider: object # exact mounted budget owner, not a name/default-model guess
     fitted: str | None  # same string already owned by SurfaceProvider.prepared
     options: object
     decision: dict | None = None
@@ -84,7 +85,8 @@ def begin_fit(owner, original, prepared, options):
     entry = next((row for row in owner.prepared if row[0] is original and row[1] is prepared), None)
     if entry is None or not isinstance(entry[2], str):return None
     try:
-        ticket = FitTicket(weakref.ref(original), weakref.ref(asyncio.current_task()), entry[2], normalized_options(options))
+        ticket = FitTicket(weakref.ref(original), weakref.ref(asyncio.current_task()),
+                           weakref.ref(owner.original), entry[2], normalized_options(options))
     except TypeError:
         return None
     owner._capture_tickets.append(ticket)
@@ -106,6 +108,10 @@ def take(owner, request):
             and t.request() is request and t.task() is asyncio.current_task()]
     if len(rows) != 1:return None
     ticket = rows[0]
+    if ticket.provider() is not owner.original or not any(
+            row[0] is request and row[2] is ticket.fitted for row in owner.prepared):
+        ticket.close()  # Its fitted generation was evicted or replaced.
+        return None
     ticket.taken = True
     return ticket
 

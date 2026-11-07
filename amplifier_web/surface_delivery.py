@@ -326,7 +326,11 @@ class SurfaceProvider:
                     if ticket is not None:ticket.close()
                     raise
                 from .coordination_delivery import WORK_ATTEMPT
-                attempt = self.delivery.begin_work(request, streaming=True) if hasattr(self.delivery, 'begin_work') else None
+                try:
+                    attempt = self.delivery.begin_work(request, streaming=True) if hasattr(self.delivery, 'begin_work') else None
+                except BaseException:
+                    if ticket is not None:ticket.close()
+                    raise
                 async def within_attempt(operation):
                     # __anext__ and aclose may run in different consumer tasks.
                     # Never carry a ContextVar token across an outward yield.
@@ -394,7 +398,11 @@ class SurfaceProvider:
             if ticket is not None:ticket.close()
             raise
         from .coordination_delivery import WORK_ATTEMPT
-        attempt = self.delivery.begin_work(request) if hasattr(self.delivery, 'begin_work') else None
+        try:
+            attempt = self.delivery.begin_work(request) if hasattr(self.delivery, 'begin_work') else None
+        except BaseException:
+            if ticket is not None:ticket.close()
+            raise
         token = WORK_ATTEMPT.set((self.delivery, attempt) if attempt else None)
         try:
             with capture.dispatch(ticket, self.original, request):

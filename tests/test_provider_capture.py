@@ -10,6 +10,7 @@ from amplifier_core.message_models import ChatRequest
 from amplifier_web import provider_capture as capture
 from amplifier_web.surface_delivery import SurfaceProvider
 from test_context_inspection import observed, request, evidence
+from test_context_inspection import Provider
 
 
 class NoWorkDelivery:
@@ -35,9 +36,10 @@ async def test_owner_serialization_shared_one_complete_final_encoding_no_work(tm
     # Count only the extra final-owner comparison, not unrelated Work/provider
     # serialization. Adding other retained candidates must not multiply it.
     for _ in range(3):await surface.request_budget(request('Other'))
-    counts={'calls':0,'characters':0};original=ChatRequest.model_dump_json
+    counts={'calls':0,'characters':0,'utf8Bytes':0};original=ChatRequest.model_dump_json
     def encode(self,*a,**kw):
-        result=original(self,*a,**kw);counts['calls']+=1;counts['characters']+=len(result);return result
+        result=original(self,*a,**kw);counts['calls']+=1;counts['characters']+=len(result)
+        counts['utf8Bytes']+=len(result.encode());return result
     monkeypatch.setattr(ChatRequest,'model_dump_json',encode)
     await surface.complete(value)
     assert counts['calls']==1
@@ -48,7 +50,11 @@ async def test_owner_serialization_shared_one_complete_final_encoding_no_work(tm
     assert header['budgetBinding']['association']=='fitted_owner_ticket'
     assert ticket.fitted is None and ticket.decision is None
     assert not list(observer.store.directory.glob('*.txt'))
-    evidence('passive-ticket-work-'+str(size),{'size':size,'retainedCandidates':4,'postAdmissionEncoding':counts,'fittedRepresentationShared':True,'providerCalls':len(provider.calls)})
+    from amplifier_web.context_inspection import fingerprint_request
+    baseline_work={};baseline=fingerprint_request(value,{},work=baseline_work)
+    evidence('passive-ticket-work-'+str(size),{'size':size,'retainedCandidates':4,
+        'postAdmissionEncoding':counts,'fittedRepresentationShared':True,'providerCalls':len(provider.calls),
+        'baselineBoundedFallback':baseline.public(),'baselineWork':baseline_work})
 
 
 @pytest.mark.parametrize('mutation',['metadata-suffix','admission-nested','options','option-type','unsupported'])
@@ -145,6 +151,8 @@ async def test_stream_first_iteration_and_cross_task_next_close_have_no_leaked_t
     await anext(iterator)
     assert capture.DISPATCH.get() is None
     await observer.drain()
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.create_task(anext(iterator))
     # Cross-task close must not reset a token from a different task.
     await asyncio.create_task(iterator.aclose())
     await observer.drain()
@@ -154,7 +162,7 @@ async def test_stream_first_iteration_and_cross_task_next_close_have_no_leaked_t
     it=surface.stream(value)
     await asyncio.create_task(anext(it))
     await asyncio.create_task(it.aclose());await observer.drain()
-    assert observer.store.index()[-1]['budget']=={}  # budget task != first-entry task
+    assert observer.store.index()[0]['budget']=={}  # budget task != first-entry task
 
 
 def test_option_normalization_type_and_resource_bounds():
@@ -178,3 +186,49 @@ async def test_no_strong_request_extension_and_ambiguous_copies(tmp_path):
     await surface.request_budget(first);await surface.request_budget(second)
     await surface.complete(first.model_copy(deep=True));await observer.drain()
     assert observer.store.read()['selected']['budget']=={}
+
+
+async def test_provider_swap_and_evicted_fit_cannot_reuse_ticket(tmp_path):
+    observer,events,provider,surface=chain(tmp_path)
+    value=request('X'*1_000_100);await surface.request_budget(value)
+    surface.original=events.instrument_provider('root',Provider())
+    await surface.complete(value);await observer.drain()
+    assert observer.store.read()['selected']['budget']=={}
+    await surface.request_budget(value)
+    surface.prepared.clear()
+    await surface.complete(value);await observer.drain()
+    assert observer.store.read()['selected']['budget']=={}
+
+
+async def test_nested_admission_same_actual_request_cannot_steal_claim(tmp_path):
+    observer,events,provider,surface=chain(tmp_path)
+    actual={}
+    async def finalize(value,**kw):actual['value']=value;return value
+    surface.delivery.finalize_work=finalize
+    nested=False
+    async def admission(row):
+        nonlocal nested
+        if not nested:
+            nested=True
+            await provider.complete(actual['value'])
+        await asyncio.sleep(0)
+    events.admission_guard=admission
+    value=request('N'*1_000_100);await surface.request_budget(value)
+    await surface.complete(value);await observer.drain()
+    assert len(provider.calls)==2
+    assert sum(h['budgetStatus']=='captured' for h in observer.store.index())==1
+
+
+async def test_parallel_tasks_same_provider_keep_their_own_fit(tmp_path):
+    observer,events,provider,surface=chain(tmp_path)
+    ready=asyncio.Event();count=0
+    async def call(text):
+        nonlocal count
+        value=request(text*1_000_100);await surface.request_budget(value)
+        count+=1
+        if count==2:ready.set()
+        await ready.wait()
+        await surface.complete(value)
+    await asyncio.gather(call('A'),call('B'));await observer.drain()
+    assert len(provider.calls)==2
+    assert all(h['budgetStatus']=='captured' for h in observer.store.index())

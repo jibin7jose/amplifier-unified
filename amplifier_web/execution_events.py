@@ -204,8 +204,9 @@ class ExecutionEvents:
         from .context_inspection_adapter import safe_observe
         # Synchronous passive validation after the existing awaits. No guard,
         # quota, Work join, refit or provider-entry authority is changed here.
-        captured_budget = observe(consume, capture, self, row, provider, request, request_options)
         observer = self.context_inspectors.get(sid)
+        captured_budget = (observe(consume, capture, self, row, provider, request, request_options)
+                           if observer is not None else None)
         if captured_budget is None:
             await safe_observe(observer, 'begin', row, request, provider, request_options, defaults)
         else:
