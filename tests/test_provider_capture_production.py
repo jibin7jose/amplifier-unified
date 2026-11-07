@@ -35,7 +35,8 @@ async def production(tmp_path, *, legacy=False, immutable=False):
            for name in ('loop-streaming','context-simple')}
     session=await PreparedBundle(plan,BundleModuleResolver(paths),Bundle(name='production-ticket',session=plan['session'])).create_session(session_id='production-ticket')
     c=session.coordinator
-    state=SimpleNamespace(budgets=[],transports=[],options=[],actual=None,retry=False,calls=0)
+    state=SimpleNamespace(budgets=[],transports=[],options=[],actual=None,retry=False,calls=0,
+                          allowance=10000,window=20000)
     class Provider:
         name='fixture';config={'raw':False}
         def __setattr__(self,name,value):
@@ -44,12 +45,13 @@ async def production(tmp_path, *, legacy=False, immutable=False):
             object.__setattr__(self,name,value)
         def get_info(self):return ProviderInfo(id='fixture',display_name='Fixture',defaults={'model':'mount-default'})
         def parse_tool_calls(self,response):return []
-        def decision(self,value,options):
+        def decision(self,value,options,context_estimate=0):
             state.budgets.append(value.model_dump_json());state.options.append(copy.deepcopy(options))
-            return {'estimated_input_tokens':100,'input_limit_tokens':10000,'max_output_tokens':321,
-                    'context_window_tokens':20000,'measurement':{'kind':'provider_count','input_tokens':100}}
+            return {'estimated_input_tokens':100,'input_limit_tokens':state.allowance,'max_output_tokens':321,
+                    'context_token_budget':context_estimate,
+                    'context_window_tokens':state.window,'measurement':{'kind':'provider_count','input_tokens':100}}
         async def request_budget(self,value,*,request_options=None,context_estimate=0,**kwargs):
-            return self.decision(value,{**(request_options or {}),**kwargs})
+            return self.decision(value,{**(request_options or {}),**kwargs},context_estimate)
         async def complete(self,value,**kwargs):
             state.calls+=1;state.transports.append(value.model_dump_json())
             if state.retry and state.calls==1:
@@ -63,7 +65,7 @@ async def production(tmp_path, *, legacy=False, immutable=False):
     if legacy:
         async def budget(self,value,*,context_estimate=0,**kwargs):
             assert 'request_options' not in kwargs
-            return self.decision(value,kwargs)
+            return self.decision(value,kwargs,context_estimate)
         Provider.request_budget=budget
     raw=Provider()
     events=ExecutionEvents(session.session_id,lambda row:None)
@@ -85,6 +87,7 @@ async def production(tmp_path, *, legacy=False, immutable=False):
     begin=surface.delivery.begin_work
     def actual(value,**kwargs):
         state.actual=weakref.ref(value)
+        state.no_work_binding=surface.delivery.work_request(value) is None
         return begin(value,**kwargs)
     surface.delivery.begin_work=actual
     try:yield session,selected,surface,observed,raw,events,inspector,state
@@ -111,7 +114,7 @@ async def test_production_transform_retains_modern_and_legacy_budget(tmp_path,le
         assert row['budget']['measurement']['input_tokens']==100
         assert state.transports==state.budgets and state.calls==1
         assert inspector.budgets==[]
-        assert surface.delivery.work_request(state.actual()) is None
+        assert state.no_work_binding
         assert row['budgetBinding']['scopedPreflightCount']==0
         assert row['budgetBinding']['fitTicket']['observed'] is True
         evidence(f'production-{legacy}-{immutable}-{size}',{
@@ -158,14 +161,18 @@ async def test_production_small_nested_call_does_not_borrow_legacy_budget(tmp_pa
 @pytest.mark.parametrize('legacy',[False,True])
 async def test_production_initialized_session_executes_large_request(tmp_path,legacy):
     async with production(tmp_path,legacy=legacy) as (session,selected,surface,observed,raw,events,inspector,state):
+        # The real loop also reserves space for its injected host instructions.
+        # Use honest synthetic capacity for its large local-estimate path; do not
+        # weaken the loop's guard merely to preserve the direct-call fixture cap.
+        state.allowance=1_000_000;state.window=2_000_000
         async def instructions():return 'L'*1_000_100
         await session.coordinator.get('context').set_system_prompt_factory(instructions)
         assert await session.execute('Finish without tools.')=='Done'
         await inspector.drain();row=inspector.store.read()['selected']
         assert len(state.transports[0])>1_000_000
         assert row['budget']['measurement']['input_tokens']==100
-        assert row['limits']['requestInputAllowance']==10000 and row['limits']['reservedOutput']==321
-        assert row['limits']['modelWindow']==20000
+        assert row['limits']['requestInputAllowance']==state.allowance and row['limits']['reservedOutput']==321
+        assert row['limits']['modelWindow']==state.window
         evidence('production-session-'+str(legacy),{'header':row,'characters':len(state.transports[0]),
             'appGuidanceTransform':True,'providerCalls':state.calls,'budgetCalls':len(state.budgets)})
 
