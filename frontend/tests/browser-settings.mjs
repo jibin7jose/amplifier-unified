@@ -2,43 +2,54 @@ import {settingsSections} from '../src/settings-navigation.js';
 // The menu's attention badge adds its own accessible unread-item label.
 // Keep an anchored match so unrelated Settings actions cannot satisfy it.
 export const settingsButton=scope=>scope.getByRole('button',{name:/^Settings(?: \d+ unread items)?$/});
-export async function openSettingsDialog(page){
+const click=(_label,control,options)=>control.click(options);
+// Instrumented callers supply every pointer/keyboard/touch activation. Their
+// navigation must reach visible controls; it never falls back to dispatch.
+export async function openSettingsDialog(page,{activate=click}={}){
  await page.waitForFunction(()=>window.amplifier?.getState());
  if(await page.evaluate(()=>['settings','appearance'].includes(window.amplifier.getState().view?.panel))){await page.locator('.a-settings-experience').waitFor({state:'visible'});return;}
  if(await page.locator('.a-settings-experience').isVisible())return;
  const settings=settingsButton(page);
- if(await settings.isVisible()){await settings.click();return;}
+ if(await settings.isVisible()){await activate('Open Settings from navigation footer',settings);return;}
  const options=page.getByRole('button',{name:'App options',exact:true});
  try{
-  if(!await options.isVisible())await page.getByRole('button',{name:'Open navigation',exact:true}).click({timeout:1500});
-  if(await settings.isVisible()){await settings.click();return;}
-  await options.click({timeout:1500});
+  if(!await options.isVisible())await activate('Open navigation',page.getByRole('button',{name:'Open navigation',exact:true}),{timeout:1500});
+  if(await settings.isVisible()){await activate('Open Settings from navigation footer',settings);return;}
+  await activate('Open App options',options,{timeout:1500});
  }catch(error){
-  // Connection discovery may open onboarding between the initial check and
-  // the navigation click. Use that real Settings surface when it arrives.
-  if(await page.locator('.a-settings-experience').isVisible())return;
+  // Ordinary fixture clicks may race onboarding. Instrumented callers own
+  // their gesture/assertion failures even when that Settings surface arrives.
+  if(activate===click&&await page.locator('.a-settings-experience').isVisible())return;
   throw error;
  }
- await settingsButton(page.getByRole('group',{name:'App options',exact:true})).click();
+ await activate('Open Settings from App options',settingsButton(page.getByRole('group',{name:'App options',exact:true})));
 }
-export async function openSettingsPage(page,destination){
- await openSettingsDialog(page);
+export async function openSettingsSection(page,id,options={}){
+ if(!settingsSections.some(section=>section.id===id))throw new Error('Unknown settings test section: '+id);
+ const activate=options.activate||click;
+ await openSettingsDialog(page,options);
+ const panel=page.locator('.a-settings-experience');
+ await page.waitForFunction(()=>{const root=document.querySelector('.a-settings-experience');return !!root&&root.dataset.compact===String((root.closest('.a-overlay')||root).clientWidth<960)});
+ for(let depth=0;await panel.getAttribute('data-compact')==='true'&&await panel.getAttribute('data-settings-index')!=='true';depth++){
+  if(depth>=8)throw new Error('Settings Back did not reach index');
+  const before=await panel.getAttribute('data-settings-route');
+  await activate('Back toward Settings index',panel.locator('.a-settings-mobile-head button').first());
+  await page.waitForFunction(previous=>document.querySelector('.a-settings-experience')?.dataset.settingsRoute!==previous,before);
+ }
+ await activate('Open '+id+' Settings',panel.locator(`[data-settings-section="${id}"]`));
+ await panel.locator('.a-settings-page-content:not([hidden])').waitFor({state:'visible'});
+}
+export async function openSettingsPage(page,destination,options={}){
  const section=settingsSections.find(section=>section.pages.some(([id])=>id===destination));
  if(!section)throw new Error('Unknown settings test destination: '+destination);
- await page.waitForFunction(()=>{const root=document.querySelector('.a-settings-experience');return !!root&&root.dataset.compact===String((root.closest('.a-overlay')||root).clientWidth<960)});
- if(await page.locator('.a-settings-experience').getAttribute('data-compact')==='true'){
-  for(let depth=0;depth<6&&await page.locator('.a-settings-experience').getAttribute('data-settings-index')!=='true';depth++){
-   const before=await page.locator('.a-settings-experience').getAttribute('data-settings-route');
-   await page.locator('.a-settings-mobile-head button').first().click();
-   await page.waitForFunction(previous=>document.querySelector('.a-settings-experience')?.dataset.settingsRoute!==previous,before);
-  }
- }
- await page.locator(`[data-settings-section="${section.id}"]`).click();
+ const activate=options.activate||click;
+ await openSettingsSection(page,section.id,options);
  if(section.pages[0][0]!==destination){
   const link=page.locator(`.a-settings-page-content:not([hidden]) [data-settings-destination="${destination}"]`);
   const group=link.locator('xpath=ancestor::details');
-  if(await group.count()&&!await link.isVisible())await group.locator('summary').click();
-  if(await link.isVisible())await link.click();
+  if(await group.count()&&!await link.isVisible())await activate('Expand '+destination+' Settings group',group.locator('summary'));
+  if(await link.isVisible())await activate('Open '+destination+' Settings page',link);
+  else if(options.activate)throw new Error('Settings destination has no visible control: '+destination);
   else await page.evaluate(destination=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:[destination]}}),destination);
  }
 

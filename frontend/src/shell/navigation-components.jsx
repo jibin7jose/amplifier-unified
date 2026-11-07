@@ -16,7 +16,6 @@ import {WorkspaceForm} from '../workspace-setup';
 import {WorkspaceExplorer,WorkspaceRow} from '../workspace-explorer';
 import {LibraryFilters} from '../conversation-library';
 import {ChatDelete} from '../chat-delete';
-import {PathField} from '../settings-ui';
 import {readItems,unreadChatItems} from '../attention';
 import {useNavigation} from '../../../packages/shell-sdk/index.js';
 import {waitForSnapshot} from './wait-for-snapshot';
@@ -103,10 +102,9 @@ export function NavigationEditor({model,deleteOwner=true}){
  if(draft.mode==='chat-delete'&&!deleteOwner)return null;
  if(draft.mode==='add')return <WorkspaceForm state={state} act={act} onDone={()=>setDraft({})} onCancel={()=>setDraft({})}/>;
  return <>{draft.mode==='chat-delete'&&<div className="a-nav-form"><strong>Delete chat?</strong><ChatDelete key={draft.id} id={draft.id} act={act} cancel={()=>setDraft({})}/></div>}    {draft.mode&&draft.mode!=='chat-rename'&&draft.mode!=='chat-delete'&&<form ref={form} className="a-nav-form" aria-busy={saving} onSubmit={submit}>
-     <div className="a-nav-form-title"><strong>{draft.mode==='add'?'New workspace':draft.mode==='rename'?'Rename workspace':draft.mode==='chat-rename'?'Rename chat':'Remove workspace?'}</strong><button className="a-icon" type="button" aria-label="Cancel navigation edit" data-action="view.update" onClick={()=>setDraft({})}><X/></button></div>
-     {draft.mode==='add'&&<><p>Choose an existing folder, or enter a path to create one. Your first chat opens here.</p><label htmlFor={editorId+'-path'}>Folder</label><PathField id={editorId+'-path'} value={draft.path||''} onChange={path=>updateDraft({path})} directory state={state} act={act} placeholder="~/Projects/my-project"/></>}
-     {['add','rename','chat-rename'].includes(draft.mode)?<><label htmlFor={editorId+'-name'}>{draft.mode==='add'?'Name (optional)':'Name'}</label><input id={editorId+'-name'} maxLength={200} value={draft.name||''} required={draft.mode!=='add'} data-action="view.update" onChange={e=>updateDraft({name:e.target.value})}/></>:<p>Remove {draft.name} from this list? Its files and chats will stay on disk.</p>}
-     <button type="submit" disabled={saving||(draft.mode==='add'&&!draft.path?.trim())} className={draft.mode==='remove'?'a-soft a-danger':'a-primary'} data-action={draft.mode==='add'?'workspace.create':draft.mode==='rename'?'workspace.rename':draft.mode==='remove'?'workspace.remove':'session.rename'}>{saving?'Saving…':draft.mode==='add'?'Create workspace':draft.mode==='remove'?'Remove registration':'Save name'}</button>
+     <div className="a-nav-form-title"><strong>{draft.mode==='rename'?'Rename workspace':'Remove workspace?'}</strong><button className="a-icon" type="button" aria-label="Cancel navigation edit" data-action="view.update" onClick={()=>setDraft({})}><X/></button></div>
+     {draft.mode==='rename'?<><label htmlFor={editorId+'-name'}>Name</label><input id={editorId+'-name'} maxLength={200} value={draft.name||''} required data-action="view.update" onChange={e=>updateDraft({name:e.target.value})}/></>:<p>Remove {draft.name} from this list? Its files and chats will stay on disk.</p>}
+     <button type="submit" disabled={saving} className={draft.mode==='remove'?'a-soft a-danger':'a-primary'} data-action={draft.mode==='rename'?'workspace.rename':draft.mode==='remove'?'workspace.remove':'session.rename'}>{saving?'Saving…':draft.mode==='remove'?'Remove registration':'Save name'}</button>
      {formError&&<p role="alert" className="a-danger">{formError}</p>}
     </form>}
 </>;

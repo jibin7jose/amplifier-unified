@@ -443,7 +443,7 @@ async def main(home):
             loop.add_signal_handler(signum, stop_requested, signum)
         else:
             loop.add_signal_handler(signum, stopped.set)
-    print(json.dumps({"url": url}), flush=True)
+    print(json.dumps({"url": url, "fixture": "empty-host-ui", "pid": os.getpid(), "base": url}), flush=True)
     try:
         await stopped.wait()
     finally:

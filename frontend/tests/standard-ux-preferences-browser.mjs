@@ -1,3 +1,4 @@
+import {openSettingsSection} from './browser-settings.mjs';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 import './composer-test-helpers.mjs';
 import {spawn} from 'node:child_process';
@@ -29,8 +30,11 @@ for(const variant of variants){
   const state=()=>page.evaluate(()=>window.amplifier.getState());
   const presentation=()=>page.evaluate(()=>window.amplifier.getShellState()?.effectiveComposition.presentation);
   const act=async(label,control)=>evidence.action(label,async()=>{await expect(control).toBeVisible();await expect(control).toBeEnabled();if(variant.mode==='keyboard'){await control.focus();await expect(control).toBeFocused();await control.press(await control.evaluate(el=>el.matches('input[type=checkbox],input[type=radio]'))?'Space':'Enter')}else if(variant.mode==='touch')await control.tap();else await control.click()});
-  const settings=async()=>{await page.waitForFunction(()=>window.amplifier?.getState()?.selectedSessionId);await expect(page.locator('#amp-one')).toBeVisible();if((await state()).view?.panel==='settings'){await expect(page.locator('.a-settings-experience')).toBeVisible();return}if(await page.locator('.a-settings-experience').isVisible())return;const button=page.getByRole('button',{name:/^Settings(?: \d+ unread items)?$/});if(!await button.isVisible())await act('Open navigation',page.getByRole('button',{name:'Open navigation',exact:true}));await act('Open Settings from navigation footer',button);await expect(page.locator('.a-settings-experience')).toBeVisible()};
-  const section=async id=>{await settings();const panel=page.locator('.a-settings-experience');await page.waitForFunction(()=>{const el=document.querySelector('.a-settings-experience');return el&&el.dataset.compact===String((el.closest('.a-overlay')||el).clientWidth<960)});for(let depth=0;await panel.getAttribute('data-compact')==='true'&&await panel.getAttribute('data-settings-index')!=='true';depth++){if(depth>=8)throw Error('Settings Back did not reach index');const previous=await panel.getAttribute('data-settings-route');await act('Back toward Settings index',panel.locator('.a-settings-mobile-head button').first());await expect(panel).not.toHaveAttribute('data-settings-route',previous)}await act('Open '+id+' Settings',panel.locator('[data-settings-section="'+id+'"]'));await expect(panel.locator('.a-settings-page-content:not([hidden])')).toBeVisible()};
+  const section=async id=>{
+   await page.waitForFunction(()=>window.amplifier?.getState()?.selectedSessionId);
+   await expect(page.locator('#amp-one')).toBeVisible();
+   await openSettingsSection(page,id,{activate:act});
+  };
   const probe=async(id,workflows,run)=>{const record=await evidence.probe(variant.id+'.'+id,workflows,async()=>{await run();return {variant,...await evidence.snapshot(page,variant.id+'.'+id,'#amp-one')}});if(record.status!=='passed')throw Error('Dependent preference checks stopped after '+id)};
   const setPresentation=async(key,value,control,kind='select')=>{
    await expect(control).toBeEnabled();

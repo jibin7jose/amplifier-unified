@@ -1,20 +1,22 @@
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 import './composer-test-helpers.mjs';
 import {openSettingsPage} from './browser-settings.mjs';
-import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
+import {finishFixture} from './fixture-lifecycle.mjs';
+import {startFixture} from './fixture-readiness.mjs';
 // Packaged application, isolated storage, no external model or feedback calls.
-import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {mkdir} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {chromium,expect} from '@playwright/test';
-const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||fileURLToPath(new URL('../../.venv/bin/python',import.meta.url)),[fileURLToPath(new URL('../../tests/fixtures/empty_host_ui_server.py',import.meta.url))],{stdio:['ignore','pipe','inherit']});
-const stop=ownFixture(fixture,{label:'Appearance library fixture'});
+const {base:url,stop}=await startFixture({
+ command:process.env.AMPLIFIER_TEST_PYTHON||fileURLToPath(new URL('../../.venv/bin/python',import.meta.url)),
+ args:[fileURLToPath(new URL('../../tests/fixtures/empty_host_ui_server.py',import.meta.url))],
+ env:process.env,tag:'empty-host-ui',name:'Appearance library',timeoutMs:20000,
+});
 let browser,failure;
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/amplifier-appearance-library';
 const focused=process.argv.includes('--catalog-thumbnails-only');
 try{
- const url=await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>reject(Error('Fixture timeout')),20000);fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exited '+code))});fixture.stdout.on('data',chunk=>{output+=chunk;for(const line of output.split('\n'))try{const value=JSON.parse(line);if(value.url){clearTimeout(timer);resolve(value.url)}}catch{}})});
  await mkdir(out,{recursive:true});browser=await chromium.launch({headless:true});
  const page=await browser.newPage({viewport:{width:1440,height:1050},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}}),errors=[];
  page.on('pageerror',e=>errors.push(e.message));
