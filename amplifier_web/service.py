@@ -1274,7 +1274,11 @@ class AppService:
         still require the explicit full reconciliation path. Pending progress
         scopes are joined by _publish, so a receipt never loses earlier work.
         """
-        self._publish(session_ids=set(sessions), global_keys=set(globals),
+        globals = set(globals)
+        updater = getattr(self, 'update_manager', None)
+        if updater is not None and updater.configuration_changed():
+            globals.add('updates')
+        self._publish(session_ids=set(sessions), global_keys=globals,
                       record_only=True, detail_only=detail_only)
 
     @measured('state.publish')

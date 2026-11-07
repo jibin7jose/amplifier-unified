@@ -484,6 +484,7 @@ class UpdateManager:
         from .update_health import publish as publish_health
         self._active_update_evidence = {}
         self._update_health_initial = True
+        self._update_health_seen_revision = service.state.get('configurationRevision')
         publish_health(self)
         if restart_repair:
             self.diagnostics.record('restart-repair','failed',errorType='ValueError',preserve_last_failure=True)
@@ -521,6 +522,19 @@ class UpdateManager:
             from .update_restart import target
             state['forceRestartTarget'] = target(self)
             self.service._publish_changes(globals={'updates','settings'})
+
+    def configuration_changed(self):
+        """Invalidate the current projection on a source-settings publication."""
+        revision = self.service.state.get('configurationRevision')
+        if getattr(self, '_update_health_seen_revision', revision) == revision:
+            self._update_health_seen_revision = revision
+            return False
+        self._update_health_seen_revision = revision
+        self._update_health_initial = True
+        from .update_health import publish as publish_health
+        publish_health(self)
+        self.wakeup.set()
+        return True
 
     def notify_idle(self, *, settled_session_id=None):
         state = self.service.state['updates']

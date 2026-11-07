@@ -580,6 +580,12 @@ def policy_inputs(stage, project):
     paths = [Path(stage) / name for name in (
         'runtime-sources.json', 'runtime-install-overrides.txt', 'profiles.json')]
     paths += [Path(project) / name for name in ('pyproject.toml', 'uv.lock', 'uv.toml')]
+    # Include declarations/bindings consumed by composition, not credential files
+    # or every cached payload. Local/custom inputs cannot use this shortcut.
+    for folder in ('config', 'shared-config', 'foundation/registry.json', 'foundation/cache/.source-bindings'):
+        path = Path(stage) / folder
+        paths.extend([path] if path.is_file() else sorted(
+            p for p in path.rglob('*') if p.is_file() and p.suffix in {'.json', '.yaml', '.yml', '.toml'}))
     return [(str(path), hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None)
             for path in paths]
 
@@ -595,6 +601,8 @@ async def reuse_collection(manager, stage, project, observed, inputs):
     from .updates import active_release
     selection = (observed or {}).get('selection')
     if not selection or 'observedReferences' not in selection:
+        return None
+    if selection.get('localSources') or selection.get('localManifests'):
         return None
     generation = active_release(manager.home).get('current')
     if generation != observed['generation'] or policy_inputs(stage, project) != inputs:
