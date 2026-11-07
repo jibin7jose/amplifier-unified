@@ -77,6 +77,20 @@ test('lost acknowledgement preserves a read-only recovery route and never resend
  await renderAct(async()=>root.unmount());
 });
 
+test('queued own-task settings explain automatic continuation without an extra command',async()=>{
+ const s=session();let root;const calls=[];
+ const view=report(s,{state:{phase:'queued',effect:'none'},recovery:{canResume:false,canReconcile:false,
+  reason:'Waiting for the settings change; this task will continue automatically after verification.'}});
+ const act=async(action)=>{calls.push(action);return {accepted:true,result:view}};
+ await renderAct(async()=>{root=create(React.createElement(ConfigurationRecovery,{session:s,act}))});
+ assert.match(text(root),/continue automatically after verification/);
+ assert.match(text(root),/settings change is queued and is not mounted yet/);
+ assert.equal(button(root,'resume').props.disabled,true);
+ assert.equal(button(root,'reconcile').props.disabled,true);
+ assert.deepEqual(calls,['configuration.operation.read']);
+ await renderAct(async()=>root.unmount());
+});
+
 test('proven saved continuation uses the original resume and remains unconfirmed during readback',async()=>{
  const s=session();let root;const calls=[];
  const view=report(s,{state:{phase:'error',effect:'saved_not_mounted'},recovery:{canResume:true,canReconcile:true,

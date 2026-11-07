@@ -62,6 +62,13 @@ intent needs no separate approval. Do not enroll independent chats implicitly.
 
 ## Continue when a dependency is resolved
 
+For an active task changing its own runtime through `configuration.apply` with
+`whenIdle:true`, the host saves the wait, yields the current execution, verifies
+the change and continues the same task. Do not add `task.block`, a message to
+yourself or polling to arrange that continuation. An uncertain outcome still
+belongs to the original configuration operation; inspect that receipt before
+deciding on recovery. This does not start idle work or resume a deliberate Stop.
+
 For an agent-recorded dependency block, send the new finding to the existing
 owner through ordinary `coordination.send` in auto or queue mode, **without
 `resume`**. The host admits this fresh input while keeping the task blocked.

@@ -37,10 +37,36 @@ class RecoveryProvider:
     async def list_models(self): return []
     def parse_tool_calls(self, response): return response.tool_calls or []
     async def complete(self, request, **kwargs):
+        def text(message):
+            content = message.content
+            return content if isinstance(content, str) else "\n".join(
+                getattr(block, "text", "") for block in content or [])
         scenario = json.loads(Path(self.config["scenario"]).read_text())
         tools = sorted(self.coordinator.get("tools"))
+        evaluation = text(request.messages[-1]).startswith("GOAL CONDITION:")
         with Path(scenario["calls"]).open("a") as out:
-            out.write(json.dumps({"pid":os.getpid(), "tools":tools})+"\n")
+            out.write(json.dumps({"pid":os.getpid(), "tools":tools,
+                "evaluation":evaluation})+"\n")
+        if scenario.get("continuation"):
+            resumed = Path(scenario["calls"]).with_name("continued.json")
+            if evaluation:
+                answer = "YES" if resumed.exists() else "NO"
+                return ChatResponse(content=[TextBlock(text=answer+"\nFinish the retained report.")])
+            peers = [text(m) for m in request.messages if m.role == "user"
+                     and text(m).startswith("Host-attributed peer task input.")]
+            if peers:
+                envelope = json.loads(peers[-1].split("\n", 2)[1])
+                assert envelope["replyToRequestId"].startswith("configuration-wait:"), envelope
+                assert "settings are applied and verified" in peers[-1]
+                assert "read_file" not in tools and "app_control" in tools, tools
+                resumed.write_text(json.dumps({"pid":os.getpid(), "envelope":envelope,
+                    "goal":self.coordinator.session_state["goal"],
+                    "task":self.coordinator.session_state["task"]}))
+                return ChatResponse(content=[TextBlock(text="settings-continuation-finished")])
+            warmup = Path(scenario["calls"]).with_name("earlier-progress")
+            if not warmup.exists():
+                warmup.touch()
+                return ChatResponse(content=[TextBlock(text="Earlier progress retained; continue the goal.")])
         users = [str(m.content) for m in request.messages
                  if m.role == "user" and not (m.metadata or {}).get("ephemeral")]
         if users and "RECOVERY_NEXT" in users[-1]:
@@ -143,7 +169,7 @@ def finish_cleanup_evidence(root, report, primary_failure):
             raise AssertionError(detail)
 
 
-async def worker(root, mutant):
+async def worker(root, mutant, continuation=False):
     from amplifier_web import configuration_recovery
     from amplifier_web.runtime_controls import RuntimeControls, override_path
     from amplifier_web.runtime_worker import Worker, configure_protocol
@@ -161,7 +187,8 @@ async def worker(root, mutant):
             raise ValueError("Synthetic one-shot pre-write refusal")
         return plan
 
-    RuntimeControls.prepare_configuration = refuse_once
+    if not continuation:
+        RuntimeControls.prepare_configuration = refuse_once
     source = inspect.getsource(configuration_recovery.native_apply)
     needle = "    controls.save_configuration(plan)\n"
     assert source.count(needle) == 1
@@ -188,7 +215,7 @@ async def until(predicate, *, seconds=30):
             await asyncio.sleep(.02)
 
 
-async def probe(root, mutant):
+async def probe(root, mutant, continuation=False):
     root.mkdir(parents=True, exist_ok=False)
     workspace, shared, home = (root / name for name in ("workspace", "shared", "app"))
     workspace.mkdir()
@@ -244,6 +271,8 @@ async def probe(root, mutant):
     command = [sys.executable, "-u", str(Path(__file__).resolve()), "--worker", str(root)]
     if mutant:
         command.append("--skip-save")
+    if continuation:
+        command.append("--settings-continuation")
     runtime = RuntimeManager(command=command, startup_timeout=45,
         retention={"prewarm_on_select": False})
     web_app = await create_app(home, workspace=workspace, runtime=runtime,
@@ -280,11 +309,15 @@ async def probe(root, mutant):
         declared["enabled"] = False
         release = root / "release-final"
         scenario.write_text(json.dumps({"sid": sid, "desired": desired,
-            "calls": str(calls), "release": str(release)}))
+            "calls": str(calls), "release": str(release), "continuation": continuation}))
         grant = (await action("capability.grant", {"sessionId": sid,
             "effects": ["runtime_configuration"], "scopes": ["session"],
             "reason": "Synthetic queued configuration recovery"}, "native-grant"))["result"]
         grant_before = copy.deepcopy(app.configuration_authority.record(grant["id"]))
+        if continuation:
+            await settings_continuation(app, runtime, owner, action, root, workspace,
+                processes, desired, release, calls, report)
+            return
         await action("conversation.send", {"sessionId": sid, "text": "RECOVERY_ORIGINAL"},
             "native-original-input")
         await until(lambda: owner.get("pendingConfiguration", {}).get("phase") == "queued")
@@ -413,7 +446,74 @@ async def probe(root, mutant):
                 finish_cleanup_evidence(root, report, primary_failure)
 
 
-async def bounded_probe(root, mutant):
+async def settings_continuation(app, runtime, owner, action, root, workspace,
+                                processes, desired, release, calls, report):
+    """A genuine goal yields, restarts once and continues without a second send."""
+    from amplifier_foundation.session.history import SessionHistoryStore
+    from amplifier_web import configuration_continuation
+    from amplifier_web.session_files import sessions_dir
+    sid = owner["id"]
+    await action("task.create", {"sessionId": sid, "expectedRevision": 0,
+        "objective": "Finish the retained report.", "maxTurns": 8,
+        "artifactRefs": ["already-uploaded-report"]}, "native-create-task")
+    original_task = copy.deepcopy(owner["task"])
+    await action("conversation.send", {"sessionId": sid, "text": "RECOVERY_ORIGINAL"},
+        "native-original-input")
+    await until(lambda: owner.get("pendingConfiguration", {}).get("phase") == "queued")
+    operation = owner["pendingConfiguration"]["operationId"]
+    native_id = runtime.workers[sid]["runtime_id"]
+    assert not await writer_available(workspace, native_id)
+    report.update(heldWriterControl=True, nativeId=native_id)
+    release.touch()
+    await until(lambda: owner.get("pendingConfiguration", {}).get("phase") in {"ready", "error"}
+        and sid not in app.management.pending_config_tasks, seconds=60)
+    record = app.management.configuration_record(sid, operation)
+    report["state"] = record["state"]
+    assert record["state"]["phase"] == "ready", record
+    await until(lambda: any(m.get("text") == "settings-continuation-finished"
+        for m in owner["messages"]) and owner["collaborationGeneration"].get("terminal"))
+    await until(lambda: runtime.workers[sid].get("parked"))
+    processes.append(runtime.workers[sid]["process"])
+    assert processes[0].returncode is not None and processes[0].pid != processes[1].pid
+    assert len(record["attempts"]) == 1 and record["attempts"][0]["workerPid"] == processes[0].pid
+    loaded = await runtime.control(sid, "configuration.inspect", {})
+    assert app.management.configuration_readback_matches(desired, loaded["plan"])
+    continued = json.loads((root / "continued.json").read_text())
+    assert continued["pid"] == processes[1].pid
+    goal = continued["goal"]
+    assert goal["turns_used"] == 2 and goal["cap"] == 8, goal
+    assert record["boundary"]["yieldedGoal"] == {key: goal.get(key)
+        for key in ("task_id", "cap", "turns_used", "continuations")}
+    for key in ("id", "objective", "maxTurns", "constraints", "artifactRefs", "continuationEpoch"):
+        assert continued["task"].get(key) == original_task.get(key), key
+    settled = await runtime.control(sid, "task.get", {})
+    finished = settled["task"]
+    # A satisfied goal ends generation; only task.complete records acceptance
+    # with evidence. Settings continuation must not manufacture that acceptance.
+    assert settled["goal"] is None and finished["status"] == "active", settled
+    assert finished["goalState"]["turns_used"] == 3, finished
+    assert finished["completionEvidence"] == []
+    before = calls.read_bytes()
+    for _ in range(3):
+        async with app.lock:
+            configuration_continuation.publish_outcome(app.management, owner, operation)
+        await app.collaboration.drain(sid)
+    assert calls.read_bytes() == before and runtime.workers[sid]["process"] is processes[1]
+    history = SessionHistoryStore(sessions_dir(workspace) / native_id).load_messages()
+    inputs = [(m.get("metadata") or {}).get("amplifier_input", {}).get("id") for m in history]
+    assert inputs.count("native-original-input") == inputs.count(continued["envelope"]["inputId"]) == 1
+    assert sum(m.get("tool_call_id") == "native-queue-config" and m.get("role") == "tool"
+               for m in history) == 1
+    actual = [json.loads(line) for line in calls.read_text().splitlines()]
+    assert len(actual) == 7 and sum(c["evaluation"] for c in actual) == 3, actual
+    await until(lambda: runtime.workers[sid].get("parked"))
+    assert await writer_available(workspace, native_id)
+    report.update(automaticContinuation=True, taskAndBudgetPreserved=True,
+        oneSettingsSave=True, exactlyOneReplacement=True, duplicateOutcomePassive=True,
+        originalInputCount=1, originalToolResultCount=1, logicalContinuationCount=1)
+
+
+async def bounded_probe(root, mutant, continuation=False):
     # Parent timeout asks for ordinary cancellation so the probe's finally can
     # close real workers and release their writer before the process exits.
     loop, task = asyncio.get_running_loop(), asyncio.current_task()
@@ -425,7 +525,7 @@ async def bounded_probe(root, mutant):
         loop.add_signal_handler(signum, cancel_once)
     try:
         async with asyncio.timeout(150):
-            await probe(root, mutant)
+            await probe(root, mutant, continuation)
     finally:
         for signum in signals:
             loop.remove_signal_handler(signum)
@@ -433,6 +533,6 @@ async def bounded_probe(root, mutant):
 
 if __name__ == "__main__":
     if sys.argv[1] == "--worker":
-        asyncio.run(worker(Path(sys.argv[2]), "--skip-save" in sys.argv))
+        asyncio.run(worker(Path(sys.argv[2]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv))
     else:
-        asyncio.run(bounded_probe(Path(sys.argv[1]), "--skip-save" in sys.argv))
+        asyncio.run(bounded_probe(Path(sys.argv[1]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv))

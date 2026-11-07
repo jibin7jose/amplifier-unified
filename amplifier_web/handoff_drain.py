@@ -75,7 +75,9 @@ async def begin(worker, command_id):
 
 def _freeze(worker):
     marker = worker._handoff_boundary
-    detail = ('The app update is waiting for existing workers. Start new delegated work after the update finishes.'
+    detail = ('Your settings change is waiting for existing workers. New delegated work can start after it finishes.'
+              if marker.get('configuration') else
+              'The app update is waiting for existing workers. Start new delegated work after the update finishes.'
               if marker.get('update') else 'This checkout move is waiting for existing workers. Start new delegated work after the move finishes.')
     if marker.get('drain'):
         return copy.deepcopy(marker['drain']['snapshot'])

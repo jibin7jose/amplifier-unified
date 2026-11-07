@@ -3690,10 +3690,12 @@ class AppService:
                 values = (action, copy.deepcopy(args), command_id, configuration_authority)
                 if action == 'configuration.apply' or action == 'runtime.control' and args.get('operation') == 'configuration.apply':
                     target = self._session(args.get('id') or args.get('sessionId'))
+                    from .configuration_continuation import capture
                     # Host-only provenance, captured before the background wait;
                     # never accept origin or caller identity from model arguments.
                     values += ({'origin': origin, 'callerSessionId': caller_session_id,
                         'generation': copy.deepcopy(target.get('collaborationGeneration')),
+                        'continuation': capture(self, target, caller_session_id, origin),
                         'target': self.management.configuration_target_binding(target)},)
                 elif action == 'runtime.control' and args.get('operation') == 'context.recovery.request':
                     # Capture before the queue. A Stop or configuration change
@@ -3994,6 +3996,10 @@ class AppService:
                             saved = {key: value for key, value in result.items() if key != "state"}
                             self.db.execute("UPDATE commands SET receipt=? WHERE id=?", (json.dumps(saved), command_id))
                             self.db.commit()
+            elif self.management is not None and fn == self.management.command and len(values) > 4 and (values[4] or {}).get('continuation'):
+                # The own-task boundary must be installed before its tool reply
+                # can permit another native goal turn. No work is retired here.
+                await fn(*values)
             else:
                 kwargs = {'defer_publish': True} if defer_publish else {}
                 task = self._task(self._guard(fn, values, kwargs))

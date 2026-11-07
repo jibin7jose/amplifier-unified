@@ -9,7 +9,7 @@ export function configurationHeld(session){
 export function recoveryMeaning(report){
  const {phase,effect}=report?.state||{};
  if(phase==='ready'&&effect==='mounted')return 'Changes are applied to the loaded session.';
- if(phase==='queued')return 'Resume is queued. The change is not mounted yet.';
+ if(phase==='queued')return 'The settings change is queued and is not mounted yet.';
  if(phase==='applying')return effect==='saved_not_mounted'?'Confirming the saved change in the loaded session. No settings write is repeated.':'Applying the original change. Waiting for loaded-session confirmation.';
  if(effect==='saved_not_mounted')return 'Settings were saved, but the loaded session is not confirmed. This change remains held.';
  if(effect==='unknown')return 'The outcome is not confirmed. No settings write will be repeated without proof.';

@@ -1,6 +1,7 @@
-# Autonomous progress — proposed continuation contract
+# Autonomous progress — continuation contract
 
-**DRAFT for review, 2026-11-07. Not implemented or release-qualified.**
+**Design accepted in #1640, 2026-11-07. Implementation qualification is recorded
+separately in the [acceptance note](../notes/autonomous-progress-20261107.md).**
 
 ## Who relies on this
 
@@ -9,7 +10,7 @@ resumption steps for work that is already authorized. The configuration, native
 execution and task-continuation owners implement this boundary; clients explain
 its state. [Configuration authority](../configuration-authority.md) and
 [execution](execution.v1.md) retain ownership of permissions, runtime identity
-and execution safety. This proposal does not grant new authority.
+and execution safety. This contract does not grant new authority.
 
 ## The behavior
 
@@ -94,7 +95,7 @@ workaround when automatic continuation ships.
 The [focused acceptance plan](../notes/autonomous-progress-20261107.md#focused-acceptance)
 covers the installed host, actual worker and built UI, including restart,
 duplicate delivery, children, changed intent and unknown outcomes. These are
-planned checks, not passed evidence.
+acceptance obligations, not a claim that every listed case has passed.
 
 Targets are zero routine human nudges, zero model polling turns, and one consumed
 logical continuation per eligible result. Measure admission delay separately from
@@ -113,6 +114,8 @@ runtime preparation and model latency.
 
 ## Change record
 
+- 2026-11-07: refined design accepted in #1640; own-task settings implementation
+  follows the existing configuration, native checkpoint and admission owners.
 - 2026-11-07: proposed own-task settings continuation; separated observable
   promises from diagnosis, implementation choices and planned qualification.
   Earlier draft clauses map as follows: 1 → **Waiting preserves the objective**;

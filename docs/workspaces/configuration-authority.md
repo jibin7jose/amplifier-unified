@@ -151,6 +151,23 @@ APIs. General update/install/deploy authority and real-time provider effects are
 not covered by this grant slice. Neither a root grant nor assignment membership
 grants stop/steer/settings authority over an independent peer.
 
+## Active tasks changing their own settings
+
+An authorized agent's `configuration.apply` with `whenIdle:true` binds the
+current active task to the existing configuration operation before the tool
+returns. Native execution yields after admitted tools and children settle.
+The configuration owner applies the saved change and verifies the replacement
+runtime; ordinary admission then continues the same objective once, with its
+used budget and progress intact. No separate block/resume or self-message is
+needed. The equivalent `runtime.control` operation follows the same owner.
+
+Stop, changed task or ownership, new input and revoked authority suppress obsolete
+continuation. Confirmed no-effect failures return their outcome under the original
+settings; unknown or saved-but-unverified outcomes retain existing operation
+recovery. Settings changes to idle, paused or completed tasks do not start work.
+See the [continuation contract](contracts/autonomous-progress.v1-candidate.md)
+and its [implementation/acceptance note](notes/autonomous-progress-20261107.md).
+
 ## Ordinary file reads
 
 Ordinary `read_file`, `grep` and `glob` calls do not need configuration grants.

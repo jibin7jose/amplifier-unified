@@ -191,6 +191,7 @@ class RuntimeControls:
             await self.configurator.apply_saved_settings(saved.get("configurator", {}))
         self.coordinator.session_state["goal"] = saved.get("goal")
         self.coordinator.session_state["task"] = saved.get("task")
+        self.coordinator.session_state["configurationCheckpoint"] = saved.get("configurationCheckpoint")
         self.tasks.receipts = saved.get("taskReceipts", {})
         self.tasks.history = saved.get("taskHistory", [])
         self.capacity.policy.update(saved.get("capacity", {}))
@@ -229,7 +230,8 @@ class RuntimeControls:
         write_private(self.state_path(), json.dumps({"configurator":{"disabled":{key:row.get("disabled",[]) for key,row in snapshot.items()}},
             "capacity":self.capacity.policy,"capacityReceipts":self.capacity.receipts,"capacityLastDenial":self.capacity.last_denial,
             "goal":self.coordinator.session_state.get("goal"),"task":self.coordinator.session_state.get("task"),"taskReceipts":self.tasks.receipts,"taskHistory":self.tasks.history,"mode":self.coordinator.session_state.get("active_mode"),
-            "selection":None if self.selection_cleared else self.selection or previous.get("selection"),"budget":budget},default=str))
+            "selection":None if self.selection_cleared else self.selection or previous.get("selection"),"budget":budget,
+            "configurationCheckpoint": self.coordinator.session_state.get("configurationCheckpoint")},default=str))
         if task_only:
             return
         plan = {key:value for key,value in self.coordinator.config.items() if key in PLAN_KEYS}

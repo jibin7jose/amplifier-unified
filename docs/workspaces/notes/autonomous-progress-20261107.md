@@ -1,9 +1,10 @@
-# Settings continuation: design and planned acceptance
+# Settings continuation: design and acceptance
 
-**Proposal, 2026-11-07. No implementation or runtime acceptance is claimed.**
+**Design accepted in #1640, 2026-11-07. The first implementation is under review;
+this document does not establish publication or live adoption.**
 
-The [candidate contract](../contracts/autonomous-progress.v1-candidate.md) owns
-the proposed observable promises. This note explains the diagnosis, implementation
+The [contract](../contracts/autonomous-progress.v1-candidate.md) owns
+the observable promises. This note explains the diagnosis, implementation
 choices and delivery sequence; it does not introduce additional binding promises.
 
 ## Why start at this boundary
@@ -78,7 +79,7 @@ input forever.
 
 ## Focused acceptance
 
-These checks are planned, not run. Use maintained tests and an owned DTU with an
+The table defines acceptance scope, not blanket passed evidence. Use maintained tests and an owned DTU with an
 installed host, actual native worker and built client. Source-level tests alone
 cannot establish the continuation behavior.
 
@@ -103,6 +104,29 @@ source/runtime identities and cold/warm conditions. Use the existing
 affected checks, not a broad per-release campaign.
 
 ## Delivery and retirement
+
+The first implementation stores continuation intent in the existing private
+configuration operation. `configuration_continuation.py` connects that owner to
+the existing native handoff boundary and command-ledger continuation. A native
+control checkpoint permits recovery of a lost boundary reply only after the
+same writer is proven stopped. The replacement reads the saved goal and task;
+it does not create a new goal or reset counters. No new queue, scheduler, storage
+authority or Core change is introduced.
+
+Maintained checks cover the host transition, changed intent, cancellation,
+no-effect failure and lost checkpoint in `test_configuration_continuation.py`;
+the actual Core/live loop in `test_configuration_continuation_native.py`; and
+the actual process restart through `test_queued_configuration_boundary.py` and
+its native probe. The native probe uses a deterministic provider, verifies two
+distinct worker processes, one settings write and one continued input, and
+preserves goal usage. It is not paid-provider or live-workload evidence.
+`configuration-recovery.test.mjs` checks the visible waiting explanation without
+issuing another command. Existing child-drain, handoff, update and configuration
+recovery checks remain separate owners of their broader boundaries.
+
+Release evidence must record the tested source and installed build, including
+any cases still unqualified. The whole acceptance table must not be marked
+passed from these focused checks alone.
 
 1. Implement and qualify the own-task settings boundary first. Ship the behavior
    and retirement of its manual guidance together.

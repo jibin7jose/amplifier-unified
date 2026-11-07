@@ -61,6 +61,22 @@ class Management:
             restored.add(session['id'])
 
         service._save_changes(sessions=restored, globals={'notificationSettings'})
+        # Only current operations, after service assembly; no history census.
+        outcomes = [(row['id'], row['pendingConfiguration']['operationId'])
+            for row in service.state.get('sessions', [])
+            if row.get('pendingConfiguration', {}).get('phase') in {'ready', 'error'}
+            and row['pendingConfiguration'].get('operationId')]
+        if outcomes:
+            async def resume_configuration_outcomes():
+                from .configuration_continuation import publish_outcome
+                for sid, operation in outcomes:
+                    async with service.lock:
+                        try:
+                            publish_outcome(self, service._session(sid), operation)
+                        except (OSError, ValueError, KeyError, TypeError):
+                            continue  # Retain unavailable evidence; do not invent a continuation.
+                    await service.collaboration.drain(sid)
+            self.background(resume_configuration_outcomes())
 
     def background(self,operation):
         task=asyncio.create_task(operation)
@@ -238,7 +254,8 @@ class Management:
         if action == 'providers.list':
             return await self.list_providers(args, command_id)
         independent=(action in {'bundle.preview','configuration.defaults','providers.list','providers.decisionModels','providers.credentials','providers.schema','providers.models','providers.imageModels','providers.test','providers.testMessage','routing.list','routing.show'}
-                     or action == 'runtime.control' and args.get('operation') == 'configuration.catalog')
+                     or action == 'runtime.control' and args.get('operation') == 'configuration.catalog'
+                     or configuration_operation is None and bool((source or {}).get('continuation')))
         try:
             if not independent and self.lock.locked():
                 await self.provider_status(action,args,command_id,'queued')
@@ -449,12 +466,14 @@ class Management:
             raise ValueError('The original configuration request binding changed.')
         return record
 
-    def configuration_transition(self, session, operation, *, recovery_source=None, **changes):
+    def configuration_transition(self, session, operation, *, recovery_source=None, boundary=None, **changes):
         """Called under service.lock (or during startup); never replace request/history."""
         from .host.config import write_private
         if session.get('pendingConfiguration', {}).get('operationId') != operation:
             raise ValueError('The pending configuration operation changed.')
         record = self.configuration_record(session['id'], operation)
+        if boundary is not None:
+            record['boundary'] = copy.deepcopy(boundary)
         record['state'].update(changes)
         record['revision'] += 1
         record['history'].append({'revision': record['revision'], 'at': time.time(), **copy.deepcopy(record['state']),
@@ -562,6 +581,10 @@ class Management:
     def check_configuration_operation(self, session, record):
         from .configuration_authority import fingerprint
         request = record['request']
+        if request['source'].get('continuation'):
+            from .configuration_continuation import intent_reason
+            if reason := intent_reason(self.service, record):
+                raise ValueError(reason)
         if request['source'].get('action') == 'configuration.patchPlacement.bind':
             from .patch_placement import check_request
             check_request(self, session, record)
@@ -596,6 +619,18 @@ class Management:
         try:
             while not self.service.closed:
                 async with self.service.lock:
+                    pending = self.service._session(identity).get('pendingConfiguration', {})
+                    if pending.get('phase') != 'queued':
+                        return
+                    operation = pending.get('operationId')
+                    record = self.configuration_record(identity, operation)
+                    yielding = (record['state']['effect'] == 'none'
+                        and record['request']['source'].get('continuation')
+                        and not record.get('boundary', {}).get('ready'))
+                if yielding:
+                    from .configuration_continuation import settle_worker
+                    await settle_worker(self, identity, operation)
+                async with self.service.lock:
                     session = self.service._session(identity)
                     pending = session.get('pendingConfiguration', {})
                     if pending.get('phase') != 'queued':
@@ -617,7 +652,9 @@ class Management:
                         # Only this proven saved operation may retain its own
                         # fence while waiting for the ordinary work-idle check.
                         candidate = {**session, 'pendingConfiguration': {}, 'configurationBusy': False}
-                    if self.configuration_idle(candidate):
+                    boundary_ready = (not record['request']['source'].get('continuation')
+                        or record.get('boundary', {}).get('ready'))
+                    if boundary_ready and self.configuration_idle(candidate):
                         # The same host admission fence is visible before any
                         # runtime-preparation await or management-lock wait.
                         session['configurationBusy'] = True
@@ -663,6 +700,9 @@ class Management:
                 await self.command_transition(operation_action, {'id': identity}, failed_command, 'error', message)
         finally:
             if self.pending_config_tasks.get(identity) is asyncio.current_task():self.pending_config_tasks.pop(identity,None)
+            if operation:
+                from .configuration_continuation import release_boundary
+                await release_boundary(self, identity, operation)
             async with self.service.lock:
                 session = self.service._session(identity)
                 pending = session.get('pendingConfiguration', {})
@@ -670,6 +710,8 @@ class Management:
                     # No-effect refusal releases admission. Unknown/saved state
                     # does not become permission to run under an uncertain mount.
                     self.settle_configuration_fence(session, operation)
+                    from .configuration_continuation import publish_outcome
+                    publish_outcome(self, session, operation)
                     self.service._publish_changes(sessions={identity})
                     if not session.get('configurationBusy'):
                         self.background(self.service.collaboration.drain(identity))
@@ -1000,6 +1042,7 @@ class Management:
                 await self.service.runtime.stop(session['id'], reason='configuration')
         elif action=='configuration.cancel':
             identity=self.session({'sessionId':args['id']})['id']
+            operation = None
             async with self.service.lock:
                 current = self.service._session(identity)
                 pending = current.get('pendingConfiguration', {})
@@ -1007,6 +1050,7 @@ class Management:
                     raise ValueError('These changes are already applying.')
                 if pending:
                     record = self.configuration_record(identity, pending.get('operationId'))
+                    operation = record['id']
                     if record['state']['effect'] != 'none' and record['state']['phase'] != 'ready':
                         raise ValueError('The original application outcome is unresolved. Cancellation cannot prove it had no effect.')
                     if record['state']['phase'] != 'ready':
@@ -1017,6 +1061,9 @@ class Management:
                 self.queued_path(identity).unlink(missing_ok=True)
                 current.pop('pendingConfiguration',None)
                 self.service._publish_changes(sessions={identity})
+            if operation:
+                from .configuration_continuation import release_boundary
+                await release_boundary(self, identity, operation)
             self.background(self.service.collaboration.drain(identity))
         elif action in {'configuration.inspect','configuration.apply','configuration.patchPlacement.bind'}:
             session=self.session({'sessionId':args['id']})
@@ -1039,6 +1086,20 @@ class Management:
                         self.configuration_transition(current, configuration_operation, phase='applying', stage='preparing')
                     self.service._publish_changes(sessions={session['id']})
                 if not idle:
+                    if (source or {}).get('continuation'):
+                        # Enroll before acknowledging the calling tool. Otherwise
+                        # its goal can start another turn before the background
+                        # settings queue gets CPU time. This only requests yield;
+                        # application still waits for the ordinary settled owner.
+                        from .configuration_continuation import settle_worker, release_boundary
+                        try:
+                            await settle_worker(self, session['id'], configuration_operation)
+                        except BaseException:
+                            async with self.service.lock:
+                                self.configuration_error(current, configuration_operation,
+                                    'The settings boundary could not be confirmed. No settings were applied.')
+                            await release_boundary(self, session['id'], configuration_operation)
+                            raise
                     self.schedule_configuration(session['id'])
                     return
             forwarded={'sessionId':args['id'],'operation':action,'args':{'config':args['config']} if 'config' in args else {}}

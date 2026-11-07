@@ -1892,7 +1892,7 @@ def require_no_child_cleanup_fallback(report):
         report["cleanupFallbackSignals"])
 
 
-@pytest.mark.parametrize("variant", ["original", "skip-save-regression"])
+@pytest.mark.parametrize("variant", ["original", "skip-save-regression", "settings-continuation"])
 async def test_real_native_recovery_and_deliberately_regressed_save_witness(tmp_path, variant):
     """No importorskip: the admitted fixed workflow owns native prerequisites."""
     import os
@@ -1905,6 +1905,8 @@ async def test_real_native_recovery_and_deliberately_regressed_save_witness(tmp_
     mutant = variant == "skip-save-regression"
     if mutant:
         command.append("--skip-save")
+    if variant == "settings-continuation":
+        command.append("--settings-continuation")
     # Retain finite structured proof and logs in the existing workflow artifact.
     # No homes, provider scenario, grants, native transcript or receipt keys.
     output = (Path(os.environ["GITHUB_WORKSPACE"]) / "output/python-checks"
@@ -1967,9 +1969,6 @@ async def test_real_native_recovery_and_deliberately_regressed_save_witness(tmp_
     report = json.loads(evidence_path.read_text())
     (output / "evidence.json").write_text(json.dumps(report, indent=2) + "\n")
     require_no_child_cleanup_fallback(report)  # Applies to both original and save-skipping variant.
-    assert report["prewriteRefusal"] and report["originalAuthorityPreserved"]
-    assert report["resumedSaveAcknowledged"] and report["actualWorkerRemounted"]
-    assert report["attempts"] == 2 and report["noRecoveryProviderCalls"]
     assert len(report["processes"]) == 2
     assert all(row["returncode"] is not None for row in report["processes"])
     assert not report["cleanupErrors"] and report["runtimeRowsAfterClose"] == 0
@@ -1978,6 +1977,16 @@ async def test_real_native_recovery_and_deliberately_regressed_save_witness(tmp_
     assert all(row["mutant"] is mutant for row in report["workerSources"])
     assert all((row["originalFunction"] != row["executedFunction"]) is mutant
         for row in report["workerSources"])
+    if variant == "settings-continuation":
+        assert process.returncode == 0, stderr.decode(errors="replace")[-6000:]
+        assert report["automaticContinuation"] and report["taskAndBudgetPreserved"]
+        assert report["oneSettingsSave"] and report["exactlyOneReplacement"]
+        assert report["duplicateOutcomePassive"]
+        assert report["originalInputCount"] == report["originalToolResultCount"] == report["logicalContinuationCount"] == 1
+        return
+    assert report["prewriteRefusal"] and report["originalAuthorityPreserved"]
+    assert report["resumedSaveAcknowledged"] and report["actualWorkerRemounted"]
+    assert report["attempts"] == 2 and report["noRecoveryProviderCalls"]
     if mutant:
         assert process.returncode != 0, "Deliberately skipped product save escaped the same acceptance oracle."
         assert report["negativeWitness"] == "resumed_save_skipped_loaded_plan_mismatch"

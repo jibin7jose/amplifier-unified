@@ -305,6 +305,8 @@ async def finish_saved(management, identity, operation):
                     detail='Changes are applied to the loaded session.', appliedAt=time.time())
                 management.queued_path(identity).unlink(missing_ok=True)
                 management.settle_configuration_fence(current, operation)
+                from .configuration_continuation import publish_outcome
+                publish_outcome(management, current, operation)
                 service._publish_changes(sessions={identity})
         finally:
             CURRENT.reset(token)
@@ -390,6 +392,10 @@ def recovery_status(management, session, record, attempt, observed, origin):
         status["reason"] = "Check the saved outcome before deciding what can happen next. Checking never applies changes."
     elif record["state"]["phase"] in {"queued", "applying"} and record["state"].get("stage") != "interrupted":
         status["reason"] = "The original change is queued or still applying. Acceptance is not confirmation that it is mounted."
+        if record['request']['source'].get('continuation'):
+            from .configuration_continuation import intent_reason
+            if not intent_reason(management.service, record):
+                status['reason'] = 'Waiting for the settings change; this task will continue automatically after verification.'
     elif record["state"]["phase"] == "ready" and record["state"]["effect"] == "mounted":
         status["reason"] = "Changes are applied to the loaded session."
     return status

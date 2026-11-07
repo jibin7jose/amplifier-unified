@@ -2,7 +2,8 @@
 import copy
 
 
-async def inspect(worker, request_id, cancel=False, *, update=False, expected=None):
+async def inspect(worker, request_id, cancel=False, *, update=False, configuration=False, expected=None):
+    continuing = update or configuration
     async with worker.command_lock:
         marker = getattr(worker, '_handoff_boundary', None)
         if cancel:
@@ -18,22 +19,23 @@ async def inspect(worker, request_id, cancel=False, *, update=False, expected=No
         if expected and expected.get('observeOnly'):
             if not marker:
                 raise ValueError('The original update boundary is unavailable; it was not recreated.')
-        elif expected:
+        elif expected and not (configuration and marker):
             task = coordinator.session_state.get('task') or {}
             from .task_binding import matches
-            if (not matches(task, expected) or task.get('revision') != expected['taskRevision']
+            if (not matches(task, expected) or update and task.get('revision') != expected['taskRevision']
                     or task.get('status') != 'active'
-                    or (worker.runtime.generation or {}).get('id') != expected['generationId']):
+                    or (worker.runtime.generation or {}).get('id') not in
+                       ({None, expected['generationId']} if configuration else {expected['generationId']})):
                 raise ValueError('The requesting task or generation changed before its update boundary.')
-        if (update and worker.runtime.generation and coordinator.session_state.get('goal')
+        if (continuing and worker.runtime.generation and coordinator.session_state.get('goal')
                 and not coordinator.get_capability('live.continuation_guard_supported')):
             return {'ready': False, 'waitingFor': ['unsupported-native-boundary']}
         if not marker:
             from amplifier_core import HookResult
             task = coordinator.session_state.get('task')
-            requested_task = ({key: task.get(key) for key in ('id', 'revision', 'continuationEpoch')}
-                              if update and task else None)
-            requested_generation = ((worker.runtime.generation or {}).get('id') if update else None)
+            requested_task = ({key: task[key] for key in ('id', 'revision', 'continuationEpoch') if key in task}
+                              if continuing and task else None)
+            requested_generation = ((worker.runtime.generation or {}).get('id') if continuing else None)
             # Native admission retains immutable Input identities in insertion
             # order before emitting/awaiting steering events. Inspect only new
             # admissions, not history or applied input_ids (which also contains
@@ -53,13 +55,19 @@ async def inspect(worker, request_id, cancel=False, *, update=False, expected=No
                         if accepted[identity].kind in {'user', 'steer'}:
                             superseded = True
                             break
+                from .task_binding import matches
+                same_task = (matches(task, {'taskId': requested_task['id'],
+                    'taskRevision': requested_task['revision'],
+                    'taskContinuationEpoch': requested_task.get('continuationEpoch', requested_task['revision'])})
+                    if configuration and requested_task else
+                    not requested_task or all(task.get(key) == value for key, value in requested_task.items()))
                 return (not superseded and (generation is None or generation == requested_generation)
                     and (not requested_task or task.get('status') == 'active' and
-                         all(task.get(key) == value for key, value in requested_task.items())))
+                         same_task))
 
             async def finish_turn(event, data):
                 goal = coordinator.session_state.get('goal')
-                if update and (not current_update()
+                if continuing and (not current_update()
                         or (worker.runtime.generation or {}).get('id') != requested_generation):
                     return HookResult()
                 if (data.get('state') == 'continuing' and goal
@@ -72,7 +80,7 @@ async def inspect(worker, request_id, cancel=False, *, update=False, expected=No
                     coordinator.session_state['goal'] = copy.deepcopy(goal)
                     try:
                         worker.controls.persist(task_only=True)
-                        if update:
+                        if continuing:
                             from .task_binding import continuation_epoch
                             worker._handoff_boundary['yieldedGoal'] = copy.deepcopy(goal)
                             task = coordinator.session_state.get('task') or {}
@@ -86,11 +94,13 @@ async def inspect(worker, request_id, cancel=False, *, update=False, expected=No
 
             unregister = coordinator.hooks.register('orchestrator:goal_progress', finish_turn,
                 name='unified-checkout-boundary', priority=0)
-            worker._handoff_boundary = {'id': request_id, 'unregister': unregister, 'update': update,
+            worker._handoff_boundary = {'id': request_id, 'unregister': unregister, 'update': continuing,
                 'hadGoal': bool(coordinator.session_state.get('goal'))}
-            if update:
+            if configuration:
+                worker._handoff_boundary.update(configuration=True, intent=copy.deepcopy(expected))
+            if continuing:
                 worker._handoff_boundary['updateCurrent'] = current_update
-        if update:
+        if continuing:
             from .handoff_drain import _freeze
             _freeze(worker)
         loop = coordinator.get('orchestrator')
@@ -107,12 +117,14 @@ async def inspect(worker, request_id, cancel=False, *, update=False, expected=No
         # alone does not establish that children or the calling tool settled.
         if not worker.parked: waiting.append('checkpoint')
         marker = worker._handoff_boundary
+        if configuration and not marker['updateCurrent']():
+            raise ValueError('New input or changed task intent superseded the settings boundary.')
         # A goal may reach its cap or complete while the calling turn settles.
         # A host observation must not re-arm that exhausted task as fresh input.
         has_task = bool(coordinator.session_state.get('task'))
         continuation_allowed = (not has_task and not marker['hadGoal']) or bool(coordinator.session_state.get('goal'))
         result = {'ready': not waiting, 'waitingFor': waiting, 'continuationAllowed': continuation_allowed}
-        if update and not waiting:
+        if continuing and not waiting and marker['updateCurrent']():
             goal = coordinator.session_state.get('goal')
             yielded = marker.get('yieldedGoal')
             task = coordinator.session_state.get('task')
@@ -124,3 +136,33 @@ async def inspect(worker, request_id, cancel=False, *, update=False, expected=No
                     yieldedGoal={key: goal.get(key) for key in ('task_id', 'cap', 'turns_used', 'continuations')},
                     task={key: task.get(key) for key in ('id', 'revision', 'status', 'continuationEpoch')})
         return result
+
+
+def checkpoint_configuration(worker):
+    """Save one recovery proof while the native history writer lease is held.
+
+    Called only after the ordinary settled-worker history checkpoint, before
+    releasing its lease. A lost host reply can then read the same operation.
+    """
+    marker = getattr(worker, '_handoff_boundary', None) or {}
+    if not marker.get('configuration') or not marker['updateCurrent']():
+        return
+    state = worker.session.coordinator.session_state
+    task, goal = state.get('task'), state.get('goal')
+    yielded = marker.get('yieldedGoal')
+    from .task_binding import matches
+    if not (yielded and task and goal and task.get('status') == 'active'
+            and matches(task, marker['yieldedTaskBinding'])
+            and yielded.get('condition') == goal.get('condition') == task.get('objective')):
+        return
+    proof = {'operationId': marker['id'], 'intent': marker['intent'],
+        'boundary': {'ready': True, 'waitingFor': [], 'continuationAllowed': True,
+            'yieldedGoal': {key: goal.get(key) for key in ('task_id', 'cap', 'turns_used', 'continuations')},
+            'task': {key: task.get(key) for key in ('id', 'revision', 'status', 'continuationEpoch')}}}
+    previous = state.get('configurationCheckpoint')
+    state['configurationCheckpoint'] = proof
+    try:
+        worker.controls.persist(task_only=True)
+    except BaseException:
+        state['configurationCheckpoint'] = previous
+        raise

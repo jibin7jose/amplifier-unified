@@ -1367,10 +1367,10 @@ class RuntimeManager:
                 current.args = (f'Takeover did not complete ({result.status}). {result.message} {current}',)
                 raise current from None
 
-    async def handoff_boundary(self, session_id, request_id, *, cancel=False, receipt=None, update=False):
+    async def handoff_boundary(self, session_id, request_id, *, cancel=False, receipt=None, update=False, configuration=False):
         """Inspect only this existing worker; never warm or acquire a writer."""
         row = self.workers.get(session_id)
-        expected = (receipt or {}).get('updateWait')
+        expected = (receipt or {}).get('configurationWait') if configuration else (receipt or {}).get('updateWait')
         def guard():
             current = self.workers.get(session_id)
             if expected and (not current or current.get('runtimeOwnerId') != expected['owner']):
@@ -1381,7 +1381,8 @@ class RuntimeManager:
         if row['process'].returncode is not None:
             raise RuntimeError('The old worker exited before confirming its saved boundary.')
         return await self._request(session_id, 'handoff.boundary', request_id=request_id, cancel=cancel,
-            receipt=receipt, **({'guard': guard} if expected else {}), **({'update': True} if update else {}))
+            receipt=receipt, **({'guard': guard} if expected else {}), **({'update': True} if update else {}),
+            **({'configuration': True} if configuration else {}))
 
     @contextmanager
     def stopped_boundary(self, session):
