@@ -43,7 +43,8 @@ async def production(tmp_path, *, legacy=False, immutable=False):
             if immutable and name in {'complete','request_budget','stream','_amplifier_web_observed'}:
                 raise AttributeError('immutable provider fixture')
             object.__setattr__(self,name,value)
-        def get_info(self):return ProviderInfo(id='fixture',display_name='Fixture',defaults={'model':'mount-default'})
+        def get_info(self):return ProviderInfo(id='fixture',display_name='Fixture',defaults={
+            'model':'mount-default','context_window':state.window,'max_output_tokens':321})
         def parse_tool_calls(self,response):return []
         def decision(self,value,options,context_estimate=0):
             state.budgets.append(value.model_dump_json());state.options.append(copy.deepcopy(options))
