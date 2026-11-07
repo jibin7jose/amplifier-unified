@@ -46,6 +46,7 @@ package-lock.json source-context=locks
 # do not classify all validation docs or JSON test inputs as historical.
 /output/** source-context=evidence
 /docs/architecture/evidence/** source-context=evidence
+/docs/shell/evidence/navigation-content-workspace.md source-context=evidence
 /BUILD-NOTES.md source-context=evidence
 /docs/settings-inventory.csv source-context=evidence
 /frontend/tests/standard-ux-controls.json source-context=evidence linguist-generated=true

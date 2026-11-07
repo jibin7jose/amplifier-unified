@@ -14,16 +14,15 @@ see [Themes](themes.md).
 See [Component contributions](components.md) for registered header, status,
 composer-action, canvas-toolbar and Settings slots.
 
-The first milestone implemented the navigation slice of the shell plan, based on
-Unified `81f2182b6112e4162d982291151c489bdec6ef8a` (0.10.8). The workspace
-manager and conversation list are independent registered components. Additional
-instances can follow the active workspace, pin a workspace, or show all chats.
+The workspace manager and conversation list are independent registered components.
+Additional instances can follow the active workspace, pin a workspace, or show all chats.
 An external module can replace either component while the app stays open.
 
-The content-workspace milestone, integrated with Unified 0.11.9, adds a
-renderer registry, validated hot-loaded artifact viewers, and a second pinned
-artifact view. See [Artifact viewers](#artifact-viewers) below for its API,
-ownership boundaries and acceptance checks.
+The renderer registry supports validated hot-loaded artifact viewers. Canvas
+has one primary viewer per client; inline message/question previews have separate
+bindings. See [Artifact viewers](#artifact-viewers) for the current API,
+ownership boundaries and checks. Early milestone identities and measurements
+are retained in the [historical evidence](evidence/navigation-content-workspace.md).
 
 The default shell retains workspace creation, folder browsing, chat search,
 pagination, pinning, renaming, removal, unread indicators and history refresh.
@@ -44,8 +43,9 @@ chat list shows All chats, without discarding the manager's view state.
 | Theme tokens and layout presentation | Host root and existing panel layout | Live preview, CSS reordering, revert and stable iframe checks |
 | Artifact card, disclosure, viewer and saved-output controls | [Artifact controls and reuse](../canvas.md#artifact-controls-and-reuse) | Exact-version presentation, control parity, dirty-state and narrow-layout checks |
 
-The host has one event stream. A small shell invalidation event shares it with
-normal app updates; a coalesced query supplies bounded instance snapshots.
+The host has one event stream. The bundled browser receives requested shell
+resources through `state.shellResources` on that stream after its initial
+descriptor/resource bootstrap; see the transport contract below.
 Queries expose summaries, the selected workspace registration, folder rows and
 navigation state. They do not expose transcripts, composer drafts, credentials
 or runtime mount plans through the SDK. The existing app-wide observation API
@@ -53,7 +53,7 @@ continues to exist outside the module SDK.
 
 The built-in browser explicitly requests its required navigation resources
 before construction; the snapshot names its supplied resources and omitted pages
-are not empty results. See [the transport contract](../browser-state-transport.md#shell-navigation-resources).
+are not empty results. See [the transport contract](../browser-state-transport.md#shell-bootstrap-and-active-resources).
 Custom navigation packages and explicit `shell.query`/`shell.inspect` reads retain
 the complete bounded navigation snapshot. The bundled HTTP endpoint requires
 resource demand; client and server ship together without old-bundle fallbacks.
@@ -107,9 +107,10 @@ Each composition holds up to 12 instances in the navigation slot, with stable
 IDs. CSS order changes placement without moving or recreating mounted nodes.
 Presentation supports light/dark/system appearance, accent color, density and
 the existing balanced/conversation/work layouts. Custom CSS skins continue to
-use the existing theme service. Full theme bundles, arbitrary slots and
-conversation decomposition are later milestones. Artifact renderers have the
-separate content-workspace contract below.
+use the existing theme service. [Themes](themes.md) and
+[component contributions](components.md) describe the supported styling and
+additional slots; [Appearances](appearances.md#shipped-building-blocks-and-remaining-work)
+separates those from future work. Artifact renderers have the separate contract below.
 
 ## Stage, validate, prepare, activate
 
@@ -176,7 +177,9 @@ report; a broken live render cannot promote itself through package validation.
 
 ## Reproduce the proof
 
-From the repository root:
+Use an owned test environment with synthetic state. These commands launch
+fixture services; choose checks for the changed boundary rather than treating
+all historical verification as a routine release requirement.
 
 ```sh
 uv sync --frozen
@@ -186,68 +189,23 @@ npm run build --prefix frontend
 npm run test:shell-browser --prefix frontend
 ```
 
-The proof starts a disposable real service and production frontend, opens the
-app, then builds the separately authored navigator. It performs stage/validation
-and agent-driven preview/apply/reorder/replacement/revert without rebuilding the
-host or restarting/reloading it. It checks independent instances/clients, draft
-and session retention, the actual iframe node, and a synthetic running job.
-It separately tests private imports, failed fixture validation and a live-only
-render failure followed by the recovery URL. Real provider calls are not part
-of this fixture.
-
-The ordinary chat/workspace browser suites cover the default modules, including
-pagination, folder creation, persistence, agent parity, touch controls and old
-CSS skins. `tests/test_shell_modules.py` covers stale revisions, idempotency,
-changed bytes, stale host receipts, state incompatibility and recovery.
+The maintained [shell browser scenario](../../frontend/tests/shell-browser.mjs)
+exercises the production host and a separately authored navigation package.
+[Shell module tests](../../tests/test_shell_modules.py) cover host-side package,
+revision, capability and recovery behavior. Fixture validation, live browser
+activation and installed-package acceptance are distinct evidence.
 
 ## Baseline and deferred work
 
-The initial focused navigation baseline passed 47 Python tests before edits.
-The existing 206-root-chat fixture, bounded pages of 100, desktop and narrow
-layouts remain the comparison workload. This proof does not establish
-large-transcript performance, voice continuity or compatibility with every
-third-party MCP view. Those need their own integration acceptance.
-
-Concurrent work on settings acknowledgement delays, transcript performance,
-MCP system-theme updates and update-cache behavior is outside this change.
-Existing location-picker actions still use the app's shared listing broker;
-this milestone does not provide independently concurrent filesystem pickers.
-Package distribution, signing, unattended trust policy, sandboxing, retention
-of unused packages/clients, rich layout editing and schema migration remain
-separate work. The SDK is provisional until this first milestone is reviewed.
+The [historical baseline and deferred-work record](evidence/navigation-content-workspace.md#baseline-and-deferred-work)
+preserves the initial scope and limits. For current supported customization and
+remaining work, use [Appearances](appearances.md#shipped-building-blocks-and-remaining-work).
 
 ## Navigation milestone verification record
 
-On this branch, the complete Python suite passed **833 tests, with 10 skips**;
-all **142 frontend unit tests** passed. Production build, production shell
-proof, chat-library browser tests and workspace-explorer browser tests passed.
-The shell proof additionally checks a left-side canvas resize, unsaved module
-form deferral, and incompatible state replacement deferral. Browser screenshots
-and raw timing samples are written under `output/shell-proof/` locally.
-
-A three-sample production comparison used the unchanged baseline checkout and
-this checkout on the same machine, with disposable 206-root-chat histories.
-These are local observations, not a benchmark or release performance claim.
-
-| Observation | Baseline 0.10.8 | Modular shell |
-| --- | ---: | ---: |
-| Median startup to 100 chat rows | 98 ms | 135 ms |
-| Median search to two matching rows | 28 ms | 16 ms |
-| Event streams per page | 1 | 1 |
-| DOM nodes after search | 377 | 386 |
-| Additional shell query after search | 0 | 44,828 bytes |
-
-The app's legacy navigation projection remains in its regular state response.
-Searching inside a module no longer filters that legacy projection, so the
-measured app state was approximately 285 KB versus 252 KB after the baseline
-search. Removing this duplication belongs with client-aware browser projection
-integration; this milestone does not claim to resolve the existing large-state
-performance work. Reproduce these samples with
-`node frontend/tests/shell-performance.mjs /path/to/baseline-checkout`.
-
-The navigation milestone was subsequently integrated with per-page attachment
-and client-aware selection. The historical measurements above are not a
-performance claim for the combined application or the content workspace.
+The [frozen navigation verification record](evidence/navigation-content-workspace.md#navigation-milestone-verification-record)
+retains the original test counts and 0.10.8 comparison. Those measurements do
+not describe the current application or establish a new performance result.
 
 ## Artifact viewers
 
@@ -258,24 +216,28 @@ and MCP Apps. Existing format controls and sandbox restrictions remain in
 those adapters. Contributed renderers enter the same host through a validated
 manifest and compiled artifact, without a format-specific host branch.
 
-The primary view follows the client's selected artifact. **Open a second
-view** pins the current ordinary artifact below it; that view remains bound
-when the primary artifact or selected conversation changes. It does not select
-the pinned artifact's conversation or change the composer target. Both views
-can render the same artifact with different settings and renderers.
+The primary view follows the client's selected artifact; use `canvas.select`
+to choose a saved artifact. Canvas mounts one viewer per client; there is no
+secondary pinned pane or `canvas.views.open` /
+`canvas.views.close` action. Legacy secondary preferences remain historical
+client data and are neither mounted nor used to block the primary view.
+
+Inline message and question previews are separate, exact-version renderer
+leases, not secondary Canvas panes. They share the canonical artifact owner
+and obey the [one-full-presentation contract](../canvas.md#one-full-presentation-per-saved-version).
+Use the [inline preview contract](../canvas.md#inline-previews) for source
+binding, supported kinds, dirty protection and release.
 
 Artifacts retain their existing library IDs and immutable stored bodies.
 Renderer choice, generation, dirty state, controls and reports belong to the
 view within the existing client presentation record. No second artifact store
-or conversation store is introduced. Closing a pinned view retains its
-preferences and artifact. Reload clones these preferences through normal
-client attachment; restarting the host restores the saved records.
+or conversation store is introduced. Closing a document retains its saved
+artifact. Reload and host restart restore saved presentation records, not
+arbitrary renderer-local React state.
 
-MCP Apps retain their existing single active tool binding per client. They can
-occupy the primary view alongside an ordinary pinned artifact. Pinning a second
-MCP App is rejected. This milestone does not provide arbitrary pane counts,
-drag-and-drop layouts, multiple simultaneous tool bindings, conversation
-renderer replacement, or automatic state-schema migrations.
+MCP Apps use their existing tool adapter and authority checks. Contributed
+renderers do not grant tool capabilities, add arbitrary Canvas pane counts or
+provide automatic state-schema migration.
 
 ### Renderer package and public SDK
 
@@ -355,26 +317,30 @@ shows the standard viewer and exposes recovery. A live render failure stays
 within its view. `?shell=recovery` bypasses optional renderer imports as well as
 optional navigation modules; explicit recovery can discard module-local edits.
 
-Opening Library hides the workspace with `hidden` and `inert` while retaining
-the mounted viewer and its local state. The action host refuses parent
-panel-close operations if the viewer has declared dirty edits. It also
-refuses primary artifact/tab, chat, workspace, fork/edit and tool-app transitions
-that would replace a dirty primary viewer, before changing the selection,
-composer target, binding or generation. These parent operations return HTTP 409
-with code `canvas_view_dirty`; existing view-specific replacements return their
-deferred result. Shared chat deletion checks affected clients too,
-and MCP App loading rechecks after asynchronous resource I/O. The browser
-navigation queue waits for preceding dirty declarations so an immediate chat
-switch cannot overtake the edit report. Finish or cancel
-the edit in its renderer before retrying, or explicitly recover that view to
+Opening Chat overview hides the workspace with `hidden` and `inert` while
+retaining the mounted viewer and its local state. The visible **Close Canvas**
+button and header toggle use `canvas.visibility` to hide/show the retained panel;
+they do not discard dirty edits or close document tabs. See
+[Canvas layout](../canvas.md#workspace-layout) for those controls.
+
+Operations that would replace a dirty viewer remain guarded. These include
+`canvas.close`, closing the current document tab, and artifact, chat, workspace,
+fork/edit or tool-app transitions that would replace that view. The host refuses
+before changing the selection, composer target, binding or generation. These
+parent operations return HTTP 409 with code `canvas_view_dirty`; existing
+view-specific renderer replacements return their deferred result. Shared chat
+deletion checks affected clients too, and MCP App loading rechecks after
+asynchronous resource I/O. The browser navigation queue waits for preceding
+dirty declarations so an immediate chat switch cannot overtake the edit report.
+Finish or cancel the edit before retrying, or explicitly recover that view to
 discard its local edit while retaining the saved artifact. Dirty state is a
 navigation guard, not persistence of arbitrary React state across a page reload.
 
 Source and iframe document requests also carry the view target. Each HTML
-bridge receives only its own frame messages, even when both views show the same
-artifact. Ordinary artifact bodies are fetched on binding changes, not on each
-view preference, theme or chat-state update. Both views share the existing
-event stream. This is not a large-workload performance claim.
+bridge receives only its own frame messages. Ordinary artifact bodies are
+fetched on binding changes, not on each view preference, theme or chat-state
+update. Renderer views use the existing event stream; this is not a
+large-workload performance claim.
 
 ### Content-workspace acceptance
 
@@ -387,60 +353,33 @@ npm run test:smart-tools-browser --prefix frontend
 uv run pytest tests/test_canvas_views.py -q
 ```
 
-The renderer proof opens a disposable production app before independently
-building/staging/validating the example. It checks two instances with separate
-settings, immutable content, an unchanged HTML iframe and its unsaved input,
-preserved composer draft and conversation target, renderer changes, appearance
-changes, reload, stale HTTP reads/actions and failed-render recovery. Desktop
-and narrow-layout screenshots and structured evidence are written under
-`output/canvas-proof/`.
+The maintained [renderer browser scenario](../../frontend/tests/canvas-renderers-browser.mjs)
+checks a single Canvas viewer, independently built/staged/validated renderer
+loading, immutable content, saved renderer preferences, composer retention,
+reload, stale HTTP reads/actions and failed-render recovery. It also distinguishes
+an optimistic Details change from an accepted receipt before reloading.
 
-The dirty-view proof validates and loads a minimal editor whose text exists only
-in React state. It verifies Library hide/show retains the same input element,
-panel-close refusal, a pinned dirty edit surviving primary/chat navigation,
-primary transitions leaving drafts and binding generations unchanged, a chat
-switch racing a delayed dirty declaration, and explicit targeted recovery
-followed by close/reopen.
+The [dirty-view scenario](../../frontend/tests/canvas-dirty-browser.mjs) uses an
+editor whose unfinished text exists only in React state. It checks preservation
+through Overview, panel hiding and Details layout changes; guarded tab/selection
+transitions; a delayed dirty declaration racing navigation; and explicit recovery.
+[Host-side tests](../../tests/test_canvas_views.py) cover legacy secondary-state
+inertness, exact targets, renderer compatibility/capabilities and dirty guards.
+The [MCP scenario](../../frontend/tests/smart-tools-browser.mjs) checks the real
+local tool adapter, frame isolation and presentation changes without mutation replay.
 
-The MCP proof uses an independently authored official-SDK counter app and a
-real local MCP tool server. A delayed accepted tool action finishes once while
-appearance/layout/focus change, the iframe survives, and its pinned ordinary
-artifact remains bound. It also covers sandbox isolation, stale server
-configuration denial and reopening without replaying mutations. These fixtures
-make no real provider/model calls; they do not prove voice continuity or every
-third-party renderer's behavior. This branch does not restart a user preview,
-publish a release or change the application version.
-
-Verification with main at 0.11.11 (`b804878`) and the dirty-view repair:
-**1,104 Python tests passed, 11 skipped**, and **154 frontend unit tests passed**.
-The production build and ten browser suites passed: dirty-view navigation,
-renderer hot loading, MCP Apps, navigation shell, canvas, saved artifacts,
-panel layout, actual host restart, empty host and live clients. The final
-navigation-queue refinement additionally reruns dirty-view, shell, live-client
-and review-during-send coverage. The source distribution and wheel built and
-passed release verification. The renderer proof also exercises recovery
-startup, including accurate fallback/ready status.
-
-The independently consumable saved-body restore fix (PR #76) restores ordinary
-content and surfaces from compact client records after a host restart. This
-branch applies the same behavior to its pinned-view resource endpoint. Large
-HTML/Babylon bodies remain indirect. The restart proof is
-`node frontend/tests/canvas-restart-browser.mjs`; run it from the repository root.
-
-The separate composer preservation fix (PR #79) is also included: an edit or
-send in a different chat first queues the previous staged draft with its original
-session and payload. It does not delay navigation behind general requests.
-The controlled debounce regression checks both host-saved drafts, sends once to
-the intended chat, and confirms a canceled timer cannot restore a sent draft.
+These synthetic fixtures do not establish live-provider, voice or arbitrary
+third-party renderer compatibility. Record a run's exact inputs and outcomes;
+this guide's historical [content-workspace verification](evidence/navigation-content-workspace.md#content-workspace-acceptance)
+preserves the 0.11.11 counts and earlier two-view proof without relabeling them
+as current acceptance. Follow the [focused release policy](../validation/release-qualification.md)
+when selecting installed-package and changed-flow checks.
 
 ## Conversation-owned interactive surfaces
 
 Use [the surface contract](conversation-surfaces.md) for dynamic interfaces
 that users and agents can operate together and refine in one tab.
 
-Canvas has one viewer per client. Use `canvas.select` to change the selected saved
-artifact and `canvas.close` to close it. Legacy secondary preferences are retained
-as historical client data but are no longer mounted or advertised as actions.
 For a file artifact, `canvas.copyPath {id, format: "absolute" | "relative"}`
 copies its path on the app server. The same action is available through the
 view command with an exact target; it never opens a local desktop application.
