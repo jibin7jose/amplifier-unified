@@ -935,6 +935,10 @@ class UpdateManager:
     async def install(self, *, automatic=False):
         if self.awaiting_restart() or self.lock.locked():return
         state = self.service.state['updates']
+        if (self.diagnostics.state.get('batch', {}).get('retry') or {}).get('mode') == 'inspect':
+            # Explicit intent is not evidence about an interrupted operation.
+            # Do not discard its inspection fence by beginning a new batch.
+            raise ValueError('The previous update was interrupted. Inspect its diagnostics and reconcile its outcome before another installation.')
         if state.get('sequence', {}).get('stage') == 'included' and state['sequence'].get('included', {}).get('issues'):
             await self.publish(detail='Resolve the included component issues and check again before installing.')
             return

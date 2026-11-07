@@ -62,9 +62,16 @@ def active_evidence(manager):
         _, current_config = configuration(manager)
         if profiles['configuration'] != configuration_key(current_config.settings, manager.home, stage):
             return {}
+        from urllib.parse import urlsplit
+        components = {row['name'] for row in graph}
+        for row in graph:
+            source = (row.get('cacheSource') or {}).get('url') or (row.get('directUrl') or {}).get('url')
+            if isinstance(source, str):
+                components.add(urlsplit(source).path.rstrip('/').rsplit('/', 1)[-1].removesuffix('.git'))
         return {'generation': generation, 'verifiedAt': activation['completedAt'],
+                'startedAt': activation['startedAt'],
                 'configuration': profiles['configuration'], 'attemptId': activation['attemptId'],
-                'packages': {row['name'] for row in graph}}
+                'packages': {row['name'] for row in graph}, 'components': components}
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return {}  # Unknown evidence is not a healthy installed graph.
 
@@ -159,15 +166,33 @@ def current(state, evidence=None):
                       'A component check is incomplete or a local change is protected. Review source details before updating.',
                       action='sources')
     failed = [row for row in failure_events(state) if row.get('status') in {'failed', 'interrupted'}]
+    application_result = state.get('applicationResult') or {}
+    application_batch = next((row for row in reversed(diagnostics.get('completedBatches', []))
+        if row.get('kind') == 'application'
+        and row.get('phase') == 'restart-ack'
+        and row.get('attemptId') == application_result.get('attemptId')
+        and row.get('revision') == application_result.get('revision')), {})
+    application_verified = (application_result.get('phase') == 'restart-ack'
+        and application_result.get('revision') == app.get('runningRevision')
+        and application_result.get('version') == app.get('current')
+        and 0 < application_batch.get('startedAt', 0)
+            <= application_result.get('verifiedAt', 0) <= application_batch.get('completedAt', 0))
     def currently_verified(row):
-        # The current graph can prove a source-policy concern is no longer a
-        # current blocker without matching historical URL batch labels. It
-        # proves nothing about missing/unselected packages or unrelated effects.
-        reason = row.get('reason') or row.get('probe', {}).get('reason')
+        # A later complete, applicable operation proves current readiness for
+        # generic preparation/OS failures too, not just a reason-code allowlist.
+        # Missing packages and unknown app feature scope remain unverified.
         package = row.get('package') or row.get('probe', {}).get('package')
-        return (row.get('kind') == 'ecosystem' and reason in RUNTIME_SOURCE_REASONS
-                and package in evidence.get('packages', ())
-                and 0 < row.get('at', 0) < evidence.get('verifiedAt', 0))
+        if row.get('kind') == 'ecosystem':
+            return (bool(evidence) and (not package or package in evidence.get('packages', ()))
+                    and (not row.get('component') or row['component'] in evidence.get('components', ()))
+                    and 0 < row.get('at', 0) < evidence.get('startedAt', 0))
+        if row.get('kind') == 'application' and application_verified:
+            from .update_diagnostics import sanitized_application_extras
+            requested = sanitized_application_extras(row.get('applicationExtras'))
+            installed = sanitized_application_extras(application_batch.get('applicationExtras'))
+            return (requested is not None and installed is not None and set(requested) <= set(installed)
+                    and 0 < row.get('at', 0) < application_batch['startedAt'])
+        return False
     remaining = [row for row in failed if not currently_verified(row)]
     if state.get('error') or phase in {'error', 'interrupted'} or remaining:
         failure = max(remaining, key=lambda row: row.get('at', 0), default=diagnostics.get('lastFailure') or {})

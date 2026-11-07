@@ -67,12 +67,12 @@ def test_captured060_current_graph_removes_old_health_cards_not_history(tmp_path
     assert health.current(manager.service.state['updates'],health.active_evidence(manager))['status']=='current'
 
 
-@pytest.mark.parametrize('case',['newer','missing-package','unrelated-error','unknown-activation','config','graph','lock','partial','staged','app-unverified','rollback'])
+@pytest.mark.parametrize('case',['newer','missing-package','unrelated-domain','unknown-activation','config','graph','lock','partial','staged','app-unverified','rollback'])
 def test_current_unknown_or_new_problem_is_not_hidden_by_old_success(tmp_path,monkeypatch,case):
     m,stage,project,source=mounted_fixture(tmp_path,monkeypatch);u=m.service.state['updates']
     if case=='newer':next(iter(u['diagnostics']['activeFailures'].values()))['latest']['at']=10**11
     elif case=='missing-package':source['runtime-installed.json'][:]=[{'name':'other','version':'1'}];(stage/'runtime-installed.json').write_text(json.dumps(source['runtime-installed.json']))
-    elif case=='unrelated-error':next(iter(u['diagnostics']['activeFailures'].values()))['latest']['reason']='disk-full'
+    elif case=='unrelated-domain':next(iter(u['diagnostics']['activeFailures'].values()))['latest']['kind']='application'
     elif case=='unknown-activation':u['diagnostics']['completedBatches']=[]
     elif case=='config':(stage/'profiles-qualified.json').write_text(json.dumps({'profiles':['work'],'configuration':'different'}))
     elif case=='graph':source['runtime-installed.json'][0]['version']='changed'
@@ -142,3 +142,41 @@ async def test_automatic_unchanged_conflict_does_zero_duplicate_stage_work(tmp_p
     assert calls=={'stage':2,'validate':2}
     await UpdateManager.install(m)  # Deliberate fresh install intent.
     assert calls=={'stage':3,'validate':3}
+
+
+@pytest.mark.parametrize('reason',[None,'disk-full','bundle-load-failed','runtime-source-constraint'])
+def test_later_complete_verified_graph_is_current_for_older_preparation_failures(tmp_path,monkeypatch,reason):
+    m,_,_,_=mounted_fixture(tmp_path,monkeypatch)
+    for group in m.diagnostics.state['activeFailures'].values():
+        group['latest'].pop('reason',None)
+        if reason:group['latest']['reason']=reason
+    before=copy.deepcopy(m.diagnostics.state)
+    assert health.current(m.service.state['updates'],health.active_evidence(m))['status']=='current'
+    assert m.diagnostics.state==before
+
+
+@pytest.mark.parametrize('case',['covered','unknown-features','missing-feature','newer','wrong-running'])
+def test_application_result_covers_old_generic_candidate_failure_only_with_current_scope(case):
+    u={'phase':'checked','sequence':{'stage':'complete'},'application':{'status':'current','current':'0.60.1','runningRevision':'a'*40},
+       'applicationResult':{'phase':'restart-ack','attemptId':'a'*32,'revision':'a'*40,'version':'0.60.1','verifiedAt':30},
+       'diagnostics':{'completedBatches':[{'kind':'application','phase':'restart-ack','attemptId':'a'*32,'revision':'a'*40,'startedAt':20,'completedAt':31,'applicationExtras':['managed-browser']}],
+         'activeFailures':{'old':{'latest':{'kind':'application','status':'failed','phase':'candidate-install','at':10,'applicationExtras':[]}}}}}
+    failure=u['diagnostics']['activeFailures']['old']['latest']
+    if case=='unknown-features':failure.pop('applicationExtras')
+    elif case=='missing-feature':failure['applicationExtras']=['tui']
+    elif case=='newer':failure['at']=32
+    elif case=='wrong-running':u['application']['runningRevision']='b'*40
+    value=health.current(u,{'generation':'c'*32,'startedAt':20,'verifiedAt':31,'packages':{'example'}})
+    assert (value['status']=='current')==(case=='covered')
+
+
+@pytest.mark.parametrize('automatic',[True,False])
+async def test_interrupted_preparation_cannot_be_replayed_by_manual_intent(tmp_path,monkeypatch,automatic):
+    from amplifier_web.updates import UpdateManager
+    m,_,_,_=mounted_fixture(tmp_path,monkeypatch)
+    m.lock=asyncio.Lock();m.awaiting_restart=lambda:False
+    m.diagnostics.state['batch']={'retry':{'mode':'inspect','inputKey':'old'}}
+    before=copy.deepcopy(m.diagnostics.state)
+    with pytest.raises(ValueError,match='interrupted'):
+        await UpdateManager.install(m,automatic=automatic)
+    assert m.diagnostics.state==before
