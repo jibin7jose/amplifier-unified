@@ -415,13 +415,13 @@ try{
  await expect(sourceLink).toBeFocused();
  const options=page.getByRole('button',{name:'Model and reasoning settings',exact:true});
  await options.click();
- const optionsDialog=page.getByRole('dialog',{name:'Chat options',exact:true});
+ const optionsDialog=page.getByRole('dialog',{name:'Model for this chat',exact:true});
  await optionsDialog.waitFor();
  // A visible portal can paint before its focus/dismissal effect settles.
  // Exercise Escape after the ordinary dialog has actually received focus.
  await expect.poll(()=>optionsDialog.evaluate(node=>node.contains(document.activeElement))).toBe(true);
  await page.keyboard.press('Escape');await expect(options).toBeFocused();
- await expect(page.getByRole('dialog',{name:'Chat options',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('dialog',{name:'Model for this chat',exact:true})).toHaveCount(0);
  await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().view.composerModel?.open)).toBe(false);
  await expectLayout('compact options preserve interleaving',expected);
  await expectCompact('desktop retained quote draft');

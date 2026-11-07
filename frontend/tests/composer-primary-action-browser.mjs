@@ -36,7 +36,7 @@ try{
  // Exercise the real default/catalog UI instead of avoiding discovery to get
  // clean shutdown. The synthetic metadata matches the fixture's seeded connection.
  await page.getByRole('button',{name:'Model and reasoning settings',exact:true}).click();
- const options=page.getByRole('dialog',{name:'Chat options',exact:true});
+ const options=page.getByRole('dialog',{name:'Model for this chat',exact:true});
  await expect(options.locator('#chat-provider')).toHaveValue('fixture');
  await expect(options.locator('#chat-provider')).toBeEnabled();
  await expect(options.locator('#chat-model')).toHaveValue('fixture-model');
