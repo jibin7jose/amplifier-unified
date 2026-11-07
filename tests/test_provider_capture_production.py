@@ -27,7 +27,7 @@ from test_context_inspection import config, request, evidence
 
 
 @asynccontextmanager
-async def production(tmp_path, *, legacy=False, immutable=False):
+async def production(tmp_path, *, legacy=False, immutable=False, streaming=True):
     plan={'session':{'orchestrator':{'module':'loop-streaming','config':{
         'min_delay_between_calls_ms':0,'max_iterations':2}},
         'context':{'module':'context-simple'}}}
@@ -35,7 +35,7 @@ async def production(tmp_path, *, legacy=False, immutable=False):
            for name in ('loop-streaming','context-simple')}
     session=await PreparedBundle(plan,BundleModuleResolver(paths),Bundle(name='production-ticket',session=plan['session'])).create_session(session_id='production-ticket')
     c=session.coordinator
-    state=SimpleNamespace(budgets=[],transports=[],options=[],actual=None,retry=False,calls=0,
+    state=SimpleNamespace(budgets=[],transports=[],options=[],dispatch_options=[],actual=None,retry=False,calls=0,
                           allowance=10000,window=20000)
     class Provider:
         name='fixture';config={'raw':False}
@@ -54,15 +54,16 @@ async def production(tmp_path, *, legacy=False, immutable=False):
         async def request_budget(self,value,*,request_options=None,context_estimate=0,**kwargs):
             return self.decision(value,{**(request_options or {}),**kwargs},context_estimate)
         async def complete(self,value,**kwargs):
-            state.calls+=1;state.transports.append(value.model_dump_json())
+            state.calls+=1;state.transports.append(value.model_dump_json());state.dispatch_options.append(copy.deepcopy(kwargs))
             if state.retry and state.calls==1:
                 from amplifier_core.llm_errors import LLMTimeoutError
                 raise LLMTimeoutError('synthetic timeout',provider='fixture',retryable=True)
             return ChatResponse(content=[TextBlock(text='Done')],usage=Usage(input_tokens=100,output_tokens=1,total_tokens=101))
         async def stream(self,value,**kwargs):
-            state.calls+=1;state.transports.append(value.model_dump_json())
+            state.calls+=1;state.transports.append(value.model_dump_json());state.dispatch_options.append(copy.deepcopy(kwargs))
             yield {'content':'Do'}
             yield {'content':'ne'}
+    if not streaming:del Provider.stream
     if legacy:
         async def budget(self,value,*,context_estimate=0,**kwargs):
             assert 'request_options' not in kwargs
@@ -160,8 +161,9 @@ async def test_production_small_nested_call_does_not_borrow_legacy_budget(tmp_pa
 
 
 @pytest.mark.parametrize('legacy',[False,True])
-async def test_production_initialized_session_executes_large_request(tmp_path,legacy):
-    async with production(tmp_path,legacy=legacy) as (session,selected,surface,observed,raw,events,inspector,state):
+@pytest.mark.parametrize('streaming',[False,True])
+async def test_production_initialized_session_executes_large_request(tmp_path,legacy,streaming):
+    async with production(tmp_path,legacy=legacy,streaming=streaming) as (session,selected,surface,observed,raw,events,inspector,state):
         # The real loop also reserves space for its injected host instructions.
         # Use honest synthetic capacity for its large local-estimate path; do not
         # weaken the loop's guard merely to preserve the direct-call fixture cap.
@@ -170,12 +172,23 @@ async def test_production_initialized_session_executes_large_request(tmp_path,le
         await session.coordinator.get('context').set_system_prompt_factory(instructions)
         assert await session.execute('Finish without tools.')=='Done'
         await inspector.drain();row=inspector.store.read()['selected']
+        evidence(f'production-session-{legacy}-{streaming}',{
+            'header':row,'characters':len(state.transports[0]),'appGuidanceTransform':True,
+            'providerCalls':state.calls,'budgetCalls':len(state.budgets),
+            'budgetOptions':state.options,'dispatchOptions':state.dispatch_options,
+            'budgetTransportEqual':state.transports[-1]==state.budgets[-1]})
         assert len(state.transports[0])>1_000_000
+        if streaming:
+            # The installed loop adds tools=[] only at stream entry, after its
+            # preflight with {}. That is not an unchanged option set. Preserve
+            # strict attribution, rather than dropping an unbudgeted option.
+            assert state.dispatch_options[-1]=={**state.options[-1],'tools':[]}
+            assert row['budgetStatus']=='request_changed' and row['budget']=={}
+            return
+        assert state.dispatch_options[-1]==state.options[-1]
         assert row['budget']['measurement']['input_tokens']==100
         assert row['limits']['requestInputAllowance']==state.allowance and row['limits']['reservedOutput']==321
         assert row['limits']['modelWindow']==state.window
-        evidence('production-session-'+str(legacy),{'header':row,'characters':len(state.transports[0]),
-            'appGuidanceTransform':True,'providerCalls':state.calls,'budgetCalls':len(state.budgets)})
 
 
 async def test_production_recovery_retries_without_reusing_consumed_ticket(tmp_path,monkeypatch):
