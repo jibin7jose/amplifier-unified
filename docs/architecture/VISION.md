@@ -75,6 +75,16 @@ Reconnect restores state through upstream rules and never assumes tool work is
 safe to repeat. Old sessions remain native-resumable when qualified, otherwise
 inspectable with a clear limitation. Saved configuration is not mounted behavior.
 
+Update health has one current authority: the update owner's operation, desired
+sources and verified active installation. Historical failed attempts remain
+inspectable but are not a second health registry. A healthy current installation
+does not rewrite an earlier failure as success; partial or uncertain activation,
+newer failures and unverified source choices remain explicit. Deterministic
+unchanged conflicts wait for changed inputs or deliberate retry rather than
+repeating expensive preparation on a timer. This direction was approved for the
+Updates simplification on November 7, 2026; [Updates](../UPDATES.md) owns its
+current-state and retry contract.
+
 ### 10. Standing authorization enables unattended work
 An operator can accept the risks of Full access once and authorize agents to use
 all supported capabilities without recurring human approvals. That choice covers
@@ -88,6 +98,10 @@ Stop, revoked authority, execution ownership and honest effect receipts still
 govern work. These are controls and correctness requirements, not substitute
 approval ceremonies. The [standing authorization contract](../workspaces/configuration-authority.md#unattended-full-access-direction)
 defines this direction separately from demonstrated implementation.
+
+The [autonomous-progress proposal](../workspaces/contracts/autonomous-progress.v1-candidate.md)
+applies this principle first to own-task settings waits and continuation. It is a
+draft, not implemented behavior; diagnosis and delivery live in its linked design note.
 
 ### 11. Available resources govern throughput
 Ordinary work has no default turn, member, queued-work or retained-resource count

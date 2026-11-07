@@ -54,6 +54,10 @@ Before enabling new defaults, run comparison fixtures against old persisted stat
 
 ## Suggested release gates
 
+These historical slice scenarios guide affected implementation acceptance. They
+do not add per-release reruns or override the current
+[release policy](../../validation/release-qualification.md).
+
 1. Placement/history slice: P01–P05, N01–N04 below, U01–U02, U04 for supported placement actions, and legacy-history preservation.
 2. Context/details slice: C01–C04, U03–U06, and browser acceptance with the current PWA shell.
 3. Execution slice: E01–E06 plus H01 and failure/restart recovery before enabling separate task working areas.

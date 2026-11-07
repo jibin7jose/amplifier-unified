@@ -481,6 +481,11 @@ class UpdateManager:
         state['canRollback'] = 'previous' in active_release(self.home)
         from .update_diagnostics import UpdateDiagnostics
         self.diagnostics=UpdateDiagnostics(self)
+        from .update_health import publish as publish_health
+        self._active_update_evidence = {}
+        self._update_health_initial = True
+        self._update_health_seen_revision = service.state.get('configurationRevision')
+        publish_health(self)
         if restart_repair:
             self.diagnostics.record('restart-repair','failed',errorType='ValueError',preserve_last_failure=True)
         else:
@@ -511,10 +516,25 @@ class UpdateManager:
                 self.diagnostics._pending_failure = None
             self.service.state['updates'].update(values)
             state = self.service.state['updates']
+            from .update_health import publish as publish_health
+            publish_health(self)
             state['blockers'] = self.blockers() if self.requires_idle(state) else []
             from .update_restart import target
             state['forceRestartTarget'] = target(self)
             self.service._publish_changes(globals={'updates','settings'})
+
+    def configuration_changed(self):
+        """Invalidate the current projection on a source-settings publication."""
+        revision = self.service.state.get('configurationRevision')
+        if getattr(self, '_update_health_seen_revision', revision) == revision:
+            self._update_health_seen_revision = revision
+            return False
+        self._update_health_seen_revision = revision
+        self._update_health_initial = True
+        from .update_health import publish as publish_health
+        publish_health(self)
+        self.wakeup.set()
+        return True
 
     def notify_idle(self, *, settled_session_id=None):
         state = self.service.state['updates']
@@ -708,6 +728,7 @@ class UpdateManager:
 
     async def _check(self, *, tier='application', install=False):
         from .update_sequence import summary
+        from .update_health import pending_preparation
         async with self.lock:
             state = self.service.state['updates']
             # A capacity observation can own this lock when a refresh arrives.
@@ -760,6 +781,10 @@ class UpdateManager:
                             detail='App update available. Included components will be checked after the new app restarts.' if app_available else 'Component checks are waiting for the application check.')
                         return
                     tier = 'included'
+                if pending_preparation(self.diagnostics.state):
+                    await self.publish(phase='checked', application=application,
+                        detail='Component checks are paused until the interrupted preparation is reconciled.')
+                    return
                 started = time.monotonic()
                 rows = await self.inventory_sources(indexed=True)
                 # Retained runner attempts already own these selections. Do not
@@ -845,11 +870,14 @@ class UpdateManager:
                 public = group_sources(checked)
                 available = sum(row.get('status') == 'update' for row in public)
                 blocked = sequence['stage'] == 'included' and sequence['included']['issues']
+                failed_check = any(row.get('status') == 'check_failed' for row in checked)
                 if not available and not blocked:sequence['stage'] = 'complete';sequence['install'] = False
-                await self.publish(phase='error' if blocked else 'available' if available else 'checked',
+                from .update_health import refresh as refresh_health
+                await refresh_health(self)
+                await self.publish(phase='error' if blocked and failed_check else 'checked' if blocked else 'available' if available else 'checked',
                     sequence=sequence, items=public+[application], application=application, appAvailable=False,
                     available=available, lastCheck=time.time(),
-                    error='An included component could not be checked or has local changes. Review its details before continuing.' if blocked else None,
+                    error='An included component could not be checked. Review its details before continuing.' if blocked and failed_check else None,
                     detail='Included components will be installed before checking the remaining sources.' if sequence['stage']=='included' and available else 'Component check complete.')
             except Exception:
                 await self.publish(phase='error', error='Update check failed. Your installed sources are unchanged.')
@@ -910,9 +938,20 @@ class UpdateManager:
                 await stage(self)
         await activate(self)
 
-    async def install(self):
+    async def install(self, *, automatic=False):
         if self.awaiting_restart() or self.lock.locked():return
         state = self.service.state['updates']
+        from .update_health import pending_preparation, reconcile_preparation
+        # Independent app/tool owners may proceed without clearing or replaying
+        # component work. Their diagnostics.begin must retain this operation.
+        if pending_preparation(self.diagnostics.state):
+            independent = state.get('pendingApp') or state.get('appAvailable') or state.get('pendingSmartTools')
+            if not independent:
+                if automatic:
+                    return
+                async with self.lock:
+                    if not reconcile_preparation(self):
+                        raise ValueError('The interrupted update has no proof of settled candidate-only preparation. Inspect its diagnostics before another installation; its outcome is not replayed.')
         if state.get('sequence', {}).get('stage') == 'included' and state['sequence'].get('included', {}).get('issues'):
             await self.publish(detail='Resolve the included component issues and check again before installing.')
             return
@@ -958,35 +997,56 @@ class UpdateManager:
                 path=self.directory/'inventory.json'
                 self.inventory=json.loads(path.read_text()) if path.exists() else []
             candidates=[r for r in self.inventory if r.get('status')=='update' and r.get('eligible') and r.get('kind')!='smart tool']
+            if pending_preparation(self.diagnostics.state):
+                if automatic:return
+                if not reconcile_preparation(self):
+                    raise ValueError('The interrupted component preparation must be reconciled before another installation.')
             if not candidates:
                 await self.publish(detail='Check for updates before installing. No eligible updates are available.')
                 return
+            from .update_health import preparation_key, retry_decision
+            input_key = preparation_key(self, self.inventory)
+            prior_retry = self.diagnostics.state.get('batch', {}).get('retry') or {}
+            if automatic and retry_decision(self.diagnostics.state.get('batch', {}), input_key):
+                await self.publish()
+                return  # No candidate directory, copy, resolution or installation.
             release=uuid.uuid4().hex
             self.diagnostics.begin('ecosystem',release,tier=state.get('sequence',{}).get('stage'),
-                                   components=[safe_label(row.get('url','')).rsplit('/',1)[-1] for row in candidates])
+                                   components=[row.get('package') or row.get('id') if not row.get('url') else
+                                               safe_label(row['url']).rsplit('/',1)[-1] for row in candidates])
+            self.diagnostics.state['batch']['inputKey'] = input_key
             stage_id=uuid.uuid4().hex
             self.diagnostics.record('ecosystem-stage','started',commandId=stage_id)
             stage=self.directory/'releases'/release
             stage.mkdir(parents=True,mode=0o700)
+            from .update_health import pointer_witness, candidate_copy
+            proof = {'candidate': release, 'activeBefore': pointer_witness(self),
+                     'directoryIdentity': [stage.stat().st_dev, stage.stat().st_ino],
+                     'boundary': 'copy-only', 'copySettled': True}
+            self.diagnostics.state['batch']['preparation'] = proof
             source=foundation_home(self.home)
             phase='ecosystem-stage'
             try:
                 await self.publish(phase='staging',detail='Preparing an isolated copy of the ecosystem…',error=None)
                 if source.exists():
                     from .update_storage import copy_snapshot
-                    await self.diagnostics.run('ecosystem-copy',asyncio.to_thread,copy_snapshot,source,stage/'foundation')
+                    await self.diagnostics.run('ecosystem-copy',candidate_copy,proof,copy_snapshot,source,stage/'foundation')
                 else:
                     (stage/'foundation').mkdir()
                 for name in ('config','routing'):
-                    if (self.home/name).exists(): await asyncio.to_thread(shutil.copytree,self.home/name,stage/name)
+                    if (self.home/name).exists(): await candidate_copy(proof,shutil.copytree,self.home/name,stage/name)
                 from .session_files import amplifier_home
                 shared_home=amplifier_home()
                 shared_stage=stage/'shared-config'
                 shared_stage.mkdir(mode=0o700)
                 for name in ('settings.yaml','keys.env','routing'):
                     original=shared_home/name
-                    if original.is_dir():await asyncio.to_thread(shutil.copytree,original,shared_stage/name)
-                    elif original.is_file():await asyncio.to_thread(shutil.copy2,original,shared_stage/name)
+                    if original.is_dir():await candidate_copy(proof,shutil.copytree,original,shared_stage/name)
+                    elif original.is_file():await candidate_copy(proof,shutil.copy2,original,shared_stage/name)
+                # Beyond plain snapshots, preparation can invoke shared source
+                # stores, installers and native hooks. Do not infer their effects
+                # or settlement from a CancelledError.
+                proof['boundary'] = 'preparing'
                 for config_file in (stage/'config').rglob('*.yaml'):
                     config_file.write_text(config_file.read_text().replace(str(source),str(stage/'foundation')))
                 shared_settings = shared_stage/'settings.yaml'
@@ -1028,12 +1088,17 @@ class UpdateManager:
             except BaseException as error:
                 from .update_diagnostics import exception_facts, failure_guidance
                 interrupted=isinstance(error,asyncio.CancelledError)
+                if interrupted:proof['interruptedAt'] = time.time()
                 status='interrupted' if interrupted else 'failed'
                 failure=self.diagnostics.state.get('lastFailure',{})
                 if failure.get('attemptId')!=self.diagnostics.state.get('attemptId'):
                     self.diagnostics.record(phase,status,**{**getattr(error,'diagnostic_facts',{}),**exception_facts(error)})
                 failure=self.diagnostics.state['lastFailure']
+                from .update_health import record_retry
+                record_retry(self.diagnostics.state['batch'], input_key, failure, prior_retry)
                 self.diagnostics.record('ecosystem-stage',status,commandId=stage_id,preserve_last_failure=True)
+                from .update_health import retain_preparation
+                retain_preparation(self.diagnostics.state)
                 await self.publish(phase='interrupted' if interrupted else 'error',pendingRelease=None,
                     detail='Component update preparation '+('was interrupted' if interrupted else 'failed')+'. Current components remain active.',
                     error=failure_guidance(failure) or 'Ecosystem update '+('interrupted' if interrupted else 'failed')+' during '+failure['phase'].replace('-',' ')+'. Current sources remain active; no conversation work was replayed.')
@@ -1171,25 +1236,32 @@ class UpdateManager:
                     if not task.done(): task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
         if fresh:
-            from .runtime_policy_reconciliation import reconcile, legacy_candidates, RECEIPT
+            from .runtime_policy_reconciliation import reconcile, legacy_candidates, RECEIPT, policy_inputs, reuse_collection
             from .runtime_source_alignment import align_checked_sources
+            collection_inputs = None
             async def collect_source_policy():
+                nonlocal collection_inputs
                 target = stage / 'selected-source-declarations.json'
                 overrides = await self.diagnostics.run('ecosystem-runtime-policy', prepare_overrides,
                     project, receipt / 'runtime-install-overrides.txt')
                 command = [shutil.which('uv'), 'run', '--locked', '--no-sync', '--project', str(project),
                            '--python', '3.13', 'python', str(Path(__file__).with_name('update_probe.py'))]
+                before = policy_inputs(stage, project)
                 await self.diagnostics.run('ecosystem-source-policy', process, *command, str(workspace), profiles[0],
                     '--install-overrides', str(overrides), '--global-only', '--profiles', str(profiles_file),
                     '--source-policy-only', str(target), env=env, timeout=900)
+                collection_inputs = before if policy_inputs(stage, project) == before else None
                 return json.loads(target.read_text())
             previous = receipt_directory(self.home, active_release(self.home).get('current'))
+            selection = None
             if legacy_candidates(self.inventory) or (previous / RECEIPT).exists():
-                await self.diagnostics.run('ecosystem-source-policy', reconcile, self, stage, project, collect_source_policy)
+                selection = await self.diagnostics.run('ecosystem-source-policy', reconcile, self, stage, project, collect_source_policy)
             # Source paths first materialized during composition were absent
             # from the early cache scan. Align them before a fresh composition;
             # never install the batch captured before a binding/checkout moved.
-            selection = await collect_source_policy()
+            selection = await reuse_collection(self, stage, project, selection, collection_inputs)
+            if selection is None:
+                selection = await collect_source_policy()
             await self.diagnostics.run('ecosystem-source-preflight', align_checked_sources,
                                        self, stage, selection=selection)
             if shared:
@@ -1225,6 +1297,9 @@ class UpdateManager:
         if self.lock.locked() or self.awaiting_restart(): return
         async with self.lock:
             if self.closed: return
+            from .update_health import pending_preparation
+            if pending_preparation(self.diagnostics.state):
+                raise ValueError('The interrupted component preparation must be reconciled before activation or rollback.')
             pointer=active_release(self.home)
             state=self.service.state['updates']
             retrying_rollback=rollback and 'pendingRollback' in state
@@ -1317,6 +1392,8 @@ class UpdateManager:
                         self.service._publish_changes(globals={'updates','settings'})
                 self.diagnostics.clear_failure()
                 self.diagnostics.record('ecosystem-rollback' if rollback else 'ecosystem-activation','succeeded')
+                from .update_health import refresh as refresh_health
+                await refresh_health(self)
                 await self.publish()  # Publish settled attention, not just the preceding installed status.
                 self.inventory=[]
                 if self.cleanup_task is None or self.cleanup_task.done():
@@ -1385,6 +1462,11 @@ class UpdateManager:
         from .update_drain import observe_waiters
         await observe_waiters(self)
         if self.awaiting_restart():return
+        if getattr(self, '_update_health_initial', False):
+            self._update_health_initial = False
+            from .update_health import refresh as refresh_health
+            await refresh_health(self)
+            await self.publish()
         from .update_drain import finish
         drain = state.get('drain') or {}
         if drain.get('phase') in {'draining', 'replacing', 'releasing'}:
@@ -1419,11 +1501,22 @@ class UpdateManager:
             await self.app()
             return
         if state.get('pendingRelease'):
+            from .update_health import pending_preparation
+            if pending_preparation(self.diagnostics.state):return
             await self.activate()
             return
         if state.get('initialPreparation') and state.get('sequence', {}).get('stage') == 'complete':
             await self.publish(initialPreparation=False)
         sequence = state.get('sequence', {})
+        from .update_health import pending_preparation
+        if pending_preparation(self.diagnostics.state):
+            # Health, drain, storage, worker adoption and independent app/tool
+            # paths above still run. No component availability/install is replayed.
+            if settings.get('autoCheck', True) and time.time()-max(state.get('lastCheck') or 0,state.get('lastAttempt') or 0)>=settings.get('intervalHours',DEFAULT_CHECK_INTERVAL_HOURS)*3600:
+                await self.check(tier='application', fresh=False)
+            if state.get('appAvailable') and settings.get('autoInstall', True):
+                await self.app()
+            return
         if sequence.get('nextStage') and state.get('phase') not in {'error','interrupted'}:
             # App-first checking deliberately skips component discovery. After
             # the new app starts, refresh those refs rather than inheriting a
@@ -1437,7 +1530,7 @@ class UpdateManager:
         state=self.service.state['updates']
         managed_preview=state.get('appAvailable') and state.get('application',{}).get('canInstall') is False
         if not managed_preview and (settings.get('autoInstall',True) or state.get('sequence', {}).get('install')) and state.get('phase')=='available' and state.get('available',0):
-            await self.install()
+            await self.install(automatic=True)
             return
         if self.independent_tool_results(state) and (state.get('phase') not in {'error', 'interrupted'} or any(
                 row.get('runnerUpdate') and not row.get('failure') for row in state['pendingSmartTools'])):

@@ -111,35 +111,14 @@ def snapshot(state, *, session_items=None):
         if row.get('status') in {'update','check_failed','local_changes'}:
             status=row['status'];label={'update':'Update available','check_failed':'Could not check','local_changes':'Local edits preserved'}[status]
             add('source:'+row['id'],label+' · '+row['label'],'maintenance','updates',row.get('detail',''),[status,row.get('latest'),row.get('current')])
-    failures = updates.get('diagnostics', {}).get('activeFailures', {})
-    overflow = updates.get('diagnostics', {}).get('failureOverflow')
-    from .update_diagnostics import disposition_occurrence
-    if overflow:
-        add('updates:failure-overflow', 'Additional update failures need review', 'maintenance', 'updates',
-            'More distinct failures occurred than the active summary can retain. Review the bounded update diagnostic history; recovery of these additional failures is unverified.' +
-            (' Some original receipts could not be stored.' if updates.get('diagnostics', {}).get('storageUnavailable') else ''),
-            overflow.get('firstAt'), actionRequired=True, occurrences=overflow['occurrences'],
-            dispositionOccurrence=disposition_occurrence('updates:failure-overflow', overflow))
-    for key, failure in sorted(failures.items(), key=lambda pair: pair[1]['first'].get('at', 0), reverse=True):
-        kind = failure['kind']
-        event = failure['first']
-        label = {'ecosystem': 'Component update', 'application': 'Application update',
-                 'smart-tools': 'Smart Tool update'}.get(kind, 'Update')
-        detail = event.get('reason') or event.get('probe', {}).get('reason') or event.get('errorType') or 'Update did not finish'
-        if event.get('component'):
-            detail += ' · ' + event['component']
-        if kind == 'ecosystem' and event.get('phase') != 'ecosystem-activation':
-            detail += '. Current components remain active.'
-        detail += ' Open Updates to review details and recovery options.'
-        add('updates:failure:' + key, label + ' needs attention', 'maintenance', 'updates',
-            detail, failure['id'], actionRequired=True, updateKind=kind,
-            occurrences=failure['occurrences'], firstFailure=event, latestFailure=failure['latest'])
-        token = disposition_occurrence(items[-1]['id'], failure)
-        if token:
-            items[-1]['dispositionOccurrence'] = token
-    if updates.get('error') and not any(group.get('displayError') == updates['error'] for group in failures.values()):
-        add('updates:error','Update needs attention','maintenance','updates',updates['error'],actionRequired=True)
-        items.insert(0, items.pop())  # A distinct current check error precedes older incidents.
+            if status == 'local_changes':
+                items[-1]['informational'] = True  # Intentional customization is not repair debt.
+    current = updates.get('currentStatus') or {}
+    if current.get('actionRequired'):
+        add('updates:current', current['title'], 'maintenance', 'updates',
+            current['detail'], [current['status'], current.get('component'), current.get('detail')],
+            actionRequired=True)
+        items[-1]['updateAction'] = current.get('action')
     if not preparing and (updates.get('pendingApp') or updates.get('pendingRelease')):add('updates:pending','Update ready; waiting for idle','maintenance','updates',version=updates.get('pendingRelease') or updates.get('pendingApp'))
     routes={'providers':('setup','providers'),'routing':('setup','routing'),'configuration':('capabilities','loaded-modules'),'bundle':('capabilities','add-bundles'),'bundles':('capabilities','app-bundles'),'modules':('capabilities','registries'),'sources':('capabilities','registries'),'history':('maintenance','history'),'permissions':('maintenance','permissions'),'notifications':('maintenance','notifications'),'maintenance':('maintenance','repair')}
     for action,op in state.get('actionStatus',{}).items():

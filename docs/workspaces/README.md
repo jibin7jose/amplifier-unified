@@ -11,6 +11,7 @@ The design direction was accepted on 2026-09-22 after the attachment flow was si
 - [Context](contracts/context.v1.md): repositories, instructions and context provenance
 - [Execution](contracts/execution.v1.md): folders, concurrent work and runtime bindings
 - [Handoff](contracts/handoff.v1.md): integration, preview ownership and cleanup
+- [Autonomous progress — proposed](contracts/autonomous-progress.v1-candidate.md): own-task settings continuation promises; draft, not implemented. [Design and planned checks](notes/autonomous-progress-20261107.md) are separate.
 - [Acceptance scenarios](notes/ACCEPTANCE.md)
 
 ## Using the workspace flow

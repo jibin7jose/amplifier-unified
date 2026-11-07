@@ -111,3 +111,30 @@ async def test_context_inspector_native_tab_reuse_scope_and_no_prompt_storage(tm
             assert app.state['selectedSessionId'] == sid
     finally:
         await app.close()
+
+
+@pytest.mark.parametrize('resume', [False, True])
+async def test_attached_client_retires_only_legacy_inspector_modal(tmp_path, resume):
+    app = AppService(tmp_path / 'app', workspace=tmp_path)
+    try:
+        await app.dispatch('session.create', {})
+        sid = app.state['selectedSessionId']
+        app.clients.attach('browser')
+        app.clients.attach('other')
+        with app.clients.bind('browser'):
+            await app.dispatch('canvas.show', {'kind':'text','content':'Keep selected document'})
+            document = app.state['canvas']['id']
+            await app.dispatch('view.update', {'patch':{'panel':'context-inspector','canvasWidth':710}})
+        other = deepcopy(app.clients.records['other'])
+        restored = app.clients.attach('resumed', resume='browser') if resume else app.clients.attach('browser')
+        assert restored['view']['panel'] is None
+        assert restored['view']['canvasWidth'] == 710
+        assert restored['selectedSessionId'] == sid
+        assert restored['canvas']['id'] == document
+        assert not any(r['kind']=='context-inspector' for r in app.state['canvasArtifacts'])
+        assert app.clients.records['other'] == other
+        restored['view']['panel'] = 'session-details'
+        app.clients.attach('resumed' if resume else 'browser')
+        assert restored['view']['panel'] == 'session-details'
+    finally:
+        await app.close()

@@ -1,5 +1,5 @@
 import {AppReloadNotice} from './app-reload.jsx';
-import {AttentionReview,ReadWhenVisible,useReadVisible,FailureDisposition,FailureDispositions} from './attention';
+import {AttentionReview,ReadWhenVisible,useReadVisible,FailureDispositions} from './attention';
 import {updateOverview,updateBatchLabel} from './update-overview';
 import {ActivityRegion} from './activity-region';
 import {useListFilter} from './list-filter.jsx';
@@ -7,7 +7,7 @@ import {ResultNotice} from './settings-ui';
 import React from 'react';
 import {RefreshCw,Download,Undo2,Check,ArrowUpCircle,AlertCircle,Pin,Clock3,LoaderCircle} from 'lucide-react';
 import './updates.css';
-import {UpdateDiagnostics,UpdateIssueSummary} from './update-diagnostics.jsx';
+import {UpdateDiagnostics} from './update-diagnostics.jsx';
 import {UpdateSupport} from './update-support.jsx';
 import {UpdateRestart} from './update-restart.jsx';
 import {SmartToolUpdateResults} from './smart-tool-update-results.jsx';
@@ -61,7 +61,11 @@ export function UpdateSettings({state,act}){
   </div>
   <UpdateReleaseSummary updates={updates} application={application} overview={overview}/>
    {overview.waiting&&!overview.runnerOnlyPending&&!!updates.blockers?.length&&<details className="a-update-work" data-part="update-blockers"><summary>View active work ({updates.blockers.length})</summary><ul>{updates.blockers.map((item,index)=><li key={index}>{item.label}{item.sessionId&&<> — <button type="button" className="a-link" data-action="session.select" onClick={async()=>{const result=await act('session.select',{id:item.sessionId});if(result&&result.accepted!==false)await act('view.update',{patch:{panel:null,workSurface:'chat'}})}}>{item.title||'Open conversation'}</button></>}</li>)}</ul><p className="a-caption">Idle chats alone don’t hold up the update. Background workers, calls, and tools may still need to finish.</p><UpdateRestart updates={updates} act={act}/></details>}
-  {unresolved.map(item=><ReadWhenVisible key={item.id} item={item} act={act}><ResultNotice phase="error" message={`${item.title}: ${item.detail}${item.occurrences>1?` (${item.occurrences} occurrences)` :''}`}/><p className="a-caption">Reading this does not resolve it. Diagnostic history is retained below.</p><FailureDisposition item={item} act={act}/></ReadWhenVisible>)}
+  {overview.current?.actionRequired&&<div className="a-update-current-action">
+   {overview.current.component&&<p className="a-caption">Component: {overview.current.component}</p>}
+   <button className="a-soft" onClick={()=>overview.current.action==='check'?act('updates.check'):act('view.update',{patch:{maintenanceDraft:{...state.view?.maintenanceDraft,updatesExpanded:overview.current.action==='sources',updateDiagnosticsExpanded:overview.current.action!=='sources'}}})}>{overview.current.action==='check'?'Check current components':overview.current.action==='sources'?'Review source details':'View update diagnostics'}</button>
+   <p className="a-caption">The current installation is kept. Review the supported next step before retrying.</p>
+  </div>}
   <FailureDispositions state={state}/>
   {!unresolved.length&&overview.tone!=='working'&&<ReadWhenVisible item={unread.find(item=>item.id==='updates:error')} act={act}><ResultNotice phase={notice.phase} message={notice.phase==='error'?notice.message:''}/></ReadWhenVisible>}
   <AppReloadNotice/>
@@ -78,7 +82,6 @@ export function UpdateSettings({state,act}){
   <ReleaseHistory application={application} state={state} act={act}/>
   <details className="a-update-disclosure" data-part="ecosystem-update-details" open={overview.tone==='error'||undefined}><summary>{overview.tone==='error'?'Advanced details · review issue':'Advanced details'}</summary><div className="a-update-disclosure-body">
    <AttentionReview state={state} act={act} page="updates" items={componentUnread} showItems/>
-   <UpdateIssueSummary state={state}/>
    {(overview.tone==='working'||overview.tone==='available')&&<div className="a-update-progress" aria-label="Update order">{[['application','App'],['included','Included components'],['other','Other components']].map(([id,label],i)=><span key={id} data-active={overview.stage===id}>{i>0&&'→ '}{label}</span>)}</div>}
    {overview.currentProgress&&<p className="a-caption">{overview.currentProgress.phase==='prepare'?'Preparing':'Checking'} configurations: {overview.currentProgress.completed} of {overview.currentProgress.total} completed.</p>}
    {overview.currentBatch&&overview.tone==='working'&&<p className="a-caption" data-part="update-batch">Current batch: {updateBatchLabel(overview.currentBatch)}. Started {new Date(overview.currentBatch.startedAt*1000).toLocaleTimeString()}.</p>}
