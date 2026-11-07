@@ -235,6 +235,10 @@ async def test_registered_identity_rejects_unknown_wrappers_swaps_cycles_and_dep
     assert not capture.matches_provider(events,unknown,raw)
     known=Wrapper(raw);capture.bind_wrapper(known,raw)
     assert capture.matches_provider(events,known,raw)
+    class EqualPlugin(Wrapper):
+        def __hash__(self):return hash(known)
+        def __eq__(self,other):return other is known or self is other
+    assert not capture.matches_provider(events,EqualPlugin(raw),raw)
     known.original=Wrapper(raw)
     assert not capture.matches_provider(events,known,raw)
     cycle=Wrapper(None);cycle.original=cycle;capture.bind_wrapper(cycle,cycle)

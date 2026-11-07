@@ -28,7 +28,7 @@ def observe(operation, *args):
 
 def bind_wrapper(wrapper, original):
     """Called only where the host constructs its recovery wrapper."""
-    _HOST_WRAPPERS[wrapper] = weakref.ref(original)
+    _HOST_WRAPPERS[wrapper] = (weakref.ref(wrapper), weakref.ref(original))
 
 
 def provider_chain(provider):
@@ -40,7 +40,10 @@ def provider_chain(provider):
         chain.append(weakref.ref(provider))
         edge = _HOST_WRAPPERS.get(provider)
         if edge is None:return tuple(chain)
-        original = edge()
+        # WeakKeyDictionary follows key equality; the registration must still
+        # belong to this exact object, never a plugin's overloaded equality.
+        if edge[0]() is not provider:return None
+        original = edge[1]()
         if original is None or vars(provider).get('original') is not original:return None
         provider = original
     return None
