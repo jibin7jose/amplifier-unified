@@ -88,11 +88,11 @@ export function updateOverview(updates={},options={},attentionItems=[]){
  // The bundled host owns current health. Historical receipts and read badges
  // cannot override it or independently classify the installation.
  const current=updates.currentStatus;
- if(current&&!overview.active&&!overview.pending){
+ if(current&&(!overview.active&&!overview.pending||current.actionRequired)){
   const tone={current:'ready',working:'working',waiting:'working',retrying:'working',
    available:'available',protected:'error','action-required':'error',unverified:'error',unchecked:'neutral'}[current.status]||'neutral';
   return {...result,title:current.title,detail:current.detail,tone,current,
-   failed:!!current.actionRequired,busy:false,processing:['working','retrying'].includes(current.status)};
+   failed:!!current.actionRequired,busy:overview.busy,processing:!current.actionRequired&&['working','retrying'].includes(current.status)};
  }
  if(overview.tone==='working'&&overview.currentProgress&&!updates.initialPreparation){
   return {...result,title:'Finishing your update',detail:'We’re preparing and checking the updated components. This continues automatically.'};

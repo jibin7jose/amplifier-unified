@@ -586,8 +586,10 @@ def policy_inputs(stage, project):
         path = Path(stage) / folder
         paths.extend([path] if path.is_file() else sorted(
             p for p in path.rglob('*') if p.is_file() and p.suffix in {'.json', '.yaml', '.yml', '.toml'}))
-    return [(str(path), hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None)
-            for path in paths]
+    return ([(str(path), hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None)
+             for path in paths] +
+            [(key, hashlib.sha256(os.environ.get(key, '').encode()).hexdigest()) for key in
+             ('UV_CONFIG_FILE', 'UV_OVERRIDE', 'UV_CONSTRAINT', 'UV_BUILD_CONSTRAINT', 'AMPLIFIER_SOURCE_STORE')])
 
 
 async def reuse_collection(manager, stage, project, observed, inputs):

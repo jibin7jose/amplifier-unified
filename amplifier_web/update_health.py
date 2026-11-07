@@ -55,6 +55,13 @@ def active_evidence(manager):
         if (project / 'uv.lock').read_bytes() != (stage / 'runtime.lock').read_bytes():
             return {}
         verify_recorded(project, stage)
+        # An observation that raced a new pointer/configuration is not evidence
+        # for whichever installation won that race.
+        if active_release(manager.home) != pointer:
+            return {}
+        _, current_config = configuration(manager)
+        if profiles['configuration'] != configuration_key(current_config.settings, manager.home, stage):
+            return {}
         return {'generation': generation, 'verifiedAt': activation['completedAt'],
                 'configuration': profiles['configuration'], 'attemptId': activation['attemptId'],
                 'packages': {row['name'] for row in graph}}
@@ -147,6 +154,10 @@ def current(state, evidence=None):
                       'Source changes kept' if row['status'] == 'local_changes' else 'A source could not be checked',
                       row.get('detail') or 'The installed source is preserved. Review its source details before updating.',
                       action='sources', component=row.get('label'))
+    if any((seq.get(tier) or {}).get('issues') for tier in ('included', 'other')):
+        return result('action-required', 'Some sources need review',
+                      'A component check is incomplete or a local change is protected. Review source details before updating.',
+                      action='sources')
     failed = [row for row in failure_events(state) if row.get('status') in {'failed', 'interrupted'}]
     def currently_verified(row):
         # The current graph can prove a source-policy concern is no longer a
@@ -175,7 +186,8 @@ def current(state, evidence=None):
         return result('action-required', 'Some tools were not updated',
                       'Their current versions remain installed. Review the failed tool to retry or keep its current version.',
                       action='tools')
-    if state.get('available') or seq.get('nextStage'):
+    if state.get('available') or seq.get('nextStage') or any(
+            (seq.get(tier) or {}).get('available') for tier in ('included', 'other')):
         return result('available', 'Updates available', 'The app and eligible components can update while preserving configured pins and local sources.', action='install')
     if seq.get('stage') == 'complete' and app.get('status') == 'current':
         if not evidence:

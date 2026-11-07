@@ -145,15 +145,15 @@ test('one current status owns attention, app result and retry boundaries after r
  const restore=value=>JSON.parse(JSON.stringify(value));
  for(const saved of [healthy,restore(healthy)]){
   const issue=updateOverview(saved,{},[unresolvedComponent]);
-  assert.equal(issue.tone,'error');
-  assert.equal(issue.title,unresolvedComponent.title);
+  assert.equal(issue.tone,'ready');
+  assert.notEqual(issue.title,unresolvedComponent.title);
   assert.equal(issue.application.state,'current');
   assert.equal(issue.applicationResult.version,confirmedApp.version);
   assert.equal(issue.busy,false);
  }
  const retry=updateOverview({...healthy,phase:'validating',sequence:{stage:'other',install:true}}, {}, [unresolvedComponent]);
  assert.equal(retry.tone,'working');
- assert.equal(retry.attention.length,1); // Preparing a retry does not resolve its old issue.
+ assert.equal(retry.attention.length,0); // History is not another current-health registry.
  assert.notEqual(retry.title,unresolvedComponent.title);
  const continuation=updateOverview({...healthy,sequence:{stage:'application',nextStage:'included',install:true}}, {}, [unresolvedComponent]);
  assert.equal(continuation.tone,'working');assert.equal(continuation.busy,true);
@@ -172,7 +172,7 @@ test('the exact current component failure wins over an older actionable episode'
  assert.match(result.detail,/foundation/);
  assert.match(result.detail,/Check for updates again/);
  assert.equal(result.application.state,'current');
- assert.equal(result.attention.length,1);
+ assert.equal(result.attention.length,0);
 });
 
 test('failed optional tool stays actionable without holding independent app or component work',()=>{
