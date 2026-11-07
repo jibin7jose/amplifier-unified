@@ -42,8 +42,17 @@ captured label and a named Copy control. Full paths do not dominate the reader.
   Unknown does not mean unlimited. No fresh counting, model discovery or generation
   is triggered by opening, searching or refreshing the inspector.
 - Each limit has captured source/reason evidence. A missing budget distinguishes
-  unsupported preflight, no retained preflight, no usable provider decision, changed request/options and
-  bounded/opaque attribution. Older observations without these receipts say
+  unsupported preflight, no retained scoped preflight, no usable provider decision,
+  changed request/options, ambiguous candidates and bounded/unsupported attribution.
+  `budgetBinding` records only a scoped candidate count (at most four), fixed
+  fingerprint status/reason codes and association disposition. It never publishes
+  fingerprints, request fields or an unmatched candidate's token values. A scoped
+  preflight observation is not proof it belongs to this dispatch. An unavailable
+  fingerprint on a copied request therefore retains **unproven association** and
+  its observed bound/unsupported reason, not an invented equality or a claim
+  that no preflight occurred. No scoped candidate means the dispatch fingerprint
+  is not evaluated; the inspector does not traverse a request to match another
+  provider or task's receipt. Older observations without these receipts say
   **not captured**, rather than inventing a historical reason from current config.
   A fixed mounted context `max_tokens` attribute is captured as well as an explicit
   configuration value. No fixed value means automatic/unspecified, not zero.
@@ -62,6 +71,74 @@ captured label and a named Copy control. Full paths do not dominate the reader.
   candidates are not matched by arrival order. Every dispatch retires that
   provider/task's preflight interval; an identical concurrent or later request
   cannot borrow its receipt.
+
+The composition `bounded` flag is independent of fingerprint eligibility. Text
+attribution has per-item, item-count, visit and scanned-character bounds; exact
+binding traverses all request fields and normalized options with its own complete
+character/node/depth/container budget. Provider input totals and the local text
+estimate do not establish which bound fired. Only observed fixed reason codes
+can explain a future capture. Existing captures are never backfilled.
+
+### Current limit: large-request numeric attribution
+
+The status repair does **not** recover budget numbers for large/opaque copies.
+`tests/test_context_inspection_binding.py` qualifies the actual native
+Core/Foundation/SelectedProvider/SurfaceProvider path with synthetic input above
+the fingerprint allowance, including a deliberately mutated admission suffix.
+Its retained evidence distinguishes a real preflight from proven request equality.
+
+An existing Work digest is not a drop-in witness for this inspector:
+
+- `SurfaceProvider` retains a full fitted serialization. `finalize_work` compares
+  requests before/after its authority await, but can return early with no Work
+  binding. Its equality covers the ChatRequest, not all dispatch option kwargs.
+- `begin_work` computes a request digest before the provider telemetry wrapper's
+  awaited `get_info`/admission guard. `admit_work` binds call/scope identity; it
+  does not revalidate mutable request contents after that await.
+- A synthetic mutation in that admission interval can leave the old Work digest
+  different from the actual provider input. Treating it as a budget witness
+  would publish another payload's count. Diagnostic observation must not repair
+  this by adding another unbounded scan or changing execution authority.
+
+A follow-up needs the canonical final-fit/admission owners to define one
+consumable, exact **post-admission** request-and-options witness, with unchanged
+copy lineage and no intervening mutation window. Prefer reusing or relocating
+the owner's existing serialization/equality work over adding inspector scans.
+The witness must bind the specific budget attempt, provider, execution/call and
+options, reject changed suffixes and invalidate on refit/cancellation/retry.
+This is a proposed internal owner contract, not implemented numeric support or
+a new public API. Until that boundary is agreed, counts remain unavailable.
+
+Concrete owner decision: split `ExecutionEvents` admission from provider entry
+using a host-private, single-use admitted-call lease. Complete the existing
+metadata/capacity await first; then let `SurfaceProvider` and its final-fit owner
+validate the exact request **and normalized dispatch options** for that lease,
+and enter the provider without another intervening await. A private fit ticket
+must identify the budget attempt and preserve the already-owned fitted input,
+not store another prompt copy or put a reusable token in request metadata.
+The lease must reject another provider/call/task, a superseded fit, changed
+options, cancellation, a second consumption and late or nested dispatch.
+Streaming needs an explicit first-entry lease with no context variable carried
+over outward yields. Admission failures must retain current quota/usage/Stop
+semantics; moving guards is not a diagnostic-only change. The decision belongs
+to those execution owners before this inspector may consume the witness.
+
+### Separate provider-owner proposal: exact model window
+
+OpenAI's `_budget_decision` and legacy `request_budget` return a dictionary. The
+current consumer validates its known required fields and tolerates additions;
+Unified already allowlists optional `context_window_tokens`. The provider owner
+can document and add that optional field from its effective request model/policy
+without a Core dependency or another count call. Its meaning must be the actual
+model context window, not a safety/pricing input cap. Unknown/custom endpoints
+or an unsupported exact model must omit it rather than infer a default.
+
+Provider tests should cover a selected model different from the mount default,
+effective wire-model overrides, output/safety/long-context policy distinctions,
+unknown/custom endpoints and both counted/legacy budget branches. This lane does
+not change that provider, its dependency pin or its public contract. An additive
+dictionary key is mechanically tolerated today; its semantic promise still
+requires the provider owner's approval and evidence.
 
 ## Privacy and bounded retention
 
