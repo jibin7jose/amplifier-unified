@@ -307,7 +307,8 @@ class SurfaceProvider:
             raise
         ticket = capture.observe(capture.begin_fit, self, request, cached, request_options)
         try:
-            decision = await self._budget(budget, cached, request_options=request_options, **kwargs)
+            with capture.fitting(ticket, self.original, cached):
+                decision = await self._budget(budget, cached, request_options=request_options, **kwargs)
             capture.finish_fit(ticket, decision)
             return decision
         except BaseException:
@@ -380,7 +381,8 @@ class SurfaceProvider:
                     from .performance_diagnostics import time_preparation
                     actual = time_preparation(self.timing_coordinator, 'provider.budget', actual)
                 try:
-                    decision = await actual(method, request, request_options=request_options, **kwargs)
+                    with capture.fitting(ticket, self.original, request):
+                        decision = await actual(method, request, request_options=request_options, **kwargs)
                     capture.finish_fit(ticket, decision)
                     return decision
                 except BaseException:

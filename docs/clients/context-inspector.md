@@ -114,6 +114,10 @@ post-admission mutation falsifier. No request identity or serialized ticket is
 stored in request metadata or diagnostic files. Paths without a fitted owner,
 unsupported options and missing/ambiguous fallback evidence retain honest absence
 dispositions; reading the inspector still never counts or calls a provider.
+Ticket-owned budgets do not also enter the legacy fingerprint candidate pool:
+otherwise a small identical nested call could borrow the same count through that
+second path. This also avoids the redundant preflight fingerprint traversal for
+the canonical fitted-owner path.
 
 ### Separate provider-owner proposal: exact model window
 

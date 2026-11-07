@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 DISPATCH = contextvars.ContextVar('amplifier_web_budget_capture_dispatch', default=None)
+FITTING = contextvars.ContextVar('amplifier_web_budget_capture_fit', default=None)
 
 
 def observe(operation, *args):
@@ -135,6 +136,25 @@ def dispatch(ticket, provider, request):
     token = DISPATCH.set(value)
     try:yield
     finally:DISPATCH.reset(token)
+
+
+@contextmanager
+def fitting(ticket, provider, request):
+    value = None
+    if ticket is not None:
+        try:value = Dispatch(ticket, provider, weakref.ref(request), weakref.ref(asyncio.current_task()))
+        except TypeError:pass
+    token = FITTING.set(value)
+    try:yield
+    finally:FITTING.reset(token)
+
+
+def owns_budget(execution, provider, request):
+    value = FITTING.get()
+    return bool(value is not None and value.task() is asyncio.current_task()
+                and value.request() is request
+                and (value.provider is provider or
+                     execution.provider_wrappers.get(id(provider)) is value.provider))
 
 
 @dataclass(eq=False)

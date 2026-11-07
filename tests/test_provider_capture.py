@@ -200,7 +200,8 @@ async def test_provider_swap_and_evicted_fit_cannot_reuse_ticket(tmp_path):
     assert observer.store.read()['selected']['budget']=={}
 
 
-async def test_nested_admission_same_actual_request_cannot_steal_claim(tmp_path):
+@pytest.mark.parametrize('size',[32,1_000_100])
+async def test_nested_admission_same_actual_request_cannot_steal_claim(tmp_path,size):
     observer,events,provider,surface=chain(tmp_path)
     actual={}
     async def finalize(value,**kw):actual['value']=value;return value
@@ -213,10 +214,11 @@ async def test_nested_admission_same_actual_request_cannot_steal_claim(tmp_path)
             await provider.complete(actual['value'])
         await asyncio.sleep(0)
     events.admission_guard=admission
-    value=request('N'*1_000_100);await surface.request_budget(value)
+    value=request('N'*size);await surface.request_budget(value)
     await surface.complete(value);await observer.drain()
     assert len(provider.calls)==2
     assert sum(h['budgetStatus']=='captured' for h in observer.store.index())==1
+    assert observer.budgets==[]  # No second fallback copy of the same receipt.
 
 
 async def test_parallel_tasks_same_provider_keep_their_own_fit(tmp_path):
