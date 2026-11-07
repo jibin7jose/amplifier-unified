@@ -102,10 +102,14 @@ async def test_export_drains_shielded_journal_write_before_capturing_evidence(tm
         await target.close()
 
 
-async def test_real_shell_output_preserves_exact_chunks_and_hash_only_event_evidence(tmp_path, monkeypatch):
+@pytest.mark.parametrize('expired', [False, True])
+async def test_real_shell_output_preserves_exact_chunks_and_hash_only_event_evidence(tmp_path, monkeypatch, expired):
     app, target, source, destination, workspace, _, sid, *_ = await setup_hosts(tmp_path, monkeypatch)
     try:
         host_env(monkeypatch, source)
+        if expired:
+            await app.dispatch('storage.cleanup.applyPreset', {'expectedRevision': 0,
+                'preset': 'temporary-operation-output'}, command_id='output-lifetime')
         started = event()
         emitted = output(text='Exact saved shell output\n')
         completed = final(total_output_bytes=emitted['chunk']['source_bytes'])
@@ -124,12 +128,18 @@ async def test_real_shell_output_preserves_exact_chunks_and_hash_only_event_evid
             assert db.execute('SELECT value FROM operation_events WHERE operation_id=? AND sequence=2', ('p1',)).fetchone()[0] == invalid
         with app.operations.journal.lock, db:
             db.execute('UPDATE operation_events SET value=? WHERE operation_id=? AND sequence=2', (saved_digest, 'p1'))
+        if expired:
+            row = app.operations.journal.status(sid, 'p1')
+            assert app.operations.journal.expire_output(sid, 'p1', row['revision'], row['outputExpiresAt'])['status'] == 'expired'
 
         receipt, _ = await export(app, target, sid, workspace)
         payload = read_capsule(Path(receipt['package']))['body']['payload']
         saved = next(row for row in payload['observations']['operations'] if row['record']['id'] == 'p1')
         assert saved['events'] == [started, {'sequence': 2, 'eventId': 'p1:2', 'sha256': expected_digest}, completed]
-        assert saved['output'] == saved_output == [emitted['chunk']]
+        assert saved_output == [emitted['chunk']]
+        assert saved['output'] == ([] if expired else saved_output)
+        assert saved['record']['outputAvailability'] == ('expired' if expired else 'retained')
+        assert saved['record']['outputComplete'] is not expired
         assert saved['record']['state'] == 'completed'
         assert not app.runtime.workers
     finally:

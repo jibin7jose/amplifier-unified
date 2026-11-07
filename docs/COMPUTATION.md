@@ -1,7 +1,7 @@
 # Persistent computation
 
-The shared `kernels.create/list/status/execute/interrupt/reset/close` actions and
-Computation panel provide Python and Node state across cells in one conversation.
+The shared `kernels.create/list/status/execute/interrupt/reset/close` actions
+provide Python and Node state across cells in one conversation.
 Cell output and results are durable operation evidence: use `operations.read` and
 `operations.wait` with the returned operation ID and output cursor. Reading saved
 kernels or cells never starts a worker, restores variables or replays code.
@@ -112,8 +112,7 @@ remain unavailable. The operation journal's loss/uncertainty contract also appli
 `pytest tests/test_kernels.py` exercises real Python and Node subprocesses when the
 managed bash module is importable. It covers persistent variables, errors, reset,
 interruption, exact code approval, generation/session boundaries, dependency
-questions, bounded output and no replay. `node frontend/tests/computation-browser.mjs`
-starts an isolated fixture with the same host actions and real child interpreters;
-it checks both languages, interruption/reset, durable reload and preservation of
-selected conversation/draft. The fixture does not use a live model provider and
-does not establish deployment or full Work bundle acceptance.
+questions, bounded output and no replay. Host action tests also preserve the
+selected conversation and draft while using the shared journal. These checks do
+not use a live model provider and do not establish deployment or full Work bundle
+acceptance. The bundled chat does not expose a separate Computation panel.

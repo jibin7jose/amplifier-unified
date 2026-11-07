@@ -1,6 +1,6 @@
 [project]
 name = "amplifier-unified"
-version = "0.62.0"
+version = "0.63.0"
 description = "A local voice-first Amplifier workspace with a shared user and agent interface"
 readme = "README.md"
 requires-python = ">=3.13"

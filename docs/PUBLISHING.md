@@ -152,3 +152,20 @@ A remote loopback URL names the remote host. To view it elsewhere requires a
 separately authorized tunnel preserving the numeric host and port, or an approved
 private serving route with its own access/TLS acceptance. Neither target
 selection nor a successful deployment receipt proves that route exists.
+
+## Finite release bodies: library support and remaining integration
+
+The portable Publisher now supports prospective body policy, one explicit pin
+primitive, current availability and availability-aware backups. These are Python
+library APIs; automatic expiry, the app's Storage/Publishing controls and remote
+protocol support are not yet connected. Existing app behavior stays in place.
+See [the library contract](../amplifier_publishing/README.md#prospective-body-retention-and-pins).
+
+Under an explicit future policy, two prior successful releases have a default
+30-day automatic rollback window. `previousReleaseId` remains historical; current
+availability and `rollbackCandidates` determine what controls may offer. An
+explicit pin keeps a selected body beyond that window. Legacy durable releases
+are never opted in by a duplicate build. A new deliberate build after expiry can
+materialize identical content as a new payload generation, without changing the
+immutable release identity or any earlier receipt. Reads and exact retries cannot
+restore it. Deployment removal itself continues to preserve release content.

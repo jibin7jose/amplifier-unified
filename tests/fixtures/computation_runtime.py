@@ -76,6 +76,11 @@ class Runtime:
         controls.lock = asyncio.Lock()
         self.controls = controls
 
+    async def start(self, session, on_event, **kwargs):
+        # The public kernel-create path prepares a runtime before control.
+        # This fixture mounts approved local tools without a model/provider.
+        await self.setup(session["id"])
+
     async def control(self, session_id, operation, args):
         await self.setup(session_id)
         return await self.controls.perform(operation, args)

@@ -93,7 +93,7 @@ The read does not reset retention, change policy, or delete anything.
 | Owner | Existing retention | What remains protected |
 | --- | --- | --- |
 | Smart Tools | 30 days / 200 full results / 32,000,000 bytes; qualifying writes and bounded periodic expiry | Execution identities; active/uncertain bodies |
-| Process operations | Output bounded per operation; no terminal lifetime expiry | Admission, outcomes, cancellation and unknown-effect recovery |
+| Process/cell operations | Bounded output ring; optional prospective 30-day terminal output expiry, at most eight due operations per pass | Admission/retry identities, outcomes, kernel results/errors, live/uncertain work and unresolved Work references |
 | Schedules | 100 terminal runs per schedule | Current schedule, active/unknown runs and command identities |
 | Saved tests | Optional prospective final-workspace expiry | Original source, results, legacy/manual/unknown custody |
 | Publishing and outputs | No general age expiry | Current/pinned/referenced content; unlink/remove does not imply content deletion |
@@ -479,7 +479,16 @@ of reclaimable storage. Source and result archives stay protected. An explicitly
 ### Temporary queued-test workspace copies
 
 **Expire temporary test workspace copies** is an optional Storage policy, off
-until enabled. Seven days is recommended. It applies only to checks newly
+until enabled. **Use seven-day temporary test cleanup** enables automatic cleanup
+and this seven-day choice in one action. It preserves custom unused-code age/size
+settings; merely reading Storage or upgrading never replaces saved disabled/custom
+choices. Full agent and system callers can use `storage.cleanup.applyPreset` with
+`preset: "temporary-test-workspaces"` and the current `expectedRevision` under
+the same standing authority as other Storage changes, without human interaction.
+The request keeps an exact retry receipt. `storage.cleanup.save` and the duration
+field remain available for other durations or disabling expiry.
+
+The choice applies only to checks newly
 submitted through `workspace.tests.submit`; the duration is captured in the
 existing job/allocation receipt. `keepWorkspace: true` preserves a check's full
 workspace, for example when it contains final edits not exported as results.

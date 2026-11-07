@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import time
 
 from amplifier_operations import OperationJournal
 from amplifier_operations.journal import ACTIVE
@@ -114,9 +115,17 @@ class Operations:
                 if not hasattr(self.service, "questions"):
                     raise ValueError("Required question answers are unavailable")
                 self.service.questions.answer_for_dependency(session_id, question_id)
+        retention = {}
+        if event.get("phase") == "started":
+            # Capture once at admission, not on every output chunk. Missing
+            # start evidence stays unclassified rather than becoming eligible.
+            from .storage_cleanup import policy
+            settings = policy(self.service)
+            if settings["enabled"] and settings.get("operationOutputKeepDays") is not None:
+                retention["output_keep_days"] = settings["operationOutputKeepDays"]
         task = asyncio.create_task(
             asyncio.to_thread(
-                self.journal.ingest, session_id, runtime_session_id, event
+                self.journal.ingest, session_id, runtime_session_id, event, **retention
             )
         )
         self.pending.add(task)
@@ -136,6 +145,65 @@ class Operations:
             "revision": value["revision"],
             "duplicate": not changed,
         }
+
+    async def expire_outputs(self, settings, *, after=None, authority=None):
+        """One bounded Storage-maintenance page; task authority stays native."""
+        from . import storage_cleanup
+        from .errors import AppError
+        from .task_continuity import _load_control
+
+        result = {"status": "disabled", "expired": 0, "protected": 0, "alreadyExpired": 0,
+                  "removedOutputBytes": 0, "items": [], "nextCursor": after}
+        async with self.service.lock:
+            storage_cleanup.check(self.service, authority)
+            if storage_cleanup.policy(self.service) != settings:
+                return {**result, "status": "deferred"}
+            if not settings["enabled"] or settings.get("operationOutputKeepDays") is None or self.closed:
+                return result
+            now = time.time()
+            page = self.journal.output_expiry_candidates(now, after=after)
+        result["status"] = "completed"
+        try:
+            for item in page["items"]:
+                # Each transaction stays atomic with its authority check; the
+                # rest of the app can run between candidates in this page.
+                await asyncio.sleep(0)
+                async with self.service.lock:
+                    storage_cleanup.check(self.service, authority)
+                    if self.closed or storage_cleanup.policy(self.service) != settings:
+                        result["status"] = "deferred"
+                        break
+                    sid, identity = item["sessionId"], item["id"]
+                    runtime = self.service.runtime
+                    reason = None
+                    if sid in getattr(runtime, "workers", {}) or sid in getattr(runtime, "_preparations", {}):
+                        reason = "The owning runtime is live or preparing"
+                    else:
+                        try:
+                            source = self.service._session_read_sources([sid], ("id", "runtimeSessionId", "nativeIdentity"))[0]
+                            saved = _load_control(self.service, source, current_only=True, max_bytes=256 * 1024)
+                            task = saved["task"]
+                            if task and task["status"] != "completed" and identity in task["operationIds"]:
+                                reason = "Unfinished Work retains this operation"
+                        except (AppError, ValueError, RuntimeError):
+                            reason = "Current task authority is unavailable"
+                    if reason:
+                        outcome = {"status": "protected", "reason": reason, "removedOutputBytes": 0}
+                    else:
+                        # No await between these checks and the transaction.
+                        outcome = self.journal.expire_output(sid, identity, item["revision"], now,
+                                                            keep_days=settings["operationOutputKeepDays"])
+                    result["items"].append({**item, **outcome})
+                    counter = {"expired": "expired", "already-expired": "alreadyExpired", "protected": "protected"}[outcome["status"]]
+                    result[counter] += 1
+                    result["removedOutputBytes"] += outcome["removedOutputBytes"]
+                    result["nextCursor"] = [item["expiresAt"], identity]
+            else:
+                result["nextCursor"] = page["nextCursor"]
+        finally:
+            if result["expired"]:
+                self.notify()
+        return result
 
     def register_source(self, name, list_records, read_record):
         """Register host-owned read adapters; never an agent execution callback.

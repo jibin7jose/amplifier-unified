@@ -98,7 +98,7 @@ async def main(home):
             'savedWorkIntact':all(path.read_text()=='Saved user work' for path in preserved),
             'savedLedgerUnchanged':hashlib.sha256(ledger.read_bytes()).hexdigest()==ledger_digest,
             'writes': [json.loads(row[0]) for row in service.db.execute(
-                "SELECT receipt FROM commands WHERE json_extract(receipt,'$.commandAction')='storage.cleanup.save'")],
+                "SELECT receipt FROM commands WHERE json_extract(receipt,'$.commandAction') IN ('storage.cleanup.save','storage.cleanup.applyPreset')")],
             'selectedSessionId': service.state.get('selectedSessionId')})
 
     async def concurrent_save(request):

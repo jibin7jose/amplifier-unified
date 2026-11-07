@@ -23,6 +23,7 @@ def storage(app, tmp_path, monkeypatch):
     manager.service = app
     manager.wakeup = asyncio.Event()
     manager.notify_idle = lambda: None
+    manager.configuration_changed = lambda: False
     manager.close = AsyncMock()
     app.update_manager = manager
     return SimpleNamespace(app=app, target=manager.directory / 'releases' / names[3],
@@ -292,7 +293,7 @@ async def test_unknown_run_is_observed_after_stop_without_replay_or_fresh_author
 @pytest.mark.parametrize('origin', ['agent', 'system'])
 async def test_ask_refuses_mutation_but_passive_reads_and_preview_need_no_capture(app, storage, monkeypatch, origin):
     source = app.state['sessions'][0]
-    for action, args in [('storage.cleanup.save', values()), ('storage.cleanup.run', {'expectedRevision': 0})]:
+    for action, args in [('storage.cleanup.save', values()), ('storage.cleanup.applyPreset', {'expectedRevision': 0, 'preset': 'temporary-test-workspaces'}), ('storage.cleanup.run', {'expectedRevision': 0})]:
         with pytest.raises(AppError, match='Only the user'):
             await call(app, source, action, args, origin=origin, command=action)
     monkeypatch.setattr(app.access_mode, 'capture_full', lambda *a: pytest.fail('Passive cleanup captured authority'))
@@ -309,7 +310,7 @@ async def test_stopped_assignment_blocks_fresh_system_work_but_not_saved_policy(
     assignment = (await app.dispatch('assignment.start', {'sessionId': source['id']}))['result']['assignment']
     await app.dispatch('assignment.stop', {'sessionId': source['id'], 'expectedRevision': assignment['revision']})
     assert app.assignments.blocked(source) and app.access_mode.full(source)
-    for action, args in [('storage.cleanup.save', values(1)), ('storage.cleanup.run', {'expectedRevision': 1})]:
+    for action, args in [('storage.cleanup.save', values(1)), ('storage.cleanup.applyPreset', {'expectedRevision': 1, 'preset': 'temporary-test-workspaces'}), ('storage.cleanup.run', {'expectedRevision': 1})]:
         with pytest.raises(AppError, match='authority changed|stopped'):
             await call(app, source, action, args, origin='system', command='fresh-' + action)
     assert storage.target.exists() and cleanup.policy(app)['revision'] == 1
@@ -320,7 +321,7 @@ async def test_stopped_assignment_blocks_fresh_system_work_but_not_saved_policy(
 async def test_full_selected_chat_does_not_supply_missing_system_caller(app, storage):
     source = app.state['sessions'][0]
     await mode(app, source)
-    for action, args in [('storage.cleanup.save', values()), ('storage.cleanup.run', {'expectedRevision': 0})]:
+    for action, args in [('storage.cleanup.save', values()), ('storage.cleanup.applyPreset', {'expectedRevision': 0, 'preset': 'temporary-test-workspaces'}), ('storage.cleanup.run', {'expectedRevision': 0})]:
         with pytest.raises(AppError, match='calling conversation'):
             await app.dispatch(action, args, origin='system')
     assert cleanup.policy(app)['revision'] == 0 and storage.target.exists()
@@ -423,3 +424,20 @@ async def test_dependency_final_native_guard_keeps_unknown_receipt(app, storage,
     assert (root / 'source.tar').read_bytes() and '_authority' not in json.dumps(result)
     assert (await call(app, source, 'storage.cleanup.run', {'expectedRevision': 1},
                        origin='system', command='dependency-run'))['result'] == result
+
+
+@pytest.mark.parametrize('origin', ['agent', 'system'])
+async def test_full_caller_sets_standing_temporary_preset_once_without_user_approval(app, storage, origin):
+    source = app.state['sessions'][0]
+    await mode(app, source)
+    messages = copy.deepcopy(source['messages'])
+    args = {'expectedRevision': 0, 'preset': 'temporary-test-workspaces'}
+    first = await call(app, source, 'storage.cleanup.applyPreset', args, origin=origin, command='full-preset')
+    assert first['accepted'] and first['result']['policy']['workspaceArchiveKeepDays'] == 7
+    assert source['messages'] == messages and '_authority' not in json.dumps(first)
+    await change(app, source, 'revoke')
+    retry = await call(app, source, 'storage.cleanup.applyPreset', args, origin=origin, command='full-preset')
+    assert retry['duplicate'] and retry['result'] == first['result']
+    assert cleanup.policy(app)['revision'] == 1
+    with pytest.raises(AppError, match='Only the user'):
+        await call(app, source, 'storage.cleanup.applyPreset', {**args, 'expectedRevision': 1}, origin=origin, command='new-preset')

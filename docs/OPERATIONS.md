@@ -2,8 +2,8 @@
 
 Unified exposes one conversation-scoped view of managed processes, existing
 Smart Tool receipts, and workers through `operations.list`, `operations.status`,
-`operations.read`, `operations.wait`, and `operations.cancel`. The Operations panel
-and agent app actions use these same actions, plus `operations.submit`,
+`operations.read`, `operations.wait`, and `operations.cancel`. Authorized clients
+and agents also use `operations.submit`,
 `operations.write`, and `operations.request` for explicit execution/input and
 their durable admission receipts. Reading or waiting does not select
 a conversation, change its draft, activate a runtime, or replay work.
@@ -62,10 +62,15 @@ Other receipt adapters remain read-only here and retain their existing controls.
 `amplifier_operations.OperationJournal` is a standard-library-only package included
 in the wheel. It has no app or module imports. Its public calls are:
 
-- `ingest(session_id, runtime_session_id, event)` returns `(record, changed)`.
+- `ingest(session_id, runtime_session_id, event, *, output_keep_days=None)` returns
+  `(record, changed)`. A supplied lifetime is captured only on the first observation.
 - `status(session_id, id)` and `list(session_id, limit=50, before=None)` read receipts.
 - `read(session_id, id, cursor=0, max_bytes=16384)` reads a bounded output page.
 - `recover(session_id=None, reason=...)` invalidates unresolved ownership.
+- `output_expiry_candidates(now, *, after=None, limit=8)` reads an indexed page of
+  due output records; `expire_output(session_id, id, expected_revision, now, *, keep_days=None)`
+  atomically removes eligible chunks and records their unavailability. The host
+  must check its current policy and consumer references before calling expiry.
 - `close()` releases storage. Opening a library reader alone does not recover work.
 
 The event envelope contains `schemaVersion: 1`, `eventId`, monotonic `sequence`,
@@ -90,6 +95,45 @@ at most 100 recent operations; known IDs remain readable directly.
 `operations.wait` uses revision changes and event notification, not a polling
 loop. It returns on actual observation changes or its bounded timeout (up to
 60 seconds). Clients carry the last revision and output cursor when reconnecting.
+
+### Optional terminal output lifetime
+
+Storage settings can explicitly enable 30-day output expiry for future operations,
+or choose a duration from 1 to 3,650 days. This is off by default, including upgrades.
+The host captures the chosen duration when it observes a new operation start;
+legacy records and observations missing their start remain unclassified. The
+deadline begins when this host observes confirmed `completed`, `failed`, or
+`cancelled` evidence. Producer timestamps, reads and exact retries do not move it.
+The captured `outputExpiresAt` is the earliest allowed deadline. A longer current
+policy also protects existing output; a shorter policy cannot shorten its captured
+lifetime. Disabling this choice or automatic cleanup stops further expiry,
+including previously admitted output.
+
+The existing hourly Storage maintenance pass checks at most eight due operations
+through a journal index, yielding between individual atomic checks/deletions so
+the app can process other work. Each current-task authority read is capped at 256 KiB;
+it does not scan task history or start a worker. Live/preparing runtimes,
+unfinished Work referencing the operation, unknown/interrupted outcomes, and
+missing, malformed, changed or oversized current-task state preserve output.
+Protected rows do not prevent the saved maintenance cursor from reaching later
+eligible records. User or authorized Full/system callers can also run the same
+saved policy through `storage.cleanup.run`, without approval per removal.
+
+Expiry removes stdout/stderr chunks and increments the existing operation revision.
+Readers receive `outputAvailability: "expired"`, `outputExpiredAt`,
+`expiredOutputBytes`, zero retained chunks/bytes, and `outputComplete: false`.
+The end cursor remains stable; earlier cursors report a gap. `streamComplete`
+and `captureComplete` still describe the original observation. The final outcome,
+exit code, kernel result/error, event fingerprints and admission/request identities
+remain. Durable saved outputs and native history are separate owners and are not
+removed. A subsequent validation cannot claim complete evidence from expired
+output; an already saved validation receipt remains its original observation.
+
+Chunk deletion and its expiry marker share one SQLite transaction. Failure rolls
+both back; restart and duplicate observations cannot regenerate the chunks or
+replay the command. Cleanup reports logical output bytes removed separately from
+filesystem bytes freed; SQLite may retain reusable pages. There is no automatic
+replay or restoration of expired output.
 
 ## Truthful completion and limitations
 
@@ -142,10 +186,20 @@ or external side effects.
 Run the focused Python suite with `pytest tests/test_operations.py`. If the
 managed bash module is importable, it also exercises a real subprocess and durable
 output beyond its local ring; otherwise that optional integration test skips.
-`node frontend/tests/operations-browser.mjs` starts an isolated fixture and checks
-live output, final state, reconnect, selected conversation/draft preservation and
-mobile bounds against the production build. These checks do not claim a live
-provider conversation or full Work bundle composition has been deployed.
+`tests/test_operation_output_retention.py` checks prospective policy, protected
+authority, atomic expiry, exact retries, bounded pages and inter-candidate changes.
+`node frontend/tests/storage-cleanup-settings-browser.mjs` checks the shipped
+Storage controls. `node frontend/tests/operation-output-retention-browser.mjs`
+drives a real Python cell through the public HTTP actions, expires its journal
+stdout and verifies retained result/outcome and no replay. It does not claim a
+mounted Operations/Computation panel or a live-provider conversation.
+
+`node frontend/tests/operations-http-browser.mjs` checks authenticated HTTP
+observation, real command submission/input, exact retries and one side effect
+across browser reload, while preserving the selected conversation and draft.
+It uses an isolated fixture and the production build; the bundled chat has no
+separate Operations panel. These checks do not claim a live provider conversation
+or full Work bundle composition has been deployed.
 
 Additional host receipt stores can register a read-only adapter with
 `service.operations.register_source(name, list_records, read_record)`. Callbacks

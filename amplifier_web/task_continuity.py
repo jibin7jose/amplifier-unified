@@ -685,28 +685,43 @@ def _valid_saved_task(task):
         for row in changes)
 
 
-def _load_control(service, session):
+def _load_control(service, session, *, current_only=False, max_bytes=None):
     """Read only this host-owned canonical control file, never its transcript.
 
     No cached task is substituted for a missing or corrupt authority record.
     File absence has unknown provenance rather than proving an empty obligation.
+    Maintenance can request only current task authority under a smaller read cap;
+    that mode skips historical task validation and never substitutes a cached projection.
     """
+    max_bytes = CONTROL_BYTES if max_bytes is None else max_bytes
+    if type(max_bytes) is not int or max_bytes < 1:
+        raise ValueError("Saved control read limit must be positive")
     from .session_files import validate_id
     identity = validate_id(session.get("runtimeSessionId") or session.get("nativeIdentity") or session["id"])
     path = service.data_dir / "sessions" / identity / "control-state.json"
     try:
         if path.is_symlink() or path.parent.is_symlink():
             raise ValueError("Saved control state is not a direct owner file")
-        with path.open("rb") as stream:
-            raw = stream.read(CONTROL_BYTES + 1)
-        if len(raw) > CONTROL_BYTES:
+        def stamp():
+            value = path.stat()
+            return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+        before = stamp() if current_only else None
+        if before is not None and before[2] > max_bytes:
             raise ValueError("Saved control state exceeds the bounded read limit")
+        with path.open("rb") as stream:
+            raw = stream.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise ValueError("Saved control state exceeds the bounded read limit")
+        if current_only and (path.is_symlink() or path.parent.is_symlink() or before != stamp()):
+            raise ValueError("Saved control state changed during the bounded read")
         saved = json.loads(raw)
         if not isinstance(saved, dict) or "task" not in saved:
             raise ValueError("Saved control state has no task authority field")
         task = saved["task"]
         if task is not None and not _valid_saved_task(task):
             raise ValueError("Saved task authority is malformed")
+        if current_only:
+            return {"task": task}
         history = saved.get("taskHistory", [])
         if (not isinstance(history, list) or any(not _valid_saved_task(row) for row in history)
                 or not isinstance(saved.get("taskReceipts", {}), dict)):
@@ -717,7 +732,8 @@ def _load_control(service, session):
     except (OSError, ValueError, UnicodeError):
         # Exception details belong to private host diagnostics, not UI/model
         # projections: filesystem errors can include the control file's path.
-        logging.getLogger(__name__).warning("Saved task state unavailable during cold read", exc_info=True)
+        if not current_only:
+            logging.getLogger(__name__).warning("Saved task state unavailable during cold read", exc_info=True)
         raise ValueError("Saved task state unavailable; no worker was started.") from None
 
 

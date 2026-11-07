@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+import signal
 import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -123,11 +125,16 @@ async def main(home):
     await site.start()
     url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
     app["allowed_origins"] = app["allowed_origins"] | {url}
-    print(json.dumps({"url": url, "sessionId": sid}), flush=True)
+    stopped = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGTERM, stopped.set)
+    print(json.dumps({"fixture": "operations-ui", "pid": os.getpid(), "base": url,
+                      "url": url, "sessionId": sid}), flush=True)
     try:
-        await asyncio.Event().wait()
+        await stopped.wait()
     finally:
         await runner.cleanup()
+        loop.remove_signal_handler(signal.SIGTERM)
 
 
 if __name__ == "__main__":

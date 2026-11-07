@@ -415,10 +415,14 @@ async def test_owner_recheck_failure_does_not_admit_cleanup_continuation(app, qu
     assert [action for action, _ in backend] == ['prepare', 'start', 'execute', 'stop', 'remove']
 
 
-async def test_workspace_expiry_intent_is_captured_once_and_keep_is_explicit(app, queue, backend):
+@pytest.mark.parametrize('choice', ['custom', 'preset'])
+async def test_workspace_expiry_intent_is_captured_once_and_keep_is_explicit(app, queue, backend, choice):
     from amplifier_web import storage_cleanup
-    storage_cleanup.store(app, storage_cleanup.POLICY,
-        {**storage_cleanup.DEFAULTS, 'revision': 1, 'workspaceArchiveKeepDays': 7})
+    if choice == 'preset':
+        await app.dispatch('storage.cleanup.applyPreset', {'expectedRevision': 0, 'preset': 'temporary-test-workspaces'}, command_id='preset')
+    else:
+        storage_cleanup.store(app, storage_cleanup.POLICY,
+            {**storage_cleanup.DEFAULTS, 'revision': 1, 'workspaceArchiveKeepDays': 7})
     await submit(app, 'temporary')
     await submit(app, 'retained', keepWorkspace=True)
     # Later policy edits cannot silently opt an already queued job in or shorten

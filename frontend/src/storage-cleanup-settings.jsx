@@ -15,14 +15,14 @@ export function StorageCleanupSettings({act,navigate=()=>{}}){
   if(mounted.current&&version===epoch.current){setReport(response.result);if(!draftRef.current)setDraft(response.result.policy)}
  }catch(e){if(mounted.current&&version===epoch.current)setError(e.message)}finally{if(mounted.current&&version===epoch.current)setBusy(false)}}
  useEffect(()=>{mounted.current=true;load();return()=>{mounted.current=false;epoch.current++}},[]);
- const dirty=!!draft&&!!report&&['enabled','keepDays','maxUnusedBytes','workspaceArchiveKeepDays'].some(name=>draft[name]!==report.policy[name]);
+ const dirty=!!draft&&!!report&&['enabled','keepDays','maxUnusedBytes','workspaceArchiveKeepDays','operationOutputKeepDays'].some(name=>draft[name]!==report.policy[name]);
  useSettingsDraft('storage-cleanup',{label:'Automatic cleanup',dirty:dirty||!!pending,review:()=>navigate('storage'),discard:()=>setDraft(report?.policy||null)});
- const valid=draft&&Number.isSafeInteger(draft.keepDays)&&draft.keepDays>=0&&draft.keepDays<=3650&&Number.isSafeInteger(draft.maxUnusedBytes)&&draft.maxUnusedBytes>=0&&(draft.workspaceArchiveKeepDays==null||(Number.isSafeInteger(draft.workspaceArchiveKeepDays)&&draft.workspaceArchiveKeepDays>=1&&draft.workspaceArchiveKeepDays<=3650));
+ const valid=draft&&Number.isSafeInteger(draft.keepDays)&&draft.keepDays>=0&&draft.keepDays<=3650&&Number.isSafeInteger(draft.maxUnusedBytes)&&draft.maxUnusedBytes>=0&&['workspaceArchiveKeepDays','operationOutputKeepDays'].every(name=>draft[name]==null||(Number.isSafeInteger(draft[name])&&draft[name]>=1&&draft[name]<=3650));
  async function send(action,args){
   if(busy)return;const request=pending||{id:crypto.randomUUID(),action,args};if(!retain(request))return;setBusy(true);setError('');setNotice('');const version=++epoch.current;
   try{const response=await act(request.action,request.args,{id:request.id,feedback:false});if(!response?.accepted){const failure=Error(response?.error||'The request was not confirmed.');failure.status=response?.status;throw failure}
    if(!mounted.current||version!==epoch.current)return;retain(null);
-   if(request.action==='storage.cleanup.save'){setReport(response.result);setDraft(response.result.policy);setPreview(null);setNotice('Cleanup settings saved for all workspaces. Active work and saved results stay protected.')}
+   if(['storage.cleanup.save','storage.cleanup.applyPreset'].includes(request.action)){setReport(response.result);setDraft(response.result.policy);setPreview(null);setNotice('Cleanup settings saved for all workspaces. Active work and saved results stay protected.')}
    else{setPreview(null);setReport(old=>({...old,lastCleanup:response.result}));setNotice(response.result.status==='completed'?`Cleanup completed. Removed ${bytes(response.result.removedFileBytes)} of unused file content.`:'Cleanup is not fully confirmed. Its receipt is kept; the request will not be repeated.')}
   }catch(e){if(mounted.current&&version===epoch.current){setError(e.message);if([400,403,409].includes(e.status))retain(null)}}finally{if(mounted.current&&version===epoch.current)setBusy(false)}
  }
@@ -31,7 +31,7 @@ export function StorageCleanupSettings({act,navigate=()=>{}}){
   if(mounted.current&&version===epoch.current)setPreview(response.result);
  }catch(e){if(mounted.current&&version===epoch.current)setError(e.message)}finally{if(mounted.current&&version===epoch.current)setBusy(false)}}
  return <section className="a-settings-section" aria-label="Automatic cleanup"><h4>Automatic cleanup</h4>
-  <p>Keep unused app components and test runner versions from accumulating. Your chats, project files, saved test sources and results are always kept.</p>
+  <p>Manage unused app components, temporary test workspace copies and saved operation output. Your chats, project files, saved outputs, test sources and test results stay protected.</p>
   {report&&<p className="a-caption">{report.scope}</p>}
   <fieldset disabled={busy||!report||!!pending}>
    <label><input type="checkbox" checked={!!draft?.enabled} onChange={e=>setDraft({...draft,enabled:e.target.checked})}/> Automatically clean up unused copies</label>
@@ -43,8 +43,15 @@ export function StorageCleanupSettings({act,navigate=()=>{}}){
    <label><input type="checkbox" checked={draft?.workspaceArchiveKeepDays!=null} onChange={e=>setDraft({...draft,workspaceArchiveKeepDays:e.target.checked?7:null})}/> Expire temporary test workspace copies</label>
    {draft?.workspaceArchiveKeepDays!=null&&<label className="a-field">Keep temporary test workspaces for days<input type="number" min="1" max="3650" step="1" value={draft.workspaceArchiveKeepDays} onChange={e=>setDraft({...draft,workspaceArchiveKeepDays:e.target.value===''?'':Number(e.target.value)})}/></label>}
    <p className="a-caption">Applies to new queued tests after their environment is removed. Seven days is recommended. Original source, saved results and receipts stay. Tests explicitly kept for review remain available. Existing archives, manual environments and uncertain work stay protected. Turning this off pauses expiry; longer durations extend existing promises.</p>
+   <label><input type="checkbox" checked={draft?.operationOutputKeepDays!=null} onChange={e=>setDraft({...draft,operationOutputKeepDays:e.target.checked?30:null})}/> Expire saved operation output</label>
+   {draft?.operationOutputKeepDays!=null&&<label className="a-field">Keep operation output for days<input type="number" min="1" max="3650" step="1" value={draft.operationOutputKeepDays} onChange={e=>setDraft({...draft,operationOutputKeepDays:e.target.value===''?'':Number(e.target.value)})}/></label>}
+   <p className="a-caption">Applies to new operations after you enable it. Their saved command output can expire after completion; outcomes and request receipts stay. Existing operations, active or uncertain work and output needed by unfinished tasks remain protected. Turning this off pauses expiry. Output keeps its original duration or the current setting, whichever is longer.</p>
   </fieldset>
-  <button className="a-primary" disabled={busy||!report||(!pending&&(!dirty||!valid||draft.revision!==report.policy.revision))} onClick={()=>send('storage.cleanup.save',{expectedRevision:draft.revision,enabled:draft.enabled,keepDays:draft.keepDays,maxUnusedBytes:draft.maxUnusedBytes,workspaceArchiveKeepDays:draft.workspaceArchiveKeepDays??null})}>{pending?'Check the same request':'Save cleanup settings'}</button>
+  <button className="a-soft" disabled={busy||!report||!!pending||dirty||draft?.revision!==report?.policy.revision} onClick={()=>send('storage.cleanup.applyPreset',{expectedRevision:report.policy.revision,preset:'temporary-test-workspaces'})}>Use seven-day temporary test cleanup</button>
+  <p className="a-caption">Enables automatic cleanup and seven-day retention for future temporary test workspaces. Keeps your unused-copy duration and size choices. You can adjust the duration or turn it off above.</p>
+  <button className="a-soft" disabled={busy||!report||!!pending||dirty||draft?.revision!==report?.policy.revision} onClick={()=>send('storage.cleanup.applyPreset',{expectedRevision:report.policy.revision,preset:'temporary-operation-output'})}>Use 30-day operation output cleanup</button>
+  <p className="a-caption">Enables automatic cleanup and 30-day output retention for new operations. Keeps your other retention choices.</p>
+  <button className="a-primary" disabled={busy||!report||(!pending&&(!dirty||!valid||draft.revision!==report.policy.revision))} onClick={()=>send('storage.cleanup.save',{expectedRevision:draft.revision,enabled:draft.enabled,keepDays:draft.keepDays,maxUnusedBytes:draft.maxUnusedBytes,workspaceArchiveKeepDays:draft.workspaceArchiveKeepDays??null,operationOutputKeepDays:draft.operationOutputKeepDays??null})}>{pending?'Check the same request':'Save cleanup settings'}</button>
   <button className="a-soft" disabled={busy||!!pending} onClick={load}>Reload cleanup settings</button>
   {draft&&report&&draft.revision!==report.policy.revision&&<p role="alert">Settings changed elsewhere. Your edits are kept. Use the saved settings before editing again.</p>}
   {dirty&&!pending&&<button className="a-link" disabled={busy} onClick={()=>setDraft({...report.policy})}>Discard edits and use saved settings</button>}
@@ -58,6 +65,7 @@ export function StorageCleanupSettings({act,navigate=()=>{}}){
    <button className="a-soft" disabled={busy||!!pending||dirty||!preview.selectedFileBytes||preview.policy.revision!==report?.policy.revision} onClick={()=>send('storage.cleanup.run',{expectedRevision:preview.policy.revision})}>Clean unused copies now</button>
   </div>}
   {report?.lastCleanup&&<p className="a-caption">Last cleanup: {report.lastCleanup.status} · {bytes(report.lastCleanup.removedFileBytes||0)} of file content removed. Receipts are retained.</p>}
+  {report?.lastCleanup?.operationOutput&&<p className="a-caption">Operation output: {report.lastCleanup.operationOutput.expired} expired, {report.lastCleanup.operationOutput.protected} protected, {report.lastCleanup.operationOutput.alreadyExpired} already expired · {bytes(report.lastCleanup.operationOutput.removedOutputBytes)} of saved output content removed. This is not a disk-space measurement.</p>}
   {notice&&<p role="status">{notice}</p>}{error&&<p role="alert">{error}</p>}
  </section>;
 }

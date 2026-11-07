@@ -368,3 +368,29 @@ async def test_workspace_retention_is_opt_in_validated_and_preserved_by_old_clie
     assert cleanup.policy(app)['workspaceArchiveKeepDays'] == 7
     await cleanup.dispatch(app, 'storage.cleanup.save', {**base, 'expectedRevision': 2, 'workspaceArchiveKeepDays': None}, 'ui', 'disable')
     assert cleanup.policy(app)['workspaceArchiveKeepDays'] is None
+
+
+@pytest.mark.parametrize('days', [None, 30])
+async def test_temporary_preset_is_explicit_cas_and_preserves_custom_code_policy(app, days):
+    from amplifier_web.workspace_archive_retention import capture
+    original = settings(app, revision=4, enabled=False, keepDays=42, maxUnusedBytes=123,
+                        workspaceArchiveKeepDays=days)
+    assert (await cleanup.dispatch(app, 'storage.cleanup.read', {}, 'ui', None))['result']['policy'] == original
+    args = {'expectedRevision': 4, 'preset': 'temporary-test-workspaces'}
+    first = await cleanup.dispatch(app, 'storage.cleanup.applyPreset', args, 'ui', 'temporary-preset')
+    expected = {**original, 'revision': 5, 'enabled': True, 'workspaceArchiveKeepDays': 7}
+    assert first['result']['policy'] == expected and cleanup.policy(app) == expected
+    assert capture(expected) == {'version': 1, 'disposition': 'temporary', 'keepDays': 7, 'policyRevision': 5}
+    assert capture(expected, keep=True) is None
+    assert app.update_manager.wakeup.is_set()
+    with pytest.raises(AppError, match='changed'):
+        await cleanup.dispatch(app, 'storage.cleanup.applyPreset', args, 'ui', 'stale-preset')
+    custom = {'expectedRevision': 5, 'enabled': False, 'keepDays': 42, 'maxUnusedBytes': 123,
+              'workspaceArchiveKeepDays': 19}
+    await cleanup.dispatch(app, 'storage.cleanup.save', custom, 'ui', 'custom-duration')
+    retry = await cleanup.dispatch(app, 'storage.cleanup.applyPreset', args, 'ui', 'temporary-preset')
+    assert retry['duplicate'] and retry['result'] == first['result']
+    assert cleanup.policy(app)['workspaceArchiveKeepDays'] == 19
+    assert cleanup.policy(app)['enabled'] is False
+    with pytest.raises(AppError, match='different contents'):
+        await cleanup.dispatch(app, 'storage.cleanup.applyPreset', {**args, 'expectedRevision': 6}, 'ui', 'temporary-preset')

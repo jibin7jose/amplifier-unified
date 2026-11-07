@@ -11,6 +11,7 @@ from pathlib import Path
 
 ACTIVE = {"queued", "running", "cancel_requested"}
 TERMINAL = {"completed", "failed", "cancelled", "outcome_unknown", "interrupted"}
+SETTLED = {"completed", "failed", "cancelled"}
 
 
 class OperationJournal:
@@ -27,6 +28,11 @@ class OperationJournal:
             CREATE INDEX IF NOT EXISTS operations_session ON operations(session_id);
             CREATE INDEX IF NOT EXISTS operations_resources ON operations(
               session_id, json_extract(value,'$.createdAt') DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS operations_output_expiry ON operations(
+              json_extract(value,'$.outputExpiresAt'), id)
+              WHERE json_extract(value,'$.outputExpiresAt') IS NOT NULL
+                AND json_extract(value,'$.outputAvailability') IS NOT 'expired'
+                AND json_extract(value,'$.retainedChunks')>0;
             CREATE TABLE IF NOT EXISTS operation_events (
               operation_id TEXT NOT NULL, sequence INTEGER NOT NULL,
               event_id TEXT NOT NULL, value TEXT NOT NULL,
@@ -76,7 +82,9 @@ class OperationJournal:
                     )
                     self._save(value)
 
-    def ingest(self, session_id, runtime_session_id, event):
+    def ingest(self, session_id, runtime_session_id, event, *, output_keep_days=None):
+        if output_keep_days is not None and (type(output_keep_days) is not int or not 1 <= output_keep_days <= 3650):
+            raise ValueError("Output retention must be 1–3650 days or disabled")
         if (
             event.get("schemaVersion") != 1
             or not isinstance(event.get("source"), str)
@@ -146,6 +154,7 @@ class OperationJournal:
                     "revision": 0,
                     "sequence": 0,
                     "outputComplete": False,
+                    "outputAvailability": "retained",
                     "captureComplete": True,
                     "controlAvailable": True,
                     "earliestCursor": 0,
@@ -158,6 +167,10 @@ class OperationJournal:
                     "returncode": None,
                 }
             )
+            # Policy is prospective: later observations never classify an old
+            # operation. Reads and retries cannot extend this captured lifetime.
+            if previous is None and output_keep_days is not None:
+                value["outputRetentionDays"] = output_keep_days
             if value["runtimeSessionId"] != runtime_session_id or value.get(
                 "ownerId"
             ) != event.get("ownerId"):
@@ -282,6 +295,9 @@ class OperationJournal:
                 # captured everything. Only observer gaps affect journal capture.
                 if phase == "finished":
                     value["endedAt"] = status.get("ended_at") or time.time()
+                    if state in SETTLED and value.get("outputRetentionDays") is not None:
+                        value["outputSettledAt"] = time.time()
+                        value["outputExpiresAt"] = value["outputSettledAt"] + value["outputRetentionDays"] * 86400
                     if status.get("total_output_bytes", 0) != value["totalOutputBytes"]:
                         value["captureComplete"] = value["outputComplete"] = False
             if "metadata" in event:
@@ -324,6 +340,53 @@ class OperationJournal:
     def status(self, session_id, identity):
         with self.lock:
             return self._record(identity, session_id)
+
+    def output_expiry_candidates(self, now, *, after=None, limit=8):
+        """An indexed page of prospective deadlines, without output hydration."""
+        if type(limit) is not int or not 1 <= limit <= 8:
+            raise ValueError("Output expiry page must contain 1–8 operations")
+        where = """json_extract(value,'$.outputExpiresAt') IS NOT NULL
+            AND json_extract(value,'$.outputAvailability') IS NOT 'expired'
+            AND json_extract(value,'$.retainedChunks')>0
+            AND json_extract(value,'$.outputExpiresAt')<=?"""
+        params = [now]
+        if after is not None:
+            where += " AND (json_extract(value,'$.outputExpiresAt'),id)>(?,?)"
+            params.extend(after)
+        with self.lock:
+            rows = self.db.execute("""SELECT id,session_id,
+                json_extract(value,'$.outputExpiresAt'),json_extract(value,'$.revision')
+                FROM operations WHERE """ + where + """
+                ORDER BY json_extract(value,'$.outputExpiresAt'),id LIMIT ?""", (*params, limit + 1)).fetchall()
+        items = [{"id": row[0], "sessionId": row[1], "expiresAt": row[2], "revision": row[3]}
+                 for row in rows[:limit]]
+        return {"items": items,
+                "nextCursor": [items[-1]["expiresAt"], items[-1]["id"]] if len(rows) > limit else None}
+
+    def expire_output(self, session_id, identity, expected_revision, now, *, keep_days=None):
+        """Release chunks atomically; preserve outcome and exact retry evidence."""
+        if keep_days is not None and (type(keep_days) is not int or not 1 <= keep_days <= 3650):
+            raise ValueError("Output retention must be 1–3650 days or disabled")
+        with self.lock, self.db:
+            value = self._record(identity, session_id)
+            if value.get("outputAvailability") == "expired":
+                return {"status": "already-expired", "removedOutputBytes": 0}
+            if (value["revision"] != expected_revision or value["state"] not in SETTLED
+                    or value.get("outputExpiresAt") is None or value["outputExpiresAt"] > now
+                    or not value.get("retainedChunks")):
+                return {"status": "protected", "reason": "Outcome or retention eligibility changed", "removedOutputBytes": 0}
+            if keep_days is not None and (value.get("outputSettledAt") is None
+                    or value["outputSettledAt"] + keep_days * 86400 > now):
+                return {"status": "protected", "reason": "Current policy retains this output longer", "removedOutputBytes": 0}
+            size = self.db.execute("SELECT COALESCE(SUM(bytes),0) FROM operation_output WHERE operation_id=?",
+                                   (identity,)).fetchone()[0]
+            self.db.execute("DELETE FROM operation_output WHERE operation_id=?", (identity,))
+            value.update(outputAvailability="expired", outputExpiredAt=now,
+                         expiredOutputBytes=size, retainedOutputBytes=0, retainedChunks=0,
+                         earliestCursor=value["latestCursor"], droppedOutputBytes=value["totalOutputBytes"],
+                         outputComplete=False, revision=value["revision"] + 1, updatedAt=now)
+            self._save(value)
+            return {"status": "expired", "removedOutputBytes": size}
 
     def list(self, session_id, limit=50, before=None):
         with self.lock:

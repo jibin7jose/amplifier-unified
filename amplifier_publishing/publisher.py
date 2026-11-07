@@ -7,6 +7,7 @@ built; no source code, build command, or deployment command is executed here.
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 import hashlib
 import ipaddress
 import json
@@ -23,6 +24,8 @@ import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
+
+from . import retention as release_retention
 
 
 class PublishingError(ValueError):
@@ -104,7 +107,9 @@ class _Server(ThreadingHTTPServer):
     block_on_close = False
     allow_reuse_address = False
 
-    def __init__(self, release, content_root, bind_host):
+    def __init__(self, release, content_root, bind_host, owner):
+        self.owner = owner
+        self._stopped = False
         self.release = release
         self.content_root = content_root
         self._connections = set()
@@ -132,6 +137,8 @@ class _Server(ThreadingHTTPServer):
         super().close_request(request)
 
     def stop(self):
+        with self.owner._readers_idle:
+            self._stopped = True
         if self.thread.is_alive():
             self.shutdown()
         self.server_close()
@@ -201,15 +208,15 @@ class _Handler(BaseHTTPRequestHandler):
             if not path or path.endswith("/"):
                 path += "index.html"
             _safe_parts(path)
-            release = self.server.release  # one immutable snapshot per request
-            entry = next((item for item in release["files"] if item["path"] == path), None)
-            if entry is None:
-                self._respond(404, b"Not found", head=head)
-                return
-            root = self.server.content_root / release["id"] / "files"
-            data = _read_file(root, path, entry["size"])
-            if hashlib.sha256(data).hexdigest() != entry["sha256"]:
-                raise PublishingError("integrity_error", "Release file does not match its manifest")
+            with self.server.owner._body_reader(self.server) as release:
+                entry = next((item for item in release["files"] if item["path"] == path), None)
+                if entry is None:
+                    self._respond(404, b"Not found", head=head)
+                    return
+                root = self.server.content_root / release["id"] / "files"
+                data = _read_file(root, path, entry["size"])
+                if hashlib.sha256(data).hexdigest() != entry["sha256"]:
+                    raise PublishingError("integrity_error", "Release file does not match its immutable manifest")
             content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
             # Executable source extensions are never served as HTML by guessing.
             self._respond(200, data, content_type, head=head)
@@ -244,6 +251,12 @@ class Publisher:
             raise PublishingError("unsafe_root", "Publishing storage cannot be a symlink")
         self.root = self.root.resolve()
         self._mutex = threading.RLock()
+        self._idle = threading.Condition(self._mutex)
+        self._readers_idle = threading.Condition(threading.RLock())
+        self._body_reads = {}
+        self._released_reads = {}
+        self._retirement_workers = set()
+        self._closing = False
         self._closed = False
         self._sites = {}
         self._previews = {}
@@ -268,7 +281,16 @@ class Publisher:
             self._db.execute("CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT, body TEXT NOT NULL, PRIMARY KEY(kind,id))")
             self._db.execute("CREATE TABLE IF NOT EXISTS receipts (session TEXT, request TEXT, fingerprint TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(session,request))")
             self._db.execute("CREATE INDEX IF NOT EXISTS publishing_resources ON records(json_extract(body,'$.sessionId'),kind,id)")
+            self._db.execute("CREATE INDEX IF NOT EXISTS publishing_pins ON records(json_extract(body,'$.sessionId'),json_extract(body,'$.siteId'),id) "
+                             "WHERE kind='retention' AND json_extract(body,'$.pinned')=1 AND json_extract(body,'$.availability')='available'")
+            self._db.execute("CREATE INDEX IF NOT EXISTS publishing_temporary ON records(json_extract(body,'$.sessionId'),id) "
+                             "WHERE kind='retention' AND json_type(body,'$.policy')='object' AND json_extract(body,'$.availability')='available'")
+            self._db.execute("CREATE INDEX IF NOT EXISTS publishing_retiring ON records(id) WHERE kind='retention' AND json_type(body,'$.retirement')='object'")
+            self._db.execute("CREATE INDEX IF NOT EXISTS publishing_unsettled ON receipts(session,json_extract(body,'$.siteId')) "
+                             "WHERE json_extract(body,'$.state') IN ('running','unknown') AND json_extract(body,'$.action')!='retire' "
+                             "AND (json_extract(body,'$.state')='running' OR json_extract(body,'$.action') NOT IN ('deploy','rollback','stop','remove'))")
             self._recover()
+            self.reconcile_retirements()
         except BaseException:
             self._lock_file.close()
             if hasattr(self, "_db"):
@@ -280,8 +302,54 @@ class Publisher:
         return {"bindHost": self._bind_host, "accessPolicy": self._access_policy, "authentication": "none", "previewAccessPolicy": "loopback-only", "publicPublishing": False}
 
     def _check_open(self):
-        if self._closed:
+        if self._closed or self._closing:
             raise PublishingError("closed", "Publisher is closed")
+        self._settle_body_reads()
+
+    def _consumer_released(self, identity, observed_at=None):
+        state = self._get('retention', identity)
+        if state and state.get('policy') and state.get('availability') == 'available':
+            observed_at = observed_at or _now()
+            if not state.get('unusedSince') or observed_at > state['unusedSince']:
+                state.update(unusedSince=observed_at, revision=state['revision'] + 1)
+                self._put('retention', state)
+
+    def _settle_body_reads(self):
+        # HTTP never waits for a long build/backup transaction. These are actual
+        # completion times, not a copied policy or availability registry.
+        with self._readers_idle:
+            for identity, observed_at in list(self._released_reads.items()):
+                self._consumer_released(identity, observed_at)
+                del self._released_reads[identity]
+
+    def _interrupted(self, kind, record):
+        record.update(status='interrupted', previousUrl=record.get('url'), url=None, updatedAt=_now())
+        if kind == 'site':
+            record['revision'] += 1
+        else:
+            self._consumer_released(record['releaseId'])
+        self._put(kind, record)
+
+    @contextmanager
+    def _body_reader(self, server):
+        with self._readers_idle:
+            if self._closing:
+                raise PublishingError('closed', 'Publisher is closed')
+            if server._stopped:
+                raise PublishingError('release_unavailable', 'This listener stopped serving its body')
+            release = server.release
+            identity = release['id']
+            self._body_reads[identity] = self._body_reads.get(identity, 0) + 1
+        try:
+            yield release
+        finally:
+            with self._readers_idle:
+                self._body_reads[identity] -= 1
+                if not self._body_reads[identity]:
+                    del self._body_reads[identity]
+                    if server._stopped or server.release['id'] != identity:
+                        self._released_reads[identity] = _now()
+                self._readers_idle.notify_all()
 
     def _get(self, kind, identity):
         row = self._db.execute("SELECT body FROM records WHERE kind=? AND id=?", (kind, identity)).fetchone()
@@ -299,19 +367,23 @@ class Publisher:
     def _recover(self):
         self._db.execute("BEGIN IMMEDIATE")
         try:
+            # Earlier prospective records have no observed unused interval.
+            # Establish a fresh grace once; never backdate an inferred lifetime.
+            self._db.execute("UPDATE records SET body=json_set(body,'$.unusedSince',?,'$.revision',json_extract(body,'$.revision')+1) "
+                             "WHERE kind='retention' AND json_type(body,'$.policy')='object' "
+                             "AND json_extract(body,'$.availability')='available' AND json_type(body,'$.unusedSince') IS NULL", (_now(),))
             for kind in ("site", "preview"):
                 for record in self._all(kind):
                     if record["status"] == "running":
-                        record.update(status="interrupted", previousUrl=record["url"], url=None, updatedAt=_now())
-                        if kind == "site":
-                            record["revision"] += 1
-                        self._put(kind, record)
+                        self._interrupted(kind, record)
             rows = self._db.execute("SELECT fingerprint,body FROM receipts").fetchall()
             for fingerprint, body in rows:
                 receipt = json.loads(body)
                 if receipt["state"] == "running":
                     receipt.update(state="unknown", completedAt=_now(), error={"code": "unknown_outcome", "message": "Process ended before the operation outcome was recorded; it was not replayed"})
                     self._save_receipt(receipt, fingerprint)
+                    if receipt['action'] == 'build':
+                        self._uncertain_capture(receipt)
                     if receipt["action"] in {"deploy", "rollback", "stop", "remove"}:
                         self._fence(receipt)
             self._db.execute("COMMIT")
@@ -376,12 +448,14 @@ class Publisher:
                 self._save_receipt(receipt, fingerprint)
                 self._db.execute("COMMIT")
             except PublishingError as exc:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 receipt.update(state="failed", error={"code": exc.code, "message": str(exc)}, completedAt=_now())
                 self._save_receipt(receipt, fingerprint)
                 raise PublishingError(exc.code, str(exc), receipt=receipt) from exc
             except Exception as exc:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 # An unexpected failure after an external effect cannot be called
                 # a known failure. Fail closed, retain uncertainty, never retry it.
                 self._stop_listeners(payload["siteId"])
@@ -389,11 +463,20 @@ class Publisher:
                 self._db.execute("BEGIN IMMEDIATE")
                 self._refresh_liveness()
                 self._save_receipt(receipt, fingerprint)
+                if action == 'build':
+                    self._uncertain_capture(receipt)
                 if action in {"deploy", "rollback", "stop", "remove"}:
                     self._fence(receipt)
                 self._db.execute("COMMIT")
                 raise PublishingError("unknown_outcome", receipt["error"]["message"], receipt=receipt) from exc
             return self._receipt_result(receipt, action)
+
+    def _uncertain_capture(self, receipt):
+        identity = receipt.get('releaseId')
+        state = self._get('retention', identity) if identity else None
+        if state and state.get('availability') == 'expired' and (self._content / identity).exists():
+            state.update(availability='unknown', revision=state['revision'] + 1)
+            self._put('retention', state)
 
     @staticmethod
     def _receipt_result(receipt, action):
@@ -476,13 +559,17 @@ class Publisher:
             shutil.rmtree(staging)
             raise
 
-    def build(self, source, *, site_id, session_id, request_id):
+    def build(self, source, *, site_id, session_id, request_id, retention=None):
         source = Path(source).expanduser()
         if ".." in source.parts:
             raise PublishingError("unsafe_path", "Build output cannot contain traversal components")
         source = source.absolute()
 
         def create(_receipt):
+            try:
+                settings = release_retention.policy(retention)
+            except ValueError as exc:
+                raise PublishingError('invalid_argument', str(exc)) from exc
             site = self._get("site", site_id)
             if site:
                 self._scope(site, session_id, "Site")
@@ -496,12 +583,26 @@ class Publisher:
                 raise PublishingError("unsafe_source", "Build output could not be safely read") from exc
             digest = _digest(manifest)
             identity = _digest({"siteId": site_id, "sessionId": session_id, "manifestDigest": digest})
+            # Capture discovered this content identity. Commit that exact intent
+            # before installing its immutable directory, including a recapture.
+            _receipt['releaseId'] = identity
+            fingerprint = self._db.execute("SELECT fingerprint FROM receipts WHERE session=? AND request=?",
+                                           (session_id, request_id)).fetchone()[0]
+            self._save_receipt(_receipt, fingerprint)
+            self._db.execute('COMMIT')
+            self._db.execute('BEGIN IMMEDIATE')
             release = {"id": identity, "siteId": site_id, "sessionId": session_id, "manifestDigest": digest, "createdAt": _now(), "files": manifest, "totalBytes": total}
             try:
                 prior = self._get("release", identity)
+                state = self._get('retention', identity)
+                restoring = state is not None and state.get('availability') == 'expired'
                 if prior:
                     release = prior
+                    if not restoring:
+                        self._require_available(release)
                 destination = self._content / identity
+                if restoring and destination.exists():
+                    raise PublishingError('release_unavailable', 'Expired release has unsettled stored content; it was not replaced')
                 if destination.exists():
                     # Verify rather than replace an existing immutable snapshot,
                     # including a possible uncommitted snapshot after a crash.
@@ -524,14 +625,27 @@ class Publisher:
                     finally:
                         os.close(directory_fd)
                 self._put("release", release)
+                if (prior is None and settings is not None) or restoring:
+                    self._put('retention', release_retention.capture(release, settings, _now(), previous=state))
                 return self._project_release(release)
             finally:
                 if staging.exists():
                     shutil.rmtree(staging)
 
-        return self._operation("build", session_id, request_id, {"siteId": site_id, "source": str(source)}, create)
+        payload = {"siteId": site_id, "source": str(source)}
+        if retention is not None:
+            payload['retention'] = retention
+        return self._operation("build", session_id, request_id, payload, create)
+
+    def _require_available(self, release):
+        state = self._get('retention', release['id'])
+        if state and state.get('availability') == 'expired':
+            raise PublishingError('release_expired', 'Release content expired; its manifest and receipts remain. A new deliberate build can capture it again')
+        if not release_retention.available(state):
+            raise PublishingError('release_unavailable', 'Release content has an unresolved retirement; it was not restored or replayed')
 
     def _verify(self, release):
+        self._require_available(release)
         identity = _digest({"siteId": release["siteId"], "sessionId": release["sessionId"], "manifestDigest": release["manifestDigest"]})
         if identity != release["id"] or _digest(release["files"]) != release["manifestDigest"]:
             raise PublishingError("integrity_error", "Release manifest does not match its immutable digest")
@@ -559,9 +673,41 @@ class Publisher:
             return self._project_release(release)
         return self._release_operation("review", release_id, session_id, request_id, {"note": note}, record)
 
+    def retention(self, release_id, session_id):
+        """Read one owned body's current policy/availability without content reads."""
+        with self._mutex:
+            self._check_open()
+            _identifier(release_id, 'releaseId')
+            _identifier(session_id, 'sessionId')
+            row = self._db.execute("SELECT json_extract(body,'$.sessionId'),json_extract(body,'$.createdAt'),json_extract(body,'$.siteId') "
+                                   "FROM records WHERE kind='release' AND id=?", (release_id,)).fetchone()
+            release = self._scope({'id': release_id, 'sessionId': row[0], 'createdAt': row[1], 'siteId': row[2]} if row else None,
+                                  session_id, 'Release')
+            return release_retention.projection(self._get('retention', release_id)
+                    or release_retention.capture(release, None, release['createdAt']), identity=True)
+
+    def pin(self, release_id, *, session_id, request_id, expected_revision, pinned):
+        """Choose durable protection for an available body without changing history."""
+        def change(release, _receipt):
+            state = self._get('retention', release_id)
+            revision = state['revision'] if state else 0
+            if type(expected_revision) is not int or expected_revision < 0 or type(pinned) is not bool:
+                raise PublishingError('invalid_argument', 'Pin requires a boolean choice and nonnegative lifecycle revision')
+            if revision != expected_revision:
+                raise PublishingError('stale_revision', f'Release retention changed; current revision is {revision}')
+            self._require_available(release)
+            state = state or release_retention.capture(release, None, release['createdAt'])
+            if state['pinned'] and not pinned and state.get('policy'):
+                state['unusedSince'] = _now()
+            state.update(pinned=pinned, revision=revision + 1)
+            self._put('retention', state)
+            return self._project_release(release)
+        return self._release_operation('pin', release_id, session_id, request_id,
+                                       {'expectedRevision': expected_revision, 'pinned': pinned}, change)
+
     def _start(self, release, *, preview=False):
         try:
-            return _Server(release, self._content, "127.0.0.1" if preview else self._bind_host)
+            return _Server(release, self._content, "127.0.0.1" if preview else self._bind_host, self)
         except OSError as exc:
             raise PublishingError("listen_failed", "Loopback listener could not be started") from exc
 
@@ -594,8 +740,23 @@ class Publisher:
                 server = self._start(release)
                 self._sites[site_id] = server
             else:
-                server.release = release
-            site.update(status="running", url=server.url, accessPolicy=self._access_policy, revision=site["revision"] + 1, previousReleaseId=site["releaseId"], releaseId=release_id, updatedAt=_now())
+                with self._readers_idle:
+                    server.release = release
+            now = _now()
+            current_retention = self._get('retention', release_id)
+            if (current_retention and current_retention.get('policy')) or 'rollbackHistory' in site:
+                previous_id = site['releaseId']
+                history = [item for item in site.get('rollbackHistory', []) if item['releaseId'] not in {release_id, previous_id}]
+                if previous_id and previous_id != release_id:
+                    previous_state = self._get('retention', previous_id)
+                    deadline = release_retention.rollback_deadline(previous_state, now)
+                    history.insert(0, {'releaseId': previous_id, 'supersededAt': now, 'retainUntil': deadline})
+                    if previous_state and previous_state.get('policy'):
+                        previous_state.update(supersededAt=now, rollbackUntil=deadline, unusedSince=now, revision=previous_state['revision'] + 1)
+                        self._put('retention', previous_state)
+                settings = (current_retention or {}).get('policy') or release_retention.DEFAULTS
+                site['rollbackHistory'] = history[:settings['rollbackKeepCount']]
+            site.update(status="running", url=server.url, accessPolicy=self._access_policy, revision=site["revision"] + 1, previousReleaseId=site["releaseId"], releaseId=release_id, updatedAt=now)
             site["deployedReleaseIds"] = sorted(set(site["deployedReleaseIds"] + [release_id]))
             self._put("site", site)
             return site
@@ -623,11 +784,15 @@ class Publisher:
                 if release["siteId"] == site_id:
                     self._scope(release, session_id, "Site")
             self._stop_listeners(site_id)
+            if action == 'remove' and site.get('releaseId'):
+                self._consumer_released(site['releaseId'])
             site.update(status="removed" if action == "remove" else "stopped", url=None, accessPolicy=self._access_policy, revision=site["revision"] + 1, updatedAt=_now())
             site.pop("unknownRequestIds", None)
             self._put("site", site)
             for preview in self._all("preview"):
                 if preview["siteId"] == site_id:
+                    if preview['status'] == 'running':
+                        self._consumer_released(preview['releaseId'])
                     preview.update(status="stopped", url=None, updatedAt=_now())
                     self._put("preview", preview)
             return site
@@ -645,7 +810,29 @@ class Publisher:
         preview = self._get("preview", release["id"])
         record["previewUrl"] = preview["url"] if preview else None
         record["previewStatus"] = preview["status"] if preview else "none"
+        state = self._get('retention', release['id'])
+        if state is not None:
+            record['retention'] = release_retention.projection(state)
         return record
+
+    def _project_site(self, site):
+        if 'rollbackHistory' not in site:
+            return site
+        states = {item['releaseId']: self._get('retention', item['releaseId']) for item in site['rollbackHistory']}
+        candidates = release_retention.rollback_candidates(site, states, _now())
+        # Explicit pins can outlive both the automatic time and count windows.
+        # Read only current pins, without hydrating historical release manifests.
+        pinned = self._db.execute("SELECT id FROM records WHERE kind='retention' "
+                                  "AND json_extract(body,'$.sessionId')=? AND json_extract(body,'$.siteId')=? "
+                                  "AND json_extract(body,'$.pinned')=1 AND json_extract(body,'$.availability')='available' ORDER BY id",
+                                  (site['sessionId'], site['id']))
+        deployed = set(site['deployedReleaseIds'])
+        candidates.extend(row[0] for row in pinned if row[0] in deployed
+                          and row[0] != site['releaseId'] and row[0] not in candidates)
+        # previousReleaseId is historical. Only these current choices are offered
+        # automatically; an available explicitly pinned body can outlive a window.
+        return {**site, 'rollbackCandidates': candidates,
+                'previousReleaseAvailable': site.get('previousReleaseId') in candidates}
 
     def _refresh_liveness(self):
         # Process-owned listener objects are the only authority for a live URL.
@@ -658,10 +845,7 @@ class Publisher:
                     stale = listeners.pop(record["id"], None)
                     if stale:
                         stale.stop()
-                    record.update(status="interrupted", previousUrl=record["url"], url=None, updatedAt=_now())
-                    if kind == "site":
-                        record["revision"] += 1
-                    self._put(kind, record)
+                    self._interrupted(kind, record)
 
     def resources(self, session_id, limit=25, before=None):
         """Observe one indexed task page through the actual listener owner.
@@ -695,10 +879,7 @@ class Publisher:
                     stale = listeners.pop(identity, None)
                     if stale:
                         stale.stop()
-                    record.update(status='interrupted', previousUrl=record.get('url'), url=None, updatedAt=_now())
-                    if kind == 'site':
-                        record['revision'] += 1
-                    self._put(kind, record)
+                    self._interrupted(kind, record)
                 running = record['status'] == 'running' and server is not None and server.thread.is_alive()
                 release = record.get('releaseId')
                 items.append({**{key: record.get(key) for key in
@@ -747,8 +928,13 @@ class Publisher:
             self._check_open()
             self._refresh_liveness()
             releases = self._all("release")
+            available = []
             for release in releases:
+                state = self._get('retention', release['id'])
+                if state and state.get('availability') == 'expired':
+                    continue
                 self._verify(release)
+                available.append(release)
             destination.parent.mkdir(parents=True, exist_ok=True)
             staging = Path(tempfile.mkdtemp(prefix="publishing-backup-", dir=destination.parent))
             try:
@@ -757,7 +943,7 @@ class Publisher:
                     self._db.backup(backup)
                 finally:
                     backup.close()
-                for release in releases:
+                for release in available:
                     target = staging / "releases" / release["id"]
                     for item in release["files"]:
                         path = target / "files" / item["path"]
@@ -765,7 +951,8 @@ class Publisher:
                         path.write_bytes(_read_file(self._content / release["id"] / "files", item["path"], item["size"]))
                         path.chmod(0o400)
                     (target / "manifest.json").write_text(_json(release["files"]))
-                metadata = {"format": "static-publishing-v1", "createdAt": _now(), "releaseCount": len(releases), "siteCount": len(self._all("site"))}
+                metadata = {"format": "static-publishing-v1", "createdAt": _now(), "releaseCount": len(releases), "siteCount": len(self._all("site")),
+                            "availableReleaseCount": len(available), "expiredReleaseCount": len(releases) - len(available)}
                 (staging / "snapshot.json").write_text(_json(metadata))
                 os.rename(staging, destination)
                 return {**metadata, "path": str(destination)}
@@ -777,13 +964,13 @@ class Publisher:
         with self._mutex:
             self._check_open()
             self._refresh_liveness()
-            return [site for site in self._all("site") if site["sessionId"] == session_id]
+            return [self._project_site(site) for site in self._all("site") if site["sessionId"] == session_id]
 
     def status(self, site_id, session_id):
         with self._mutex:
             self._check_open()
             self._refresh_liveness()
-            return self._scope(self._get("site", site_id), session_id, "Site")
+            return self._project_site(self._scope(self._get("site", site_id), session_id, "Site"))
 
     def releases(self, session_id):
         with self._mutex:
@@ -796,16 +983,44 @@ class Publisher:
             self._check_open()
             return [json.loads(row[0]) for row in self._db.execute("SELECT body FROM receipts WHERE session=? ORDER BY rowid", (session_id,))]
 
+    def receipt(self, session_id, request_id):
+        with self._mutex:
+            self._check_open()
+            _identifier(session_id, 'sessionId')
+            _identifier(request_id, 'requestId')
+            row = self._db.execute('SELECT body FROM receipts WHERE session=? AND request=?', (session_id, request_id)).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def retirement_candidates(self, session_id, *, policy, limit=25, after=None):
+        from .retirement import candidates
+        return candidates(self, session_id, policy=policy, limit=limit, after=after)
+
+    def retire(self, release_id, *, session_id, request_id, expected_revision, policy, stop_event=None):
+        from .retirement import retire
+        return retire(self, release_id, session_id, request_id, expected_revision, policy, stop_event)
+
+    def reconcile_retirements(self, *, limit=1, after=None, stop_event=None):
+        from .retirement import reconcile
+        return reconcile(self, limit=limit, after=after, stop_event=stop_event)
+
     def close(self):
         with self._mutex:
             if self._closed:
                 return
+            with self._readers_idle:
+                self._closing = True
             try:
                 for site_id in list(self._sites):
                     self._stop_listeners(site_id)
                 for server in self._previews.values():
                     server.stop()
                 self._previews.clear()
+                while self._retirement_workers:
+                    self._idle.wait()
+                with self._readers_idle:
+                    while self._body_reads:
+                        self._readers_idle.wait()
+                self._settle_body_reads()
                 self._db.execute("BEGIN IMMEDIATE")
                 for kind in ("site", "preview"):
                     for record in self._all(kind):
@@ -813,6 +1028,8 @@ class Publisher:
                             record.update(status="stopped", previousUrl=record["url"], url=None, updatedAt=_now())
                             if kind == "site":
                                 record["revision"] += 1
+                            else:
+                                self._consumer_released(record['releaseId'])
                             self._put(kind, record)
                 self._db.execute("COMMIT")
             finally:
