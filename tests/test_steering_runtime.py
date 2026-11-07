@@ -12,7 +12,8 @@ async def test_worker_rechecks_target_after_input_preparation(monkeypatch):
     pytest.importorskip('amplifier_module_loop_live.runtime')
     runtime = SimpleNamespace(closed=False, generation={'id': 'old'}, max_input_chars=10000)
     capability = {'version': 1, 'mode': 'request_boundary', 'submit': AsyncMock()}
-    controls = SimpleNamespace(coordinator=SimpleNamespace(get_capability=lambda name: capability))
+    controls = SimpleNamespace(coordinator=SimpleNamespace(
+        get_capability=lambda name: capability if name == 'live.steering' else None))
     async def prepare(*args, **kwargs):
         runtime.generation = {'id': 'new'}
         return 'pause'
@@ -103,7 +104,8 @@ async def test_worker_rejects_closing_or_stopped_run_before_admission(monkeypatc
     runtime = SimpleNamespace(closed=False, generation={'id': 'run'}, max_input_chars=10000)
     setattr(runtime, flag, True)
     capability = {'version': 1, 'mode': 'request_boundary', 'submit': AsyncMock()}
-    controls = SimpleNamespace(coordinator=SimpleNamespace(get_capability=lambda name: capability))
+    controls = SimpleNamespace(coordinator=SimpleNamespace(
+        get_capability=lambda name: capability if name == 'live.steering' else None))
     monkeypatch.setattr('amplifier_web.message_interactions.prepare_input', AsyncMock(return_value='pause'))
     result = await submit(controls, runtime, {'text': 'pause', 'inputId': 'late',
         'targetGenerationId': 'run'}, None, lambda: 0)
