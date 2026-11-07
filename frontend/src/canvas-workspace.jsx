@@ -10,12 +10,15 @@ import './canvas-workspace.css';
 import {useCanvasReloadGuard} from './canvas-reload-guard.jsx';
 import {hasLocalCanvasEdits} from './canvas-reload-guard.js';
 import {ArtifactFileDetails} from './artifact-file-details';
+import {ContextInspector} from './context-inspector';
 
 const Surface=({canvas,act})=><A2UISurface surface={canvas.surface} act={act}/>;
 // Every built-in format and every contributed renderer enters the same host.
 const builtins=Object.fromEntries(['markdown','text','code','json','jsonl','image','pdf','html','babylon','mermaid','dot'].map(kind=>['builtin.canvas.'+kind,CanvasViewer]));
 // Native retained references are not new contributed-renderer SDK kinds.
 builtins['builtin.canvas.gif']=GifCanvasViewer;
+// A native live view, not an HTML artifact or another prompt-body store.
+builtins['builtin.canvas.context-inspector']=({canvas,dispatch})=><ContextInspector session={{id:canvas.sessionId}} act={dispatch} open={panel=>dispatch('view.update',{patch:{panel}})}/>;
 Object.assign(builtins,{'builtin.canvas.settings':({canvas,dispatch})=><button type="button" className="a-soft" onClick={()=>dispatch('canvas.select',{id:canvas.id})}>Open Settings in Canvas</button>,'builtin.canvas.browser':BrowserPreview,'builtin.canvas.mcp-app':McpAppViewer,'builtin.canvas.a2ui':Surface});
 const targetOf=view=>Object.fromEntries(['viewId','resourceId','resourceRevision','generation'].map(key=>[key,view[key]]));
 const factoryCache=new Map();
@@ -113,6 +116,7 @@ function ResourceView({view,state,dispatch,recovery}){
   finally{choicePending.current=false;setChoosing(false);if(confirmed)loadPending.current=false}
  };
  useEffect(()=>{setChoice(null);setError('')},[view.resourceId,view.resourceRevision,view.generation]);
+ if(canvas?.kind==='context-inspector')return <section className="a-resource-view" data-canvas-view={view.viewId} aria-label="Context inspector view"><div className="a-resource-renderer"><Renderer key={view.resourceId} view={view} canvas={canvas} dispatch={dispatch} recovery={recovery}/></div></section>;
  return <CanvasViewControls label="Artifact controls"><section className="a-resource-view" data-canvas-view={view.viewId} aria-label="Artifact view">
   <CanvasControl><div className="a-resource-view-controls a-canvas-toolbar">
    <strong>{canvas?.title}</strong>

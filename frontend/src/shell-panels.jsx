@@ -187,8 +187,8 @@ export function AgentCanvas({state,act,dispatch=act,suppressed=false,settingsSur
    <div ref={readerRef} className="a-canvas-reader" inert={covered} aria-hidden={covered||undefined}>
    <div className="a-canvas-artifact-toolbar" hidden={overview||!hasContent}>
     <strong title={canvas.title}>{canvas.title}</strong>
-    {resourceView?.versions?.length>0&&<button type="button" className="a-canvas-version-shortcut a-soft" aria-label="Choose artifact version" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>openControls('version')}>v{resourceView.runningVersion??resourceView.selectedVersion??resourceView.latestVersion}{resourceView.selectedVersion!=null?' · Saved':''}</button>}
-    {resourceView?.versions?.length>0&&!canvas.app&&!['settings','browser','mcp-app'].includes(canvas.kind)&&<CanvasDocumentRefresh key={state.selectedSessionId+':'+resourceView.resourceId+':'+(resourceView.selectedVersion??'latest')} view={resourceView} dispatch={dispatch}/>}
+    {resourceView?.versions?.length>0&&canvas.kind!=='context-inspector'&&<button type="button" className="a-canvas-version-shortcut a-soft" aria-label="Choose artifact version" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>openControls('version')}>v{resourceView.runningVersion??resourceView.selectedVersion??resourceView.latestVersion}{resourceView.selectedVersion!=null?' · Saved':''}</button>}
+    {resourceView?.versions?.length>0&&!canvas.app&&!['settings','context-inspector','browser','mcp-app'].includes(canvas.kind)&&<CanvasDocumentRefresh key={state.selectedSessionId+':'+resourceView.resourceId+':'+(resourceView.selectedVersion??'latest')} view={resourceView} dispatch={dispatch}/>}
     <div ref={setActionsHost} className="a-canvas-primary-actions"/>
     <button type="button" className="a-soft a-canvas-details" aria-label="Canvas details" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>controls?closeControls():openControls()}><Info/><span>Details</span></button>
    </div>

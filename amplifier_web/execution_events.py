@@ -296,7 +296,7 @@ class ExecutionEvents:
             decision = original_budget(request, **kwargs)
             decision = await decision if inspect.isawaitable(decision) else decision
             from .context_inspection_adapter import safe_observe
-            await safe_observe(self.context_inspectors.get(sid), 'budget', request, kwargs, decision)
+            await safe_observe(self.context_inspectors.get(sid), 'budget', request, kwargs, decision, provider)
             return decision
 
         original_compact = getattr(provider, "compact_context", None)

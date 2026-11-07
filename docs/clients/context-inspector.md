@@ -1,8 +1,22 @@
 # Context inspector: retained host requests
 
-The bundled web client's **Chat overview → Context inspector** opens the clean-bar
-category explorer selected in the November 6, 2026 design review. It is a passive
-view of a bounded native-adapter observation, not a live prompt editor.
+The bundled web client's **Chat overview → Context inspector** opens a native
+Canvas tab, not a modal or embedded page. This applies the November 7, 2026
+direction to the clean-bar explorer selected in the November 6 design review.
+It is a passive view of a bounded native-adapter observation, not a prompt editor.
+
+The existing Canvas owns resizing, full-window focus, hide/reopen, document tabs
+and dirty-view protection. Opening the inspector does not change the selected
+chat or replace other saved documents. Only the live-view identity is saved as
+an artifact; captured text remains in its existing private bounded store.
+Container width, not device width, chooses a single column below 650px, a
+master/detail split at intermediate widths, and a bounded navigation column with
+an expanding reader above 1100px. Resizing keeps the selected request, category,
+item and text page mounted, with no additional inspection reads.
+
+Item headings show a short source name. A compact label helps distinguish
+same-name sources; the expandable provenance section retains the complete
+captured label and a named Copy control. Full paths do not dominate the reader.
 
 ## Meaning and limits
 
@@ -27,6 +41,27 @@ view of a bounded native-adapter observation, not a live prompt editor.
   budget decision or provider metadata whose default model matches this call.
   Unknown does not mean unlimited. No fresh counting, model discovery or generation
   is triggered by opening, searching or refreshing the inspector.
+- Each limit has captured source/reason evidence. A missing budget distinguishes
+  unsupported preflight, no retained preflight, no usable provider decision, changed request/options and
+  bounded/opaque attribution. Older observations without these receipts say
+  **not captured**, rather than inventing a historical reason from current config.
+  A fixed mounted context `max_tokens` attribute is captured as well as an explicit
+  configuration value. No fixed value means automatic/unspecified, not zero.
+  Explicit request output options are captured; a provider's model output maximum
+  is never mislabeled as the request's output reservation.
+- Provider metadata for a different default model cannot establish the selected
+  model's window. An input allowance cannot establish the total window either:
+  it may include independent provider safety/pricing limits. Providers that omit
+  `context_window_tokens` from their existing budget decision need to supply that
+  optional evidence themselves; Unified does not guess from model names or call
+  a catalog/count endpoint to fill the gap.
+- Host revalidation may copy an unchanged fitted request. A retained preflight
+  may follow that copy only within the same provider and execution task with an
+  exact bounded fingerprint of all request fields and options. Exceeding a bound
+  returns no fingerprint, never a truncated-prefix digest. Ambiguous identical
+  candidates are not matched by arrival order. Every dispatch retires that
+  provider/task's preflight interval; an identical concurrent or later request
+  cannot borrow its receipt.
 
 ## Privacy and bounded retention
 
@@ -87,7 +122,8 @@ Canonical implementation owners:
   never an execution context or recovery source.
 - `context_continuity.py`: unchanged native checkpoint/recovery authority.
 - `context-inspector.jsx`: selected A presentation, private selection/search and
-  late-response fencing. `chat-pages.jsx` and `work-overview.jsx` own entry points.
+  late-response fencing. `chat-pages.jsx` and `work-overview.jsx` own entry points;
+  the existing Canvas renderer host owns the native live tab.
 
 This applies family vision principles 2–7/12, AP2/3/5, CB2/3, CS1–7, CX1/6–8 and
 workspace context P3/4. It does not assert completion of the broader ACP/AHP migration.
@@ -101,5 +137,6 @@ bounded work. Existing provider-recording/execution/final-refit checks protect t
 owners. `frontend/tests/context-inspector-browser.mjs` runs against canonical built
 assets and production inspection responses, with synthetic captured input. It checks
 entry/drilldown/reader, pagination, unknown/no-record/empty states, errors, cross-chat
-late responses, keyboard and narrow/light/dark layouts. Source inspection and scripted
+late responses, keyboard, actual Canvas divider/focus transitions, retained other
+documents and 320/390px and full-width light/dark layouts. Source inspection and scripted
 checks are not live-provider or released-package qualification.

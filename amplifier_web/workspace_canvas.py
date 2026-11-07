@@ -23,7 +23,7 @@ MAX_SURFACE = 100_000
 class ReferencedFileChanged(ValueError):
     """The bytes read for a preview are not the exact referenced version."""
 
-KINDS = ['auto', 'text', 'markdown', 'code', 'html', 'mermaid', 'dot', 'json', 'jsonl', 'image', 'pdf', 'a2ui', 'browser', 'babylon', 'settings']
+KINDS = ['auto', 'text', 'markdown', 'code', 'html', 'mermaid', 'dot', 'json', 'jsonl', 'image', 'pdf', 'a2ui', 'browser', 'babylon', 'settings', 'context-inspector']
 EXTENSIONS = {'.pdf':'pdf', '.md':'markdown', '.markdown':'markdown', '.html':'html', '.htm':'html',
     '.mmd':'mermaid', '.mermaid':'mermaid', '.dot':'dot', '.gv':'dot', '.json':'json',
     '.jsonl':'jsonl', '.ndjson':'jsonl', **{x:'image' for x in ['.png','.jpg','.jpeg','.webp','.gif']},
@@ -316,12 +316,13 @@ def canvas_command(state, action, args, origin, *, file_root=None):
             _error('Automatic format detection needs a workspace file path.')
         kind = EXTENSIONS.get(Path(args['path']).suffix.lower(), 'text')
     canvas = {"id": uuid.uuid4().hex, "view": {}, "renderReports": {},"open": True, "kind": kind, "title": args.get("title") or "Canvas", "events": [], "workspaceId": state["selectedWorkspaceId"], "sessionId":state.get("selectedSessionId")}
-    if kind == 'settings':
+    if kind in {'settings', 'context-inspector'}:
+        label = 'Settings' if kind == 'settings' else 'Context inspector'
         if any(key in args for key in ('content', 'path', 'url', 'surface')):
-            _error('Settings is a live app view; do not supply content or credentials.')
+            _error(f'{label} is a live app view; do not supply content or credentials.')
         if not state.get('selectedSessionId'):
-            _error('Create or select a chat before opening Settings in Canvas.')
-        canvas['title'] = 'Settings'
+            _error(f'Create or select a chat before opening {label} in Canvas.')
+        canvas['title'] = label
     elif kind == "browser":
         url = args.get('url','').strip()
         try:

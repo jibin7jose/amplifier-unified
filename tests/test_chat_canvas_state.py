@@ -80,3 +80,34 @@ async def test_legacy_selected_canvas_is_saved_before_first_navigation(tmp_path)
             assert app.state['canvas']['content'] == 'Legacy'
     finally:
         await app.close()
+
+
+async def test_context_inspector_native_tab_reuse_scope_and_no_prompt_storage(tmp_path):
+    app = AppService(tmp_path / 'app', workspace=tmp_path)
+    try:
+        await app.dispatch('session.create', {'title': 'Inspected'})
+        sid = app.state['selectedSessionId']
+        app.clients.attach('browser')
+        with app.clients.bind('browser'):
+            await app.dispatch('canvas.show', {'kind':'text','content':'Keep this document'})
+            document = app.state['canvas']['id']
+            await app.dispatch('view.update', {'patch':{'panel':'session-details'}})
+            await app.dispatch('canvas.show', {'kind':'context-inspector','sessionId':sid})
+            inspector = app.state['canvas']['id']
+            assert app.state['view']['panel'] is None
+            assert app.state['canvas']['sessionId'] == sid
+            assert app.state['canvas']['title'] == 'Context inspector'
+            assert not any(k in app.state['canvas'] for k in ('content','path','url','surface'))
+            await app.dispatch('canvas.show', {'kind':'context-inspector','sessionId':sid})
+            assert app.state['canvas']['id'] == inspector
+            assert len([r for r in app.state['canvasArtifacts'] if r['kind']=='context-inspector']) == 1
+            with pytest.raises(AppError, match='live app view'):
+                await app.dispatch('canvas.show', {'kind':'context-inspector','content':'not allowed'})
+            with pytest.raises(AppError, match='opens in Canvas'):
+                await app.dispatch('canvas.show', {'kind':'context-inspector','presentation':'inline'})
+            await app.dispatch('canvas.tabClose', {'id':inspector})
+            await app.dispatch('canvas.select', {'id':document})
+            assert app.state['canvas']['content'] == 'Keep this document'
+            assert app.state['selectedSessionId'] == sid
+    finally:
+        await app.close()
