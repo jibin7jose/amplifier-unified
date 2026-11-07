@@ -154,6 +154,7 @@ class Collector:
             data = json.loads(path.read_text())
             bindings.setdefault((data['git_url'], data['commit']), set()).add(data['ref'])
         inspected, packages, constraints, manifests = {}, {}, {}, {}
+        constraint_origins = {}
         for name, source in sorted(batch.names.items()):
             name, source = package_name(name), Path(source)
             package = {'status': 'unresolved'}
@@ -204,6 +205,12 @@ class Collector:
                 if dependency in sibling_dev:
                     continue  # --no-sources does not activate this selected sibling's dev edge.
                 constraints.setdefault(dependency, []).extend(declarations)
+                constraint_origins.setdefault(dependency, []).append({
+                    'package': name, 'url': data['git_url'], 'revision': data['commit'],
+                    'subdirectory': '' if source == root else source.relative_to(root).as_posix(),
+                    'manifestSha256': hashlib.sha256(content).hexdigest(),
+                    'declarations': declarations,
+                })
             if any((path / 'uv.toml').exists() or (path / 'uv.toml').is_symlink() for path in (root, source)):
                 package['status'] = 'separate-resolver-config'
                 continue
@@ -232,17 +239,22 @@ class Collector:
                 continue
             manifests[name] = content
         for name, package in packages.items():
-            if package.get('status') != 'selected' or name not in constraints:
+            if package.get('status') not in {'selected', 'explicit-pin'} or name not in constraints:
                 continue
             # Check each authored choice against the independently selected
             # identity. rev=main and branch=main can each agree with it without
             # declaring every rev a branch or discarding a conflicting tag.
-            if any(not constraint or constraint.get('refKind') == 'tag'
-                   or any(constraint.get(field, '') != package[field]
-                          for field in ('url', 'ref', 'subdirectory'))
-                   for constraint in constraints[name]):
+            if any(not compatible_constraint(constraint, package) for constraint in constraints[name]):
                 package.clear()
                 package['status'] = 'authored-constraint'
+            elif any(exact_constraint_pin(constraint) for constraint in constraints[name]):
+                # An independently selected branch can satisfy an authored pin
+                # at this exact commit, but that is never moving-ref authority.
+                # The existing explicit-pin gate requires the checked revision
+                # to match even before alignment; migration/root rewrites remain
+                # protected. Do not replace the selected ref or remove the pin.
+                package['status'] = 'explicit-pin'
+            package['authoredConstraints'] = constraint_origins[name]
         from .selected_runtime_dependencies import selected
         dependencies = selected({name: content for name, content in manifests.items()
                                  if packages[name].get('status') == 'selected'})
@@ -253,6 +265,22 @@ class Collector:
                 'batchPaths': {name: str(path) for name, path in batch.names.items()},
                 'protectedPaths': sorted(str(path) for path in self.local_sources | self.local_manifests)}
 
+
+def exact_constraint_pin(constraint):
+    return bool(constraint and constraint.get('refKind') == 'rev'
+                and isinstance(constraint.get('ref'), str)
+                and re.fullmatch('[a-f0-9]{40}', constraint['ref']))
+
+
+def compatible_constraint(constraint, package):
+    """Restrictions cannot select a package or turn a pin into branch policy."""
+    if (not constraint or constraint.get('refKind') not in {'branch', 'rev'}
+            or any(constraint.get(field, '') != package.get(field)
+                   for field in ('url', 'subdirectory'))):
+        return False
+    if exact_constraint_pin(constraint):
+        return constraint['ref'] == package.get('revision')
+    return constraint.get('ref') == package.get('ref')
 
 
 def selected_sibling_dev_sources(content, source, root, selected):

@@ -22,9 +22,13 @@ def verify_checked_selection(checked, selection, *, exact=False):
     packages = selection['packages']
     for name in selection['batchPaths']:
         policy = checked.get(name)
-        if policy is None:
-            continue  # Ordinary dependencies remain governed by overrides and freeze.
         source = packages.get(name, {})
+        if policy is None:
+            if source.get('status') == 'explicit-pin' and source.get('authoredConstraints'):
+                # Matching an authored pin is not authority to install an
+                # unchecked batch identity, even if its selected ref is main.
+                raise ProtectedRuntimeSource(name, 'runtime-source-constraint')
+            continue  # Ordinary dependencies remain governed by overrides and freeze.
         if source.get('status') == 'authored-constraint':
             raise ProtectedRuntimeSource(name, 'runtime-source-constraint')
         if (source.get('status') not in {'selected', 'explicit-pin'}

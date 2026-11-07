@@ -260,6 +260,19 @@ pin, fork, local override, separate resolver configuration, dirty source or
 missing ownership evidence never grants migration. The normal installed graph,
 source identity and immutable freeze checks still decide qualification.
 
+An authored full-SHA dependency constraint can agree with an independently
+selected branch only at the exact same repository, subdirectory and commit.
+The collector retains every constraint and the declaring package/revision/
+manifest digest, and classifies this agreement as `explicit-pin`, not moving-ref
+authority. The existing pre-alignment guard requires the checked candidate to
+equal that same commit even when ordinary branch alignment could advance it.
+A future branch revision is refused before checkout or installation; the pin
+is not removed, the selected ref is not rewritten, and legacy-pin migration
+does not promote it to branch-following permission. Abbreviated pins, tags,
+unknown/conditional alternatives, forks, different subdirectories and any
+conflicting declaration remain protective. This is same-identity compatibility,
+not a change to authored source policy or installed-generation ownership.
+
 A generation receipt records migrated, protected and unselected packages.
 A receipt matching the current configuration and exact installed identity marks
 packages absent from the offered-profile batch as usage unknown, kept for existing
