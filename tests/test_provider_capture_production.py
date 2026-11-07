@@ -175,15 +175,18 @@ async def test_production_initialized_session_executes_large_request(tmp_path,le
         evidence(f'production-session-{legacy}-{streaming}',{
             'header':row,'characters':len(state.transports[0]),'appGuidanceTransform':True,
             'providerCalls':state.calls,'budgetCalls':len(state.budgets),
-            'budgetOptions':state.options,'dispatchOptions':state.dispatch_options,
+            'budgetOptions':state.options,
+            'dispatchOptions':[{k:v for k,v in options.items() if k!='tools'} for options in state.dispatch_options],
+            'streamToolTypes':[type(tool).__name__ for tool in state.dispatch_options[-1].get('tools',[])],
             'budgetTransportEqual':state.transports[-1]==state.budgets[-1]})
         assert len(state.transports[0])>1_000_000
         if streaming:
-            # The installed loop adds tools=[] only at stream entry, after its
-            # preflight with {}. That is not an unchanged option set. Preserve
-            # strict attribution, rather than dropping an unbudgeted option.
-            assert state.dispatch_options[-1]=={**state.options[-1],'tools':[]}
-            assert row['budgetStatus']=='request_changed' and row['budget']=={}
+            # The installed loop adds live tool objects only at stream entry,
+            # after preflight with {}. Those opaque options must fail closed.
+            actual=state.dispatch_options[-1]
+            assert {k:v for k,v in actual.items() if k!='tools'}==state.options[-1]
+            assert actual['tools'] and type(actual['tools'][0]).__name__=='AppControl'
+            assert row['budgetStatus']=='binding_unsupported' and row['budget']=={}
             return
         assert state.dispatch_options[-1]==state.options[-1]
         assert row['budget']['measurement']['input_tokens']==100

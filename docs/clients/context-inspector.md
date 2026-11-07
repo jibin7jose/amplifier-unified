@@ -159,9 +159,9 @@ qualifies actual `install_app_access` transformation through
 `WorkRecoveringProvider`, SelectedProvider and initialized Core/Foundation,
 including immutable providers, both budget signatures and session execution.
 Earlier simplified-native evidence is not production-wiring qualification.
-The installed native loop's streaming path adds `tools=[]` at dispatch after
-budgeting without that option. That unequal option set remains unattributed;
-the ticket does not erase it to manufacture an unchanged request. The production
+The installed native loop's streaming path adds live tool objects at dispatch
+after budgeting without that option. That unsupported option set remains
+unattributed; the ticket does not erase it to manufacture an unchanged request. The production
 fixture distinguishes this from unchanged complete dispatch and directly
 matched streaming calls. Changing the loop's option contract is separate work.
 No request identity or serialized ticket is
