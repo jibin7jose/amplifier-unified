@@ -41,6 +41,15 @@ entire native context. Persist native-ID mappings and ownership with a clear
 crash-recovery rule; a process pool is an optional optimization after isolation
 tests, not one process per historical session.
 
+The November 7 [ownership clarification](state-and-storage.md#conversation-participation-and-execution)
+distinguishes the shared conversation from the agent's execution context. ACP
+[`session/new` and optional load](https://agentclientprotocol.com/protocol/v1/session-setup)
+establish an agent context; they do not assign ownership of an experience's
+multi-participant transcript. A connector/adapter maps participation to the
+runtime's chosen contexts. Qualify the actual AHP/ACP representation, authorship,
+retrieval and unsupported-peer behavior before implementing it; this design adds
+no private fields to the standard by implication.
+
 **Do not equate two existing products.** The freshly reviewed `amplifier-agent`
 repository now offers Python/TypeScript embedding APIs and a frozen engine contract.
 That contract constrains one provider per agent and its own configuration surface.
@@ -146,7 +155,7 @@ compatibility lane, separate from the core host-to-agent ACP adapter.
 | --- | --- |
 | No direct host access to live Amplifier objects | Explicit async control/events and serialization; simpler isolation, mocking and independent replacement |
 | No assumption every peer has all Amplifier features | Advanced controls become negotiated; baseline clients remain useful and honest |
-| Engine-bound sessions | No transparent mid-session engine swap; simpler native history and ownership, new sessions can choose freely |
+| Engine-bound native executions | No transparent conversion of native history to another engine; a conversation can add another agent participant without converting existing execution history |
 | Local drafts by default | No implicit cross-device private-draft recovery; zero routine sync cost and independent editors |
 | Cold histories and idle agents | First history page or execution start may incur latency; bounded steady-state memory and predictable navigation |
 | More repositories and version combinations | More release/CI integration work; smaller ownership surfaces and parallel development against fixtures |

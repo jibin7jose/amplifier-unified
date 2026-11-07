@@ -22,14 +22,18 @@ accepted execution -> runtime admission -> working -> safely evictable when idle
 
 ## The promises
 
-1. **WS1 — Preserve the durable record.** Native transcripts, metadata and retained
-   event logs survive catalog exclusion, index rebuild and cache eviction. Derived
+1. **WS1 — Preserve the durable record.** Experience-owned conversations and native
+   execution records retain their respective owners across catalog exclusion,
+   index rebuild and cache eviction. Native transcripts, metadata and retained
+   event logs remain intact. Derived
    indexes never become an alternative resume authority or replay past execution.
    Broken: removing a missing directory deletes its history. Affected: owners of historical work.
 
-2. **WS2 — Filter before loading pages.** Default project discovery includes confirmed
-   existing workspace directories; default conversation discovery includes their root
-   sessions. Unknown or unreachable paths have an explicit state, not an inferred deletion.
+2. **WS2 — Filter before loading pages.** Apply authorization and the experience's
+   catalog eligibility before pagination. In the native filesystem-backed profile,
+   default project discovery includes confirmed existing workspace directories and
+   their root sessions. Unknown or unreachable paths have an explicit state, not an
+   inferred deletion. Other experiences do not require a local folder to list conversations.
    Broken: paging loads all 25,000 sessions and filters in the browser. Affected: ordinary browsing.
 
 3. **WS3 — Load detail by demand.** History windows, child conversations, large tool
@@ -47,6 +51,10 @@ accepted execution -> runtime admission -> working -> safely evictable when idle
    Protecting an active conversation does not require keeping all its completed
    message, worker and tool bodies resident. Current execution and pending decisions
    retain exact identities; completed detail remains accessible through durable reads.
+   Associated processes and temporary environments can retire or wake through their
+   lifecycle owner only when actual work, other consumers and review holds allow it.
+   Viewer absence alone is not an idle witness; archive is not permission to delete
+   durable conversation or agent memory. Retention follows its separate owner/policy.
    Broken: one slow client grows memory without limit or eviction cancels work. Affected: all users.
 
 5. **WS5 — Charge updates to dependencies.** A resource update touches its record,
@@ -134,6 +142,7 @@ Which directory freshness policy handles offline mounts without noisy catalog ch
 
 | Date | Change | Evidence |
 | --- | --- | --- |
+| 2026-11-07 | Distinguish conversation/native records, scope filesystem eligibility to its catalog profile, and tie idle release to owners/consumers. | [Lifecycle design](../docs/architecture/state-and-storage.md#conversation-participation-and-execution); no DTU hibernation implementation claimed. |
 | 2026-11-07 | Ratify prospective owner-specific disposable payload lifetimes; preserve current authority, durable/native content and exact retry identities. | User-approved finite-lifetime design; [Storage policy](../docs/STORAGE.md#approved-prospective-retention-policy). |
 | 2026-10-30 | Clarify same-conversation history scaling and distinguish protected execution from completed-body residency. | [Long-lived conversations](../docs/architecture/state-and-storage.md#long-lived-conversations); diagnostic fixture in [performance validation](../docs/validation/performance.md#long-lived-conversation-baseline). |
 | 2026-10-30 | Clarify diagnostic ownership and request-scoped preparation under WS5. | Focused runtime progress and preparation checks in [performance validation](../docs/validation/performance.md). |

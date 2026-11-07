@@ -15,7 +15,7 @@ resource subscriptions do not require consumers to import the host implementatio
 ```text
 client -- AHP initialize / listSessions / subscribe / actions --> host
 host -- negotiated snapshots, action envelopes, notifications --> client
-host -- ACP --> session's chosen agent
+host -- ACP --> participating agent's execution adapter
 ```
 
 The [protocol design](../docs/architecture/protocol-fit.md) cites upstream authority;
@@ -38,9 +38,10 @@ The [protocol design](../docs/architecture/protocol-fit.md) cites upstream autho
    baseline requires fresh state; notification-only catalogs are refetched as specified.
    Broken: a delta is applied to an absent base or reconnect repeats intent. Affected: reconnecting clients.
 
-4. **HP4 — Preserve independent lifetimes.** The host owns agent connections and
-   accepted work beyond any viewer connection. Multiple authorized views share that
-   authority. Resource subscriptions alone never grant execution or filesystem permission.
+4. **HP4 — Preserve independent lifetimes.** Host routing, agent connections and
+   admission receipts survive viewer connections; the execution owner retains
+   accepted work. Multiple authorized views use those same owners. Resource
+   subscriptions alone never grant execution or filesystem permission.
    Broken: closing a tab cancels work or bypasses approval. Affected: unattended work and other viewers.
 
 5. **HP5 — Make capability limits visible.** Map agent capabilities to honest host
@@ -62,6 +63,15 @@ The [protocol design](../docs/architecture/protocol-fit.md) cites upstream autho
    closed-epoch boundary before any identity can be forgotten.
    Broken: retry after a lost response starts another turn. Affected: people with unstable connections.
 
+7. **HP7 — Route to the conversation owner.** The experience owns its shared transcript,
+   participant membership and delivery facts. The broker routes authorized reads,
+   inputs and updates without becoming a second transcript store. Agent participants
+   can retrieve their connected conversations through adapters; native model context
+   is not the shared transcript. Workspace grouping adds shared files/context, not
+   another mandatory conversation or workflow authority.
+   Broken: connecting an agent transfers authority over shared history to its private runtime,
+   or a catalog read hydrates every conversation. Affected: participants and host operators.
+
 ## Not in v1
 
 Cross-host execution migration or cross-engine continuation; promote only with separate
@@ -76,6 +86,8 @@ ownership and recovery contracts. No private replacement for AHP's reconciliatio
 - HP6: kill around admission/dispatch and lose replies; count accepted turns and effects.
   Repeat exact/conflicting requests after body expiry, restart and backup recovery;
   preserve unknown outcomes and verify no additional execution.
+- HP7: two agents and a person share one transcript; disconnect/reconnect an agent,
+  retrieve an older page, and change membership without duplicating or reassigning history.
 
 Implementation is not yet verified. [The plan](../docs/architecture/delivery-plan.md) records delivery gates.
 
@@ -88,6 +100,7 @@ Which command receipts can be recovered with upstream identities alone before an
 
 | Date | Change | Evidence |
 | --- | --- | --- |
+| 2026-11-07 | Separate conversation ownership from broker routing and native execution; add HP7. | [Ownership design](../docs/architecture/state-and-storage.md#conversation-participation-and-execution); no current multi-participant conformance claim. |
 | 2026-11-07 | Preserve admission and legacy exact retries independently of disposable detail expiry. | User-approved finite-lifetime design; [Storage policy](../docs/STORAGE.md#approved-prospective-retention-policy). |
 | 2026-10-02 | Ratified for implementation; exclude amplifier-agent as the native backend. | User approval of the plan and direction; implementation evidence remains separate. |
 | 2026-10-02 | Initial HP1–6. | [Protocol review](../docs/architecture/protocol-fit.md). |

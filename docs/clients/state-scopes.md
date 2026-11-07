@@ -3,14 +3,15 @@
 Design note supporting [CS](../../contracts/client-state.v1.md), not an additional
 contract or a statement that every synchronization channel exists today.
 "Local" always needs a qualifier: execution host, workspace, device or client view.
-The [2026-10-02 storage design](../architecture/state-and-storage.md) adds concrete
+The [storage design](../architecture/state-and-storage.md) adds concrete
 client persistence, AHP recovery, catalog filtering and runtime-residency guidance.
 
 ## Proposed ownership and subscriptions
 
 | State | Authority / scope | Who follows it | Client effect |
 | --- | --- | --- | --- |
-| Accepted messages, progress, questions, ownership | Host + conversation | Detail viewers; pending command/decision consumers | Reconcile shared conversation; preserve local draft/scroll |
+| Shared messages and participants | Experience conversation owner under [HP7](../../contracts/host-protocol.v1.md) | Authorized detail viewers and connected participants | Reconcile shared conversation; preserve local draft/scroll |
+| Native progress/history, pending questions and execution ownership | Native execution and existing decision owners under [CS7](../../contracts/client-state.v1.md); host routes their projections | Authorized execution/decision consumers | Retain the participant/target and exact outcome; do not merge private execution history into the shared transcript |
 | Name, activity summary, unread/attention source | Canonical conversation metadata and host summary projection | Interested catalog/attention views | Update small summary; do not load every transcript |
 | Workspace registration, host paths, repository availability | Execution host | Workspace/catalog consumers | Identify the host; do not interpret a remote path as local |
 | Global defaults and provider configuration | One host's selected shared configuration root | Settings viewers and dependent effective configurations | Recompute affected inherited values; no automatic cross-host sync |

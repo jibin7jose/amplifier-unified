@@ -14,6 +14,13 @@ devices through a durable host. Its Amplifier defaults are useful on their own,
 and its public protocol boundaries let people choose other agents, clients and
 optional capabilities. Work and its history outlive the interface viewing them.
 
+A session is a conversation with participants, usually a person and an agent,
+sometimes many people and agents. The experience owns that conversation and its
+shared transcript. An agent's participation is separate from its native execution
+session and memory. Workspaces group conversations and shared context/files.
+These November 7 clarifications describe the destination, not shipped support for
+every participant or process arrangement.
+
 ## Principles
 
 ### 1. Protocols make parts independent
@@ -46,11 +53,16 @@ indexes make them discoverable without loading them into every process.
 Opening a historical conversation loads a view, not an agent runtime.
 Losing a derived cache does not lose accepted work or replay its effects.
 
-### 6. One conversation has one execution authority
-A conversation keeps its agent implementation and native identity.
-Authorized clients can observe and act through the same host without starting
-competing executions. Leaving a view does not cancel work. Switching agent
-implementations is a new conversation, not an implicit conversion of history.
+<a id="6-one-conversation-has-one-execution-authority"></a>
+
+### 6. Conversation and execution have distinct owners
+The experience keeps the shared conversation, participants and transcript. Each
+native execution identity has one writer and retains its engine and continuation
+semantics. Another agent can participate without converting that native history.
+Agents retrieve connected conversations through their adapters and choose their
+own memory/context strategy; the platform does not require a copied transcript or
+private context for every relationship. Leaving a view does not cancel accepted
+work. A workspace container does not become another orchestrator or history owner.
 
 ### 7. Small updates perform small work
 A change visits its resource, dependencies and subscribers. It does not copy,
@@ -68,6 +80,12 @@ Web, TUI, host, agent adapters, discovery and optional capabilities have explici
 repository boundaries. Each can run against a fixture peer. Cross-repo changes
 name their producer, consumers, contract clauses and integration evidence.
 Packaging many components together never restores private runtime coupling.
+
+Components release independently. Unified packages a tested default set with a
+simple installation; people can configure other implementations at the public
+boundaries. Independent ownership and experimentation are the reasons to split,
+not repository count or reuse alone. Repository, process and language boundaries
+need not coincide. Packaging absorbs prerequisites and assembly work for users.
 
 ### 9. Recovery tells the truth
 Clients distinguish local intent, confirmed shared state and unknown outcomes.
@@ -139,6 +157,8 @@ this principle to provenance, freshness, personal memory and validation.
 - A private fork of a standard hidden behind a compatible-looking endpoint.
 - Multiple stores claiming to be the same session's canonical history.
 - A browser session becoming the lifetime or permission boundary of an agent.
+- A mandatory agent workflow, memory layout or central collaboration service
+  imposed by the conversation hub.
 - Requiring a new client to embed the Amplifier runtime to participate.
 - Treating a repository extraction as proof of modularity or performance.
 
@@ -150,6 +170,10 @@ this principle to provenance, freshness, personal memory and validation.
 - Two web clients and two TUIs follow 1 conversation while keeping private drafts.
 - A reviewer runs 1 external agent through our host and our agent in 1 external client.
 - Three teams build against fixture peers in 3 repos before integrated acceptance.
+- Two agents join one conversation without sharing a native writer or moving its
+  transcript into the broker; either can retrieve that conversation when needed.
+- An operator substitutes one component and can identify the actual composition
+  and return to the tested default without losing newer work.
 - An operator clears 1 derived index and recovers accepted history without replay.
 - A release reviewer sees 0 claims that source inspection proves deployed behavior.
 
@@ -157,6 +181,7 @@ this principle to provenance, freshness, personal memory and validation.
 
 | Date | Change | Evidence |
 | --- | --- | --- |
+| 2026-11-07 | Separate experience conversations, agent participation and native execution; package independently released components with configurable alternatives. | Product-owner clarification; [ownership design](state-and-storage.md#conversation-participation-and-execution) and [incremental delivery](delivery-plan.md#next-bounded-batches). No runtime adoption claimed. |
 | 2026-11-06 | Keep context task-relevant, discoverable and subordinate to canonical controls. | User-approved audit and simplification of instructions, scratch and memory. |
 | 2026-10-30 | Use resource-based throughput instead of arbitrary default work-count ceilings. | User-requested removal of artificial limits and optional adjustable controls. |
 | 2026-10-30 | Make operator-selected Full access cover unattended and system-delegated work. | User-requested standing authorization and removal of recurring human gates. |

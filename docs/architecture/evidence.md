@@ -1,7 +1,47 @@
 # Source assessment and evidence boundaries
 
-Reviewed 2026-10-02. This is source research and a recorded synthetic probe, not a
-production trace or proof that the proposed architecture is implemented.
+The October 2 assessment and synthetic probe below retain their original source
+and measurement identities. The separate November 7 review updates ownership and
+extraction choices; neither review is current runtime acceptance of the proposal.
+
+## November 7 ownership review
+
+Reviewed main at
+[`9720e3ee`](https://github.com/microsoft/amplifier-unified/tree/9720e3ee52f210fbba3297c28d2e562e12671435).
+This was targeted source inspection across native execution, history/catalog,
+client/component seams and the earlier candidate proposal. It is not a completed
+whole-codebase audit, a benchmark rerun or a new interoperability qualification.
+
+| Finding / exact source | Consequence for the next batch |
+| --- | --- |
+| [`RuntimeManager`](https://github.com/microsoft/amplifier-unified/blob/9720e3ee52f210fbba3297c28d2e562e12671435/amplifier_web/runtime.py#L466) already starts native root workers; [`WorkerRetention`](https://github.com/microsoft/amplifier-unified/blob/9720e3ee52f210fbba3297c28d2e562e12671435/amplifier_web/runtime_retention.py) owns idle policy | Reuse process/lifecycle owners; extracting a repo does not require another supervisor |
+| [`Children.spawn`](https://github.com/microsoft/amplifier-unified/blob/9720e3ee52f210fbba3297c28d2e562e12671435/amplifier_web/host/children.py#L416) executes delegated sessions within the root worker; [`RuntimeManager.close`](https://github.com/microsoft/amplifier-unified/blob/9720e3ee52f210fbba3297c28d2e562e12671435/amplifier_web/runtime.py#L1709) stops workers | Neither one process per every native child nor survival of host shutdown is current behavior |
+| [`SessionStore`](https://github.com/microsoft/amplifier-unified/blob/9720e3ee52f210fbba3297c28d2e562e12671435/amplifier_web/host/storage.py) wraps Foundation history; [`runtime_worker.py`](https://github.com/microsoft/amplifier-unified/blob/9720e3ee52f210fbba3297c28d2e562e12671435/amplifier_web/runtime_worker.py#L874) acquires native writer ownership | Preserve native continuation and exclusive writer identity when separating experience conversations from agent participation |
+| [`HistoryDirectory`](https://github.com/microsoft/amplifier-unified/blob/9720e3ee52f210fbba3297c28d2e562e12671435/amplifier_web/history_directory.py#L781) already selects bounded SQL pages; [`TranscriptWindowReader`](https://github.com/microsoft/amplifier-unified/blob/9720e3ee52f210fbba3297c28d2e562e12671435/amplifier_web/transcript_window.py#L110) has a selected-history read boundary | Preserve these distinct readers; do not claim dormant discovery requires every agent to run or replace native writers with an index |
+| [`shell-sdk`](https://github.com/microsoft/amplifier-unified/tree/9720e3ee52f210fbba3297c28d2e562e12671435/packages/shell-sdk) already exports a package API | First extraction can publish the existing interface with standalone authoring fixtures, before a runtime or transport migration |
+
+The retained [PR448 distribution manifest](https://github.com/microsoft/amplifier-unified/blob/20f6bb078617f4d85d2f11932d103a69c8577fa2/distribution/components.json)
+and its packaged host/native integration artifacts demonstrate prior implementation
+work, not just proposed repository names. Selected artifact inspection found ACP
+process ownership, resume/load handling and retirement behavior worth reusing.
+The prototype predates current main's history readers and lifecycle fixes; compare
+and adapt those changes before claiming parity. Public availability and independent
+installation of every referenced dependency still need qualification.
+
+Constellation research was retained at exact sources:
+[umbrella `d0347431`](https://github.com/microsoft/amplifier-constellation/tree/d03474310e74f0b5f7b2de1b1ca4c895783c0e9b),
+[Runtime `1ce2aede`](https://github.com/microsoft/amplifier-constellation-runtime/tree/1ce2aede54a16ed2377e9073ec5ec1656d624bc6),
+[Instance `6fe76d67`](https://github.com/microsoft/amplifier-constellation-instance/tree/6fe76d6738f4c10debdcbc554815eff022b71868).
+Its experience/connector/runtime separation informs the proposal. It does not
+establish native Unified compatibility: connection lifetime and runtime memory
+remain implementation-specific, and Rust alone does not remove full selected-history
+loading/serialization. Reuse appropriate interfaces without importing a mandatory
+scheduler, memory layout or agent workflow.
+
+The [candidate README](../candidates/modular-e2e-architecture/README.md#relationship-to-current-direction)
+identifies superseded assumptions while preserving its original source audit and
+diagrams. The [next batches](delivery-plan.md#next-bounded-batches) identify the
+runtime, packaging and experience checks that remain to be performed.
 
 ## Unified baseline
 

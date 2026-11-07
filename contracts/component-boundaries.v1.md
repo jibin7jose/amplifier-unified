@@ -46,9 +46,14 @@ anonymous retries and authenticated mutations across component boundaries.
    Broken: an adapter README is reported as passing runtime compatibility. Affected: community adopters.
 
 5. **CB5 — Keep releases composable.** Components version and release independently.
-   The distribution tracks supported latest releases through qualification and safe
-   activation, preserving prior receipts for rollback rather than standing pins.
-   Broken: source currency is confused with a freshly loaded worker. Affected: operators.
+   Unified publishes an exact tested default set and absorbs installation/assembly
+   prerequisites. Users can configure alternatives through public interfaces. Report
+   actual selected versions, compatibility limits and how to return to the default;
+   an alternative is not automatically part of its qualification. Updates follow
+   qualification and safe activation, preserving prior receipts and newer user work.
+   Broken: independent releases force manual source assembly, a private allowlist
+   prevents substitution, or a source update is confused with a freshly loaded worker.
+   Affected: operators and component developers.
 
 6. **CB6 — Isolate implementation lanes.** Each lane names its writable repo/paths,
    public producer/consumer seam, dependencies and falsifiable acceptance before
@@ -65,7 +70,9 @@ measured isolation or deployment requirement warrants the additional boundary.
 - CB1/CB2: boot each component with fixture peers; enforce dependency/import checks.
 - CB3: resolve contract references and generated-schema provenance.
 - CB4: execute both directions of external interoperability qualification.
-- CB5: record package, installed process and fresh worker versions during release.
+- CB5: install the packaged default without sibling checkouts, substitute a component
+  through its public interface, record actual package/process/worker versions, and
+  return to the default while preserving newer data and uncertain effects.
 - CB6: review the lane brief and rerun its seam test outside the implementing agent.
 
 ## Open questions
@@ -77,5 +84,6 @@ Which existing packages already own a suitable implementation, avoiding duplicat
 
 | Date | Change | Evidence |
 | --- | --- | --- |
+| 2026-11-07 | Clarify independent component releases, tested default composition and configurable alternatives. | Product-owner direction; [repository map](../docs/architecture/repositories.md). Existing bundled compatibility remains until a boundary is deliberately extracted. |
 | 2026-10-02 | Ratified for implementation; exclude amplifier-agent as the native backend. | User approval of the plan and direction; implementation evidence remains separate. |
 | 2026-10-02 | Initial CB1–6. | [Refreshed Converge references](../docs/architecture/evidence.md). |

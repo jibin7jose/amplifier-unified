@@ -60,6 +60,23 @@ Keep evidence bound to the source and inputs actually checked.
 
 ## Keep guidance small and current
 
+Record the principle behind a choice at its canonical owner: the user outcome,
+the failure it prevents, and what evidence would justify changing it. Link that
+short rationale from the relevant interface or contributor entrypoint so an agent
+with limited context can find it while editing. Use a design note for alternatives
+and history; do not copy the rationale into every bundle or task brief. Revise it
+when the product direction, owner or supporting evidence changes, preserving the
+reason for the change rather than accumulating contradictory instructions.
+
+Use compiler/type checks, LSP references, dependency fixtures and concise structural
+warnings to provide feedback during edits. Complexity and file-size thresholds
+should be configurable, advisory and focused on changed source; generated assets
+and retained evidence have different owners. A lower score is not proof of simpler
+design, and warnings must not reward splitting one responsibility into many thin
+wrappers. Preserve behavior through focused boundary tests and DTU/Reality Check
+experience validation. These are engineering tools for the ecosystem, not a
+mandatory governance engine or universal workflow inside the product.
+
 Ship retirement of manual workarounds with the engineered mechanism that replaces
 them. Keep historical diagnosis and incident receipts available on demand, not in
 always-loaded instructions. Following the

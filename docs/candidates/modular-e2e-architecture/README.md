@@ -14,6 +14,18 @@ prerequisite for the first useful substitution.
 
 ## Relationship to current direction
 
+**November 7 clarification:** the [current ownership design](../../architecture/state-and-storage.md#conversation-participation-and-execution)
+and [bounded delivery plan](../../architecture/delivery-plan.md#next-bounded-batches)
+supersede several assumptions in this historical candidate. A conversation belongs
+to its experience and has participants; it is not universally one engine's session
+or a projection of that engine's entire history. Native execution history retains
+its own owner. Workspaces are containers with shared context, not a required
+collaboration/assignment authority. Converge workflows, fresh child contexts, fixed
+budgets and model floors are optional agent/runtime choices, not universal product
+requirements. Repository separation also does not require one process per repo.
+The October source audit, diagrams and validation receipt below remain frozen
+historical material; they do not qualify these updated semantics or current main.
+
 The existing [architecture](../../architecture/README.md),
 [architecture vision](../../architecture/VISION.md), [repository guidance](../../../AGENTS.md)
 and adopted [host](../../../contracts/host-protocol.v1.md),

@@ -17,6 +17,10 @@ and migration, not an automatic cutover from main.
 
 ## Sequence and gates
 
+The November 7 refinement below defines the next small batches. The broader waves
+and Q matrix remain migration qualification, not prerequisites for every package
+extraction or unrelated main release.
+
 | Wave | Work | Exit evidence |
 | --- | --- | --- |
 | 0: establish seams | Refresh ownership, finish full native control inventory, settle initial capability floor; create public fixtures, version matrix and performance traces | Reviewed interfaces, runnable AHP/ACP fixtures, independently reproducible baseline and proposed budgets |
@@ -40,7 +44,7 @@ the exact target checkout/files. Every lane receives the common brief below.
 | --- | --- | --- | --- |
 | L0: interfaces/fixtures, HP1/AP4/CB3–4 | `amplifier-interop`, extension repo; this contract packet under one editor | Upstream schemas -> all lanes; first prerequisite is supported versions/capability floor | Minimal fake ACP agent + AHP host/client, failure fixtures; broken if peers need private implementation imports |
 | L1: native ACP, AP1–6 | Adapter repo; extract from `runtime.py`, `runtime_worker.py`, `runtime_controls.py`, `execution*.py` | Native runtime -> standard ACP -> host and Zed; depends only on L0 schemas | New/prompt/stream/permission/cancel/load/resume plus complete limitation inventory; broken if a feature silently disappears or native history forks |
-| L2: generic host, HP1–6/CS3–4 | Host repo; `server.py`, generic parts of `service.py`, command/ownership plumbing | ACP events -> AHP resources; use fake agent/catalog until L1/L3 ready | Two viewers, reconnect, receipt crash tests; broken if native imports or a global snapshot are needed |
+| L2: generic host, HP1–7/CS3–4 | Host repo; `server.py`, generic parts of `service.py`, command/ownership plumbing | ACP events -> AHP resources; use fake agent/catalog until L1/L3 ready | Two viewers, reconnect, receipt crash tests; broken if native imports or a global snapshot are needed |
 | L3: catalog/hints, WS1–3/WS5–6 | Catalog repo; `automatic_history.py`, `history_watch.py`, `native_catalog.py`, history query; separately owned CLI/Foundation changes | Native durable facts/hints -> paged catalog -> host/agents; independent of L1 runtime completion | 4k/25k fixture, lost hints/rebuild, no agent starts; broken by synchronous historical scans or lost records |
 | L4: web/local state, CS2–4/CX1–2/CB1 | Web repo; `frontend/`, persistence and AHP backend adapter | Upstream AHP + fixture host -> browser; depends on L0 only | Draft survives browser restart, zero typing traffic, scoped rendering; broken by shared private drafts or whole-app rebuild |
 | L5: TUI/AHP, CS1–4/CX1–7/CB1 | Existing `amplifier-app-tui`; connected transport/persistence seams | AHP fixture then actual host -> real terminal; independent of web | Actual Ratatui transcript/approval/reconnect tests; broken if connected mode imports native execution |
@@ -161,3 +165,77 @@ versions, which advanced controls can use existing upstream extensions, and the
 last unsupported legacy resume cases. None blocks L0 fixture work. Record their
 resolution with evidence rather than silently inventing protocol fields or
 discarding supported product behavior.
+
+## Next bounded batches
+
+Refined November 7 against [current source and retained prototypes](evidence.md#november-7-ownership-review).
+This sequence delivers independent development before a full protocol migration.
+Each row is a separate reviewable change; no repository is created by this proposal.
+
+| Batch / owner | Deliverable | Focused exit evidence |
+| --- | --- | --- |
+| 1: shell SDK / component authoring | Extract `packages/shell-sdk`, its authoring instructions and a standalone fixture consumer into a releasable package; retain existing interface semantics | Build/install the artifact without private app imports; load one component in an owned Unified DTU; incompatible interface reports a useful failure |
+| 2: portable clients and capabilities | Separate authored components/appearance artifacts, then qualifying document/rendering or publishing libraries behind named adapters | Independent fixture consumer and actual integration path; built-in shell imports of settings/navigation/API remain app-owned until adapters replace them |
+| 3: native execution and conversation proof | Reuse current root workers/retention and retained ACP adapter mechanisms; define conversation, participation and execution identities distinctly | The two-stage experience proof below, with native history and accepted-work ownership preserved |
+| 4: catalog/read boundary and Rust comparison | Define typed catalog queries and a separately named selected-history-page interface; retain native writers; compare a bounded Rust implementation only after fixtures exist | Same inputs, visible results, error/expiry semantics and cold/warm cost measurements; return to current implementation without rewriting history |
+| 5: independent whole-client release | Build web client against an exact current HTTP/SSE fixture and packaged server; introduce a supported public compatibility boundary | Install a tested default, select a compatible alternative, and return to the default while retaining new work; AHP implementation follows separately |
+
+Batch 1 can start without selecting the host language. Batches 2 and 4 need not
+wait for all external ACP peers. The SDK's extraction must preserve the current
+extension validator: it fingerprints static JavaScript assets, so narrowing that
+coupling requires an explicit validator/host compatibility decision, not just a
+package move. Existing bundled web/server rules continue until their public seam
+and independent adoption policy are deliberately introduced.
+
+### First experience proof
+
+Use an owned DTU, synthetic state and Reality Check/user-journey simulation. Reuse
+the current root subprocess and `WorkerRetention` mechanisms, adapting the retained
+native ACP prototype rather than adding another supervisor. First prove one
+conversation participant backed by native execution and a second implementation
+in a separate conversation through the same boundary. Then prove two agent
+participants in one experience-owned conversation, with distinct authorship and
+private execution identities. An agent may also access two connected conversations
+without the host dictating how its runtime organizes context or memory.
+
+Exercise send/stream, background work with zero viewers, disconnect/reconnect,
+Stop, standing Full authorization, revocation, lost reply, duplicate delivery,
+idle retirement/wake and failure recovery. System-delegated work needs no new
+human-presence requirement. Keep unknown effects unknown; neither replay nor a
+second writer is a recovery shortcut. Shared conversation retrieval must respect
+membership and preserve authorship; native private history is not automatically
+public conversation content. The user experience must remain honest when a peer
+lacks a capability.
+
+Measure fixed active work while increasing historical catalog size, then vary
+selected history size and concurrent workers independently. Report host and worker
+CPU/RSS separately, encoding/copy volume, catalog/history reads, latency, start/wake
+cost and retained resources after churn. Multiple processes enable scheduling;
+they do not prove useful parallelism or remove serialization. Preserve exact
+source, installed artifacts, provider and cold/warm identities under the existing
+[performance policy](../validation/performance.md). Synthetic-provider results do
+not establish real-provider acceptance.
+
+Viewer loss, host-process loss, settled-worker retirement, DTU stop/start and true
+suspend/resume are distinct checks. Current host shutdown stops native workers;
+the proof must report that behavior rather than claim independent host survival.
+Keep resources needed by accepted work, other consumers or review holds. Archive
+may trigger reconciliation after those checks; it does not delete durable history.
+Do not advertise DTU hibernation until its owning tool supports and qualifies it.
+
+### Decisions before the corresponding implementation
+
+| Decision | Why it cannot be settled by moving files |
+| --- | --- |
+| Conversation/participant mapping to AHP and ACP | ACP execution context is not automatically the shared conversation; qualify authorship, membership, delivery identities and unsupported-peer behavior |
+| Surviving host-process replacement | Existing root workers stop with the host; use a proven independent owner or a tested drain, with recovery and exclusive execution intact |
+| Resource wake and retirement | Existing tools own stop/remove/reconcile; choose supported wake semantics and shared-consumer handling before tying them to conversation archival |
+| Public component compatibility and distribution | Confirm accessible artifacts, interface revision policy, installed versions and default lock; alternatives must be usable without rebuilding the ecosystem |
+| Rust target and packaging | Compare the bounded reader after the interface fixture; compiler feedback and binary delivery are benefits to measure, not evidence of better architecture by themselves |
+
+The turnkey release entrypoint remains a required follow-on tooling/workflow
+deliverable. Choose its owner after the first independently releasable artifact;
+it should guide an agent through existing focused checks and report exact published
+and adopted versions. It is not a universal agent workflow or an extra approval
+service. Unified packages a tested set; component publication and changing that
+default are distinct operations.

@@ -1,7 +1,8 @@
 # Repository and ownership map
 
 Proposal supporting [CB](../../contracts/component-boundaries.v1.md).
-Names marked **new** are proposed, not repositories created by this packet.
+Names marked **new** are proposed responsibility slots, not instructions to create
+repositories. Compare retained candidate implementations before choosing a home.
 Use existing ownership and public APIs where they fit. Independent repositories
 may publish libraries, executables or optional capabilities; not all are services.
 
@@ -10,26 +11,30 @@ may publish libraries, executables or optional capabilities; not all are service
 | Repository | Disposition and responsibility | Public seam / owns | Must not depend on |
 | --- | --- | --- | --- |
 | `amplifier-unified` | Existing; become family/distribution, installer, integration docs and release composition | Component manifest, installation and adoption receipts; family vision | Private copies of client/agent implementation |
-| `amplifier-client-web` | **New**; extract browser from `frontend/` and relevant static/asset build | AHP client, browser persistence, UI, accessibility, optional renderers | Python service objects, native session files |
+| Web client owner | **Proposed extraction** of `frontend/` and relevant assets; compare retained `amplifier-unified-client-web` candidate | Browser persistence, UI, accessibility and transport adapter; current HTTP/SSE first, qualified AHP later | Python service objects, native session files |
+| Shell SDK and authored components | **Proposed extraction** of `packages/shell-sdk`, authoring guidance and fixtures; components may release separately | Public slot/navigation/renderer contracts and validation | Built-in shell internals, app API singleton or private React contexts |
 | `amplifier-app-tui` | Existing separate repo; evolve connected backend to AHP | Terminal interaction, local persistence and AHP; replace legacy CLI over time | Web rendering or native runtime in connected mode |
 | [`amplifier-client-macos`](https://github.com/microsoft/amplifier-client-macos) | Existing; independently released Amplifier for Mac, with optional Tempo | Current HTTP client, native interaction, private local state, signing/updates; [desktop scope](../clients/desktop-clients.md) | Host internals, agent runtime, duplicated shared semantics |
 | Windows desktop client (repo unassigned) | Planned; select native mechanisms and supported journeys before implementation | Shared DC/CX/CS behavior; platform-owned presentation and distribution | Mac-only frameworks, private host objects, copied normative contracts |
-| `amplifier-host` | **New** target owner; extract generic admission, AHP, ACP orchestration, authorization and lifecycle | AHP public server, ACP client, scoped host records | Amplifier core/loop imports, web widgets, Converge domain types |
-| `amplifier-agent-acp` | **New**; thin adapter around current native application runtime | ACP agent, native runtime composition, ownership and identity mapping | Web client, generic host private objects |
+| Generic host owner | **Proposed extraction**; compare `amplifierd` and retained `amplifier-unified-host` candidate | Admission, routing, negotiated AHP/ACP, catalog/resource interfaces and lifecycle coordination | Amplifier core/loop imports, conversation bodies for routine routing, web widgets, Converge domain types |
+| Conversation experience owner | **Proposed boundary**; Unified and external experiences can be different implementations | Shared transcript, participants, delivery identities and authorized retrieval; legacy projection preserves native history | Every agent's private working context or mandatory collaboration workflow |
+| Native ACP adapter owner | Reuse/evolve the retained adapter where qualified; retain current Core/Foundation execution | ACP agent, native runtime composition, ownership and execution identity mapping | Web client, generic host private objects |
+| Experience connectors / agent participation | Reuse Constellation connectors and adapter SDKs where their semantics fit | Conversation access and event delivery to an agent; runtime chooses context and memory strategy | A second canonical conversation transcript or one required agent memory layout |
 | `amplifier-core`, `amplifier-foundation`, module/bundle repos | Existing; retain kernel and reusable native mechanisms | Native composition, persistence and ownership mechanisms | AHP UI concepts or product-specific catalogs |
 | `amplifier-agent` | Existing separate building block; excluded from this migration | Its own independent product contracts | Native Unified execution; it is not our current or intended runtime |
-| `amplifier-session-catalog` | **New**; extract discovery/index/query, including legacy writer hints | Rebuildable summaries, workspace existence and parent indexes; filtered paged reads | Agent initialization, transcript mutation, browser selection |
-| `amplifier-protocol-extensions` | **New**; small owner of Amplifier-only negotiated schemas and generated bindings | Extension registry, permissions, versions, fallback fixtures | Forked upstream core protocol or UI implementation |
-| `amplifier-client-kit` | **New**, only shared client mechanisms | AHP SDK integration, local intent/cache interfaces, optional renderer registration | Host/global app store; duplicated upstream reducers |
-| `amplifier-interop` | **New**; independent seam fixtures, load/recovery probes and real-peer qualification | Replayable fixtures, capability matrix and exact evidence manifests | Production runtime ownership or shared user state |
+| Catalog owner | Extract current native catalog discovery/index/query; compare existing candidates before assigning a repo | Rebuildable summaries, workspace existence and parent indexes; filtered paged reads | Agent initialization, transcript mutation, browser selection |
+| Protocol extensions owner | Compare retained `amplifier-unified-protocol-extensions` candidate | Amplifier-only extension registry, permissions, versions, fallback fixtures | Forked upstream core protocol or UI implementation |
+| Client helpers owner | Compare retained `amplifier-ahp-client-kit` candidate; only shared mechanisms | AHP SDK integration, local intent/cache interfaces, optional renderer registration | Host/global app store; duplicated upstream reducers |
+| Interoperability fixtures owner | **New** independent seam fixtures, load/recovery probes and real-peer qualification | Replayable fixtures, capability matrix and exact evidence manifests | Production runtime ownership or shared user state |
 
-The host extraction must first compare the existing `amplifierd` daemon and current
-Unified host boundaries. Reuse tested mechanisms that fit; do not establish two
-competing generic hosts or silently declare existing REST/SSE to be AHP. The lane
-records whether `amplifier-host` is a new home or an agreed evolution of an existing
-owner before moving code. Naming does not block contract/fixture work.
+The [retained distribution prototype](https://github.com/microsoft/amplifier-unified/blob/20f6bb078617f4d85d2f11932d103a69c8577fa2/distribution/components.json)
+already names component packages. Its existence does not establish current parity,
+public artifact availability or adoption. Resolve accessible source, packages,
+maintainers and current contract coverage before declaring an independent lane
+ready. Reuse tested mechanisms; do not establish competing generic hosts or call
+existing HTTP/SSE AHP. Naming does not block contract/fixture work.
 
-`amplifier-client-kit` can initially publish language-specific packages in one small
+The client helpers owner can initially publish language-specific packages in one small
 repo; split TS and Rust ownership if it helps teams. It owns recovery helpers and
 client persistence contracts, not a framework that dictates all UI state. Upstream
 SDKs keep their own schemas and reducers. Do not translate every action twice merely
@@ -37,7 +42,7 @@ to put an Amplifier name around it.
 
 ## Additional useful extractions
 
-These are concrete follow-on boundaries, not reasons to delay the first protocol
+These are concrete follow-on boundaries, not reasons to delay the first useful
 slice. Each becomes its own repo when its seam fixture is written; preserve an
 existing suitable repo if the inventory finds one.
 
@@ -50,7 +55,7 @@ existing suitable repo if the inventory finds one.
 | `amplifier-scheduling` (**new extraction or existing owner reuse**) | `amplifier_scheduling/`, schedules; compare `amplifier-drumbeat` | Durable schedule/trigger ownership and host admission interface; work runs with zero viewers |
 | `amplifier-operations` (**new extraction**) | `amplifier_operations/`, durable questions/tasks | Durable operations API and capability; independent of a particular agent engine and frontend |
 | `amplifier-publishing` (**new extraction**) | `amplifier_publishing/` | Publishing library/capability and resources; own tests without an app boot |
-| `amplifier-worktrees` (**new extraction**) | `amplifier_worktrees/` | Workspace/worktree lifecycle library with explicit ownership; independent CLI/host consumers |
+| Worktree/resource lifecycle owner (**proposed extraction**) | `amplifier_worktrees/`, `amplifier_web/task_environments.py` and their owning tools | Exact resource ownership, consumers, reconciliation and cleanup; archive does not destroy active work or review holds |
 | `amplifier-portability` (**new extraction**) | `amplifier_portability/` | Explicit transfer/inspection and receipts; never implicit cross-engine conversion |
 | Recall/history capability owner | `amplifier_recall/`, native history readers; Foundation and catalog overlaps | Search/read-only enrichment; index loss never changes native resume |
 | ACP client bridge owner | Reuse an existing compatible bridge or propose a small separate repo | ACP server facing an editor, AHP client facing the host; no second history/authority, capability loss documented |
@@ -66,6 +71,8 @@ that still imports a sibling's private source has not completed its boundary.
 distribution --> released components and compatibility manifest
 web/TUI --> upstream AHP SDK + optional client helpers/renderers
 host --> upstream AHP server behavior + ACP client + catalog/resource interfaces
+conversation experience --> shared transcript + participation/connector interfaces
+connector --> experience conversation API + agent's chosen runtime interface
 Amplifier ACP adapter --> native runtime/Core/Foundation/modules/bundles
 optional capability --> published host/resource/client-extension interfaces
 legacy CLI --> native persistence + transitional discovery hint
@@ -76,6 +83,26 @@ Keep native metadata naming/configuration authority in one place. The host's
 display projection or catalog must not become another writer of a session's
 canonical name. Make commands to change native facts go through their owning
 adapter; then update index/projections from the confirmed result.
+
+## First separations against current source
+
+These observations are pinned in the [November 7 review](evidence.md#november-7-ownership-review).
+They distinguish a package boundary from merely moving a directory.
+
+| Source / boundary | Small reviewable change | Remaining design decision |
+| --- | --- | --- |
+| `packages/shell-sdk` and authoring fixtures | Publish the existing public API independently; install a fixture component from the built package | Package/repository home and supported interface revision |
+| Built-in shell and appearance | Separate portable component/style artifacts from app-owned navigation, settings and compilation | Explicit callbacks/resource adapters before extracting coupled built-ins |
+| Whole web client | Build/install against the current HTTP/SSE fixture and exact tested server | Independent public compatibility policy; later AHP mapping is separate |
+| `RuntimeManager`, `WorkerRetention`, native adapter | Reuse existing root workers and idle admission checks for the vertical proof | Host-process failure survival and delegated-child isolation are separate choices |
+| Native catalog/history readers | Define typed metadata and selected-page reads; compare existing implementations | Which bounded reader merits a Rust pilot, with native writers unchanged |
+| Conversation and participation | Define ownership, authorship and delivery fixtures | Faithful multi-participant protocol representation; no invented standard fields |
+
+Repositories, processes and languages are separate decisions. Extracting a library
+does not add a daemon. Independent release requires a usable artifact and fixture,
+not a permanent need to assemble sibling source checkouts. A Rust executable does
+not remove Python prerequisites for native execution; the distribution must handle
+remaining runtime dependencies if it promises a simple installation.
 
 ## How parallel work becomes practical
 

@@ -7,6 +7,14 @@ The vision and contracts are ratified by user approval on 2026-10-02.
 Numeric performance budgets remain candidate targets pending measurement.
 This packet changes documentation; it does not establish protocol conformance.
 
+**November 7 ownership clarification:** the family vision and contracts now
+distinguish experience-owned conversations, agent participation and native
+execution. [State/storage](state-and-storage.md#conversation-participation-and-execution)
+explains the mapping; [next batches](delivery-plan.md#next-bounded-batches) give the
+concrete proposal. Current source evidence is recorded separately from the October
+baseline. No repository extraction, migration or implementation acceptance follows
+merely from this documentation update.
+
 **Current main application priority (October 14):** the approved
 [bounded-data implementation plan](../../plans/2026-10-14-main-working-set-architecture.md)
 applies the working-set and ownership principles to today's application first.
@@ -41,10 +49,12 @@ from the human-facing meaning of client. A direct ACP editor can use the Amplifi
 agent without Unified; it does not automatically receive Unified's multi-client
 coordination. Two hosts cannot concurrently own the same writable native session.
 
-Bind a conversation to its **agent implementation and native session identity**,
-not its originating browser or terminal. An authorized compatible UI can attach
-later. Cross-engine continuation is out of scope. Agent replacement is supported
-for new conversations; UI replacement is supported within negotiated capabilities.
+Bind **native execution** to its agent implementation and native session identity,
+not its originating browser or terminal. The experience conversation can have
+several people and agent participants; its shared history is distinct from their
+working context. An authorized compatible UI can attach later. Cross-engine
+continuation remains out of scope: a new participant does not convert an existing
+native execution. UI replacement follows negotiated capabilities.
 
 **Native backend clarification:** Unified uses Core `AmplifierSession` through
 Foundation prepared bundles today. `microsoft/amplifier-agent` is a separate
@@ -74,16 +84,19 @@ building block and is excluded from this migration.
 2. AHP owns replication semantics. Clients retain resource snapshots and consume
    actions with the upstream reducer/reconciliation model. Missing baselines mean
    resubscribe; reconnect is not permission to replay business commands.
-3. Catalog queries are disk-indexed, filtered and paged. Default visibility means
-   a confirmed existing workspace directory and a root conversation. Child
-   sessions become relevant when a specific conversation requests them.
-4. Native transcripts, metadata and retained event logs stay durable. The catalog
-   and rendered projections are rebuildable indexes, not new resume authorities.
+3. Catalog queries are disk-indexed, filtered and paged. The native filesystem
+   profile defaults to existing workspace directories and root conversations;
+   other experiences supply their own eligibility without a folder prerequisite.
+   Child sessions become relevant when a specific conversation requests them.
+4. Experience conversations and native execution records retain their owners.
+   Native transcripts, metadata and retained events stay durable. Catalogs and
+   rendered projections are rebuildable indexes, not new resume authorities.
 5. Running work, pending decisions and active ownership are protected. Idle
    runtimes are evictable independently of whether a client can read their history.
    Reading or selecting a historical chat does not initialize its agent.
-6. Repository boundaries follow contracts. A repo need not become a network
-   service. Small independently versioned packages are useful boundaries too.
+6. Repository boundaries follow contracts. Components release independently;
+   Unified packages a tested default and supports configured alternatives. A repo
+   need not become a network service. Small packages are useful boundaries too.
 7. Amplifier provider, tool, hook, loop, context, bundle and capability modularity
    stays behind the ACP adapter. Plain ACP peers get an honest baseline; advanced
    controls require advertised support and have an explicit unavailable state.
@@ -110,6 +123,12 @@ every ACP editor, or that vendor consumer apps accept arbitrary AHP hosts. Those
 are separate compatibility claims requiring actual tests.
 
 ## First milestone
+
+Start with the [bounded batches](delivery-plan.md#next-bounded-batches): an existing
+public SDK extraction and a small native/alternative execution journey. The wider
+interoperability milestone below remains useful evidence before declaring the
+architecture qualified; it is not a prerequisite for every independent extraction
+or the normal release train.
 
 Build one complete path: a web client and a real TUI use AHP to observe and control
 one native Amplifier conversation through ACP; a second agent runs through the

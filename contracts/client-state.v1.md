@@ -10,7 +10,8 @@ Unified service and runtime owners, Foundation maintainers, and all connected cl
 ## What it is
 
 ```text
-Host + conversation identity -> one execution owner -> canonical session storage
+Conversation identity -> experience owner -> shared transcript and participants
+Participant execution binding -> exclusive native writer -> native continuation storage
 Client A -> conversation X + private presentation + explicit subscriptions
 Client B -> conversation X or Y + its own presentation + explicit subscriptions
 Configuration: persisted scope -> effective merge -> mounted runtime revision
@@ -24,8 +25,9 @@ Command: pending -> rejected / accepted / unknown; accepted -> execution outcome
 ## The promises
 
 1. **CS1 — Identify the host and the target.** Commands capture the intended host and
-   conversation before waiting. Multiple clients share that conversation's execution;
-   detaching a view does not stop it. Client identity is not authentication.
+   conversation and, where relevant, participant/execution target before waiting.
+   Multiple clients use the same conversation and execution owners; detaching a view
+   does not stop accepted work. Client identity is not authentication.
    Broken: switching selection retargets pending input or a second viewer creates a second runtime. Affected: concurrent users.
 
 2. **CS2 — Separate shared state from each view.** Accepted work, questions and durable
@@ -63,10 +65,14 @@ Command: pending -> rejected / accepted / unknown; accepted -> execution outcome
    pending/restart requirement; unrelated sessions and explicitly overridden fields remain unaffected. Refreshing a catalog is not editing configuration or mounting a provider.
    Broken: saved defaults are labelled active in an unchanged worker. Affected: operators choosing runtime behavior.
 
-7. **CS7 — Preserve canonical storage and exclusive execution.** Native adapters own
-   canonical history and coordinate writers using their mechanisms (Foundation for
-   native Amplifier). Connected clients mutate through the host; independent apps acquire
-   ownership before writable loading. Reacquisition reloads current data; release does not prove effects stopped.
+7. **CS7 — Preserve canonical storage and exclusive execution.** The experience owns
+   shared conversation history under [HP7](host-protocol.v1.md). Native adapters own
+   execution history and coordinate its writers using their mechanisms (Foundation
+   for native Amplifier). The current single-agent adapter may expose its native
+   history as the conversation view; that compatibility mapping does not merge the
+   general identities or require a second transcript store. Connected clients mutate
+   through the host; independent apps acquire ownership before writable native loading.
+   Reacquisition reloads current data; release does not prove effects stopped.
    Broken: two owners write, a stale worker overwrites history, or a second store controls the name. Affected: all shared-session participants.
 
 8. **CS8 — Target device effects explicitly.** Microphone, camera, clipboard, local files,
@@ -95,6 +101,7 @@ Which advanced controls need negotiated extensions beyond standard AHP/ACP?
 
 | Date | Change | Basis |
 | --- | --- | --- |
+| 2026-11-07 | Distinguish shared conversation ownership and participant targets from exclusive native execution; preserve the single-agent compatibility mapping. | [Conversation ownership](../docs/architecture/state-and-storage.md#conversation-participation-and-execution); multi-participant implementation remains unqualified. |
 | 2026-10-02 | Ratified for implementation; exclude amplifier-agent as the native backend. | User approval of the plan and direction; implementation evidence remains separate. |
 | 2026-10-02 | Client-local persistence, AHP recovery and generic native ownership. | [Protocol architecture](../docs/architecture/README.md); user-approved direction, ratified below. |
 | 2026-09-20 | Initial draft, CS1–8. | Shared-state discussion and source/owner boundary review. |

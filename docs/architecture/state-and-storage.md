@@ -4,6 +4,82 @@ Design supporting [CS](../../contracts/client-state.v1.md),
 [HP](../../contracts/host-protocol.v1.md) and [WS](../../contracts/working-set.v1.md).
 This describes the target, not completed changes to current persistence.
 
+## Conversation, participation and execution
+
+The experience owns a **conversation/session**: its shared transcript, participants
+and delivery facts. This may be the Unified conversation experience, Slack,
+Minecraft or another experience. A browser is a view into that owner, not the only
+place its conversation exists. A workspace groups conversations and shared
+context/files; it does not prescribe a work scheduler or agent workflow.
+
+An **agent instance** participates through a connector/adapter. It may join several
+conversations, and a conversation may include several agents and people. The
+instance/runtime/adapter chooses its memory, working context and optional copies.
+It can retrieve connected conversations when useful. Neither one private context
+per relationship nor one global model history is a platform requirement.
+
+An **execution binding** identifies the native engine/session and its exclusive
+writer. It is not the shared conversation ID. Existing native history remains
+engine-bound; adding another participant does not convert it. Agents respond to
+their supported connection/message/event triggers and may deliver through chat,
+external work, or both. A software factory can implement that boundary without
+exposing its internal harness. [HP7](../../contracts/host-protocol.v1.md) and
+[AP3](../../contracts/agent-protocol.v1.md) own the observable promises.
+
+```mermaid
+flowchart LR
+    UI[Web / terminal / native views] <--> B[Broker: routing and admission references]
+    B <--> E[Experience: conversation and participants]
+    E <--> C[Connector: agent participation]
+    C <-->|ACP execution where supported| A[Agent instance / runtime / factory]
+    A --> M[Its own working context and memory]
+    B --> I[Rebuildable paged metadata catalog]
+    E -. metadata changes .-> I
+    B --> L[Existing process and resource lifecycle owners]
+    L -. wake / settle / retire .-> A
+    E --> T[Shared transcript and resource references]
+```
+
+These are responsibilities, not seven new services. The host may carry the ACP
+transport while the connector owns its experience-specific mapping. Shared host
+records contain locators, small summaries, routing/authority references and
+admission outcomes; they do not mirror conversations or inspect model histories.
+Relaying requested content still requires transport encoding. Moving a full scan
+to another process does not remove that scan: measure broker and owner costs.
+
+For legacy sessions, an experience adapter exposes the existing authorized history
+view without rewriting native files or making a second canonical transcript.
+Native continuation, tools, reasoning and pending effects stay with their current
+owner. This legacy projection does not prove the new multi-participant experience.
+That path needs explicit authorship, ordering, duplicate-delivery and membership
+behavior; it must not label every agent's output as one assistant or leak private
+working context into the shared conversation.
+
+### Process and resource placement
+
+Current Unified already uses per-session native root workers and an idle-retention
+owner; the remaining work is not simply to add subprocesses. Reuse
+[`RuntimeManager`](../../amplifier_web/runtime.py),
+[`WorkerRetention`](../../amplifier_web/runtime_retention.py) and
+[`task_environments`](../../amplifier_web/task_environments.py) at their actual
+boundaries. Native child execution, broker hydration and host shutdown have
+separate costs and lifetimes. [The source update](evidence.md#november-7-ownership-review)
+records the inspected implementation and limits.
+
+The first experiment preserves the current root-worker model. Only active work
+needs an execution process; reading an idle conversation uses its history owner.
+Evaluate conversation-owner isolation and multiple agent instances independently,
+without requiring a process per dormant conversation or per repository. Host
+restart survival requires a durable supervisor/reattachment decision; keeping a
+browser-independent connection is not that guarantee.
+
+Associated DTUs and worktrees name their owner, purpose and consumers. Activity,
+pending effects and review holds prevent idle retirement. Use owner operations to
+stop/wake or retire resources and reconcile interrupted cleanup. An archive event
+can request that reconciliation; it cannot indiscriminately delete shared or
+durable work. Installed DTU tooling reviewed for this proposal has no public
+suspend/resume operation, so hibernation is a separate tooling change to qualify.
+
 ## Ownership and durability
 
 | Data | Authority and durability | When resident / synchronized |
@@ -12,11 +88,12 @@ This describes the target, not completed changes to current persistence.
 | Intentionally shared draft | Optional AHP chat draft | Explicit feature; standard `chat/draftChanged`, convenient/debounced writes |
 | Agent-visible editor context | Explicit targeted capability, bounded snapshot or lease | Requested nonsecret fields only; no permanent mirror of every keystroke |
 | Submitted but uncertain input | Client durable intent journal and host admission receipt | Retain exact identity and recovery status; independent of optimistic reducer state |
-| Accepted messages, native tool history, metadata | Native agent store; existing Amplifier transcript/metadata files | Selected history window or active execution; no second resume authority |
+| Shared messages, participants, conversation metadata and delivery facts | Experience conversation owner; legacy projection preserves current native files | Authorized selected windows and current updates; no broker transcript mirror |
+| Native tool history, reasoning, continuation and agent memory | Agent/runtime-selected stores and exclusive native writer | Active execution or explicit authorized retrieval; no second resume authority |
 | `events.jsonl` and historical logs | Retained native files on disk | Targeted inspection/export or background indexing when required; no ordinary catalog parse |
-| Workspace/session summaries and parent links | Rebuildable disk index over native facts | Query pages and incremental invalidations; not a global in-memory model |
-| AHP projected chat/session state | Derived host resource projection over native facts plus host-owned fields | Subscribed/active resources and bounded cache; explicit upstream snapshot semantics |
-| Host-owned scheduling, command receipts, pending decisions, protocol/native ID mapping | Scoped durable host records | Active requests and indexed lookups; survive viewer loss and host restart |
+| Workspace/session summaries and parent links | Rebuildable disk index over experience/legacy metadata facts | Query pages and incremental invalidations; not a global in-memory model |
+| AHP projected chat/session state | Derived view of authorized owner data plus host-owned fields | Subscribed/active resources and bounded cache; explicit upstream snapshot semantics |
+| Command receipts, pending decision references and execution routing | Scoped durable admission records; schedules/decisions retain their existing domain owners | Active requests and indexed lookups; survive viewer loss and support restart reconciliation |
 | Active model context, modules, hooks, provider connections | Agent execution process | Executing/protected sessions plus deliberately bounded idle reuse |
 | Catalogs of providers, modules and capabilities | Disk/package metadata and independently invalidated caches | Requested settings/agent preparation; no mount/test/login during a listing |
 | Attachments, tool bodies, artifacts | Stable durable resource references and native ownership | Content on demand; previews/cache bounded by bytes, no inline global replication |
@@ -77,19 +154,22 @@ of all panels and drafts. Shared work still uses the host's authoritative comman
 
 ## Catalog that fits the actual installation
 
-Target the user's roughly 4,000 historical projects and 25,000 native sessions,
-with many fewer existing directories and relevant root conversations. Index small
-metadata on disk (SQLite is a proposed implementation, not a new canonical store):
+The historical native-profile fixture targets roughly 4,000 projects and 25,000
+native sessions, with fewer existing directories and relevant root conversations.
+Other experiences define their own catalog eligibility; a local folder is not a
+universal prerequisite. Index small metadata on disk, retaining each fact's owner:
 
 ```text
-workspace: host, stable identity, canonical path, existence status, checked_at
-conversation: native owner/kind, native ID, host ID mapping, workspace ID,
+workspace, when present: host, stable identity; native path/existence/freshness
+conversation: experience owner/kind, conversation ID, host locator, optional workspace ID,
               parent/root ID, title, modified time, status, storage locator
+participation: conversation ID, participant reference, connector locator
+execution binding: adapter-managed native identity and writer reference
 discovery: writer/source revision, durable change cursor, last reconciliation
-query: authorized existing workspaces -> root conversations -> order -> page
+query: authorized experience/profile eligibility -> order -> page
 ```
 
-Filter authorization, directory eligibility and root status in the indexed query,
+For the native profile, filter authorization, directory eligibility and root status in the indexed query,
 **before** pagination and detail reads. Index parent/root and `(workspace, modified,
 stable ID)` for deterministic page order. Do not stat 4,000 paths on every query.
 Use tracked directory freshness, watches where useful and throttled revalidation.
@@ -97,11 +177,13 @@ Confirmed missing paths leave ordinary results; inaccessible/offline paths becom
 unknown rather than confirmed missing. Preserve last-known facts for recovery and
 show an explicit unavailable source when useful. Archive inspection is separate.
 
-Map one root conversation/execution context to an AHP session with its main chat
+Map an experience conversation to an AHP session with its main chat
 and relevant related chats. Workspace grouping is a catalog concern. Do not put
 all of a workspace's historical sessions in one giant AHP session chat catalog.
-Keep a separate mapping for each chat's ACP/native execution session: an AHP
-session grouping is not evidence that one ACP session can run all its chats.
+Keep participant/execution bindings separate: an AHP grouping does not imply one
+ACP session per chat, or that one ACP session can run all its participants.
+This is a conceptual owner map, not new standard wire fields. Qualify the actual
+protocol representation and ordinary single-agent fallback before exposing it.
 Project-scoped filtering beyond the standard request shape is an optional host
 catalog capability, not invented AHP core fields. Standard `listSessions` still
 works with a useful bounded default list and upstream pagination semantics.
