@@ -145,6 +145,31 @@ def pointer_witness(manager):
         return None
 
 
+def pending_preparation(diagnostics):
+    """One unresolved component operation, independent of the display batch."""
+    if 'componentPreparation' in diagnostics:
+        return diagnostics['componentPreparation']
+    batch = diagnostics.get('batch', {})
+    return batch if (batch.get('retry') or {}).get('mode') == 'inspect' else None
+
+
+def retain_preparation(diagnostics):
+    """Preserve exact existing proof before another domain replaces its batch."""
+    import copy
+    if 'componentPreparation' in diagnostics:
+        return
+    batch = diagnostics.get('batch', {})
+    if (batch.get('retry') or {}).get('mode') != 'inspect':
+        return
+    terminal = next((row for row in reversed(diagnostics.get('events', []))
+        if row.get('attemptId') == batch.get('attemptId') and
+        row.get('phase') == 'ecosystem-stage' and row.get('status') == 'interrupted'), None)
+    diagnostics['componentPreparation'] = copy.deepcopy({
+        'attemptId': batch.get('attemptId'), 'kind': batch.get('kind'),
+        'revision': diagnostics.get('revision'), 'retry': batch.get('retry'),
+        'preparation': batch.get('preparation'), 'terminal': terminal})
+
+
 async def candidate_copy(proof, operation, *args):
     """Cancellation must not pretend a to_thread copy has stopped.
 
@@ -175,14 +200,14 @@ def reconcile_preparation(manager):
     settlement for legacy/unknown fetch, validation, activation or rollback.
     """
     diagnostics = manager.diagnostics.state
-    batch = diagnostics.get('batch', {})
-    proof = batch.get('preparation', {})
+    batch = diagnostics.get('componentPreparation') or {}
+    proof = batch.get('preparation') or {}
     state = manager.service.state['updates']
     candidate = proof.get('candidate')
-    if (diagnostics.get('storageUnavailable') or diagnostics.get('kind') != 'ecosystem' or batch.get('kind') != 'ecosystem'
-            or batch.get('attemptId') != diagnostics.get('attemptId')
+    if (diagnostics.get('storageUnavailable') or batch.get('kind') != 'ecosystem'
+            or not batch.get('attemptId')
             or not isinstance(candidate, str) or not re.fullmatch('[a-f0-9]{32}', candidate)
-            or diagnostics.get('revision') != candidate
+            or batch.get('revision') != candidate
             or proof.get('boundary') != 'copy-only' or proof.get('copySettled') is not True
             or not proof.get('interruptedAt') or 'activeBefore' not in proof
             or any(state.get(key) for key in ('pendingApp', 'pendingRelease', 'pendingRollback',
@@ -198,7 +223,7 @@ def reconcile_preparation(manager):
                 or candidate in (active_release(manager.home).get('current'), active_release(manager.home).get('previous'))
                 or pointer_witness(manager) != proof['activeBefore']):
             return False
-        latest = diagnostics.get('latest', {})
+        latest = batch.get('terminal') or {}
         if (latest.get('attemptId') != batch['attemptId'] or latest.get('status') != 'interrupted'
                 or latest.get('phase') != 'ecosystem-stage'):
             return False
@@ -208,8 +233,12 @@ def reconcile_preparation(manager):
             return False
     except (OSError, ValueError, TypeError, KeyError):
         return False
-    batch['retry'] = {**batch['retry'], 'mode': 'fresh-intent', 'reconciledAt': time.time()}
     manager.diagnostics.record('ecosystem-preparation-reconciled', 'succeeded')
+    if diagnostics.get('storageUnavailable'):
+        return False
+    diagnostics.pop('componentPreparation', None)
+    if diagnostics.get('batch', {}).get('attemptId') == batch['attemptId']:
+        diagnostics['batch']['retry'] = {**batch['retry'], 'mode': 'fresh-intent', 'reconciledAt': time.time()}
     return True
 
 
@@ -254,6 +283,10 @@ def current(state, evidence=None):
                       'Update needs attention' if state.get('error') else 'Update ready; waiting for work',
                       state.get('error') or 'The qualified update continues automatically when its activation boundary is ready.',
                       action='diagnostics' if state.get('error') else None)
+    if pending_preparation(diagnostics):
+        return result('action-required', 'Component preparation was interrupted',
+                      'Automatic component work is paused. A deliberate update can start a new candidate only after settled copy-only preparation is verified; other uncertain effects require diagnostic review.',
+                      action='diagnostics')
     local_changes = [r for r in state.get('items', []) if r.get('status') == 'local_changes']
     issues = [r for r in state.get('items', []) if r.get('status') == 'check_failed']
     if issues:

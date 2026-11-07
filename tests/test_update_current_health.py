@@ -329,7 +329,7 @@ async def interrupted_copy_fixture(tmp_path,monkeypatch):
 async def test_manual_fresh_candidate_requires_actual_settled_copy_and_unchanged_pointer(tmp_path,monkeypatch,case):
     from amplifier_web.updates import UpdateManager
     m,calls,proof,failure=await interrupted_copy_fixture(tmp_path,monkeypatch)
-    u=m.service.state['updates'];batch=m.diagnostics.state['batch'];old=m.diagnostics.state['attemptId']
+    u=m.service.state['updates'];batch=m.diagnostics.state.get('componentPreparation',m.diagnostics.state['batch']);old=m.diagnostics.state['attemptId']
     if case=='pointer-drift':
         (m.directory/'active.json').write_text(json.dumps({'current':'b'*32}))
     elif case=='promotion':u['pendingRelease']=proof['candidate']
@@ -350,3 +350,51 @@ async def test_manual_fresh_candidate_requires_actual_settled_copy_and_unchanged
         with pytest.raises(ValueError,match='no proof'):await UpdateManager.install(m)
         assert m.diagnostics.state==before
         assert calls=={'stage':0}
+
+
+@pytest.mark.parametrize('kind',['application','smart-tools','rollback'])
+@pytest.mark.parametrize('safe',[True,False])
+async def test_unrelated_batch_preserves_exact_component_fence_and_copy_recovery(tmp_path,monkeypatch,kind,safe):
+    from amplifier_web.updates import UpdateManager
+    m,calls,proof,_=await interrupted_copy_fixture(tmp_path,monkeypatch)
+    if not safe:
+        m.diagnostics.state.get('componentPreparation',m.diagnostics.state['batch'])['preparation']['boundary']='preparing'
+    m.diagnostics.begin(kind,'d'*40 if kind=='application' else 'd'*32)
+    m.diagnostics.record('unrelated-check','succeeded')
+    # Reload the same retained host state. The display batch and latest event
+    # are now unrelated; neither may discard the unresolved component operation.
+    m.diagnostics=UpdateDiagnostics(m)
+    if safe:
+        await UpdateManager.install(m)
+        assert calls['stage']==1
+        assert m.diagnostics.state['revision']!=proof['candidate']
+        assert not health.pending_preparation(m.diagnostics.state)
+    else:
+        with pytest.raises(ValueError,match='interrupted'):await UpdateManager.install(m)
+        assert calls['stage']==0
+        assert health.pending_preparation(m.diagnostics.state)
+
+
+async def test_component_fence_allows_health_storage_adoption_and_independent_app(tmp_path,monkeypatch):
+    from amplifier_web.updates import UpdateManager
+    m,_,_,_=mounted_fixture(tmp_path,monkeypatch)
+    m.service.state['settings']={'updates':{'autoCheck':False,'autoInstall':True}}
+    m.diagnostics.state['batch']={'kind':'ecosystem','attemptId':'a'*32,'retry':{'mode':'inspect'}}
+    m.awaiting_restart=lambda:False;m.requires_idle=lambda u:False
+    m.service.runtime=SimpleNamespace(generation_usage=lambda:[])
+    m.cleanup_task=None;m._storage_policy_due=True;m._update_health_initial=True
+    calls={'health':0,'storage':0,'app':0}
+    async def refresh(manager):calls['health']+=1
+    async def retire():calls['storage']+=1
+    async def app():
+        calls['app']+=1
+        m.diagnostics.begin('application','e'*40)
+    async def publish(**kw):m.service.state['updates'].update(kw)
+    m.publish=publish;m.retire_storage=retire;m.app=app
+    m.service.state['updates']['appAvailable']=True
+    monkeypatch.setattr(health,'refresh',refresh)
+    await UpdateManager.tick(m)
+    await m.cleanup_task
+    assert calls=={'health':1,'storage':1,'app':1}
+    assert m.service.state['updates']['adoption']=={'activeWorkers':0,'pendingWorkers':0}
+    assert health.pending_preparation(m.diagnostics.state)

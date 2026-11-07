@@ -205,6 +205,8 @@ class UpdateDiagnostics:
             if failure and not recovered:
                 self._track_failure(failure)
         self._pending_failure = None
+        from .update_health import retain_preparation
+        retain_preparation(self.state)
         # Legacy activeFailures is retained diagnostic history, not another
         # current-health authority. UpdateManager projects verified current
         # desired/active state without rewriting earlier attempt outcomes.
@@ -336,6 +338,8 @@ class UpdateDiagnostics:
         return result
 
     def begin(self,kind,revision=None,attempt_id=None,*,tier=None,components=(),application_extras=None):
+        from .update_health import retain_preparation
+        retain_preparation(self.state)
         self._pending_failure = None
         previous_revision = self.state.get('revision')
         identity=attempt_id if isinstance(attempt_id,str) and re.fullmatch(r'[a-f0-9]{32}',attempt_id) else uuid.uuid4().hex

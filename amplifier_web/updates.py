@@ -728,6 +728,7 @@ class UpdateManager:
 
     async def _check(self, *, tier='application', install=False):
         from .update_sequence import summary
+        from .update_health import pending_preparation
         async with self.lock:
             state = self.service.state['updates']
             # A capacity observation can own this lock when a refresh arrives.
@@ -780,6 +781,10 @@ class UpdateManager:
                             detail='App update available. Included components will be checked after the new app restarts.' if app_available else 'Component checks are waiting for the application check.')
                         return
                     tier = 'included'
+                if pending_preparation(self.diagnostics.state):
+                    await self.publish(phase='checked', application=application,
+                        detail='Component checks are paused until the interrupted preparation is reconciled.')
+                    return
                 started = time.monotonic()
                 rows = await self.inventory_sources(indexed=True)
                 # Retained runner attempts already own these selections. Do not
@@ -936,13 +941,17 @@ class UpdateManager:
     async def install(self, *, automatic=False):
         if self.awaiting_restart() or self.lock.locked():return
         state = self.service.state['updates']
-        if (self.diagnostics.state.get('batch', {}).get('retry') or {}).get('mode') == 'inspect':
-            if automatic:
-                return  # Waiting is not another failed attempt or a new event.
-            from .update_health import reconcile_preparation
-            async with self.lock:
-                if not reconcile_preparation(self):
-                    raise ValueError('The interrupted update has no proof of settled candidate-only preparation. Inspect its diagnostics before another installation; its outcome is not replayed.')
+        from .update_health import pending_preparation, reconcile_preparation
+        # Independent app/tool owners may proceed without clearing or replaying
+        # component work. Their diagnostics.begin must retain this operation.
+        if pending_preparation(self.diagnostics.state):
+            independent = state.get('pendingApp') or state.get('appAvailable') or state.get('pendingSmartTools')
+            if not independent:
+                if automatic:
+                    return
+                async with self.lock:
+                    if not reconcile_preparation(self):
+                        raise ValueError('The interrupted update has no proof of settled candidate-only preparation. Inspect its diagnostics before another installation; its outcome is not replayed.')
         if state.get('sequence', {}).get('stage') == 'included' and state['sequence'].get('included', {}).get('issues'):
             await self.publish(detail='Resolve the included component issues and check again before installing.')
             return
@@ -988,6 +997,10 @@ class UpdateManager:
                 path=self.directory/'inventory.json'
                 self.inventory=json.loads(path.read_text()) if path.exists() else []
             candidates=[r for r in self.inventory if r.get('status')=='update' and r.get('eligible') and r.get('kind')!='smart tool']
+            if pending_preparation(self.diagnostics.state):
+                if automatic:return
+                if not reconcile_preparation(self):
+                    raise ValueError('The interrupted component preparation must be reconciled before another installation.')
             if not candidates:
                 await self.publish(detail='Check for updates before installing. No eligible updates are available.')
                 return
@@ -1084,6 +1097,8 @@ class UpdateManager:
                 from .update_health import record_retry
                 record_retry(self.diagnostics.state['batch'], input_key, failure, prior_retry)
                 self.diagnostics.record('ecosystem-stage',status,commandId=stage_id,preserve_last_failure=True)
+                from .update_health import retain_preparation
+                retain_preparation(self.diagnostics.state)
                 await self.publish(phase='interrupted' if interrupted else 'error',pendingRelease=None,
                     detail='Component update preparation '+('was interrupted' if interrupted else 'failed')+'. Current components remain active.',
                     error=failure_guidance(failure) or 'Ecosystem update '+('interrupted' if interrupted else 'failed')+' during '+failure['phase'].replace('-',' ')+'. Current sources remain active; no conversation work was replayed.')
@@ -1282,6 +1297,9 @@ class UpdateManager:
         if self.lock.locked() or self.awaiting_restart(): return
         async with self.lock:
             if self.closed: return
+            from .update_health import pending_preparation
+            if pending_preparation(self.diagnostics.state):
+                raise ValueError('The interrupted component preparation must be reconciled before activation or rollback.')
             pointer=active_release(self.home)
             state=self.service.state['updates']
             retrying_rollback=rollback and 'pendingRollback' in state
@@ -1444,8 +1462,6 @@ class UpdateManager:
         from .update_drain import observe_waiters
         await observe_waiters(self)
         if self.awaiting_restart():return
-        if (self.diagnostics.state.get('batch', {}).get('retry') or {}).get('mode') == 'inspect':
-            return  # An uncertain outcome is a stable wait, not background failure.
         if getattr(self, '_update_health_initial', False):
             self._update_health_initial = False
             from .update_health import refresh as refresh_health
@@ -1485,11 +1501,22 @@ class UpdateManager:
             await self.app()
             return
         if state.get('pendingRelease'):
+            from .update_health import pending_preparation
+            if pending_preparation(self.diagnostics.state):return
             await self.activate()
             return
         if state.get('initialPreparation') and state.get('sequence', {}).get('stage') == 'complete':
             await self.publish(initialPreparation=False)
         sequence = state.get('sequence', {})
+        from .update_health import pending_preparation
+        if pending_preparation(self.diagnostics.state):
+            # Health, drain, storage, worker adoption and independent app/tool
+            # paths above still run. No component availability/install is replayed.
+            if settings.get('autoCheck', True) and time.time()-max(state.get('lastCheck') or 0,state.get('lastAttempt') or 0)>=settings.get('intervalHours',DEFAULT_CHECK_INTERVAL_HOURS)*3600:
+                await self.check(tier='application', fresh=False)
+            if state.get('appAvailable') and settings.get('autoInstall', True):
+                await self.app()
+            return
         if sequence.get('nextStage') and state.get('phase') not in {'error','interrupted'}:
             # App-first checking deliberately skips component discovery. After
             # the new app starts, refresh those refs rather than inheriting a

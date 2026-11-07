@@ -246,6 +246,11 @@ handoff. It creates a new candidate, never resumes the interrupted copy. Unknown
 or legacy operations, unsettled threads, fetch/installer/native initialization
 and activation effects remain fenced; cancellation alone proves none of them
 safe to replay.
+The unresolved component operation is retained separately from the current
+diagnostic display batch; starting an app, tool or rollback batch cannot erase
+its fence. Its exact interrupted receipt, not an unrelated latest event, anchors
+reconciliation. Automatic waiting blocks component work only: health, storage,
+worker adoption and independent app/tool owners can continue without clearing it.
 These are preparation scheduling decisions, never authority to bypass source,
 qualification, activation or restart guards.
 
