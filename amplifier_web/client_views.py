@@ -453,6 +453,15 @@ class ClientViews:
             self.dirty.add(identity)
         return record.get('selectionRevision', 0)
 
+    def commit(self, identity, command_id, fingerprint, receipt):
+        """Commit a private view with its receipt; the caller owns rollback."""
+        db = self.service.db
+        if command_id:
+            db.execute('INSERT INTO commands VALUES (?,?,?)', (command_id, fingerprint, json.dumps(receipt)))
+        written = self.save(identity, defer_ack=True)
+        db.commit()
+        self.acknowledge(written)
+
     def save(self, identity=None, *, defer_ack=False):
         pending = set(self.dirty) if identity is None else self.dirty.intersection({identity})
         written = {}

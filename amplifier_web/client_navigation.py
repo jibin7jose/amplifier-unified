@@ -1,6 +1,5 @@
 """Select an existing chat without rewriting the shared history catalog."""
 import copy
-import json
 
 
 def workspace_for(service, session):
@@ -58,11 +57,7 @@ def select(service, session, command_id, fingerprint, *, include_state):
             client['view'].pop(key, None)
         service.clients.reconcile(identity)
         service._state['revision'] = revision + 1
-        if command_id:
-            service.db.execute('INSERT INTO commands VALUES (?,?,?)', (command_id, fingerprint, json.dumps(receipt)))
-        written = service.clients.save(identity, defer_ack=True)
-        service.db.commit()
-        service.clients.acknowledge(written)
+        service.clients.commit(identity, command_id, fingerprint, receipt)
     except Exception:
         service.db.rollback()
         service.clients.records[identity] = previous

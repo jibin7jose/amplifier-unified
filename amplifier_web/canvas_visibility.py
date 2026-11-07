@@ -47,12 +47,9 @@ def update(service, args, command_id, fingerprint, *, include_state):
         service._state['revision'] = revision + 1
         service._client_snapshots.pop(identity, None)
         receipt = {'accepted': True, 'revision': revision + 1, 'effects': []}
-        if command_id:
-            service.db.execute('INSERT INTO commands VALUES (?,?,?)', (command_id, fingerprint, json.dumps(receipt)))
         # Presentation is independently durable. The next ordinary publication
         # persists the shared revision; hostInstanceId bounds it across restarts.
-        service.clients.save(identity)
-        service.db.commit()
+        service.clients.commit(identity, command_id, fingerprint, receipt)
     except Exception:
         service.db.rollback()
         service.clients.records[identity] = previous

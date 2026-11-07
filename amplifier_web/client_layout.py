@@ -40,12 +40,9 @@ def update(service, patch, command_id, fingerprint, *, include_state):
     try:
         client['view'].update(patch)
         service._state['revision'] = revision + 1
-        if command_id:
-            service.db.execute('INSERT INTO commands VALUES (?,?,?)', (command_id, fingerprint, json.dumps(receipt)))
         # As with Canvas visibility, hostInstanceId bounds the shared revision
         # across restarts; the client view and retry receipt commit together.
-        service.clients.save(identity)
-        service.db.commit()
+        service.clients.commit(identity, command_id, fingerprint, receipt)
     except Exception:
         service.db.rollback()
         service.clients.records[identity] = previous
