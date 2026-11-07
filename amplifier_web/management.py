@@ -70,7 +70,7 @@ class Management:
     async def warm_providers(self,manager,workspace,*,refresh=False):
         catalogs={};pending=[]
         def catalog_entry(result,cache_key,**values):
-            return {'sharedCatalogKey':cache_key[1],'models':(result or {}).get('models',[]),'supported':(result or {}).get('modelsSupported',True),'metadata':(result or {}).get('providerMetadata'),'loadedAt':self.provider_catalog.loaded_at.get(cache_key),**values}
+            return {**self.provider_catalog.entry(cache_key), **values}
         # Publish the cached catalog as one snapshot. Even fresh cache hits used
         # to rebuild and persist the entire app twice for every provider.
         with manager.read_snapshot(workspace):
@@ -79,9 +79,13 @@ class Management:
                 key=manager.catalog_key({'id':row['id']},workspace)
                 cache_key=('providers.models',key)
                 cached=self.provider_catalog.peek(cache_key)
-                fresh=not refresh and not row.get('authenticationRequired') and not (row.get('account') or {}).get('refreshable') and self.provider_catalog.fresh(cache_key)
-                catalogs[row['id']]=catalog_entry(cached,cache_key,phase='ready' if fresh else 'working')
-                if not fresh:pending.append((row,key,cache_key))
+                if row.get('authenticationRequired'):
+                    catalogs[row['id']]={'sharedCatalogKey':key,'models':[],'phase':'invalidated','supported':False,
+                        'error':'This connection needs sign-in. Cached models are not available until it is reconnected.'}
+                    continue
+                known=not refresh and (self.provider_catalog.fresh(cache_key) or cache_key in self.provider_catalog.failed_at)
+                catalogs[row['id']]=catalog_entry(cached,cache_key,**({} if known else {'phase':'working'}))
+                if not known:pending.append((row,key,cache_key))
         async with self.service.lock:
             setup=self.service.state.setdefault('setup',{})
             if setup.get('providersWorkspace')!=workspace or (setup.get('providersLocation',{}).get('kind')=='managed')!=bool(getattr(manager,'global_only',False)):return
@@ -104,10 +108,10 @@ class Management:
             identity=row['id'];args={'id':identity}
             async with self.catalog_limit:
                 try:
-                    result=await manager.perform('providers.models',{'id':identity,'workspace':workspace,'refresh':True})
-                    entry=catalog_entry(result,cache_key,phase='ready')
+                    result=await manager.perform('providers.models',{'id':identity,'workspace':workspace,'refresh':refresh})
+                    entry=catalog_entry(result,cache_key)
                 except Exception:
-                    entry=catalog_entry(self.provider_catalog.peek(cache_key),cache_key,phase='error',error='Could not refresh models. Saved models remain available; retry or enter a model ID.')
+                    entry=catalog_entry(self.provider_catalog.peek(cache_key),cache_key)
             # An old request must never overwrite a newer config or workspace.
             current_key=manager.catalog_key(args,workspace)
             if current_key!=key:
@@ -146,61 +150,35 @@ class Management:
 
     async def runtime_models(self,session_id,row,revision=None,*,refresh=False):
         key=self.runtime_catalog_key(session_id,row,revision)
+        async def check_binding():
+            if not row.get('sharedCatalogKey'):
+                return
+            from .provider_catalog import CatalogInvalidated
+            current=await self.service.runtime.control(session_id,'configuration.providers',{})
+            current_row=next((item for item in current.get('providers',[]) if item['id']==row['id']),None)
+            if (current_row is None or current_row.get('sharedCatalogKey')!=row['sharedCatalogKey']
+                    or revision and current.get('catalogRevision')!=revision):
+                raise CatalogInvalidated('Mounted connection changed during discovery.')
         async def load():
             # The host owns expiry/manual refresh; a second worker cache must
             # not extend the host's TTL after it decides a refresh is needed.
-            result=await self.service.runtime.control(session_id,'configuration.providerModels',{'instance':row['id'],'refresh':True})
+            await check_binding()
+            try:
+                result=await self.service.runtime.control(session_id,'configuration.providerModels',{
+                    'instance':row['id'],'refresh':True,
+                    **({'expectedCatalogKey':row['sharedCatalogKey']} if row.get('sharedCatalogKey') else {})})
+            except Exception:
+                await check_binding()
+                raise
+            await check_binding()
             if row.get('module') and 'info' in row and 'configSchema' in row:
-                result={**result,'providerMetadata':{'module':row['module'],'info':row['info'],'configSchema':row['configSchema']}}
+                info=copy.deepcopy(row['info'])
+                for name in ('model','default_model','reasoning_effort','priority'):
+                    info.get('defaults',{}).pop(name,None)
+                result={**result,'providerMetadata':{'module':row['module'],'info':info,
+                    'configSchema':row['configSchema'],'modelListInfo':row.get('modelListInfo')}}
             return result
         return await self.provider_catalog.get(key,load,refresh=refresh)
-
-    async def warm_runtime_models(self,session_id,providers,revision=None):
-        """Reuse the host catalog and publish one snapshot per refresh batch."""
-        def key(row):
-            return self.runtime_catalog_key(session_id,row,revision)
-        def entry(result,cache_key,phase):
-            result=result or {}
-            return {'phase':phase,'models':result.get('models',[]),
-                    'supported':result.get('supported',result.get('modelsSupported',True)),
-                    'loadedAt':self.provider_catalog.loaded_at.get(cache_key)}
-        pending=[];catalogs={}
-        for row in providers:
-            cache_key=key(row)
-            cached=self.provider_catalog.peek(cache_key)
-            fresh=self.provider_catalog.fresh(cache_key)
-            catalogs[row['id']]=entry(cached,cache_key,'ready' if fresh else 'working')
-            if not fresh:pending.append((row,cache_key))
-        async with self.service.lock:
-            control=self.service.state.setdefault('runtimeControl',{}).setdefault(session_id,{})
-            current_revision=control.get('configuration.providers',{}).get('catalogRevision')
-            if revision and current_revision and current_revision!=revision:return
-            before=(control.get('modelCatalogRevision'),control.get('modelCatalogs'))
-            control.update(modelCatalogRevision=revision,modelCatalogs=catalogs)
-            if before!=(revision,catalogs):self.service._publish_changes(sessions={session_id})
-        if not pending:return
-        await asyncio.sleep(0)
-        async def load(row,cache_key):
-            identity=row['id']
-            try:
-                async with self.catalog_limit:
-                    result=await self.runtime_models(session_id,row,revision)
-                value=entry(result,cache_key,'ready')
-            except Exception:
-                value={**entry(self.provider_catalog.peek(cache_key),cache_key,'error'),
-                       'error':'Could not load models from this mounted provider. Retry to check the connection.'}
-            async with self.service.lock:
-                control=self.service.state.setdefault('runtimeControl',{}).setdefault(session_id,{})
-                if control.get('modelCatalogRevision')!=revision:return
-                current=control.get('configuration.providers',{}).get('providers',[])
-                mounted=next((candidate for candidate in current if candidate['id']==identity),None)
-                if current and (mounted is None or key(mounted)!=cache_key):return
-                control.setdefault('modelCatalogs',{})[identity]=value
-                self.service._publish_progress(session_ids={session_id}, record_only=True)
-        try:
-            await asyncio.gather(*(load(*item) for item in pending))
-        finally:
-            await self.service._flush_pending_progress()
 
     async def publish(self,**values):
         async with self.service.lock:
@@ -765,9 +743,6 @@ class Management:
             controls = self.service.state.setdefault('runtimeControl', {}).setdefault(session['id'], {})
             controls['configuration.providers'] = recovery
             controls[operation] = result
-            if operation == 'configuration.providerModels':
-                controls.setdefault('modelCatalogs', {})[result['provider']] = {
-                    'phase': 'ready', 'models': result.get('models', []), 'supported': result.get('supported', True)}
             self.service._publish_progress(session_ids={session['id']}, record_only=True)
         return True
 
@@ -932,7 +907,21 @@ class Management:
                 routing_contexts[None] = (session['workspace'], None)
                 routing_before = {identity: routing_manager.effective_routing(*context)
                                   for identity, context in routing_contexts.items()}
-            result=await manager.perform(action,{**args,'workspace':session['workspace']})
+            try:
+                result=await manager.perform(action,{**args,'workspace':session['workspace']})
+            except Exception:
+                if action=='providers.models' and probe_key==manager.catalog_key(args,session['workspace']):
+                    async with self.service.lock:
+                        from .conversation_models import publish_catalogs
+                        from .configuration_target import state_for
+                        entry=self.provider_catalog.entry(('providers.models',probe_key))
+                        publish_catalogs(self,{probe_key:entry})
+                        setup=state_for(self.service,'setup',args)
+                        previous=setup.get('providerCatalogs',{}).get(args['id'],{})
+                        if previous.get('sharedCatalogKey')==probe_key:
+                            setup['providerCatalogs'][args['id']]=entry
+                        self.service._publish_changes(globals={'setup','modelCatalogs'})
+                raise
             routing_sessions = None
             if routing_before is not None:
                 routing_sessions = {identity for identity, before in routing_before.items()
@@ -963,9 +952,12 @@ class Management:
                 if 'imageModels' in result:
                     setup.setdefault('imageCatalogs',{})[result['imageModelsProviderId']]={'phase':'ready','models':result['imageModels'],'supported':result.get('imageModelsSupported',False),'metadata':result.get('providerMetadata')}
                 if 'models' in result:
+                    from .conversation_models import publish_catalogs
+                    entry=self.provider_catalog.entry(('providers.models',probe_key))
                     setup.setdefault('modelCatalogs',{})[result['modelsProviderId']]=result['models']
-                    setup.setdefault('providerCatalogs',{})[result['modelsProviderId']]={'phase':'ready','models':result['models'],'supported':result.get('modelsSupported',True),'metadata':result.get('providerMetadata')}
-                self.service._publish_progress(session_ids=set(), record_only=True, global_keys={'setup'})
+                    setup.setdefault('providerCatalogs',{})[result['modelsProviderId']]=entry
+                    publish_catalogs(self,{probe_key:entry})
+                self.service._publish_progress(session_ids=set(), record_only=True, global_keys={'setup','modelCatalogs'})
             if action in {'providers.list','providers.save','providers.finishSetup','providers.remove','providers.move','providers.reorder','providers.loginStatus'}:
                 async with self.service.lock:
                     from .configuration_target import state_for
@@ -1124,7 +1116,8 @@ class Management:
             operation_guard()
             if args['operation']=='configuration.catalog':
                 from .conversation_models import request_browse
-                await request_browse(self,session,refresh=args.get('args',{}).get('refresh',False))
+                await request_browse(self,session,refresh=args.get('args',{}).get('refresh',False),
+                                     instance=args.get('args',{}).get('instance'))
                 return
             if args['operation']=='provider.queueSelection':
                 from .conversation_models import select
@@ -1270,16 +1263,16 @@ class Management:
                     self.service.state.setdefault('runtimeControl',{}).setdefault(session['id'],{}).update(refreshed)
                     self.service.state.setdefault('runtimeControl',{}).setdefault(session['id'],{})[args['operation']]=result
                     if args['operation'] in {'provider.select', 'provider.reset'}:
-                        self.service._session(session['id'])['selection'] = copy.deepcopy(result['selection'])
+                        current=self.service._session(session['id'])
+                        current['selection'] = copy.deepcopy(result['selection'])
+                        selected=result['selection']
+                        mounted=next((row for row in refreshed.get('configuration.providers',{}).get('providers',[])
+                            if selected and row['id']==selected['instance']),{})
+                        current['modelConnectionKey']=mounted.get('connectionKey') if selected else None
                     if args['operation'] in {'configuration.inspect','configuration.apply','configuration.toggle'}:
                         configuration=result.get('configuration',result)
                         self.service._session(session['id'])['configuration']=configuration
-                    if args['operation']=='configuration.providerModels':
-                        identity=args.get('args',{}).get('instance') or args.get('args',{}).get('provider')
-                        self.service.state['runtimeControl'][session['id']].setdefault('modelCatalogs',{})[identity]={'phase':'ready','models':result.get('models',[]),'supported':result.get('supported',True)}
                     self.service._publish_progress(session_ids={session['id']}, record_only=True)
-                provider_info=result if args['operation']=='configuration.providers' else refreshed.get('configuration.providers')
-                if provider_info is not None:self.background(self.warm_runtime_models(session['id'],provider_info.get('providers',[]),provider_info.get('catalogRevision')))
             finally:
                 if mutating or recovery_contract_change:
                     async with self.service.lock:

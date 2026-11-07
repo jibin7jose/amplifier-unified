@@ -111,14 +111,33 @@ async def main(home):
     elif '--chat-controls' in sys.argv:
         preferred_model = ['first']
         from amplifier_web.setup import SetupManager
-        SetupManager.provider_rows=lambda self,workspace:[{'id':'test-provider','module':'provider-test','config':{'model':preferred_model[0]},'enabled':True}]
-        async def catalog(self,action,args,workspace):
-            return {'modelsProviderId':'test-provider','models':[{'id':'first'},{'id':'chosen-model'}],
+        from amplifier_web.host.config import write_private
+        def save_provider_settings():
+            write_private(home / 'shared-settings/settings.yaml', json.dumps({'config': {'providers': [
+                {'id': 'test-provider', 'module': 'provider-test', 'label': 'Test provider',
+                 'config': {'model': preferred_model[0]}, 'enabled': True}]}}))
+        save_provider_settings()
+        discovery = {'mode': 'ready', 'calls': 0}
+        async def probe(self,action,args,workspace):
+            # Only the external provider boundary is synthetic. Configured
+            # rows, connection identities, cached_probe and ProviderCatalog
+            # remain production code for both draft and existing-chat reads.
+            assert action in {'providers.models', 'providers.schema'}, action
+            assert args.get('id') == 'test-provider' or args.get('module') == 'provider-test'
+            if action == 'providers.models':
+                discovery['calls'] += 1
+                if discovery['mode'] == 'error':
+                    raise ValueError('Synthetic model discovery failure')
+            return {'models':[{'id':'first'},{'id':'chosen-model'}],
+                    'modelsSupported': True, 'modelsProvenance': 'provider-api',
                     'providerMetadata':{'module':'provider-test','info':{'display_name':'Test provider'},
                     'configSchema':{'fields':[{'id':'reasoning_effort','choices':['low','high']}]}}}
-        SetupManager.cached_probe=catalog
+        SetupManager.probe=probe
         import amplifier_web.draft_defaults as draft_defaults
+        original_resolve_defaults = draft_defaults.resolve_defaults
         async def resolve_defaults(home,workspace,bundle=None,app_bundle=None,**kwargs):
+            if kwargs.get('catalog'):
+                return await original_resolve_defaults(home,workspace,bundle,app_bundle,**kwargs)
             return {'bundle':bundle or 'work','effective':{'instance':'test-provider','model':preferred_model[0]},
                     'providers':[{'id':'test-provider','info':{'display_name':'Test provider','defaults':{'model':preferred_model[0]}},
                     'configSchema':{'fields':[{'id':'reasoning_effort','choices':['low','high']}]}}]}
@@ -231,11 +250,25 @@ async def main(home):
     if '--chat-controls' in sys.argv:
         async def provider_preference(request):
             preferred_model[0] = (await request.json())['model']
+            save_provider_settings()
             await app['service'].management.invalidate_configuration()
             return web.json_response({'ok': True})
 
         if '--provider-resolution' not in sys.argv:
             app.router.add_post('/fixture/provider-preference', provider_preference)
+            async def model_discovery(request):
+                if request.headers.get('Authorization') != 'Bearer fixture-browser-control-token':
+                    raise web.HTTPForbidden()
+                if request.method == 'POST':
+                    data = await request.json()
+                    if set(data) != {'mode'} or data['mode'] not in {'ready', 'error'}:
+                        raise web.HTTPBadRequest()
+                    # Change only the next external response. Do not clear or
+                    # republish the cache: the UI must explicitly refresh it.
+                    discovery['mode'] = data['mode']
+                return web.json_response(discovery)
+            app.router.add_get('/fixture/model-discovery', model_discovery)
+            app.router.add_post('/fixture/model-discovery', model_discovery)
 
         async def activity(request):
             data = await request.json()

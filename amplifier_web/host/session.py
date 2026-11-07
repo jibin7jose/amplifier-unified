@@ -406,7 +406,10 @@ def _apply_settings(bundle, config):
     for kind in ("providers", "tools", "hooks"):
         values = []
         for row in getattr(bundle, kind):
-            override = merge(overrides.get(row.get("module"), {}), overrides.get(row.get("id") or row.get("instance_id"), {}))
+            override_id = row.get("id") or row.get("instance_id")
+            if kind == "providers" and not override_id:
+                override_id = row["module"].removeprefix("provider-")
+            override = merge(overrides.get(row.get("module"), {}), overrides.get(override_id, {}))
             if override.get("enabled") is False or (kind == "providers" and (row.get("id") or row.get("instance_id") or row["module"].removeprefix("provider-")) in settings.get("configurator", {}).get("disabled", {}).get("providers", [])):
                 if kind == "providers":
                     # Removing a connection must not erase its old image intent
@@ -1162,6 +1165,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         module_source(config,snapshot,row['module'],row.get('source'),components)
         for row in prepared.mount_plan.get('providers',[])}
     catalog_keys=mounted_catalog_keys(config.home,config.workspace,prepared.mount_plan.get('providers',[]),catalog_sources)
+    connection_keys=mounted_catalog_keys(config.home,config.workspace,prepared.mount_plan.get('providers',[]),catalog_sources,binding=True)
     try:
         from .model_selection import prepare_default_routing
         routing_policy = ({"before_initialize": partial(
@@ -1198,7 +1202,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         # construction. A later rotation cannot relabel an old mounted result.
         coordinator.register_capability('web.provider_catalog', {
             'home':str(config.home),'workspace':str(config.workspace),
-            'sources':catalog_sources,'keys':catalog_keys})
+            'sources':catalog_sources,'keys':catalog_keys,'connectionKeys':connection_keys})
         coordinator.register_capability("live.runtime", runtime)
         coordinator.register_capability("live.jobs", jobs)
         coordinator.register_capability("live.recovered_jobs", [row["job_id"] for row in recovered])

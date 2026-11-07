@@ -111,20 +111,29 @@ def test_production_writers_declare_scope_or_explicit_full_reconciliation():
     assert not violations, '\n'.join(violations)
 
 
-async def test_mounted_model_catalog_persists_only_its_owner(app,monkeypatch):
+async def test_explicit_runtime_catalog_read_persists_only_its_owner(app,monkeypatch):
     from amplifier_web.management import Management
     manager=Management(app)
     sid=app.state['selectedSessionId']
     scopes=[]; save=app._save
     def capture():
-        assert app._publish_save_scope=={sid}
-        scopes.append(set(app._publish_global_keys));save()
+        assert app._publish_save_scope is not None and app._publish_save_scope<={sid}
+        scopes.append(set(app._publish_save_scope));save()
+    async def control(session_id,operation,args):
+        assert session_id==sid
+        return {'providers':[]} if operation=='configuration.providers' else {'models':[]}
+    async def ready(*args,**kwargs):pass
+    from types import SimpleNamespace
+    app.runtime=SimpleNamespace(control=control,close=ready)
     with monkeypatch.context() as patch:
         patch.setattr(app,'_save',capture)
-        await manager.warm_runtime_models(sid,[],revision='fixture-revision')
+        patch.setattr(manager,'ensure_runtime',ready)
+        await manager.command('runtime.control',{'sessionId':sid,'operation':'configuration.providers','args':{}},'explicit')
     saved=load(app.db)
-    assert saved['runtimeControl'][sid]['modelCatalogRevision']=='fixture-revision'
-    assert scopes==[set()]
+    assert saved['runtimeControl'][sid]['configuration.providers']=={'providers':[]}
+    assert 'modelCatalogs' not in saved['runtimeControl'][sid]
+    assert {sid} in scopes
+    app.runtime=None
     app._save()
     assert load(app.db)==saved
     await manager.provider_catalog.close()

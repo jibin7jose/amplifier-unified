@@ -204,7 +204,7 @@ wheels = [
 [[package]]
 name = "amplifier-foundation"
 version = "1.0.0"
-source = { git = "https://github.com/microsoft/amplifier-foundation?rev=main#8d26eceb9b7cafe6e93346f8f4294596bd45dcd1" }
+source = { git = "https://github.com/microsoft/amplifier-foundation?rev=main#a52ad1558419c828c86c0139b9b4bc351e3a618f" }
 dependencies = [
     { name = "amplifier-core" },
     { name = "filelock" },
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "amplifier-module-hooks-session-naming"
 version = "0.2.0"
-source = { git = "https://github.com/microsoft/amplifier-foundation?subdirectory=modules%2Fhooks-session-naming&rev=main#8d26eceb9b7cafe6e93346f8f4294596bd45dcd1" }
+source = { git = "https://github.com/microsoft/amplifier-foundation?subdirectory=modules%2Fhooks-session-naming&rev=main#a52ad1558419c828c86c0139b9b4bc351e3a618f" }
 
 [[package]]
 name = "amplifier-module-loop-live"
@@ -274,7 +274,7 @@ source = { git = "https://github.com/microsoft/amplifier-module-loop-streaming?r
 [[package]]
 name = "amplifier-module-provider-azure-openai"
 version = "1.0.0"
-source = { git = "https://github.com/microsoft/amplifier-module-provider-azure-openai?rev=main#a1ef0231435060bc02d12da288ec1d763f06b391" }
+source = { git = "https://github.com/microsoft/amplifier-module-provider-azure-openai?rev=main#dc47ad450da8395daf8a7909fb43c0db24ac7740" }
 dependencies = [
     { name = "azure-identity" },
     { name = "openai" },
@@ -306,7 +306,7 @@ dependencies = [
 [[package]]
 name = "amplifier-module-provider-openai"
 version = "1.0.0"
-source = { git = "https://github.com/microsoft/amplifier-module-provider-openai?rev=main#84d4c2d2f8a950af045501d0254932bd39fc687b" }
+source = { git = "https://github.com/microsoft/amplifier-module-provider-openai?rev=main#de94d275d62987441c5375957e7a0102d6736941" }
 dependencies = [
     { name = "httpx" },
     { name = "openai" },

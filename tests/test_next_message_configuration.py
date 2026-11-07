@@ -323,7 +323,7 @@ async def test_preview_and_catalog_do_not_wait_on_runtime_mutation(app, monkeypa
 
 def valid_catalog():
     return {'providers': [{'id': 'one', 'sharedCatalogKey': 'one'}], 'catalogs': {'one': {
-        'phase': 'ready', 'models': [{'id': 'chosen'}],
+        'phase': 'ready', 'supported': True, 'models': [{'id': 'chosen'}],
         'metadata': {'configSchema': {'fields': [{'id': 'reasoning_effort', 'choices': ['low', 'high']}]}}}}}
 
 
@@ -339,25 +339,23 @@ def test_nullable_provider_visibility_allows_valid_effort_and_rejects_unknown():
         validate_selection({**selected, 'effort': 'unsupported'}, catalog)
 
 
-def test_configured_default_is_selectable_even_when_catalog_omits_it():
+def test_configured_default_is_not_invented_but_unavailable_discovery_allows_manual_id():
     from amplifier_web.next_message_configuration import validate_selection
     catalog = valid_catalog()
     catalog['providers'][0]['info'] = {'defaults': {'model': 'configured-model'}}
     catalog['providers'].append({'id': 'other', 'sharedCatalogKey': 'other',
                                 'info': {'defaults': {'model': 'other-account-model'}}})
     selected = {'instance': 'one', 'model': 'configured-model', 'effort': 'low'}
-    validate_selection(selected, catalog)
-    for model in ('unknown-model', 'other-account-model'):
-        with pytest.raises(ValueError, match='catalog'):
-            validate_selection({**selected, 'model': model}, catalog)
+    for model in ('configured-model', 'unknown-model', 'other-account-model'):
+        validate_selection({**selected, 'model': model}, catalog)
+    assert catalog['catalogs']['one']['models']==[{'id':'chosen'}]
     with pytest.raises(ValueError, match='reasoning effort'):
-        validate_selection({**selected, 'effort': 'unsupported'}, catalog)
+        validate_selection({**selected, 'model': 'chosen', 'effort': 'unsupported'}, catalog)
     catalog['catalogs']['one']['phase'] = 'error'
-    with pytest.raises(ValueError, match='compatibility is unavailable'):
-        validate_selection(selected, catalog)
+    validate_selection(selected, catalog)
 
 
-@pytest.mark.parametrize('fault', ['offline', 'model', 'effort', 'provider'])
+@pytest.mark.parametrize('fault', ['effort', 'provider'])
 def test_invalid_choices_never_pass_validation(fault):
     from amplifier_web.next_message_configuration import validate_selection
     catalog = valid_catalog()
@@ -478,23 +476,28 @@ async def test_stale_preview_settles_only_its_own_operation(app, monkeypatch):
 
 
 async def test_unsupported_model_listing_stays_unsupported_after_cached_browse(app, monkeypatch):
-    from amplifier_web import draft_defaults
+    import yaml
+    from amplifier_web.host.config import write_private
+    from amplifier_web.session_files import amplifier_home
+    from amplifier_web.setup import SetupManager
     from amplifier_web.conversation_models import browse
     from amplifier_web.provider_catalog import model_key
     from amplifier_web.next_message_configuration import validate_selection
-    result = valid_catalog()
-    result['providers'][0]['info'] = {'defaults': {'model': 'chosen'}}
-    result['catalogs']['one'].update(supported=False, models=[])
-    resolver = AsyncMock(return_value=result)
-    monkeypatch.setattr(draft_defaults, 'resolve_defaults', resolver)
+    write_private(amplifier_home()/'settings.yaml', yaml.safe_dump({'config':{'providers':[
+        {'id':'one','module':'provider-fixture','config':{}}]}}))
+    resolver = AsyncMock(return_value={'models':[], 'modelsSupported':False, 'providerMetadata':{}})
+    monkeypatch.setattr(SetupManager, 'probe', resolver)
+    app._session()['selection']={'instance':'one','model':'chosen'}
     await browse(app.management, deepcopy(app._session()))
     await browse(app.management, deepcopy(app._session()))
     assert resolver.await_count == 1
-    cached = app.management.provider_catalog.peek(model_key('one'))
+    result=app.state['runtimeControl'][app._session()['id']]['configuration.catalog']
+    key=result['providers'][0]['sharedCatalogKey']
+    cached = app.management.provider_catalog.peek(model_key(key))
     assert cached['modelsSupported'] is False
     validate_selection({'instance': 'one', 'model': 'chosen'}, {
         'providers': result['providers'],
-        'catalogs': {'one': {'phase': 'ready', 'supported': cached['modelsSupported'],
+        'catalogs': {key: {'phase': 'ready', 'supported': cached['modelsSupported'],
                              'models': cached['models'], 'metadata': cached['providerMetadata']}}})
 
 

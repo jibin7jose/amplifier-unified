@@ -39,6 +39,8 @@ async def run():
             return None
         async def list_models(self):
             return [{'id':'fixture-model'}]
+        def get_model_list_info(self):
+            return {'version':1,'source':'provider-api'}
     provider=Provider()
     await coordinator.mount('providers',provider,name='fixture-provider')
     class Echo:

@@ -6,7 +6,11 @@ import os
 from pathlib import Path
 from .probe_process import spawn, stop
 
-async def resolve_defaults(home, workspace, bundle=None, app_bundle=None, *, global_only=False, session_id=None, catalog=False, refresh=False, replacement=None, desired_bundle=False):
+async def resolve_defaults(home, workspace, bundle=None, app_bundle=None, *, global_only=False, session_id=None, catalog=False, refresh=False, replacement=None, desired_bundle=False, catalog_cache=None, instance=None, selected_only=False):
+    if catalog:
+        from .setup import SetupManager
+        manager = SetupManager(home, catalog=catalog_cache, global_only=global_only, allow_missing_workspace=True)
+        return await manager.discover_catalog(workspace, refresh=refresh, instance=instance, selected_only=selected_only)
     from .bundle_selection import defaults
     from .runtime import RuntimeManager
     chosen=bundle or defaults(home,workspace,app_bundle,global_only=global_only)['effective']

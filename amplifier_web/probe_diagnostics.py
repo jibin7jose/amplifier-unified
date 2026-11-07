@@ -3,6 +3,32 @@ import asyncio
 import re
 
 
+class HostProbeFailure(ValueError):
+    """Closed host-owned remedies; no interpolated provider text."""
+    messages = {
+        'timeout': 'Provider check timed out after 90 seconds. Check connectivity and credentials, then retry.',
+        'disabled': 'This configured connection is disabled. Enable it before checking it.',
+        'unsaved': 'Save this provider before discovering models or testing it.',
+        'not-verifiable': 'This provider does not expose API model listing for connection testing. Local recommendations do not verify connectivity.',
+    }
+
+    def __init__(self, code):
+        self.code = code
+        self.public_message = self.messages[code]
+        self.diagnostic = {'stage': 'probe', 'category': 'HostProbeFailure', 'code': code}
+        super().__init__(self.public_message)
+
+
+class ProbeProcessFailure(ValueError):
+    """Host-authored subprocess facts, never an arbitrary provider message."""
+    def __init__(self, returncode, stderr):
+        self.public_message = (
+            f'The provider check ended without a valid result (exit code {int(returncode)}). '
+            + failure_detail(stderr))
+        self.diagnostic = {'stage':'preparation','category':'ProbeProcessFailure'}
+        super().__init__(self.public_message)
+
+
 async def communicate(process, payload):
     """Read stdout while the separate bounded reader drains stderr."""
     async def write_input():

@@ -15,6 +15,14 @@ export function modelOptions(value){
  const models=Array.isArray(value)?value:value?.models||[];
  return models.map(model=>typeof model==='string'?{id:model,name:model}:{id:model.id||model.name||model.model,name:model.display_name||model.displayName||model.name||model.id||model.model}).filter(model=>model.id);
 }
+export function connectionTestability(catalog){
+ const metadata=catalog?.metadata,origin=metadata?.modelListInfo?.source||catalog?.provenance;
+ if(metadata?.supports?.test===false||['configured','static','simulated','unsupported'].includes(origin)){
+  const label={configured:'Configured models',static:'Static recommendations',simulated:'Simulated models'}[origin]||'This catalog';
+  return {supported:false,reason:`${label} do not verify connectivity. This provider has no API catalog check.`};
+ }
+ return {supported:true,reason:'Checking verifies the API model catalog without sending a chat request.'};
+}
 export function updateRole(matrix,role,patch){
  return {...matrix,roles:{...matrix?.roles,[role]:{...matrix?.roles?.[role],...patch}}};
 }

@@ -9,7 +9,7 @@ from amplifier_web.session_files import amplifier_home
 
 
 def settings(home,models=('first','second')):
-    write_private(amplifier_home()/'settings.yaml',yaml.safe_dump({'config':{'providers':[{'id':str(i),'module':'provider-openai','config':{'default_model':model,'api_key':'${CATALOG_TEST_KEY}'}} for i,model in enumerate(models)]}}))
+    write_private(amplifier_home()/'settings.yaml',yaml.safe_dump({'config':{'providers':[{'id':str(i),'module':'provider-openai','config':{'base_url':'https://'+model+'.test','default_model':model,'api_key':'${CATALOG_TEST_KEY}'}} for i,model in enumerate(models)]}}))
 
 
 async def test_catalog_single_flight_refresh_and_failure_recovery():
@@ -85,7 +85,7 @@ async def test_startup_warms_all_providers_and_reuses_catalogs(tmp_path,monkeypa
         await service.management.command('providers.list',{})
         await asyncio.sleep(.03);assert calls=={'0':1,'1':1}
         save_id='catalog-save'
-        await service.management.command('providers.save',{'id':'0','module':'provider-openai','config':{'default_model':'changed'}},command_id=save_id)
+        await service.management.command('providers.save',{'id':'0','module':'provider-openai','config':{'base_url':'https://changed.test'}},command_id=save_id)
         receipt=service.state['managementResults'][save_id]
         assert receipt=={'phase':'ready','error':None},receipt
         expected={identity:manager.catalog_key({'id':identity},str(tmp_path)) for identity in old}
@@ -129,7 +129,7 @@ async def test_catalog_wait_requires_new_identity_and_rejects_refresh_error(tmp_
         old={identity:manager.catalog_key({'id':identity},str(tmp_path)) for identity in ('0','1')}
         await wait_catalogs(service,old);assert calls=={'0':1,'1':1}
         hold_refresh=True
-        await service.management.command('providers.save',{'id':'0','module':'provider-openai','config':{'default_model':'changed'}},command_id='delayed-save')
+        await service.management.command('providers.save',{'id':'0','module':'provider-openai','config':{'base_url':'https://changed.test'}},command_id='delayed-save')
         receipt=service.state['managementResults']['delayed-save']
         assert receipt=={'phase':'ready','error':None},receipt
         expected={identity:manager.catalog_key({'id':identity},str(tmp_path)) for identity in old}
@@ -170,13 +170,13 @@ async def test_remount_reuses_unchanged_provider_catalogs(tmp_path):
     await service.dispatch('session.create',{})
     sid=service.state['selectedSessionId']
     try:
-        await service.management.warm_runtime_models(sid,[{'id':'one','catalogKey':'one-config'},{'id':'two','catalogKey':'two-config'}],'first')
+        for row in [{'id':'one','catalogKey':'one-config'},{'id':'two','catalogKey':'two-config'}]:
+            await service.management.runtime_models(sid,row,'first')
         assert calls=={'one':1,'two':1}
-        await service.management.warm_runtime_models(sid,[{'id':'one','catalogKey':'changed-config'},{'id':'two','catalogKey':'two-config'}],'second')
+        for row in [{'id':'one','catalogKey':'changed-config'},{'id':'two','catalogKey':'two-config'}]:
+            await service.management.runtime_models(sid,row,'second')
         assert calls=={'one':2,'two':1}
-        assert set(service.state['runtimeControl'][sid]['modelCatalogs'])=={'one','two'}
-        await service.management.warm_runtime_models(sid,[],'third')
-        assert service.state['runtimeControl'][sid]['modelCatalogs']=={}
+        assert 'modelCatalogs' not in service.state.get('runtimeControl',{}).get(sid,{})
     finally:await service.close()
 
 
@@ -201,11 +201,11 @@ async def test_persistent_ttl_failed_refresh_and_private_file(tmp_path):
         nonlocal calls
         calls+=1
         return {'models':[{'id':'saved'}]}
-    cache=ProviderCatalog(path,ttl=60,clock=lambda:now[0])
+    cache=ProviderCatalog(path,ttl=60,retry_after=60,clock=lambda:now[0])
     key=('providers.models','private-configuration-digest')
     await cache.get(key,load)
     assert path.stat().st_mode & 0o777 == 0o600
-    restarted=ProviderCatalog(path,ttl=60,clock=lambda:now[0])
+    restarted=ProviderCatalog(path,ttl=60,retry_after=60,clock=lambda:now[0])
     assert restarted.peek(key)['models'][0]['id']=='saved'
     await restarted.get(key,load);assert calls==1
     assert restarted.peek(('providers.models','different-account')) is None
@@ -221,6 +221,25 @@ async def test_persistent_ttl_failed_refresh_and_private_file(tmp_path):
     assert ProviderCatalog(path).peek(key) is None
 
 
+async def test_failed_refresh_inside_ttl_is_stale_and_retains_success_timestamp(tmp_path):
+    now=[1000.0];key=('providers.models','identity')
+    cache=ProviderCatalog(tmp_path/'catalog.json',ttl=60,clock=lambda:now[0])
+    cache.put(key,{'models':[{'id':'prior'}],'modelsSupported':True,'modelsProvenance':'provider-api'})
+    now[0]+=1
+    async def fail():raise TimeoutError('synthetic')
+    with pytest.raises(TimeoutError):await cache.get(key,fail,refresh=True)
+    assert not cache.fresh(key)
+    entry=cache.entry(key)
+    assert entry['stale'] and entry['phase']=='error'
+    assert entry['loadedAt']==1000 and entry['failedAt']==1001
+    assert entry['models']==[{'id':'prior'}]
+    restarted=ProviderCatalog(cache.path,ttl=60,clock=lambda:now[0])
+    assert restarted.entry(key)==entry
+    cache.put(key,{'models':[],'modelsSupported':True,'modelsProvenance':'provider-api'})
+    assert cache.fresh(key) and not cache.entry(key)['stale']
+    assert cache.entry(key)['models']==[]
+
+
 async def test_provider_priority_does_not_invalidate_models(tmp_path,monkeypatch):
     settings(tmp_path)
     manager=SetupManager(tmp_path,catalog=ProviderCatalog())
@@ -232,3 +251,24 @@ async def test_provider_priority_does_not_invalidate_models(tmp_path,monkeypatch
     document['config']['providers'][0]['config']['base_url']='https://other.example/v1'
     write_private(amplifier_home()/'settings.yaml',yaml.safe_dump(document))
     assert manager.catalog_key({'id':'0'},str(tmp_path))!=before
+
+
+@pytest.mark.parametrize('field', ['model', 'default_model'])
+def test_selection_defaults_change_catalog_not_account_identity(tmp_path, monkeypatch, field):
+    from amplifier_web.provider_catalog import configuration_key, connection_key
+    config={'api_key':'synthetic','base_url':'https://fixture.invalid'}
+    before=configuration_key(tmp_path,'provider-fixture',config)
+    assert before==configuration_key(tmp_path,'provider-fixture',{
+        **config,'reasoning_effort':'high','priority':10})
+    updated={**config,field:'changed'}
+    assert before!=configuration_key(tmp_path,'provider-fixture',updated)
+    assert connection_key(tmp_path,'provider-fixture',config)==connection_key(
+        tmp_path,'provider-fixture',updated)
+    indirect={**config,field:'${LIST_MODEL}'}
+    monkeypatch.setenv('LIST_MODEL','changed')
+    assert configuration_key(tmp_path,'provider-fixture',indirect)==configuration_key(
+        tmp_path,'provider-fixture',updated)
+    monkeypatch.setenv('LIST_MODEL','other')
+    assert configuration_key(tmp_path,'provider-fixture',indirect)!=configuration_key(
+        tmp_path,'provider-fixture',updated)
+    assert before!=configuration_key(tmp_path,'provider-fixture',{**config,'api_key':'rotated'})

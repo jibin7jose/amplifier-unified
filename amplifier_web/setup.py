@@ -23,6 +23,8 @@ from .host.config import credential_environment_source, expand_environment, load
 from .bundles import SECRET_KEYS, validate_uri
 
 KNOWN_PROVIDER_SOURCES=json.loads(Path(__file__).with_name('provider_sources.json').read_text())
+_SERVICE_NAMES = {row['module']: row['name'] for row in
+                  json.loads(Path(__file__).with_name('ai_services.json').read_text())}
 
 NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,99}')
 
@@ -43,6 +45,8 @@ PROVIDER_ENV = {
 def credential_field(module):
     return 'github_token' if module=='provider-github-copilot' else 'api_key'
 
+COPILOT_ENV_ORDER = ('COPILOT_AGENT_TOKEN', 'COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN')
+
 
 def key_preview(module, value, env_name, *, configured=False):
     """Identify the service's configured key, never serialize a complete secret.
@@ -59,7 +63,7 @@ def key_preview(module, value, env_name, *, configured=False):
     if configured:
         if not value:
             defaults = {
-                'provider-github-copilot': ('COPILOT_AGENT_TOKEN', 'COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'),
+                'provider-github-copilot': COPILOT_ENV_ORDER,
                 'provider-azure-openai': ('AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_KEY'),
                 'provider-ollama': ('OLLAMA_API_KEY',),
                 'provider-vllm': ('VLLM_API_KEY',),
@@ -95,11 +99,14 @@ def environment_credential(module,raw=None,env_var=None):
     configured=raw is not None and env_var is None
     raw=raw or {}
     defaults=PROVIDER_ENV.get(module,())
+    # Keep the setup recommendation separate from effective SDK precedence.
+    # Discovery and identity must use the same account as an unpinned mount.
+    effective_defaults = COPILOT_ENV_ORDER if configured and module=='provider-github-copilot' else defaults
     value=raw.get(credential_field(module))
     reference=re.fullmatch(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}',value) if isinstance(value,str) else None
     if env_var is not None and (not isinstance(env_var,str) or not ENV_NAME.fullmatch(env_var)):
         raise ValueError('Use an environment variable name containing letters, numbers and underscores, starting with a letter or underscore.')
-    chosen=env_var or (reference.group(1) if reference else next((name for name in defaults if os.environ.get(name)),defaults[0] if defaults else ''))
+    chosen=env_var or (reference.group(1) if reference else next((name for name in effective_defaults if os.environ.get(name)),defaults[0] if defaults else ''))
     return {'module':module,'field':credential_field(module),'defaultEnvVar':defaults[0] if defaults else '',
             'alternatives':list(defaults[1:]),'envVar':chosen,'available':bool(chosen and os.environ.get(chosen)),
             'explicit':bool(reference),'hasStoredKey':bool(value and not reference),
@@ -244,7 +251,7 @@ class SetupManager:
     def provider_rows(self,workspace):
         config=self.config(workspace)
         rows=[]
-        for value in config.providers:
+        for value in config.configured_connections:
             identity=value.get('id') or value.get('instance_id') or value['module'].removeprefix('provider-')
             raw=value.get('config',{})
             refs=[]
@@ -265,26 +272,114 @@ class SetupManager:
             connected=bool(account and account['connected'])
             if account:configured=connected and (account['authMode']!='chatgpt_plan' or account['planEnabled'])
             rows.append({'credential':credential,'id':identity,'module':value['module'],'source':public_source(value.get('source')),'config':redact(raw),
+                'displayName': value.get('label') or value.get('name') or _SERVICE_NAMES.get(value['module'], value['module'].removeprefix('provider-')),
                 'authenticationRequired':needs_auth,'account':account,'accountConnected':connected,'credentialsConfigured':configured,'keySource':'environment' if (not refs and credential['available']) or any(isinstance(v,str) and v.startswith('${') for v in refs) else ('configuration' if refs else 'provider-managed'), 'enabled':value.get('enabled',True) and identity not in config.settings.get('configurator',{}).get('disabled',{}).get('providers',[])})
         return rows
 
-    def catalog_key(self,args,workspace):
-        from .provider_catalog import configuration_key
+    async def discover_catalog(self, workspace, *, refresh=False, instance=None, selected_only=False):
+        """Configured connections only; all consumers share the host cache.
+
+        A session's mounted/default/saved selection is not an inventory source.
+        Relative workspace and effective credential/source identities are still
+        computed by catalog_key, never by display name or provider type.
+        """
+        from .provider_catalog import model_key
+        with self.read_snapshot(workspace):
+            rows = [row for row in self.provider_rows(workspace) if row['enabled']
+                    and (not selected_only or row['id'] == instance)]
+            for row in rows:
+                row['sharedCatalogKey'] = self.catalog_key({'id': row['id']}, workspace)
+                row['connectionKey'] = self.catalog_key({'id': row['id']}, workspace, binding=True)
+        if instance is not None and not any(row['id'] == instance for row in rows):
+            raise ValueError('Choose a configured connection to refresh.')
+
+        async def discover(row):
+            key = model_key(row['sharedCatalogKey'])
+            if row.get('authenticationRequired'):
+                return row['sharedCatalogKey'], {'sharedCatalogKey':key[1], 'models':[],
+                    'phase':'invalidated','supported':False,
+                    'error':'This connection needs sign-in. Cached models are not available until it is reconnected.'}
+            try:
+                await self.cached_probe('providers.models', {
+                    'id': row['id'], 'refresh': refresh and (instance is None or instance == row['id'])
+                }, workspace)
+            except Exception:
+                # The cache/probe owns the bounded diagnostic. Construction,
+                # import, configuration and model discovery fail independently.
+                pass
+            # A provider-owned same-account refresh can rotate its token file.
+            # cached_probe re-queries under the new generation, never retags an
+            # old response. Adopt only that newly checked key for publication.
+            with self.read_snapshot(workspace):
+                binding = self.catalog_key({'id': row['id']}, workspace, binding=True)
+                if binding != row['connectionKey']:
+                    raise ValueError('Configured connection changed during discovery. Reopen model settings.')
+                row['sharedCatalogKey'] = self.catalog_key({'id': row['id']}, workspace)
+            return row['sharedCatalogKey'], self.catalog.entry(model_key(row['sharedCatalogKey']))
+
+        entries = dict(await asyncio.gather(*(discover(row) for row in rows)))
+        with self.read_snapshot(workspace):
+            current = {row['id']: self.catalog_key({'id': row['id']}, workspace)
+                       for row in self.provider_rows(workspace) if row['enabled']
+                       and (not selected_only or row['id'] == instance)}
+        if current != {row['id']: row['sharedCatalogKey'] for row in rows}:
+            raise ValueError('Configured connections changed during discovery. Reopen model settings.')
+        for row in rows:
+            metadata = entries[row['sharedCatalogKey']].get('metadata') or {}
+            row['info'] = metadata.get('info', {})
+        return {'providers': rows, 'catalogs': entries}
+
+    def catalog_key(self,args,workspace,*,binding=False):
+        from .provider_catalog import configuration_key, connection_key
         config=self.config(workspace)
-        row=next((row for row in config.providers if (row.get('id') or row.get('instance_id') or row['module'].removeprefix('provider-'))==args.get('id')),None)
+        row=next((row for row in config.configured_connections if (row.get('id') or row.get('instance_id') or row['module'].removeprefix('provider-'))==args.get('id')),None)
         module=args.get('module') or (row or {}).get('module')
         raw=(row or {}).get('config',{})
-        return configuration_key(workspace,module,raw,getattr(config,'module_sources',{}).get(module) or (row or {}).get('source'),home=self.home)
+        identity = connection_key if binding else configuration_key
+        return identity(workspace,module,raw,(row or {}).get('source') or getattr(config,'module_sources',{}).get(module),home=self.home)
 
-    async def cached_probe(self,action,args,workspace):
-        from .provider_catalog import model_key
+    async def cached_probe(self,action,args,workspace,*,_rotation_retry=True):
+        from .provider_catalog import model_key, CatalogInvalidated, public_failure
+        from .probe_diagnostics import ProbeProcessFailure, HostProbeFailure
         identity=self.catalog_key(args,workspace)
+        binding=self.catalog_key(args,workspace,binding=True)
+        def configured_row():
+            return next((row for row in self.config(workspace).configured_connections
+                         if (row.get('id') or row.get('instance_id') or row['module'].removeprefix('provider-'))==args.get('id')), {})
+        captured_row=copy.deepcopy(configured_row())
         key=model_key(identity) if action=='providers.models' else (action,identity)
         if action=='providers.schema' and not args.get('refresh') and self.catalog.fresh(model_key(identity)):
             cached=self.catalog.peek(model_key(identity))
             if cached.get('providerMetadata'):
                 return {'providerMetadata':cached['providerMetadata']}
-        result=await self.catalog.get(key,lambda:self.probe(action,args,workspace),refresh=args.get('refresh',False))
+        async def load():
+            try:
+                if identity!=self.catalog_key(args,workspace):
+                    raise CatalogInvalidated('Provider configuration changed before discovery.')
+                # No await between rechecking identity and probe's synchronous
+                # request/environment capture. Queued A→B→A cannot probe B as A.
+                result=await self.probe(action,args,workspace)
+                if identity!=self.catalog_key(args,workspace):
+                    raise CatalogInvalidated('Provider configuration changed during discovery.')
+                return result
+            except (CatalogInvalidated, ProbeProcessFailure, HostProbeFailure):
+                raise
+            except Exception as exc:
+                message, diagnostic = public_failure(exc)
+                failure = ValueError(message)
+                failure.diagnostic = {**diagnostic, 'connection': args.get('id')}
+                raise failure from None
+        try:
+            result=await self.catalog.get(key,load,refresh=args.get('refresh',False))
+        except CatalogInvalidated:
+            # One new observation after same-account credential renewal. Never
+            # reuse a response across accounts or loop on continuously changing
+            # credentials; ordinary failure/cancellation does not retry.
+            if (_rotation_retry and captured_row.get('module')=='provider-openai-chatgpt'
+                    and captured_row==configured_row() and identity!=self.catalog_key(args,workspace)
+                    and binding==self.catalog_key(args,workspace,binding=True)):
+                return await self.cached_probe(action,args,workspace,_rotation_retry=False)
+            raise
         if identity!=self.catalog_key(args,workspace):
             self.catalog.discard(key)
             raise ValueError('Provider configuration changed during discovery. The new configuration is being refreshed.')
@@ -294,12 +389,15 @@ class SetupManager:
             result={**result,'imageModelsProviderId':args['id']}
         return result
 
-    async def probe(self,action,args,workspace):
-        from .runtime import RuntimeManager
+    def probe_snapshot(self, action, args, workspace):
+        """Freeze credentials/config/source before waiting for discovery capacity."""
+        from .probe_diagnostics import HostProbeFailure
         configured=self.config(workspace)
-        row=next((row for row in configured.providers if (row.get('id') or row.get('instance_id') or row['module'].removeprefix('provider-'))==args.get('id')),None)
+        row=next((row for row in configured.configured_connections if (row.get('id') or row.get('instance_id') or row['module'].removeprefix('provider-'))==args.get('id')),None)
         module=args.get('module') if action=='providers.schema' else (row or {}).get('module')
-        if not module:raise ValueError('Save this provider before discovering models or testing it.')
+        if not module:raise HostProbeFailure('unsaved')
+        if action!='providers.schema' and row.get('enabled') is False:
+            raise HostProbeFailure('disabled')
         safe_name(module)
         raw=(row or {}).get('config',{}) if row and row['module']==module else {}
         # Metadata may need this exact instance's endpoint, never its secrets.
@@ -310,40 +408,62 @@ class SetupManager:
             credential=environment_credential(module,raw)
             field=credential['field']
             if not config.get(field) and credential['available']:config[field]='${'+credential['envVar']+'}'
-        from .provider_health import generation, record
+        from .provider_health import generation
         credential_generation=generation(module,raw)
-        command=self.probe_command or RuntimeManager()._command()[:-1]+[str(Path(__file__).with_name('provider_probe.py'))]
         env={**os.environ,'AMPLIFIER_WEB_HOME':str(self.home)}
-        if module=='provider-github-copilot' and config.get('github_token'):env['COPILOT_AGENT_TOKEN']=config['github_token']
+        # provider_probe promotes Copilot's credential AFTER materialization.
+        # Overwriting this environment first can turn ${COPILOT_AGENT_TOKEN}
+        # into a self-reference and send different bytes than the cache key.
+        return {'module':module,'raw':copy.deepcopy(raw),'config':config,'env':env,
+                'credentialGeneration':credential_generation,
+                'source':(row or {}).get('source') or getattr(configured,'module_sources',{}).get(module),
+                'registryHome':str(getattr(configured,'registry_home',self.home/'foundation'))}
+
+    async def probe(self,action,args,workspace):
+        from .runtime import RuntimeManager
+        from .provider_health import generation, record
+        snapshot=self.probe_snapshot(action,args,workspace)
+        module,raw,config,env=(snapshot[name] for name in ('module','raw','config','env'))
+        credential_generation=snapshot['credentialGeneration']
+        command=self.probe_command or RuntimeManager()._command()[:-1]+[str(Path(__file__).with_name('provider_probe.py'))]
         probe_workspace=Path(workspace)
         while not probe_workspace.is_dir() and probe_workspace.parent!=probe_workspace:
             probe_workspace=probe_workspace.parent
-        from .probe_diagnostics import communicate, stderr_tail, failure_detail
+        from .probe_diagnostics import communicate, stderr_tail, ProbeProcessFailure, HostProbeFailure
         from .probe_process import spawn, stop
         process=await spawn(*command,stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,env=env,cwd=probe_workspace)
         stderr_task=asyncio.create_task(stderr_tail(process.stderr))
         try:
             try:
-                output,stderr=await asyncio.wait_for(asyncio.gather(communicate(process,json.dumps({'action':action,'model':args.get('model'),**({'prompt':args['prompt']} if action=='naming.complete' else {}),'module':module,'config':config,'source':getattr(configured,'module_sources',{}).get(module) or (row or {}).get('source'),'fallbackSource':KNOWN_PROVIDER_SOURCES.get(module),'registryHome':str(getattr(configured,'registry_home',self.home/'foundation'))}).encode()),stderr_task),90)
+                output,stderr=await asyncio.wait_for(asyncio.gather(communicate(process,json.dumps({'action':action,'model':args.get('model'),**({'prompt':args['prompt']} if action=='naming.complete' else {}),'module':module,'config':config,'source':snapshot['source'],'fallbackSource':KNOWN_PROVIDER_SOURCES.get(module),'registryHome':snapshot['registryHome']}).encode()),stderr_task),90)
             except TimeoutError:
-                raise ValueError('Provider check timed out after 90 seconds. Check connectivity and credentials, then retry.') from None
+                raise HostProbeFailure('timeout') from None
             try:result=json.loads(output)
             except (ValueError,UnicodeError):
-                raise ValueError(
-                    f'The provider check ended without a valid result (exit code {process.returncode}). '
-                    + failure_detail(stderr)
-                ) from None
+                raise ProbeProcessFailure(process.returncode, stderr) from None
             if action!='providers.schema' and generation(module,raw)==credential_generation:
-                if not result.get('error') or result.get('authenticationRequired') is True:
+                api_observation = action!='providers.models' or result.get('modelsProvenance')=='provider-api'
+                if (not result.get('error') and api_observation) or result.get('authenticationRequired') is True:
                     record(self.home,args['id'],credential_generation,authentication_required=result.get('authenticationRequired') is True)
-            if result.get('error'):raise ValueError(result['error'])
-            if process.returncode:raise ValueError(f'The provider check could not finish (exit code {process.returncode}). '+failure_detail(stderr))
+            if result.get('error'):
+                if result.get('publicFailureCode') in HostProbeFailure.messages:
+                    raise HostProbeFailure(result['publicFailureCode'])
+                error = ValueError(result['error'])
+                error.diagnostic = result.get('diagnostic', {'stage':'probe','category':'ProviderError'})
+                raise error
+            if process.returncode:raise ProbeProcessFailure(process.returncode, stderr)
             if action=='naming.complete':
                 if result.get('naming',{}).get('error'):raise ValueError(result['naming']['error'])
                 return {'text':result.get('naming',{}).get('text','')}
-            metadata={'module':module,'info':result['info'],'configSchema':result['configSchema'],'imageGeneration':result.get('imageGeneration')}
+            metadata={'module':module,'info':result['info'],'configSchema':result['configSchema'],'imageGeneration':result.get('imageGeneration'),'supports':result.get('supports',{})}
+            if action=='providers.models':
+                metadata['modelListInfo']=result.get('modelListInfo')
+                metadata['info']=copy.deepcopy(metadata['info'])
+                defaults=metadata['info'].get('defaults',{})
+                for name in ('model','default_model','reasoning_effort','priority'):
+                    defaults.pop(name,None)
             response={'providerMetadata':metadata}
-            if action=='providers.models':response.update(models=result.get('models',[]),modelsProviderId=args['id'],modelsSupported=result.get('modelsSupported',True))
+            if action=='providers.models':response.update(models=result.get('models',[]),modelsProviderId=args['id'],modelsSupported=result.get('modelsSupported',False),modelsProvenance=result.get('modelsProvenance'))
             if action=='providers.imageModels':response.update(imageModels=result.get('imageModels',[]),imageModelsProviderId=args['id'],imageModelsSupported=result.get('imageModelsSupported',False))
             if action=='providers.testMessage':response['messageTest']={**result['messageTest'],'providerId':args['id'],'checkedAt':time.time()}
             if action=='providers.test':response['test']={**result['test'],'providerId':args['id']}

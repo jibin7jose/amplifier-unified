@@ -1288,8 +1288,22 @@ class RuntimeManager:
             requested=session.get('pendingModelSelection')
             guarded = {'guard': guard} if guard else {}
             await self.start({**session,**({'selection':requested,'replaceSavedSelection':True} if requested else {})}, emit, **guarded)
+            if session.get('modelConnectionKey') and (requested or session.get('selection')):
+                try:
+                    await self.control(session['id'],'provider.verifyConnection',{
+                        'instance':(requested or session['selection'])['instance'],
+                        'expectedConnectionKey':session['modelConnectionKey']
+                    }, **guarded)
+                except (SessionInUseError, RuntimeStartupError, RuntimeHostClosingError):
+                    raise
+                except Exception as exc:
+                    raise RuntimeStartupError(
+                        'Could not verify the saved connection. No input was sent. '
+                        'Review its account and endpoint, reconnect if needed, and save the model again.') from exc
             if requested:
-                await self.control(session['id'],'provider.select',requested, **guarded)
+                await self.control(session['id'],'provider.select',{
+                    **requested, **({'expectedConnectionKey':session['modelConnectionKey']} if session.get('modelConnectionKey') else {})
+                }, **guarded)
             if configuration_guard:
                 guard()
                 await emit('runtime.nextMessageApplied', {'sessionId': session['id'],

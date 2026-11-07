@@ -54,51 +54,36 @@ def publish_catalogs(management, entries):
     return changed
 
 
-async def browse(management, session, *, refresh=False):
+async def browse(management, session, *, refresh=False, instance=None):
     from .draft_defaults import resolve_defaults
-    from .provider_catalog import model_key
     service = management.service
     sid = session['id']
     revision = service.state.get('configurationRevision', 0)
     desired_revision = session.get('nextMessageRevision', 0)
+    interruption_revision = session.get('interruptionRevision', 0)
     pending_bundle = copy.deepcopy(session.get('pendingBundleSelection'))
-    # The resolver only composes configuration and queries provider metadata.
-    # It doesn't mount context, hooks, tools, load history, or acquire ownership.
-    # Fresh workers publish connection identities with their effective selection.
-    # Reuse those identities directly; browsing needs no separate per-chat probe.
-    report=session.get('runtimeReport',{})
-    previous=service.state.get('runtimeControl',{}).get(sid,{}).get('configuration.catalog',{})
-    same_revision=(previous.get('configurationRevision',0)==revision
-                   and previous.get('nextMessageRevision',0)==desired_revision)
-    current_catalog=same_revision and previous.get('phase')=='ready'
-    # A prior result at the current revision owns its identities. Never stamp an
-    # old runtime report with the revision of a newer configuration discovery.
-    choices=previous.get('providers',[]) if current_catalog else report.get('provider_choices',[]) if revision==0 and not previous and not pending_bundle else []
-    cached={row.get('sharedCatalogKey'):management.provider_catalog.peek(model_key(row.get('sharedCatalogKey')))
-            for row in choices if row.get('sharedCatalogKey')}
-    if same_revision and not refresh and not session.get('configurationPending') and choices and all((cached.get(row.get('sharedCatalogKey')) or {}).get('providerMetadata') for row in choices):
-        result={'providers':copy.deepcopy(choices) if current_catalog else [{'id':row['id'],'sharedCatalogKey':row['sharedCatalogKey'],
-                   'info':{'display_name':row.get('display_name'),'defaults':{'model':row.get('model'),'reasoning_effort':row.get('effort')}}}
-                  for row in choices], 'effective':previous.get('effective',{}) if current_catalog else report.get('effective_selection',{}),
-                'catalogs':{key:{'phase':'ready','models':value.get('models',[]),'metadata':value['providerMetadata'],
-                                'supported':value.get('modelsSupported',True)}
-                            for key,value in cached.items()}}
-    else:
-        result = await resolve_defaults(service.data_dir, session['workspace'], pending_bundle['bundle'] if pending_bundle else session.get('bundle'),
+    # One configured roster and one host-owned single flight, regardless of
+    # which conversation or Settings surface requested it. No runtime startup.
+    result = await resolve_defaults(service.data_dir, session['workspace'], pending_bundle['bundle'] if pending_bundle else session.get('bundle'),
         service.state['settings'].get('appBundle'), session_id=session.get('runtimeSessionId') or session.get('nativeIdentity') or sid,
-            catalog=True, refresh=refresh, desired_bundle=bool(pending_bundle),
-            global_only=session.get('location',{}).get('kind')=='managed')
+        catalog=True, refresh=refresh, instance=instance, catalog_cache=management.provider_catalog,
+        desired_bundle=bool(pending_bundle), global_only=session.get('location',{}).get('kind')=='managed')
+    if result.get('providers') and not (session.get('pendingModelSelection') or session.get('selection') or reported_selection(service, session) or result.get('effective')):
+        # Ordinary display/refresh must not prepare a whole bundle just to
+        # fill a default label. Native reports and saved intent remain the
+        # evidence; genuine input resolves the actual bundle selection.
+        result.update(defaultError='The bundle default will be resolved when you send. You can choose an explicit connection and model now.')
     entries = result.pop('catalogs', {})
+    from .provider_catalog import conversation_bindings
+    result['connectionScope'] = 'global' if session.get('location',{}).get('kind')=='managed' else 'workspace'
+    result['connectionBindings'] = conversation_bindings(service.data_dir, session['workspace'],
+        session.get('runtimeSessionId') or session.get('nativeIdentity') or sid, result.get('providers', []),
+        global_only=session.get('location',{}).get('kind')=='managed')
     async with service.lock:
         if (revision != service.state.get('configurationRevision', 0)
-                or desired_revision != service._session(sid, hydrate=False).get('nextMessageRevision', 0)):
+                or desired_revision != service._session(sid, hydrate=False).get('nextMessageRevision', 0)
+                or interruption_revision != service._session(sid, hydrate=False).get('interruptionRevision', 0)):
             return
-        for identity, entry in entries.items():
-            if entry.get('phase') == 'ready':
-                value = {'models': entry['models'], 'providerMetadata': entry['metadata'],
-                         'modelsSupported': entry.get('supported', True)}
-                if refresh or management.provider_catalog.peek(model_key(identity)) != value:
-                    management.provider_catalog.put(model_key(identity), value)
         current = service._session(sid)
         selection = current.get('selection') if 'selection' in current else result.get('selection')
         result.update(effective=current.get('pendingModelSelection') or selection or reported_selection(service, current) or result.get('effective', {}),
@@ -125,6 +110,9 @@ async def select(management, session, requested):
             raise ValueError('Finish active work before changing this conversation model')
         # Validation of mounted capabilities and compaction happens on Send.
         # Persist the explicit intent before touching any worker.
+        from .provider_catalog import configured_binding
+        current['modelConnectionKey']=configured_binding(service.data_dir,current['workspace'],selected['instance'],
+            global_only=current.get('location',{}).get('kind')=='managed')
         current['selection'] = copy.deepcopy(selected)
         current['pendingModelSelection'] = copy.deepcopy(selected)
         current['nextMessageRevision'] = current.get('nextMessageRevision', 0) + 1
@@ -140,7 +128,7 @@ async def select(management, session, requested):
         service._publish_changes(sessions={current['id']})
 
 
-async def request_browse(management, session, *, refresh=False):
+async def request_browse(management, session, *, refresh=False, instance=None):
     pending=getattr(management,'conversation_catalog_requests',None)
     if pending is None:
         pending=management.conversation_catalog_requests={}
@@ -149,23 +137,27 @@ async def request_browse(management, session, *, refresh=False):
     requested=getattr(management,'conversation_catalog_demand',None)
     if requested is None:
         requested=management.conversation_catalog_demand={}
-    demand=(service.state.get('configurationRevision',0),refresh,session.get('nextMessageRevision',0))
+    demand=(service.state.get('configurationRevision',0),refresh,session.get('nextMessageRevision',0),instance)
     if sid in pending:
-        if requested.get(sid)!=(demand[0],False,demand[2]) or refresh:
-            requested[sid]=(demand[0],refresh or requested.get(sid,(None,False))[1],demand[2])
+        queue=requested[sid]
+        if demand not in queue:
+            # Plain observation cannot replace a requested forced refresh.
+            if refresh or not any(item[0]==demand[0] and item[2]==demand[2] for item in queue):
+                queue.append(demand)
         return
-    requested[sid]=demand
+    requested[sid]=[demand]
     async def run():
         try:
             while True:
-                observed=requested[sid]
+                observed=requested[sid][0]
                 try:
-                    await browse(management,service._session(sid),refresh=observed[1])
+                    await browse(management,service._session(sid),refresh=observed[1],instance=observed[3])
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     # A failing obsolete read cannot poison a newer request.
-                    if requested[sid]!=observed:
+                    if len(requested[sid])>1:
+                        requested[sid].pop(0)
                         continue
                     async with service.lock:
                         if (observed[0]==service.state.get('configurationRevision',0)
@@ -173,7 +165,8 @@ async def request_browse(management, session, *, refresh=False):
                             control=service.state.setdefault('runtimeControl',{}).setdefault(sid,{})
                             control.setdefault('configuration.catalog',{}).update(phase='error',error='Could not load model settings. Your selection is preserved. Refresh models to retry.')
                             service._publish_changes(sessions={sid})
-                if requested[sid]==observed:
+                requested[sid].pop(0)
+                if not requested[sid]:
                     break
         finally:
             pending.pop(sid,None)

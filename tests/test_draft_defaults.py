@@ -194,29 +194,27 @@ async def test_managed_probe_skips_app_directory_project_settings(tmp_path, monk
 
 
 async def test_composed_catalog_shares_connection_models_across_workspaces(tmp_path,monkeypatch):
-    from amplifier_web.host import config,session
-    from amplifier_web import provider_environment as env
-    from amplifier_web.provider_catalog import ProviderCatalog, model_key
-    monkeypatch.setattr(config,'load_config',lambda *a,**k:types.SimpleNamespace(workspace=tmp_path))
-    monkeypatch.setattr(session,'module_source',lambda *a,**k:None)
-    monkeypatch.setattr(session,'is_snapshot',lambda *a:False)
-    async def root(*args,**kwargs):
-        return None,types.SimpleNamespace(providers=[{'module':'provider-test','id':'connection','config':{'model':'chosen','base_url':'https://fixture.invalid','reasoning_effort':'high'}}]),None
-    monkeypatch.setattr(session,'load_root_bundle',root)
+    import yaml
+    from amplifier_web.host.config import write_private
+    from amplifier_web.session_files import amplifier_home
+    from amplifier_web.setup import SetupManager
+    from amplifier_web.draft_defaults import resolve_defaults
+    from amplifier_web.provider_catalog import ProviderCatalog
+    write_private(amplifier_home()/'settings.yaml',yaml.safe_dump({'config':{'providers':[
+        {'module':'provider-test','id':'connection','config':{'base_url':'https://fixture.invalid'}}]}}))
     calls=[]
-    class Provider:
-        def __init__(self,config):self.config=config
-        def get_info(self):return {'id':'test','defaults':{'model':self.config.get('model','chosen')},'api_key':'never-export'}
-        def get_config_schema(self):return {'fields':[{'id':'reasoning_effort','choices':['high','low'],'field_type':'choice','required':False},{'id':'api_key','default':'never-export','field_type':'secret','required':False}]}
-        async def list_models(self):calls.append(1);return [{'id':'chosen','display_name':'Chosen model'}]
-    monkeypatch.setattr(env,'provider_class',lambda module:Provider)
-    first=await query({'home':str(tmp_path),'workspace':str(tmp_path/'one'),'bundle':'work','catalog':True})
+    async def probe(*args,**kwargs):
+        calls.append(1)
+        return {'models':[{'id':'chosen','display_name':'Chosen model'}],'modelsSupported':True,
+                'providerMetadata':{'info':{},'configSchema':{'fields':[]}}}
+    monkeypatch.setattr(SetupManager,'probe',probe)
+    cache=ProviderCatalog(tmp_path/'cache.json')
+    first=await resolve_defaults(tmp_path,str(tmp_path/'one'),catalog=True,catalog_cache=cache)
     key=first['providers'][0]['sharedCatalogKey'];entry=first['catalogs'][key]
-    ProviderCatalog(tmp_path/'cache'/'provider-catalogs.json').put(model_key(key),{'models':entry['models'],'providerMetadata':entry['metadata'],'modelsSupported':True})
-    second=await query({'home':str(tmp_path),'workspace':str(tmp_path/'two'),'bundle':'work','catalog':True})
+    second=await resolve_defaults(tmp_path,str(tmp_path/'two'),catalog=True,catalog_cache=cache)
     assert second['providers'][0]['sharedCatalogKey']==key
     assert second['catalogs'][key]['models']==entry['models']
-    assert second['effective']['effort']=='high' and calls==[1]
+    assert calls==[1]
     assert 'never-export' not in str(first)
     assert not (tmp_path/'one').exists() and not (tmp_path/'two').exists()
 

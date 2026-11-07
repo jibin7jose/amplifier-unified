@@ -1,0 +1,230 @@
+{
+  "status": "accepted-upstream-primary-graph",
+  "providers": {
+    "openai": {
+      "commit": "de94d275d62987441c5375957e7a0102d6736941",
+      "archiveSha256": "f481bce9ea525d7548115ba8b70f1b46247069148e336b42935bfc2c3e3b76aa",
+      "module": "amplifier_module_provider_openai",
+      "files": {
+        "__init__.py": "443e905047207440e7fc0153ba186c90858951011a1daea188d664e0af3ae9a6",
+        "_capabilities.py": "96d916c0475319dc6c405644e97fba503a74e22c6c180e24e1486d59caf0bb9d",
+        "_computer_result.py": "2c3d56886b98a57b591683bfe0991689be11b4e026e7471dbc5113e442f63517",
+        "_constants.py": "71b1df9fcdc0f69a0d53d007f85f751f50f48936bdaa6b3ac2ae7d76cb8a2cdb",
+        "_cost.py": "a7f605eaeb1a4a0010f4126f3edc9453aeba06e759d564d1d4fdb0e049d6a092",
+        "_lifecycle.py": "d7246087eaf7ba2d537dca87a9ff7eb11b50d16ecaca941539594ba6a3311288",
+        "_model_listing.py": "a327bd1192f26e299340ce444f6e8d2f48de8d97965a0628b0f0279599894ead",
+        "_response_handling.py": "fca36801fb534a7788085eaa7add2ab1a0b094aae4f59deb6c495d3e6e529c58",
+        "_single_attempt.py": "2979f2493f6a6d016c93c11d03768c5932cdd230d574def3412acf7df6744f58",
+        "_token_count.py": "58cf433d21c34d6fc928c51acfd85ce76ba72a62adf522fef58bcdcad6f7511d",
+        "_tool_search.py": "6597ad91c8ff4c01d060b54dac3a92dda2473881b103cf73745af7299b8bc096",
+        "_transport.py": "18a5e4446df10463a9a1f5d2660ae6413be4446fdaf8e7fcc4be5d3db87de64a",
+        "compaction.py": "e6a8ba4830b9f7bc58fefc3b4ab159d8d73b00e2a1b11827a5cc0baa4255372f",
+        "computer_history.py": "a459c71bb8fcdaa2adf0503a3ef1bf96c8ef3d4c31c1d1e041fa1ba4a5db862d",
+        "computer_images.py": "501e4533c534efee9c9180425292a40ee7c16ff83c6c0ed74aa441d0b05abb54",
+        "configuration_updates.py": "e424b018446097ed2ca74dda2a9234041177505e569a90726ab034987fec25b9",
+        "decisions.py": "5d7b2869e3b2d9b54cd2dcf4df141d09c9975c791346e283d8b93aaa7f1c6779",
+        "image_operation.py": "905f263d8bae33223129f441ce48d79b1d6dcb0b4d241726398902c1f5dde69b",
+        "images.py": "e963e1229a35603075dd4255ca581a0f756ef15ed676079d0f81092b004f011f",
+        "native.py": "7c706d61605eee5921f6437dae0ade25ede61ab47a40dfbc45d674efea2954fe",
+        "native_checkpoint.py": "87bcf3b394093a49c5bc91e36f6d19ca405033565e182accba78119944bddf95",
+        "neutral_computer.py": "8c6ce02962d2710e027c92ff990d0f4f9f1e497ca34d84148f9926b11f5aae7a"
+      },
+      "tree": "458ef2ac0a0c989b54c42b679a33649e0bc5618c",
+      "repository": "microsoft/amplifier-module-provider-openai",
+      "pull": 141
+    },
+    "chat-completions": {
+      "commit": "a9f63ccfc69df694a97cbc0e81b86b8c8acc7b26",
+      "archiveSha256": "547e58aae900093c97fae7dd8ec4441b42b4c5235281f413b436eddcaf1389de",
+      "module": "amplifier_module_provider_chat_completions",
+      "files": {
+        "__init__.py": "b09a3c48b3f332c8546196b638120486607e90dae411b97c6b77b48af83842d7",
+        "_cost.py": "eb3724b4970da67924b6e27005487f158dc46dc085aa25ad75ebefc7d12402c7",
+        "_model_listing.py": "94a5c911286f73a9a04ca8ec2ca059e82bce689d7284f16dd5b0ff0262a9e5be"
+      },
+      "tree": "99e9002ce4b8b45bb81414b1d469f652c6ca92ab",
+      "repository": "microsoft/amplifier-module-provider-chat-completions",
+      "pull": 28
+    },
+    "gemini": {
+      "commit": "d1eae1af050d35a3c4e1b529910f0cdb4b84da13",
+      "archiveSha256": "7e1f97129d81581d0140a43ba59c1d0bbbfa3e5607db5d98374ef48939db73de",
+      "module": "amplifier_module_provider_gemini",
+      "sdk": {
+        "distribution": "google-genai",
+        "requirement": ">=2.30.1,<3"
+      },
+      "files": {
+        "__init__.py": "06038a0cd10b4a16eee306901aadde9de4e1eb1907814cfe01734b799a0c8206",
+        "_capabilities.py": "f1071f42e56c2e789a5e22dd1265218d5bc5741273abbaa01e9c4d68063782a9",
+        "_cost.py": "2eb5be2f064c9d39564eff1654b48a18d0f5732bd4e80e3f0daf26afc3fb631a",
+        "_model_listing.py": "9a2ad80604e681e735cfa8e96bcb61c831dad164f3fcdfd6b163f1d14997f1cd",
+        "image_operation.py": "ab472051131c39939188dcb49cbd00da83f7d47723b351fee2b3b0195dab47e8",
+        "images.py": "02644f1cd43b9bc66ecc36672a5c370a5f1106e45d520460f47a875728c63172"
+      },
+      "tree": "f7c8a855e67f696c78a1efb5e294106a5e6ef55d",
+      "repository": "microsoft/amplifier-module-provider-gemini",
+      "pull": 63
+    },
+    "github-copilot": {
+      "commit": "d9f350524249d2124accf5f5357658e32a8a52ac",
+      "archiveSha256": "864405a3aa948323dd30b8680a40b1cffaf3f1ccb16c73ed3692ed7b199c552f",
+      "module": "amplifier_module_provider_github_copilot",
+      "sdk": {
+        "distribution": "github-copilot-sdk",
+        "requirement": "==1.0.15"
+      },
+      "files": {
+        "__init__.py": "2db268a0e6d24502d60b32b7424abb7febd50fc9be64f7dd3117824b9d766ce8",
+        "_compat.py": "79b36b3c1b42915917e53cd3358e3504a0bb6dcf8d74eb29a39b2e06af282ffa",
+        "_deprecated.py": "20be5a8cd1bae6e48ccd2b2dd8e71479d213b122771159349c544de3bdb97e52",
+        "_identity.py": "dc1e7b774ef800e7c7e4fbe0ebfda2be90007afe52b4714832bcd4873c6fb398",
+        "_model_listing.py": "5ca454584e18a08d317275dbe31addf09d47a45f683345f99ed0ced295df4a28",
+        "_permissions.py": "256a7eb195ec5d261d2043a6bfb6b949e1fec9dde312c8f8ab3aae7db294de11",
+        "_platform.py": "57525d453f8eab5c769a32b3a0e45c52f087f769a0626e019c22d03aa6a5ff9c",
+        "config/__init__.py": "8a5b4ac745a0dd4f28ebd8bf34cbf3b046ebb95b67f79cb179a0e072f1482947",
+        "config/_models.py": "53671458f282f8daa7161fa4dc999710f70ad9bd45a1f7e8b471401e98e9845f",
+        "config/_paths.py": "6a9fe671d348a6a1dc0bdd8d9c3244750cde4407be6c3aacdcf9f4ce5693cef1",
+        "config/_policy.py": "38038cca9b984986f5a507a32e88db864783e4dcefa45524713b30567fda6d6c",
+        "config/_sdk_protection.py": "73a19ba7c7ccce00ce5d186ccb1324e12b3235cca84044f23e74dbaed99fe2df",
+        "config/data/__init__.py": "d99c25bc5dd093a9e3f472c86a3a04f013f85c6e26caf238c066caa6593b5b14",
+        "config_loader.py": "7992a06e567ca91fbe6def431aaca979ec9fadc743a9ddeb4536ae2adc31e930",
+        "error_translation.py": "40edf7791cfe43334da3aefaa33ff9eaef4ba7d38b6223ec87bdea02c95343e2",
+        "event_router.py": "73bd1e248eaa37a6f04c11e61b8dcf206293727ada1b49d691dab2f1b81dd861",
+        "fake_tool_detection.py": "c4fa61a5a0206f7f5fc44502fad8bf8565ac326ed1970eaaa2d367bc2706aca8",
+        "model_cache.py": "4c7b709f1a3d5de811319276e670e03605af0a37629f488213860a888cdbf6b1",
+        "models.py": "af31fe703c9e39f9c1828229579c02806a7beca949db879c6a4ea9f34503bf4d",
+        "observability.py": "c75530a13787452b41589c7682d58a550aab3b0f615ba2900684b6b27dfb4d1e",
+        "provider.py": "6826a84fdfebef0f0cfe926648f58528eafb8446ea6c3b5519badb667fe1db39",
+        "request_adapter.py": "f495cefd3e649d650dd7880a678fdb1fffaba2ce736bfcb6287f6ab40a588893",
+        "retry_utils.py": "8d47f215a431c78b511e2eced5ae40dcd19268d6ab60dcdf4e057051b0b443fe",
+        "sdk_adapter/__init__.py": "7b8b9f65ee31442db1a4540ae74773b852bdefad38ea9e75fea773d36d9dcb16",
+        "sdk_adapter/_imports.py": "222201310dbac488fe5b55f820e7482994180852dfa3ec1f3875cee588bd975e",
+        "sdk_adapter/_spec_utils.py": "247bc21988f75a945da80ad4ddc53f87a000baa1e1747e52370a84fca7a65a3a",
+        "sdk_adapter/client.py": "2881ee39be131ce8dffdf7cabdb4154666303390a75974094eeeb927e4eeef62",
+        "sdk_adapter/event_helpers.py": "3334a4414f2a86269911c4cf9c61eac1316d910d09c16053ccaf0095ec962add",
+        "sdk_adapter/extract.py": "96789cf0c3d48fc1f6b78c913ae95d79a437079228c61e3d518b106c552a98ea",
+        "sdk_adapter/model_translation.py": "bdb2bcf2c88576f7afcc68f0d1a569e240d5d3caf0e51f2932c8f731ea7fcbdb",
+        "sdk_adapter/tool_capture.py": "e3e1829190e32f57b662d7da4b1373f24c7ec5093991b5b44b3f5b39c1726ece",
+        "sdk_adapter/types.py": "8b47cf23545802bb30522517b4aa0bae6fc53bb6a8c77e206d88c8e2612c9597",
+        "security_redaction.py": "a06b6619dc280f6e92ab70b9ede9416715798143a80d74f880d28bbe38eddc3a",
+        "streaming.py": "d0ffd28765753d4a3e1ff7825031e82ef6a4adba09712ce9d2d0e1d726734f77",
+        "tool_parsing.py": "71f8f037b8fcadb68be8a686d348d64808aae7d364ca8c226fe029b356606e5b"
+      },
+      "tree": "8a8c06f229c9f212abfd4fac48e92fafb33f2720",
+      "repository": "microsoft/amplifier-module-provider-github-copilot",
+      "pull": 91
+    },
+    "anthropic": {
+      "commit": "7793791a504aea5531806abcd904b7757c2d5a58",
+      "archiveSha256": "03f853d8aef6a5dfb673b1cbfd5f69a8ba33f3b2726a8f3f54d815fb0d5279a3",
+      "module": "amplifier_module_provider_anthropic",
+      "sdk": {
+        "distribution": "anthropic",
+        "requirement": ">=1.12.0,<2.0.0"
+      },
+      "files": {
+        "__init__.py": "05979a644ec17efb66f20077f46257e58470cb18633cd11a967db2861874d564",
+        "_computer_toolset.py": "7187da9a8d4ead38cd78e3b0f72276e5076b92542f2f14395e0209a779b22d1c",
+        "_cost.py": "cf26f34dd21bdda9776e8ba4297a8b99dbb0e1b51dff7096b820e07634e34db7",
+        "_model_listing.py": "819431a34cf78943d0f0423bb81aec30ebf8d90d1552bfc6215ec94279f7b1fc"
+      },
+      "tree": "cd56959ee10e6f34fd02f9079b9935a87fb4242a",
+      "repository": "microsoft/amplifier-module-provider-anthropic",
+      "pull": 139
+    },
+    "openai-chatgpt": {
+      "commit": "cae3eaa32e16b139b8e889b8cc477c3f2d9dee31",
+      "archiveSha256": "d708e7378fce5e3fb91706cb0cda54f35784d788736ec8b647050ee06dcd8727",
+      "module": "amplifier_module_provider_openai_chatgpt",
+      "files": {
+        "__init__.py": "a0b855a217f2f3fdeb94e055ee8bc3cfee8a56899a998bce99949cd528d5e5b4",
+        "_model_listing.py": "295c67a0f12662b3268c16a98e0302c8cec6b70a1d025ce029a9fa063b328529",
+        "_plan_request.py": "81d4dfd93fd9fd0fb5bbd47f1c8634af84f73ba5c5d4b3e5f37c7dd6dba27246",
+        "_sse.py": "16cf9b7ac8908821e3e9efff602c05a9ec31e8bace67bf40a748f94227847a70",
+        "models.py": "10f810f66ccb43c08e1956ac37a4dc7702210c0af6fc94444e4b3b20b1f8a15c",
+        "oauth.py": "9ad4fd021889fc51b271a249afa2247d9d025d9bd6135ced03efeeaced36e8b5",
+        "plan_auth.py": "f2f1f10291924a0e00100012aff43fa54c1578e6433bd58b9a2c2e72fa251db0",
+        "provider.py": "3d4ba5776ca07057286c27ef1cdb1d91356e15a16b08919dfa21c6ad32ee9d7e"
+      },
+      "tree": "bf7427cae9cbb92857079c55378828959d49d8f6",
+      "repository": "microsoft/amplifier-module-provider-openai-chatgpt",
+      "pull": 27
+    }
+  },
+  "localProviders": {
+    "azure-openai": {
+      "commit": "dc47ad450da8395daf8a7909fb43c0db24ac7740",
+      "archiveSha256": "b0b6a46710ded3a65c1e28145cbe62cb86f8d4a6a3c7e3d1e9792acd185475e4",
+      "module": "amplifier_module_provider_azure_openai",
+      "source": "configured",
+      "files": {
+        "__init__.py": "78d4035b76cedcaa2cffadd5acac0f837a82ecfed9d8959ee1e95fd2fc7879c1",
+        "_cost.py": "35ffd319bc2b16343573140e0a6d8de2a6cb7a43e33c073b326cbd2205f223a4",
+        "_model_listing.py": "a51d01bd5642c7597dcde0b19ef4e7643f37d181cd2c44ad2f2de314611a0c82",
+        "decision_hook.py": "3824c27b29ac6fe2746caeca0b321a474bebdac98a93204ec03001b0d8bd139a",
+        "decisions.py": "4ec2357de8bbeb5e18d6a11fb14d852a14dfbf03a5ca70f08c4499efa272a2e6"
+      },
+      "tree": "418e0fc7dd8f830d9240c918db2fd82390b04917",
+      "repository": "microsoft/amplifier-module-provider-azure-openai",
+      "pull": 48
+    },
+    "litellm": {
+      "commit": "29bd5b266f485abf48dcd1a39e724edbf7c21b82",
+      "archiveSha256": "929237f3d6c9e3acb60055c6fcb6bd8c12894ff9501e08f673909cee38369a28",
+      "module": "amplifier_module_provider_litellm",
+      "source": "configured",
+      "sdk": {
+        "distribution": "litellm",
+        "requirement": ">=1.50.0"
+      },
+      "files": {
+        "__init__.py": "0873a25f457d48b79e5bfe8c4574442ec90c3700c00168acb6987a640667f970",
+        "_model_listing.py": "a51d01bd5642c7597dcde0b19ef4e7643f37d181cd2c44ad2f2de314611a0c82",
+        "module.py": "9862e9793b6d1a4480f90ebc375c6f8007ce9e29307f4b882cb4750a70b6d39f",
+        "provider.py": "d5c61a508c91c578a576fb867d2bdb6568191fdf640c9ae5a43aaea8b28fdeb2"
+      },
+      "tree": "38429ec1a659d46f96c33a6f64261b0ec46a64b6",
+      "repository": "microsoft/amplifier-module-provider-litellm",
+      "pull": 21
+    },
+    "mock": {
+      "commit": "c7bda633b7a755910a29f6d1a1eca2f10db47479",
+      "archiveSha256": "2b95fe49b3fc0f9257cf1d53e75819a2f470d4de8acc4225a58c45d01ea6bcc9",
+      "module": "amplifier_module_provider_mock",
+      "source": "simulated",
+      "files": {
+        "__init__.py": "7301efcc57d8e1c68d0949155e189eb91a5f6e646c33eaef16be29cca770c58b",
+        "_model_listing.py": "d66901c5cf60fcbaf9a06816560b1af4883eb199ee745b8c8db94c44941b07f9"
+      },
+      "tree": "d1bf59883daf3a563a343d7070b9e98260ac5643",
+      "repository": "microsoft/amplifier-module-provider-mock",
+      "pull": 9
+    }
+  },
+  "context": {
+    "foundation": {
+      "repository": "microsoft/amplifier-foundation",
+      "pull": 461,
+      "commit": "a52ad1558419c828c86c0139b9b4bc351e3a618f",
+      "tree": "2f5920e3457e01db639ddcc1b34f230eae4ff3dd",
+      "mergedAt": "2026-11-07T04:37:40Z",
+      "head": "3a03b5daaa3fee7aa381101553fa4874cf9417a5",
+      "archiveSha256": "05c6a3d1cbfc7d428c23c1f3cd669f5a72f34807f0ee676cb29896739456c9fb"
+    },
+    "bundle-routing-matrix": {
+      "repository": "microsoft/amplifier-bundle-routing-matrix",
+      "pull": 86,
+      "commit": "64138b9c544cbaddad6c24fd57f955da2c4e03ba",
+      "tree": "bd736c2976deea5b81a8b4b2993b7a4399686a69",
+      "mergedAt": "2026-11-07T04:55:53Z",
+      "head": "c9edf2f0896c95d516672e4d52acec44bc2769f1",
+      "archiveSha256": "97b7b7028e116ca15ea30c4efd92c61aacf10355fc3b3352c6270b4b99b789d3"
+    }
+  },
+  "excludedUnmergedCandidates": [
+    "bedrock",
+    "perplexity-fix",
+    "openai-realtime"
+  ]
+}

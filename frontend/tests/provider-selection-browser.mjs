@@ -109,9 +109,9 @@ try{
  };
  const model=page.locator('.a-composer').getByRole('button',{name:'Model and reasoning settings',exact:true});
  const composer=page.getByRole('textbox',{name:'Message Amplifier'});
- const dialog=page.getByRole('dialog',{name:'Chat options',exact:true});
+ const dialog=page.getByRole('dialog',{name:'Model for this chat',exact:true});
  const connectionLabel=instance=>`Synthetic provider (${instance})`;
- const labelFor=expected=>`${expected.model} (${expected.effort})`;
+ const labelFor=expected=>expected.effort?`${expected.model} (${expected.effort})`:expected.model;
  const beforeSends=[],displayObservations=[];
  const activate=locator=>page.viewportSize().width<600?locator.tap():locator.click();
  async function closeOptions(){
@@ -121,7 +121,7 @@ try{
  }
  // Observe only controls currently visible to a person. Native title is owned
  // by the tooltip layer and is neither durable nor the connection selector.
- async function assertDisplayed(expected,options={}){
+ async function assertDisplayed(expected,{manual=false,...options}={}){
   const observed={expected,viewport:page.viewportSize()};
   if(!await dialog.isVisible())await activate(model);
   await expect(dialog).toBeVisible();
@@ -140,12 +140,12 @@ try{
   assert.equal(observed.connectionLabel,connectionLabel(expected.instance));
   await save('display-observations.json',displayObservations);
   await showComposerOption(page,'model');
-  const selectedModel=dialog.locator('select#chat-model');
+  const selectedModel=dialog.locator(manual?'input#chat-model':'select#chat-model');
   await expect(selectedModel).toBeVisible();
   await expect(selectedModel).toHaveValue(expected.model,options);
-  await expect(selectedModel.locator('option:checked')).toHaveText(expected.model,options);
+  if(!manual)await expect(selectedModel.locator('option:checked')).toHaveText(expected.model,options);
   observed.model=await selectedModel.inputValue();
-  observed.modelLabel=await selectedModel.evaluate(node=>node.selectedOptions[0]?.label);
+  observed.modelLabel=await selectedModel.evaluate(node=>node.selectedOptions?node.selectedOptions[0]?.label:node.value);
   assert.equal(observed.model,expected.model);
   assert.equal(observed.modelLabel,expected.model);
   await save('display-observations.json',displayObservations);
@@ -184,12 +184,12 @@ try{
  };
  const inherited={instance:'cli',model:'cli-model',effort:'low'};
  let count=0;
- async function send(expected){
+ async function send(expected,options={}){
   const text='Synthetic first request '+count;
   await composer.fill(text);
   // Inspect the rendered destination immediately before Enter, independently
   // of the provider's later complete-call recording.
-  const before={expected,display:await assertDisplayed(expected),callsBefore:(await requests()).length};
+  const before={expected,display:await assertDisplayed(expected,options),callsBefore:(await requests()).length};
   await expect(composer).toHaveText(text);
   before.draftText=await composer.innerText();
   beforeSends.push(before);
@@ -281,7 +281,7 @@ try{
  await expect(model).toHaveCSS('cursor','progress');
  await model.focus();await model.press('Enter');
  await expect(dialog).toBeVisible();
- await expect(dialog.getByRole('button',{name:'Choose model',exact:true})).toBeFocused();
+ await expect(dialog.locator('#chat-provider')).toBeFocused();
  await closeOptions();
  await expect(model).toBeFocused();
  await expect(model).toHaveAttribute('aria-busy','true');
@@ -306,99 +306,102 @@ try{
  assert.deepEqual(evidenceErrors,[]);
  assert.deepEqual(errors,[]);
  await save('positive-journey.json',{completed:true,sends:count,pageErrors:errors,evidenceErrors});
- // Separate no-send diagnostic, after positive acceptance evidence is saved.
- // Seed only the exact prior observed unsent choice through the normal action.
- const diagnostic={id:'same-provider-reselection',positiveJourneyUnaffected:true,source:negativeBaseline,
-  status:'observing',completionReads:[],callsBefore:(await requests()).length};
- try{
-  diagnostic.openReceipt=await action('session.draft');
-  diagnostic.seedReceipt=await action('view.update',{patch:{newSessionDraft:negativeBaseline.state.savedDraft}});
-  assert.equal(diagnostic.seedReceipt.accepted,true);
-  await assertDisplayed(wrong);
-  const clientId=(await state()).client.id;
-  diagnostic.before=await serverBoundary('reselection-before',clientId);
-  assert.deepEqual(diagnostic.before.state.savedDraft.selection,wrong);
-  await activate(model);await showComposerOption(page,'provider');
-  const provider=dialog.locator('select#chat-provider');
-  await expect(provider).toHaveValue('unified');
-  const matches=request=>{
-   const command=observedCommand(request);
-   const selection=command?.args?.patch?.newSessionDraft?.selection;
-   return command?.action==='view.update'&&selection?.instance==='unified'&&selection.model==='unified-model'
-    &&request.headers()['x-amplifier-client']===clientId;
-  };
-  const received=page.waitForResponse(response=>matches(response.request()),{timeout:5000})
-   .then(response=>({response}),error=>({error:error.message}));
-  const [request]=await Promise.all([page.waitForRequest(matches,{timeout:5000}),provider.selectOption('unified')]);
-  diagnostic.reselection={command:request.postDataJSON(),clientId};
-  await save('reselection-diagnostic.json',diagnostic);
-  const observed=await received;
-  assert.ok(observed.response,observed.error);
-  assert.equal(observed.response.request(),request);
-  const receipt=await observed.response.json();
-  Object.assign(diagnostic.reselection,{status:observed.response.status(),receipt});
-  assert.equal(receipt.accepted,true);
-  diagnostic.after=await serverBoundary('reselection-after-receipt',clientId);
-  if(receipt.stateRevision!==undefined){
-   assert.equal(diagnostic.after.state.client.hostInstanceId,receipt.hostInstanceId);
-   assert.ok(diagnostic.after.state.revision>=receipt.stateRevision);
+ // The former diagnostic mocked cached_probe and could pass with missing
+ // options. These are acceptance assertions over the real shared host cache.
+ const probeCounts=async()=>(await (await page.request.get(url+'/fixture/provider-resolution')).json()).probes;
+ assert.deepEqual(await probeCounts(),{cli:1,unified:1},'All chats/drafts share exactly one discovery per connection');
+ const sentBefore=(await requests()).length;
+ await action('session.draft');
+ await action('view.update',{patch:{newSessionDraft:negativeBaseline.state.savedDraft}});
+ await assertDisplayed(wrong);
+ await activate(model);
+ await dialog.locator('#chat-provider').selectOption('unified');
+ await expect(dialog.locator('select#chat-model option[value="cli-model"]')).toHaveCount(1);
+ await expect(dialog.locator('select#chat-model option[value="unified-model"]')).toHaveCount(1);
+ assert.deepEqual((await state()).view.newSessionDraft.selection,wrong,'Changing the local connection field does not silently save a default model');
+  // Successful recommendations are not an entitlement gate. The uncommon exact
+  // ID path stays explicit and does not add a made-up row to the API inventory.
+  await dialog.getByRole('button',{name:'Enter an exact model ID',exact:true}).click();
+  await dialog.locator('input#chat-model').fill('hidden-by-recommendation');
+  await dialog.locator('input#chat-model').press('Tab');
+  await expect.poll(async()=>(await state()).view.newSessionDraft.selection?.model).toBe('hidden-by-recommendation');
+  await expect(dialog.locator('select#chat-model-catalog option[value="hidden-by-recommendation"]')).toHaveCount(0);
+  await expect(dialog.getByText(/not verified by discovery/)).toBeVisible();
+  await dialog.locator('input#chat-model').fill(wrong.model);
+  await dialog.locator('input#chat-model').press('Tab');
+  await expect.poll(async()=>(await state()).view.newSessionDraft.selection?.model).toBe(wrong.model);
+  // Choosing a different model intentionally clears model-specific effort.
+  // Restore the explicit old journey baseline rather than assuming it survived.
+  await showComposerOption(page,'effort');
+  await dialog.locator('#chat-effort').focus();await dialog.locator('#chat-effort').press('Home');await dialog.locator('#chat-effort').press('Tab');
+  await expect.poll(async()=>(await state()).view.newSessionDraft.selection).toEqual(wrong);
+ const fault=async mode=>{const response=await page.request.post(url+'/fixture/provider-resolution/fault',{data:{id:'unified',mode}});assert.equal(response.status(),200)};
+ await fault('error');
+ await dialog.getByRole('button',{name:'Refresh this connection',exact:true}).click();
+ await expect(dialog.getByText(/discovery failed at/)).toBeVisible();
+ await expect(dialog.locator('select#chat-model-catalog option[value="cli-model"]')).toHaveCount(1);
+ await expect(dialog.getByText(/Last successful refresh/)).toBeVisible();
+ assert.deepEqual(await probeCounts(),{cli:1,unified:2},'Refresh is scoped, failure preserves the authentic list');
+ await closeOptions();await page.reload();await activate(model);
+ await expect(dialog.locator('input#chat-model')).toBeVisible();
+ assert.deepEqual(await probeCounts(),{cli:1,unified:2},'Reopen/reload does not retry failure');
+ await dialog.locator('input#chat-model').fill('manual-deployment');
+ await dialog.locator('input#chat-model').press('Tab');
+ await expect.poll(async()=>(await state()).view.newSessionDraft.selection?.model).toBe('manual-deployment');
+ await dialog.evaluate(node=>{node.scrollTop=0});
+ await page.screenshot({path:`${evidence}/narrow-manual.png`});
+ await closeOptions();
+ await send({instance:'unified',model:'manual-deployment',effort:wrong.effort}, {manual:true});
+ await activate(model);
+ await fault('empty');
+ await dialog.getByRole('button',{name:'Refresh this connection',exact:true}).click();
+ await expect(dialog.getByText('This connection returned no models.',{exact:true})).toBeVisible();
+ assert.equal(await dialog.locator('select#chat-model-catalog option[value="cli-model"]').count(),0);
+ await expect(dialog.getByText(/Saved selection: manual-deployment/)).toBeVisible();
+ assert.deepEqual(await probeCounts(),{cli:1,unified:3});
+ assert.equal((await requests()).length,sentBefore+1);
+ await page.setViewportSize({width:1280,height:900});
+ await dialog.evaluate(node=>{node.scrollTop=0});
+ await page.screenshot({path:`${evidence}/desktop-empty.png`});
+ await closeOptions();
+ await save('shared-catalog.json',{completed:true,probes:await probeCounts(),manualDispatch:(await requests()).at(-1)});
+ const originChecks=[];
+ for(const [origin,label] of [
+  ['configured','Configured models — not checked against the service.'],
+  ['static','Static recommendations — not a live inventory.'],
+  ['simulated','Simulated models — test responses only.']
+ ]){
+  const response=await page.request.post(url+'/fixture/provider-resolution/fault',{data:{id:'unified',mode:'ready',origin}});
+  assert.equal(response.status(),200);
+  await activate(model);
+  await dialog.getByRole('button',{name:'Refresh this connection',exact:true}).click();
+  await expect(dialog.getByText(label,{exact:true})).toBeVisible();
+  await expect(dialog.locator('option[value="unified-model"]')).toHaveCount(1);
+  await expect(dialog.getByText(/Saved selection: manual-deployment.*catalog/)).toBeVisible();
+  for(const width of [1280,390]){
+   await page.setViewportSize({width,height:900});
+   await expect(dialog.getByText(label,{exact:true})).toBeVisible();
+   assert.equal(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth+1),true,'Origin label must wrap without horizontal overflow');
+   await page.screenshot({path:`${evidence}/origin-${origin}-${width}.png`});
   }
-  assert.deepEqual(diagnostic.after.state.savedDraft.selection,{instance:'unified',model:'unified-model'});
-  diagnostic.selectionCompletion='accepted receipt plus exact-client saved readback; view.update has no management job';
-  await showComposerOption(page,'model');
-  const rendered=()=>dialog.locator('select#chat-model').evaluate(node=>({
-   value:node.value,selectedLabel:node.selectedOptions[0]?.label,
-   options:[...node.options].map(option=>({value:option.value,label:option.label,selected:option.selected,disabled:option.disabled})),
-  }));
-  diagnostic.renderedAfterReceipt=await rendered();
-  await bounded(Promise.all(actionSettlements),5000,'Diagnostic action receipts');await actionWrites;
-  const latest=new Map();
-  for(const row of actionRows.filter(row=>row.clientId===clientId&&row.command.action!=='view.update'))
-   latest.set(row.command.action+':'+(row.command.args?.id||''),row);
-  diagnostic.catalogActions=[...latest.values()];
-  for(const row of diagnostic.catalogActions){
-   const operationId=row.receipt?.operationId||row.command.id;
-   const path='/managementResults/'+operationId.replaceAll('~','~0').replaceAll('/','~1');
-   const reads={commandId:row.command.id,operationId,action:row.command.action,reads:[],terminal:false};
-   diagnostic.completionReads.push(reads);
-   try{
-    await expect.poll(async()=>{
-     const response=await page.request.get(url+'/api/state/detail?'+new URLSearchParams({clientId,path,limit:'50'}),{timeout:1500});
-     const body=await response.json();
-     reads.reads.push({request:{path,clientId},status:response.status(),body});
-     const values=Object.fromEntries((body.items||[]).map(item=>[item.key,item.value]));
-     reads.phase=values.phase;reads.terminal=response.ok()&&['ready','error'].includes(values.phase);
-     await save('reselection-diagnostic.json',diagnostic);
-     return reads.terminal;
-    },{timeout:5000}).toBe(true);
-   }catch(error){reads.unsettled=error.message}
-  }
-  diagnostic.current=await serverBoundary('reselection-current',clientId);
-  diagnostic.clientPresentation=selectedBoundary(await state());
-  diagnostic.renderedCurrent=await rendered();
-  diagnostic.actionsDuringReselection=actionRows.filter(row=>row.clientId===clientId&&
-   row.sequence>=(actionRequests.get(request)?.sequence??Infinity));
-  diagnostic.callsAfter=(await requests()).length;
-  assert.equal(diagnostic.callsAfter,diagnostic.callsBefore);
-  const pending=diagnostic.catalogActions.some(row=>row.phase!=='received')||
-   diagnostic.completionReads.some(row=>!row.terminal)||
-   ['working','queued'].includes(diagnostic.current.state.catalog?.phase);
-  const present=diagnostic.renderedCurrent.options.some(option=>option.value==='cli-model');
-  diagnostic.status=pending?'unsettled':!diagnostic.current.state.catalog?'catalog-unavailable':
-   present?'option-present':'settled-missing-option';
-  diagnostic.productCause='unlocalized; synthetic cached_probe replaces normal catalog cache';
-  await page.screenshot({path:`${evidence}/reselection-diagnostic.png`,timeout:2000});
+  await fault('error');
+  await dialog.getByRole('button',{name:'Refresh this connection',exact:true}).click();
+  await expect(dialog.getByText(/discovery failed at/)).toBeVisible();
+  await expect(dialog.getByText(label,{exact:true})).toBeVisible();
+  await expect(dialog.locator('option[value="unified-model"]')).toHaveCount(1);
+  await fault('empty');
+  await dialog.getByRole('button',{name:'Refresh this connection',exact:true}).click();
+  await expect(dialog.getByText('This connection returned no models.',{exact:true})).toBeVisible();
+  await expect(dialog.getByText(label,{exact:true})).toBeVisible();
+  const current=await state();
+  assert.equal(current.sessions.find(row=>row.id===current.selectedSessionId)?.selection?.model,'manual-deployment');
+  originChecks.push({origin,label,ready:true,stale:true,empty:true,widths:[1280,390]});
   await closeOptions();
- }catch(error){
-  diagnostic.status='diagnostic-incomplete';diagnostic.error={name:error.name,message:error.message,stack:error.stack};
-  try{diagnostic.failureBoundary=await serverBoundary('reselection-failure',(await state()).client.id)}
-  catch(capture){diagnostic.captureError=capture.message}
  }
- await save('reselection-diagnostic.json',diagnostic);
+ assert.equal((await requests()).length,sentBefore+1,'Browsing local-origin lists must not send inference');
+ await save('origin-labels.json',{completed:true,checks:originChecks,syntheticFixture:true});
  await bounded(Promise.all(actionSettlements),5000,'Final action receipts');await actionWrites;
  await save('actions.json',actionRows);
- // Diagnostic findings do not turn a missing option into a passing behavior.
- console.log('Separate no-send same-provider diagnostic:',diagnostic.status);
  console.log('Provider selection passed: exact pre-send connection/model/effort; wrong-connection label rejected; explicit draft+effort+reload; consecutive inherited chats; delayed bundle truth; narrow touch; synthetic native-selector complete-call recording (not full prepare_manager).');
 }catch(error){
  primaryError=error;

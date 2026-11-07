@@ -56,6 +56,9 @@ class FixtureProvider:
         record('models')
         return [{'id': 'fixture-model', 'api_key': 'fixture-private-key'}]
 
+    def get_model_list_info(self):
+        return {'version':1,'source':'provider-api'}
+
     async def close(self):
         record('close')
 '''

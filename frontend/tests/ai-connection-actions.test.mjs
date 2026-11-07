@@ -12,6 +12,21 @@ const {aiServices}=await vite.ssrLoadModule('/src/ai-connections-data.js');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;test.after(()=>vite.close());
 const state=editor=>({view:{aiConnectionEditor:editor},setup:{providers:[],providersLoadedAt:1}});
 
+test('connection detail respects per-connection local catalog testability',async()=>{
+ const {AIConnectionDetail}=await vite.ssrLoadModule('/src/ai-connection-detail.jsx');
+ let root;const calls=[];
+ try{
+  await act(async()=>{root=create(React.createElement(AIConnectionDetail,{
+   selected:{id:'one',config:{}},service:{auth:'key'},state:{setup:{providerCatalogs:{
+    one:{phase:'ready',metadata:{supports:{test:false},modelListInfo:{version:1,source:'configured'}}}}}},
+   onCheck:()=>calls.push('test'),act:async()=>{},busy:false}))});
+  const button=root.root.findAll(node=>node.type==='button'&&node.children.includes('Check connection'))[0];
+  assert.equal(button.props.disabled,true);
+  assert.match(JSON.stringify(root.toJSON()),/Configured models do not verify connectivity/);
+  assert.deepEqual(calls,[]);
+ }finally{await act(async()=>root?.unmount())}
+});
+
 test('the supported service list is the same shared host catalog',async()=>{
  assert.deepEqual(aiServices,JSON.parse(await readFile(new URL('../../amplifier_web/ai_services.json',import.meta.url),'utf8')));
  assert.equal(aiServices.length,6);
@@ -108,5 +123,28 @@ test('new decision-only Azure setup saves its own endpoint without requesting a 
   assert.deepEqual(calls.find(([action])=>action==='providers.save')[1].config,
    {chat_enabled:false,azure_endpoint:'https://example.services.ai.azure.com'});
   assert.equal(calls.some(([action])=>action==='providers.models'),false);
+ }finally{await act(async()=>root?.unmount())}
+});
+
+test('everyday model setup retains explicit origin and error truth for empty and stale catalogs',async()=>{
+ let root,calls=[];
+ const render=entry=>React.createElement(AIConnections,{state:{
+  ...state({step:'model',id:'one',module:'provider-openai',model:'saved-exact'}),
+  modelCatalogs:{key:entry},
+  setup:{providersLoadedAt:1,providers:[{id:'one',module:'provider-openai',config:{default_model:'saved-exact'}}],
+   providerCatalogs:{one:{sharedCatalogKey:'key'}}}},
+  act:async(...args)=>{calls.push(args);return {accepted:true}},navigate:()=>{}});
+ try{
+  for(const entry of [
+   {phase:'ready',supported:true,provenance:'static',models:[]},
+   {phase:'error',supported:true,provenance:'static',models:['old-model'],stale:true,error:'Refresh failed'}
+  ]){
+   await act(async()=>{if(root)root.update(render(entry));else root=create(render(entry))});
+   assert.equal(root.root.findByProps({'data-model-origin':'static'}).props.children,'Static recommendations — not a live inventory.');
+   assert.equal(root.root.findByProps({id:'ai-model-manual'}).props.value,'saved-exact');
+   if(entry.phase==='error')assert.ok(JSON.stringify(root.toJSON()).includes('Model list is stale'));
+   else assert.ok(JSON.stringify(root.toJSON()).includes('This connection returned no models'));
+  }
+  assert.equal(calls.some(([action])=>['providers.test','providers.login','providers.finishSetup'].includes(action)),false);
  }finally{await act(async()=>root?.unmount())}
 });

@@ -1,0 +1,117 @@
+{
+  "status": "reviewed-candidates-not-merged",
+  "providers": {
+    "openai": {
+      "commit": "eb5ecea13a96f7873b32370885831e16026f4dec",
+      "archiveSha256": "a682a45c957d9bb0114891e6f492ad254b3c93c256f98642222879aab13d46f4",
+      "module": "amplifier_module_provider_openai",
+      "files": {
+        "__init__.py": "c0a63605d7a9cc4f45bef35656af386edbc08db99b3c430a9fc186ca4af2ec6a",
+        "_capabilities.py": "55aeff5e10d3f333d2889e6e85679fc886964c9fe6a4d4bf65fca35a0d7debba",
+        "_computer_result.py": "2c3d56886b98a57b591683bfe0991689be11b4e026e7471dbc5113e442f63517",
+        "_constants.py": "6ce3b512ea88b229f0333351aa5abdc91d49d8ac975988c86dabef62d71a3049",
+        "_cost.py": "7d23717a4d4d3c20aa0d143ecd114f3fdd827fecd2edbde75954c16a6dcd366c",
+        "_response_handling.py": "f5f63ef27ba8068ec8c92450bd7e01da2b201b6578af8ebeda5f9c0e215c5955",
+        "_single_attempt.py": "2979f2493f6a6d016c93c11d03768c5932cdd230d574def3412acf7df6744f58",
+        "_token_count.py": "58cf433d21c34d6fc928c51acfd85ce76ba72a62adf522fef58bcdcad6f7511d",
+        "_tool_search.py": "6597ad91c8ff4c01d060b54dac3a92dda2473881b103cf73745af7299b8bc096",
+        "_transport.py": "18a5e4446df10463a9a1f5d2660ae6413be4446fdaf8e7fcc4be5d3db87de64a",
+        "compaction.py": "e6a8ba4830b9f7bc58fefc3b4ab159d8d73b00e2a1b11827a5cc0baa4255372f",
+        "computer_history.py": "a459c71bb8fcdaa2adf0503a3ef1bf96c8ef3d4c31c1d1e041fa1ba4a5db862d",
+        "computer_images.py": "501e4533c534efee9c9180425292a40ee7c16ff83c6c0ed74aa441d0b05abb54",
+        "decisions.py": "5d7b2869e3b2d9b54cd2dcf4df141d09c9975c791346e283d8b93aaa7f1c6779",
+        "image_operation.py": "cce72816cffd715053eba27e2ffe06f02cbcd97217526073eef0182d45b8ec9d",
+        "images.py": "97a6155515567dd1da0d4b10c5d6e5d4321599a5cc22a0ec4b3b76cea0045610",
+        "native.py": "a309b2d85bc906f80c0d5a04759f6a639053263f46bf2e3049de17218e2e6ca8",
+        "native_checkpoint.py": "f6974b3b25d67ae710a806609855c7bf05529fb9d4fe2cd51eeaf51423b05264",
+        "neutral_computer.py": "925bbf03af1816c3bcc134df74840327dcc12c58bdab8b95b2be9a06998f987e"
+      }
+    },
+    "anthropic": {
+      "commit": "fc966e967523d2120ab20f09e62358fa033b41cc",
+      "archiveSha256": "341525183f2d116c5699a6d88aff58fa56819baf04650235da9e4721cb32808a",
+      "module": "amplifier_module_provider_anthropic",
+      "files": {
+        "__init__.py": "acabfe3a3442b56cb52aa33fca0f855ad0e380c32866145c31b118b6aad14289",
+        "_computer_toolset.py": "7187da9a8d4ead38cd78e3b0f72276e5076b92542f2f14395e0209a779b22d1c",
+        "_cost.py": "cf26f34dd21bdda9776e8ba4297a8b99dbb0e1b51dff7096b820e07634e34db7"
+      }
+    },
+    "gemini": {
+      "commit": "e4b6d8342691709015fdc86825b17b9c30e0fa15",
+      "archiveSha256": "53bbad41fb9e8b447d165d5fa8849707ad10ec85343652d305d81da0436b4ec3",
+      "module": "amplifier_module_provider_gemini",
+      "files": {
+        "__init__.py": "7a5838d49b710e38de516ecfdfeec2b844c3bebe67e303ffdc14692cf0cc8011",
+        "_capabilities.py": "4c6a708688ae3a44a726eb463c9ac52b6f0f39a0edc5e844a72a207c75899216",
+        "_cost.py": "2eb5be2f064c9d39564eff1654b48a18d0f5732bd4e80e3f0daf26afc3fb631a",
+        "image_operation.py": "ab472051131c39939188dcb49cbd00da83f7d47723b351fee2b3b0195dab47e8",
+        "images.py": "02644f1cd43b9bc66ecc36672a5c370a5f1106e45d520460f47a875728c63172"
+      }
+    },
+    "chat-completions": {
+      "commit": "6dfc0085686d0f545085466c9ad93391125af2a8",
+      "archiveSha256": "f0038b6e5033584778f3ab5e01ee3ecd8f3a384d0c95850e370e991aef525d69",
+      "module": "amplifier_module_provider_chat_completions",
+      "files": {
+        "__init__.py": "7d7e346f48249ffb08acf0161c9ae5e9cfdc0f926ab3c76c9f8a4d264fdfb0ff",
+        "_cost.py": "eb3724b4970da67924b6e27005487f158dc46dc085aa25ad75ebefc7d12402c7"
+      }
+    },
+    "openai-chatgpt": {
+      "commit": "ceb1df314c9b8808b1cf680f0e4c26f0f2fa7c17",
+      "archiveSha256": "7b8c203dc036fb443343df615be01c439799e77497974988252d6404cfe9685c",
+      "module": "amplifier_module_provider_openai_chatgpt",
+      "files": {
+        "__init__.py": "a0b855a217f2f3fdeb94e055ee8bc3cfee8a56899a998bce99949cd528d5e5b4",
+        "_plan_request.py": "81d4dfd93fd9fd0fb5bbd47f1c8634af84f73ba5c5d4b3e5f37c7dd6dba27246",
+        "_sse.py": "16cf9b7ac8908821e3e9efff602c05a9ec31e8bace67bf40a748f94227847a70",
+        "models.py": "7be084cf39110c036bb8eb55b6f897a0fdfed05af61e3af3e952303d82f9a3b4",
+        "oauth.py": "9ad4fd021889fc51b271a249afa2247d9d025d9bd6135ced03efeeaced36e8b5",
+        "plan_auth.py": "f2f1f10291924a0e00100012aff43fa54c1578e6433bd58b9a2c2e72fa251db0",
+        "provider.py": "566d40f6e329881c216a798373d7160346311f6b1b67ad77bc7f600989026551"
+      }
+    },
+    "github-copilot": {
+      "commit": "2f3e5b5d11dfc27f0e4d1be11457734265a4d105",
+      "archiveSha256": "e51f0fcafef70395cd8456e145d7542da5c1f3bbd1f9c32ce666181d330b77b2",
+      "module": "amplifier_module_provider_github_copilot",
+      "files": {
+        "__init__.py": "2db268a0e6d24502d60b32b7424abb7febd50fc9be64f7dd3117824b9d766ce8",
+        "_compat.py": "79b36b3c1b42915917e53cd3358e3504a0bb6dcf8d74eb29a39b2e06af282ffa",
+        "_deprecated.py": "20be5a8cd1bae6e48ccd2b2dd8e71479d213b122771159349c544de3bdb97e52",
+        "_identity.py": "dc1e7b774ef800e7c7e4fbe0ebfda2be90007afe52b4714832bcd4873c6fb398",
+        "_permissions.py": "256a7eb195ec5d261d2043a6bfb6b949e1fec9dde312c8f8ab3aae7db294de11",
+        "_platform.py": "57525d453f8eab5c769a32b3a0e45c52f087f769a0626e019c22d03aa6a5ff9c",
+        "config/__init__.py": "8a5b4ac745a0dd4f28ebd8bf34cbf3b046ebb95b67f79cb179a0e072f1482947",
+        "config/_models.py": "53671458f282f8daa7161fa4dc999710f70ad9bd45a1f7e8b471401e98e9845f",
+        "config/_paths.py": "6a9fe671d348a6a1dc0bdd8d9c3244750cde4407be6c3aacdcf9f4ce5693cef1",
+        "config/_policy.py": "38038cca9b984986f5a507a32e88db864783e4dcefa45524713b30567fda6d6c",
+        "config/_sdk_protection.py": "73a19ba7c7ccce00ce5d186ccb1324e12b3235cca84044f23e74dbaed99fe2df",
+        "config/data/__init__.py": "d99c25bc5dd093a9e3f472c86a3a04f013f85c6e26caf238c066caa6593b5b14",
+        "config_loader.py": "7992a06e567ca91fbe6def431aaca979ec9fadc743a9ddeb4536ae2adc31e930",
+        "error_translation.py": "40edf7791cfe43334da3aefaa33ff9eaef4ba7d38b6223ec87bdea02c95343e2",
+        "event_router.py": "73bd1e248eaa37a6f04c11e61b8dcf206293727ada1b49d691dab2f1b81dd861",
+        "fake_tool_detection.py": "c4fa61a5a0206f7f5fc44502fad8bf8565ac326ed1970eaaa2d367bc2706aca8",
+        "model_cache.py": "4c7b709f1a3d5de811319276e670e03605af0a37629f488213860a888cdbf6b1",
+        "models.py": "20e81e692362a92e551f67d63cdb73d5057b0c5ea912f2673ce84eae857e5a84",
+        "observability.py": "c75530a13787452b41589c7682d58a550aab3b0f615ba2900684b6b27dfb4d1e",
+        "provider.py": "2c6a92eaa2c34ed8f005239de3aa2d69d76fb572b66a85536a056fb16c9634af",
+        "request_adapter.py": "f495cefd3e649d650dd7880a678fdb1fffaba2ce736bfcb6287f6ab40a588893",
+        "retry_utils.py": "8d47f215a431c78b511e2eced5ae40dcd19268d6ab60dcdf4e057051b0b443fe",
+        "sdk_adapter/__init__.py": "7b8b9f65ee31442db1a4540ae74773b852bdefad38ea9e75fea773d36d9dcb16",
+        "sdk_adapter/_imports.py": "222201310dbac488fe5b55f820e7482994180852dfa3ec1f3875cee588bd975e",
+        "sdk_adapter/_spec_utils.py": "247bc21988f75a945da80ad4ddc53f87a000baa1e1747e52370a84fca7a65a3a",
+        "sdk_adapter/client.py": "2881ee39be131ce8dffdf7cabdb4154666303390a75974094eeeb927e4eeef62",
+        "sdk_adapter/event_helpers.py": "3334a4414f2a86269911c4cf9c61eac1316d910d09c16053ccaf0095ec962add",
+        "sdk_adapter/extract.py": "96789cf0c3d48fc1f6b78c913ae95d79a437079228c61e3d518b106c552a98ea",
+        "sdk_adapter/model_translation.py": "0b7883bb3771504bd246185da9137342fb78b666ab92a827422c3fbcdb3ddfa4",
+        "sdk_adapter/tool_capture.py": "e3e1829190e32f57b662d7da4b1373f24c7ec5093991b5b44b3f5b39c1726ece",
+        "sdk_adapter/types.py": "8b47cf23545802bb30522517b4aa0bae6fc53bb6a8c77e206d88c8e2612c9597",
+        "security_redaction.py": "a06b6619dc280f6e92ab70b9ede9416715798143a80d74f880d28bbe38eddc3a",
+        "streaming.py": "d0ffd28765753d4a3e1ff7825031e82ef6a4adba09712ce9d2d0e1d726734f77",
+        "tool_parsing.py": "71f8f037b8fcadb68be8a686d348d64808aae7d364ca8c226fe029b356606e5b"
+      }
+    }
+  }
+}

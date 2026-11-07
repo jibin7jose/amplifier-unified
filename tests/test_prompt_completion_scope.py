@@ -36,6 +36,24 @@ async def complete(co):
     await co.hooks.emit('prompt:submit', {'session_id': 'root', 'prompt': 'A user request'})
     await co.hooks.emit('orchestrator:complete', {'session_id': 'root', 'status': 'complete'})
 
+@pytest.mark.parametrize('identity,event_type', [('root','runtime.activity'), ('child','worker.activity')])
+async def test_model_activity_uses_same_thinking_label_without_changing_phase(monkeypatch, identity, event_type):
+    co, worker, observed = host(monkeypatch)
+    if identity != 'root':
+        co = SimpleNamespace(session_id=identity, hooks=HookRegistry(), get=lambda _: {},
+            get_capability=lambda _: None, register_capability=lambda *args: None)
+        worker.install_activity(co)
+    observed.clear()
+    await co.hooks.emit('provider:request', {'session_id':identity})
+    activity = next(row for row in observed if row.get('type')==event_type)
+    assert activity['phase']=='model'
+    assert activity['detail']=='Thinking...'
+    await co.hooks.emit('provider:retry', {'session_id':identity,'attempt':2,'max_retries':3})
+    retry = [row for row in observed if row.get('type')==event_type][-1]
+    assert retry['phase']=='retrying'
+    assert retry['retryAttempt']==2 and retry['retryMax']==3
+    assert 'retrying (2 of 3)' in retry['detail']
+
 
 async def test_completion_evaluation_is_private_but_usage_and_response_payload_survive(monkeypatch):
     co, worker, observed = host(monkeypatch)

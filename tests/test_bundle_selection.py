@@ -473,9 +473,9 @@ print('saved', flush=True)
 
     original = history._read_messages
     reads = 0
-    def concurrent_checkpoint(path):
+    def concurrent_checkpoint(path, **kwargs):
         nonlocal reads
-        rows = original(path)
+        rows = original(path, **kwargs)
         reads += 1
         writer.stdin.write('checkpoint\n'); writer.stdin.flush()
         assert receipt() == ('blocked' if serialized else 'unlocked')

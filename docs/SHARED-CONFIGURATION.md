@@ -81,6 +81,123 @@ New sessions resolve the default bundle from their own workspace. Deliberate
 existing Unified conversation overrides (`configuration.json` and
 `control-state.json`) remain in force; they are not flattened into user defaults.
 
+## Configured connection and model discovery
+
+The bundled Model for this chat panel, new-chat setup and Settings use the
+configured connection roster for their effective global/workspace scope.
+Mounted reports and saved/default selections are separate facts, not extra
+connection or model options. Managed chats use global settings only.
+Connection labels and order come from this roster; accounts/endpoints remain
+separate even when they use the same provider implementation.
+Supported module/instance overrides are resolved before discovery, including
+disabled connections and endpoint/configuration overrides. They do not introduce
+additional bundle-only connections into the shared roster.
+
+Unified consumes the existing async `list_models() -> list[ModelInfo]` API.
+Optional `get_model_list_info()` metadata with `version: 1` and
+`source: "provider-api"` declares strict fresh API listing, not account access or
+model entitlement. Missing/unknown metadata or `source: "unsupported"` remains
+unverified and exposes explicit model-ID entry, never a static fallback presented
+as fresh inventory. The superseded `discover_models()` method is not consumed.
+Failed listing raises an error; a genuine empty result is successful and distinct
+from failure or unsupported listing. Returned IDs are preserved exactly.
+
+Providers own recommendations. Unified calls `list_models()` without keywords,
+preserving that provider's effective configured `model_filters` or defaults.
+For adapters declaring `unfiltered: {}` and `override: "replace"`, explicit saved
+`model_filters: {}` requests the full inventory; a custom mapping replaces
+defaults, not merges with them. OpenAI's declared default is
+`include: ["gpt-6*"]`, `exclude: []`, `hide_dated: true`,
+`hide_shutdown: true`; explicit `{}` disables both optional exclusions.
+Other providers' policies remain their owners' decisions. Optional v1 metadata
+advertises `filters_keyword`, `filters_schema`, `default_filters`, `unfiltered`
+and `override`; selectors are passed only when advertised. Unified does not copy
+the recommendation algorithm, mutate private provider fields or maintain a
+second unfiltered catalog.
+Provider-specific fields remain opaque to Unified: it neither restricts a
+selector to OpenAI's field names nor fills omitted fields itself. The entire
+effective `model_filters` mapping participates in catalog identity. Version 1
+metadata can explicitly declare `configured`, `static` or `simulated` origin.
+Those rows remain useful choices labeled Configured models, Static recommendations
+or Simulated models; none claims fresh API inventory or a reachable account.
+The same origin remains visible after empty success or a stale/error refresh.
+Unknown origins, absent metadata and `unsupported` remain manual-only. A failed
+API listing never falls back to another origin. Connection testing requires
+`provider-api`; browsing configured/static/simulated choices does not test or
+log in to the service. Their exact IDs remain valid selection intent.
+
+The opt-in candidate graph in `tests/fixtures/canonical_model_catalog_candidate.json`
+binds reviewed provider revisions and module hashes, including required SDK versions.
+Its offline checks exercise real installed providers through Unified's probe/cache
+with synthetic HTTP or SDK responses. This is candidate integration evidence, not
+an upstream merge, runtime-lock adoption, live entitlement or inference qualification.
+The separate `tests/fixtures/model_catalog_accepted.json` binds merged primary
+provider, Foundation and routing revisions. Set `UNIFIED_CATALOG_ACCEPTED=1`
+alongside the existing opt-in to use it. Unmerged community repair candidates are
+excluded from that graph; their older evidence remains separate. The host lock
+records accepted revisions while runtime source declarations retain their existing
+main-following policy. Neither manifest is evidence of live account access.
+
+The host's existing private `ProviderCatalog` owns single-flight discovery and
+restart reuse. Explicit Refresh reloads the selected connection once. Reopen,
+chat navigation and elapsed time do not refresh it. An unsuccessful refresh
+retains the same identity's last successful models and timestamp with a visible
+error; it does not retry automatically. Successful empty refresh removes previous
+options. Credential, endpoint, discovery configuration, source or qualified
+runtime changes create a distinct identity. Catalog identity conservatively
+includes configured `model` and `default_model` because a provider can derive
+its listing defaults from those constructor inputs (including explicit legacy
+filtering). This can refresh recommendations even when that provider ignores
+these fields. `model_filters`, `model` and `default_model` never change the
+account binding of a saved exact model selection. `reasoning_effort`, priority
+and connection labels do not affect catalog identity. Other provider
+configuration remains identity-bearing.
+Legacy unproven cache entries are not adopted as authentic snapshots.
+Ordinary model display/refresh does not prepare a whole bundle to resolve an
+unknown default label. Saved intent or a current native report supplies that
+label; otherwise the panel states that Send will resolve the bundle default.
+
+Conversation-specific account/endpoint overrides remain intact. The panel marks
+known mismatches separately instead of treating an equal instance name as equal
+credentials. A newly saved configured selection is bound to that connection's
+identity; input admission checks the actual mounted identity and refuses a
+mismatch without sending or substituting another account.
+This connection binding is stable across host and worker processes and distinct
+from the runtime-qualified discovery cache identity. Unqualified processes may
+agree on a connection without sharing discovery across restarts. Effective
+Copilot credential promotion and implicit ChatGPT OAuth/Plan token files are
+included; token-file replacement or removal invalidates discovery reuse.
+
+For supported ChatGPT Codex and Plan credential records, account binding uses
+the configured path/auth mode and the provider-owned stable account fields
+(`account_id`, or Plan `client_id` and `subject`), not rotating token bytes.
+This is a local identity comparison, not authentication. The provider still
+validates current credentials. Malformed/unknown records retain byte identity;
+removal, account changes, API-key changes and endpoint changes cannot reuse a
+saved binding. Catalog and health generations still observe token rotation.
+A refresh that rotates the same account re-queries once under the new generation;
+it never relabels an older response or retries a different account.
+
+Send preparation loads only the selected connection's catalog, without using
+membership as an inference gate. Unrelated connections do not add listing work.
+Provider selection, bundle changes and runtime inventory reads do not warm a
+second mounted catalog. The explicit raw `configuration.providerModels` control
+remains available; its result is not an automatic UI discovery subscription.
+Settings disables API connection testing for declared local origins and explains
+why; explicit tests return a bounded not-verifiable remedy, never fake success.
+
+The cache is bounded by entry count and encoded bytes. Eviction is not a history
+policy. Relative credential/configuration paths retain their workspace scope.
+Late results cannot be published under a changed connection identity.
+
+An explicit manual ID is saved as intent, not as a discovered option. Unknown
+capabilities do not clear saved reasoning intent. Advertised finite reasoning
+choices still validate it. A model hidden by recommendations, absent from a
+successful list, or retained while listing fails remains usable as an exact ID;
+listing is not an unconditional success gate for inference. Sending preserves current authority, Stop, revision,
+connection availability and provider invocation checks; a failed provider
+request is never retried under a different connection or model.
+
 ## Upgrade from private settings
 
 Startup performs an additive migration once per shared root and used workspace:

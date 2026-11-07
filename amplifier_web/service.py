@@ -1708,6 +1708,10 @@ class AppService:
         placement = ({'sessionKind': 'internal', 'sessionPurpose': args['purpose']} if args.get('purpose')
                      else {'sessionKind': 'root', 'workingDirectory': workspace,
                            'executionRevision': 0, 'interruptionRevision': 0} if new_root else {})
+        if chosen and new_root and not args.get('inheritConfiguration'):
+            from .provider_catalog import configured_binding
+            placement['modelConnectionKey'] = configured_binding(self.data_dir, workspace, chosen['instance'],
+                global_only=args.get('location',{}).get('kind')=='managed')
         return self.cold_display.record({**({'selection': chosen} if chosen else {}), **({'location': {'kind': 'managed'}} if args.get('location', {}).get('kind') == 'managed' else {}), "id": str(uuid.uuid4()), "title": args.get("title") or "New chat", "titleSource":"manual" if args.get("title") and args["title"] not in {"New chat","New conversation","A new conversation","Untitled conversation"} else "automatic", "bundle": args.get("bundle") or selected_bundle, "workspace": workspace, "status": "idle", "createdAt": now, "recentActivityAt": now, "messages": [], "workers": [], "approvals": [], '_collaborationHostInstanceId': self.instance_id, **placement})
 
     def _reusable_internal(self, candidate):

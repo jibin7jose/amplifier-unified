@@ -9,6 +9,6 @@ export function ComposerOptions({state,session,act,working,detail}){
  const nextMessageControl=useNextMessageConfiguration(session,act);
  const props={state,session,act,working,nextMessageControl};
  return <ModelControl {...props} compact detail={detail}>
-  {({page,navigate})=><BundleControl {...props} compact embedded page={page} onNavigate={navigate}/>}
+  <BundleControl {...props} compact embedded/>
  </ModelControl>;
 }

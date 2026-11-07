@@ -10,7 +10,7 @@ import {SettingsLink} from './settings-everyday';
 import {SettingsActions,SettingsLayoutContext} from './settings-layout';
 import {useSettingsDraft,useGuardedSettingsDraft} from './settings-drafts';
 import {ResultNotice} from './settings-ui';
-import {ModelSelect} from './model-select';
+import {ModelSelect,ModelOriginNotice} from './model-select';
 import {modelOptions} from './setup-data';
 import {ConfigurationDiagnostics} from './registry';
 import {AIConnectionDetail} from './ai-connection-detail';
@@ -28,7 +28,7 @@ export function AIConnections({state,session,act,navigate,onReturnToChat}){
   // chat account from the same provider or change its save/test workflow.
   return choice.decisionOnlyWhen&&config?{...choice,decisionOnly:config.chat_enabled===false}:choice;
  };
- const labels=new Map(providerOptions(providers.map(p=>({...p,info:{id:p.module,display_name:serviceFor(p.module).name}}))).map(row=>[row.id,row.label]));
+ const labels=new Map(providerOptions(providers).map(row=>[row.id,row.label]));
  const editorKey='aiConnectionEditor';
  const configId=useConfigurationId();
  const requested=state.view?.[editorKey]||{};
@@ -87,7 +87,7 @@ export function AIConnections({state,session,act,navigate,onReturnToChat}){
    edit({step:'model'});run('providers.models',{id:d.id});
   }
  },[step,d.saved,login?.status,login?.loginId,busy,layout.active]);
- const catalog=setup.providerCatalogs?.[d.id],models=modelOptions(catalog?.models||setup.modelCatalogs?.[d.id]||[]);
+ const connectionCatalog=setup.providerCatalogs?.[d.id],catalog=state.modelCatalogs?.[connectionCatalog?.sharedCatalogKey]||connectionCatalog,models=modelOptions(catalog?.models||[]);
  const modelBusy=setupPending(setup.operations?.['providers.models:'+d.id])||catalog?.phase==='working';
  const credential=!setupPending(credentialOperation)&&setup.credentialCheck?.module===d.module?setup.credentialCheck:null;
  const credentialMode=d.credentialMode==='auto'?(credential?.githubCliAvailable?'github-cli':credential?.available?'environment':'private'):(d.credentialMode||'private');
@@ -151,8 +151,8 @@ export function AIConnections({state,session,act,navigate,onReturnToChat}){
       <SettingsActions><button className="a-primary" data-action="providers.save" disabled={busy||(needsEndpoint&&!/^https?:\/\/[^\s]+$/.test(d.baseUrl||''))||(credentialMode==='environment'?!credential?.available:credentialMode==='github-cli'?!credential?.githubCliAvailable:service.auth!=='optional-key'&&!key.trim())} onClick={saveConnection}>{busy?'Connecting…':service.decisionOnly?'Save connection':'Save and check connection'}</button></SettingsActions>
      </>}
     </>:step==='model'?<>
-     {login?.status==='completed'&&<DeviceSignIn login={login} chooseModel welcomeDismissed={d.welcomedLoginId===login.loginId} onWelcomeDismiss={()=>edit({welcomedLoginId:login.loginId})}/>}<p>Choose from the models available through this connection.</p>
-     {models.length>0?<><label htmlFor={configId('ai-model')}>Model</label><ModelSelect id={configId('ai-model')} label="Model" value={d.model||''} catalogKey={d.id} entry={{...catalog,models,phase:'ready'}} state={state} act={act} disabled={busy} onChange={model=>{edit({model});if(d.settingDefault&&model.trim())run('providers.finishSetup',{id:d.id,model,scope,initializeRouting:false})}}/></>:<p role="status">{modelBusy?'Loading models…':'No model list is available yet. Retry or enter a model ID under More options.'}</p>}
+     {login?.status==='completed'&&<DeviceSignIn login={login} chooseModel welcomeDismissed={d.welcomedLoginId===login.loginId} onWelcomeDismiss={()=>edit({welcomedLoginId:login.loginId})}/>}<p>Choose a model supplied by this connection, or enter an exact ID.</p>
+     {models.length>0?<><label htmlFor={configId('ai-model')}>Model</label><ModelSelect id={configId('ai-model')} label="Model" value={d.model||''} catalogKey={d.id} entry={{...catalog,models}} state={state} act={act} disabled={busy} onChange={model=>{edit({model});if(d.settingDefault&&model.trim())run('providers.finishSetup',{id:d.id,model,scope,initializeRouting:false})}}/></>:<><ModelOriginNotice entry={catalog}/><p role="status">{modelBusy?'Loading models…':catalog?.phase==='ready'&&catalog?.supported!==false?'This connection returned no models. Enter an exact model ID under More options.':'No model list is available yet. Retry or enter a model ID under More options.'}</p></>}
      {catalog?.phase==='error'&&<ResultNotice phase="error" message={catalog.error||'Could not refresh the model list. Saved choices are kept.'}/>}
      <button className="a-link" data-action="providers.models" disabled={busy||modelBusy} onClick={()=>run('providers.models',{id:d.id,refresh:true})}><RefreshCw/>Refresh models</button>
      <div className="a-ai-hint">{d.initializeRouting?'Balanced model rules choose suitable models for each task. This connection’s default is used when no rule applies.':'This changes the connection’s default model. Existing model rules may choose a different model.'}</div>

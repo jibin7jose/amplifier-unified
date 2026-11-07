@@ -152,8 +152,6 @@ class RuntimeControls:
         self.logins = {}
         self.kernels = None
         self.kernel_install = None
-        from .provider_catalog import ProviderCatalog
-        self.model_catalog=ProviderCatalog()
         self.catalog_revision=str(uuid.uuid4())
         self.coordinator.register_capability("web.controls.persist", self.persist)
         self.coordinator.register_capability("web.context_recovery.contract", self.recovery_contract)
@@ -165,7 +163,6 @@ class RuntimeControls:
     async def close(self):
         if self.kernels:
             await self.kernels.shutdown()
-        await self.model_catalog.close()
         tasks = [row["task"] for row in self.logins.values() if not row["task"].done()]
         for task in tasks:
             task.cancel()
@@ -564,6 +561,10 @@ class RuntimeControls:
             self.selection_cleared=True
             self.persist()
             return {'selection':None,'scope':'main session'}
+        if operation == "provider.verifyConnection":
+            from .provider_catalog import require_mounted_binding
+            require_mounted_binding(self.coordinator, args.get('instance'), args.get('expectedConnectionKey'))
+            return {'verified':True}
         if operation == "provider.select":
             self.require_idle()
             from .host.session import SelectedProvider
@@ -574,6 +575,8 @@ class RuntimeControls:
                 raise ProviderSelectionError("Select an available provider instance and model")
             from .provider_isolation import require_available
             require_available(self.coordinator, args["instance"])
+            from .provider_catalog import require_mounted_binding
+            require_mounted_binding(self.coordinator, args["instance"], args.get('expectedConnectionKey'))
             selected = {key:args[key] for key in ("instance","model","effort") if key in args}
             effective = {**selected, **({"max_output_tokens":self.max_output_tokens} if self.max_output_tokens else {})}
             self.coordinator.get("orchestrator").root_provider = SelectedProvider(providers[args["instance"]], effective,self.coordinator.get_capability('web.provider_transform'))
@@ -591,6 +594,7 @@ class RuntimeControls:
         providers = self.coordinator.get("providers") or {}
         if operation == "configuration.providers":
             from .provider_isolation import UnavailableProvider
+            from .provider_probe import model_list_info
             rows = []
             for name,provider in providers.items():
                 info = provider.get_info()
@@ -605,13 +609,17 @@ class RuntimeControls:
                 catalog_key=fingerprint([self.catalog_revision,name,mounted or getattr(provider,'config',{}),public_config(info, metadata=True)])
                 shared={}
                 captured=self.coordinator.get_capability('web.provider_catalog')
+                if isinstance(captured,dict) and name in captured.get('connectionKeys',{}):
+                    shared['connectionKey']=captured['connectionKeys'][name]
                 if mounted and isinstance(captured,dict) and name in captured.get('keys',{}):
                     from .provider_catalog import configuration_key
                     current=configuration_key(captured['workspace'],mounted['module'],mounted.get('config',{}),captured['sources'][name],home=captured['home'])
                     if current==captured['keys'][name]:shared['sharedCatalogKey']=current
+                listing = await model_list_info(provider)
                 rows.append({"id":name,**({"available":False,"failure":provider.failure} if isinstance(provider,UnavailableProvider) else {}),"module":mounted.get('module'),"catalogKey":catalog_key,**shared,"info":public_config(info, metadata=True),"configSchema":public_config(schema, metadata=True),
-                    "supports":{"models":callable(getattr(provider,"list_models",None)),
-                                "test":callable(getattr(provider,"list_models",None)),
+                    "modelListInfo":listing,
+                    "supports":{"models":bool(listing and listing['source']!='unsupported'),
+                                "test":bool(listing and listing['source']=='provider-api'),
                                 "login":callable(getattr(provider,"login",None))}})
             loop=self.coordinator.get('orchestrator')
             selected=loop._select_provider(providers) if providers else None
@@ -628,21 +636,22 @@ class RuntimeControls:
         provider = providers.get(name)
         if provider is None:
             raise ValueError("Provider instance is not mounted")
-        if operation in {"configuration.providerModels", "configuration.providerTest"}:
-            method = getattr(provider,"list_models",None)
-            if not callable(method):
-                if operation=='configuration.providerModels':return {'provider':name,'models':[],'supported':False}
-                raise ValueError("This provider does not expose a model-list API for connection testing")
-            async def load():
-                result=method()
-                if inspect.isawaitable(result):result=await asyncio.wait_for(result,120)
-                return public_config(result)
-            from .provider_catalog import fingerprint
-            key=(name,id(provider),fingerprint(getattr(provider,'config',{})))
-            result=await load() if operation=='configuration.providerTest' else await self.model_catalog.get(key,load,refresh=args.get('refresh',False))
-            if operation == "configuration.providerTest":
-                return {"provider":name,"reachable":True,"modelCount":len(result),"method":"provider.list_models"}
-            return {"provider":name,"models":result,'supported':True}
+        if operation == "configuration.providerModels":
+            from .provider_probe import listed_models, ProbeFailure
+            from .provider_catalog import require_mounted_binding
+            require_mounted_binding(self.coordinator, name, args.get('expectedCatalogKey'), catalog=True)
+            # The host owns connection-bound caching. Do not let a mounted
+            # provider's unqualified legacy list seed that same shared identity.
+            # Explicit configured/static/simulated origins retain their labels.
+            try:
+                result = await asyncio.wait_for(listed_models(provider), 120)
+            except Exception as exc:
+                raise ProbeFailure('mounted-provider', 'models', exc) from None
+            return {'provider': name, **result, 'supported': result['modelsSupported']}
+        if operation == "configuration.providerTest":
+            from .provider_probe import listed_models
+            result=await asyncio.wait_for(listed_models(provider,require_api=True),120)
+            return {"provider":name,"reachable":True,"modelCount":len(result['models']),"method":"provider.list_models"}
         method = getattr(provider,"login",None)
         if not callable(method):
             raise ValueError("This provider does not expose an interactive login API; configure its credential fields instead")

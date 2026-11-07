@@ -12,7 +12,7 @@ def display_catalog(entry):
     """Closed controls need display/default metadata, not the option inventory."""
     metadata = entry.get('metadata') or {}
     fields = metadata.get('configSchema', {}).get('fields') or metadata.get('info', {}).get('config_fields', [])
-    return {**{key: entry[key] for key in ('phase', 'error', 'supported') if key in entry},
+    return {**{key: entry[key] for key in ('phase', 'error', 'supported', 'provenance', 'loadedAt', 'failedAt') if key in entry},
             'modelsDeferred': True, 'metadata': {
                 'info': {key: value for key, value in metadata.get('info', {}).items()
                          if key in {'id', 'display_name', 'defaults'}},

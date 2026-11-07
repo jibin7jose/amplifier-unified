@@ -145,7 +145,6 @@ async def perform(management, action, args):
                 current.pop('bundlePreview', None)
                 if args.get('resetModel'): current.pop('selection', None)
                 app.state.setdefault('runtimeControl', {})[sid] = {'configuration.providers': result['providers']}
-            management.background(management.warm_runtime_models(sid, result['providers'].get('providers', []), result['providers'].get('catalogRevision')))
         else:
             expected = app._session(sid).get('bundlePreview', {})
             if args.get('previewId') and (expected.get('previewId') != args['previewId'] or expected.get('bundle') != args['bundle']):

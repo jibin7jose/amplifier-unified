@@ -149,6 +149,20 @@ class HostConfig:
         return sorted(rows, key=lambda row: row.get("config", {}).get("priority", 100))
 
     @property
+    def configured_connections(self):
+        """Explicit connection rows with the same overrides as bundle composition."""
+        overrides = self.settings.get('overrides', {})
+        disabled = self.settings.get('configurator', {}).get('disabled', {}).get('providers', [])
+        rows = []
+        for original in self.providers:
+            identity = original.get('id') or original.get('instance_id') or original['module'].removeprefix('provider-')
+            patch = merge(overrides.get(original['module'], {}), overrides.get(identity, {}))
+            row = merge(original, {key:value for key,value in patch.items() if key in {'source','config'}})
+            row['enabled'] = original.get('enabled', True) and patch.get('enabled') is not False and identity not in disabled
+            rows.append(row)
+        return sorted(rows, key=lambda row: row.get('config', {}).get('priority', 100))
+
+    @property
     def module_sources(self):
         result = dict(self.settings.get("sources", {}).get("modules", {}))
         result.update({key:row["source"] for key,row in self.settings.get("overrides", {}).items()

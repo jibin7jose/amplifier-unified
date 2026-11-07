@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 from amplifier_web.setup import SetupManager,validate_matrix
-from amplifier_web.host.config import merge
+from amplifier_web.host.config import HostConfig, merge
 
 @pytest.fixture
 def manager(tmp_path,monkeypatch):
@@ -12,7 +12,10 @@ def manager(tmp_path,monkeypatch):
     def config(workspace):
         value={}
         for scope in ('global','project','local'):value=merge(value,manager.store.read(workspace,scope))
-        return SimpleNamespace(resolve_source=lambda reference:None,module_sources={},settings=value,providers=value.get('config',{}).get('providers',[]))
+        result=HostConfig(home=manager.home,workspace=Path(workspace),
+                          settings=value,registry_home=manager.home/'foundation')
+        result.resolve_source=lambda reference:None
+        return result
     monkeypatch.setattr(manager,'config',config)
     async def cached_catalog(workspace):pass
     monkeypatch.setattr(manager,'ensure_routing_catalog',cached_catalog)
@@ -127,7 +130,7 @@ async def test_schema_uses_only_requested_instances_endpoint_and_no_saved_secret
 @pytest.mark.asyncio
 async def test_provider_probe_errors_are_visible(manager,tmp_path):
     import sys
-    child=tmp_path/'probe.py';child.write_text("import json; print(json.dumps({'error':'Provider setup failed (AuthenticationError). Check the saved credentials and endpoint, then retry.'}))")
+    child=tmp_path/'probe.py';child.write_text("import json; print(json.dumps({'error':'private-provider-body', 'diagnostic':{'stage':'metadata','category':'AuthenticationError'}}))")
     manager.probe_command=[sys.executable,str(child)]
     with pytest.raises(ValueError,match='AuthenticationError'):
         await manager.perform('providers.schema',{'module':'provider-openai','workspace':str(tmp_path)})

@@ -130,7 +130,7 @@ test('no pending updates still distinguishes failed checks from current sources'
 });
 
 test('provider model results and metadata choices are visible even after other management actions finish',()=>{
- const state={view:{providerEditor:{id:'openai',module:'provider-openai',model:'gpt-6-astra',config:'{"reasoning_effort":"high"}'}},management:{phase:'ready',operation:'notifications.get'},setup:{modelCatalogs:{openai:[{id:'gpt-6-astra',display_name:'Astra'}]},metadata:{'provider-openai':{info:{config_fields:[{id:'reasoning_effort',display_name:'Reasoning effort',field_type:'choice',choices:['low','high'],requires_model:true},{id:'enabled',field_type:'boolean'}]}}},operations:{'providers.models:openai':{phase:'ready'}}}};
+ const state={view:{providerEditor:{id:'openai',module:'provider-openai',model:'gpt-6-astra',config:'{"reasoning_effort":"high"}'}},management:{phase:'ready',operation:'notifications.get'},modelCatalogs:{'openai-connection':{phase:'ready',supported:true,models:[{id:'gpt-6-astra',display_name:'Astra'}]}},setup:{providerCatalogs:{openai:{sharedCatalogKey:'openai-connection'}},metadata:{'provider-openai':{info:{config_fields:[{id:'reasoning_effort',display_name:'Reasoning effort',field_type:'choice',choices:['low','high'],requires_model:true},{id:'enabled',field_type:'boolean'}]}}},operations:{'providers.models:openai':{phase:'ready'}}}};
  const html=renderToStaticMarkup(React.createElement(ProviderSettings,{state,act}));
  assert.match(html,/Found 1 models/);assert.doesNotMatch(html,/Available models/);assert.match(html,/<select id="provider-model-catalog"/);
  assert.match(html,/<select id="provider-option-reasoning_effort"/);

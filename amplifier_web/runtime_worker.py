@@ -763,7 +763,7 @@ class Worker:
                 return result
             phase = "model"
             retry = {}
-            detail = "Waiting for the configured model to respond."
+            detail = "Thinking..."
             if event == "context:compaction_started":
                 phase, detail = "compacting", "Making room in the conversation. This can take a few minutes. You can keep sending updates."
                 if data.get("recovery"):

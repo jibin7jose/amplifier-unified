@@ -92,9 +92,14 @@ def save(service, args, authority=None):
                 'authority': copy.deepcopy(authority), 'target': target(session)}
         if args.get('resetModel'):
             session.pop('pendingModelSelection', None)
+            session.pop('modelConnectionKey', None)
             session['selection'] = None
         session.pop('bundlePreview', None)
     if selected is not None:
+        from .provider_catalog import configured_binding
+        binding = configured_binding(service.data_dir, session['workspace'], selected['instance'],
+            global_only=session.get('location',{}).get('kind')=='managed')
+        session['modelConnectionKey'] = binding
         session['selection'] = copy.deepcopy(selected)
         session['pendingModelSelection'] = copy.deepcopy(selected)
         # An explicit model chosen after a bundle-default choice supersedes the
@@ -119,6 +124,7 @@ def guard_for(service, captured):
     sid = captured['id']
     revision = captured.get('nextMessageRevision', 0)
     interruption = captured.get('interruptionRevision', 0)
+    configuration_revision = service.state.get('configurationRevision', 0)
     placement = target(captured)
     bundle = copy.deepcopy(captured.get('pendingBundleSelection'))
     def check():
@@ -127,6 +133,8 @@ def guard_for(service, captured):
             raise RuntimeStartupError('This preparation was stopped. No input was sent.')
         if target(current) != placement or current.get('nextMessageRevision', 0) != revision:
             raise RuntimeStartupError('Next message settings or execution placement changed. No input was sent.')
+        if service.state.get('configurationRevision', 0) != configuration_revision:
+            raise RuntimeStartupError('Connection settings changed during input preparation. No input was sent.')
         if service.management.unresolved_configuration(current) or current.get('configurationOperationFence'):
             raise RuntimeStartupError('The original configuration operation is unresolved. No input was sent.')
         if current.get('fileAccessPending'):
@@ -178,16 +186,23 @@ async def prepare(service, captured):
             elif selection:
                 session['selection'] = copy.deepcopy(selection)
                 session['pendingModelSelection'] = copy.deepcopy(selection)
-        # Catalog validation does not call inference. A failed/unknown lookup
-        # keeps intent and prevents silently sending under a different model.
+        # Listing informs capabilities, not model entitlement. Hidden/manual
+        # exact IDs remain intent; account binding still gates native admission.
         if selection:
             resolved = await resolve_defaults(service.data_dir, session['workspace'], session.get('bundle'),
                 service.state['settings'].get('appBundle'),
                 session_id=session.get('runtimeSessionId') or session.get('nativeIdentity') or session['id'],
                 catalog=True, desired_bundle=bool(pending),
+                instance=selection['instance'], selected_only=True,
+                catalog_cache=service.management.provider_catalog,
                 global_only=session.get('location', {}).get('kind') == 'managed')
             check()
             validate_selection(selection, resolved)
+            provider = next(row for row in resolved['providers'] if row['id']==selection['instance'])
+            expected = session.get('modelConnectionKey')
+            if expected and expected != provider.get('connectionKey'):
+                raise ValueError('The configured connection changed after this choice was saved. Review the connection and save the model again.')
+            session['modelConnectionKey'] = provider.get('connectionKey')
         if pending:
             # Existing warm ownership must settle before fresh-process bundle
             # replacement. A cold conversation has nothing to retire.
@@ -212,20 +227,14 @@ def validate_selection(selected, catalog):
     if provider is None:
         raise ValueError('The saved provider is unavailable. Choose an available connection.')
     entry = catalog.get('catalogs', {}).get(provider.get('sharedCatalogKey'), {})
-    if entry.get('phase') != 'ready':
-        raise ValueError('Model compatibility is unavailable. Refresh the catalog or choose a known model before sending.')
-    if entry.get('supported', True):
-        models = {row if isinstance(row, str) else row.get('id') for row in entry.get('models', [])}
-        # Discovery can omit a configured deployment/alias. Match the controls'
-        # choices, using only this connection's explicit default.
-        configured = provider.get('info', {}).get('defaults', {}).get('model')
-        if configured:
-            models.add(configured)
-        if selected['model'] not in models:
-            raise ValueError('The saved model is not in this connection’s catalog. Choose a compatible model.')
-    elif selected['model'] != provider.get('info', {}).get('defaults', {}).get('model'):
-        raise ValueError('This connection cannot verify the saved model. Choose its configured default.')
-    if selected.get('effort'):
+    if provider.get('config', {}).get('chat_enabled') is False:
+        raise ValueError('This connection is not enabled for chat.')
+    # A recommendation filter (even a successful empty list) is not rejection
+    # by the provider. An explicit model/deployment ID remains intent, never an
+    # invented catalog row or an entitlement claim; invocation still validates
+    # credentials, endpoint, mounted connection and the provider's response.
+    metadata = entry.get('metadata') or {}
+    if selected.get('effort') and isinstance(metadata.get('configSchema', {}).get('fields'), list):
         import re
         schema = entry.get('metadata', {}).get('configSchema', {})
         config = {'model': selected['model'], 'default_model': selected['model']}
@@ -254,7 +263,7 @@ def validate_selection(selected, catalog):
         field = next((field for field in schema.get('fields', [])
             if field.get('id') == 'reasoning_effort' and shown(field)), None)
         choices = field.get('choices', []) if field else []
-        if not field or selected['effort'] not in [row.get('value') if isinstance(row, dict) else row for row in choices]:
+        if choices and selected['effort'] not in [row.get('value') if isinstance(row, dict) else row for row in choices]:
             raise ValueError('The saved reasoning effort is unavailable for this model.')
 
 
