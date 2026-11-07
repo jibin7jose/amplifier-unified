@@ -83,7 +83,7 @@ def test_current_unknown_or_new_problem_is_not_hidden_by_old_success(tmp_path,mo
     elif case=='rollback':u['pendingRollback']='c'*32;u['phase']='error';u['error']='Rollback not confirmed'
     status=health.current(u,health.active_evidence(m))
     assert status['status']!='current'
-    if case not in {'partial','staged'}:assert status['actionRequired']
+    if case not in {'partial','staged','unknown-activation'}:assert status['actionRequired']
 
 
 def test_render_projection_does_no_filesystem_work_and_config_revision_invalidates(tmp_path,monkeypatch):
@@ -94,7 +94,8 @@ def test_render_projection_does_no_filesystem_work_and_config_revision_invalidat
     for _ in range(100):health.publish(m)
     assert m.service.state['updates']['currentStatus']['status']=='current'
     m.service.state['configurationRevision']=2;health.publish(m)
-    assert m.service.state['updates']['currentStatus']['actionRequired']
+    assert not m.service.state['updates']['currentStatus']['actionRequired']
+    assert m.service.state['updates']['currentStatus']['title']=='Checking current configuration'
 
 
 def test_retry_witness_preserves_manual_and_unknown_boundaries():
@@ -180,3 +181,67 @@ async def test_interrupted_preparation_cannot_be_replayed_by_manual_intent(tmp_p
     with pytest.raises(ValueError,match='interrupted'):
         await UpdateManager.install(m,automatic=automatic)
     assert m.diagnostics.state==before
+
+
+@pytest.mark.parametrize('case',['local-only','mixed-check-failure','unknown-issue','new-conflict'])
+def test_custom_source_is_information_without_hiding_current_conflicts(tmp_path,monkeypatch,case):
+    m,_,_,_=mounted_fixture(tmp_path,monkeypatch);u=m.service.state['updates']
+    u['items']=[{'id':'custom','label':'Custom module','status':'local_changes','updateTier':'included'}]
+    u['sequence']={'stage':'included','included':{'issues':1}}
+    if case=='mixed-check-failure':
+        u['items'].append({'id':'broken','label':'Unavailable source','status':'check_failed'})
+    elif case=='unknown-issue':u['sequence']['included']['issues']=2
+    elif case=='new-conflict':
+        next(iter(u['diagnostics']['activeFailures'].values()))['latest']['at']=10**11
+    m._active_update_evidence=health.active_evidence(m);health.publish(m)
+    assert u['currentStatus']['actionRequired']==(case!='local-only')
+    if case=='local-only':
+        assert u['currentStatus']['status']=='unchecked'
+        notices=snapshot(m.service.state)
+        assert notices['pages'].get('updates',0)==0
+        assert [row['id'] for row in notices['items']]==['source:custom']
+        assert notices['items'][0]['informational']
+
+
+@pytest.mark.parametrize('case',['evicted','legacy-event','legacy-missing','newer','activation-failure','outside-graph','changed-graph'])
+def test_history_retention_is_not_activation_authority(tmp_path,monkeypatch,case):
+    m,stage,_,source=mounted_fixture(tmp_path,monkeypatch);u=m.service.state['updates']
+    batches=u['diagnostics']['completedBatches']
+    activation=next(row for row in batches if row.get('revision')==u['release'])
+    if case.startswith('legacy'):
+        activation.pop('revision')
+        if case=='legacy-event':
+            u['diagnostics']['events']=[{'revision':u['release'],'phase':'ecosystem-activation',
+                'status':'succeeded','at':activation['completedAt'],'attemptId':activation['attemptId']}]
+    else:
+        # More than the retained eight later batches, none for this generation.
+        batches[:]=[{'revision':str(i),'phase':'check','completedAt':activation['completedAt']+i} for i in range(10)]
+        batches[:]=batches[-8:]
+    failure=next(iter(u['diagnostics']['activeFailures'].values()))['latest']
+    if case=='newer':failure['at']=10**11
+    elif case=='activation-failure':failure['phase']='ecosystem-activation'
+    elif case=='outside-graph':failure['package']='not-in-qualified-graph'
+    elif case=='changed-graph':source['runtime-installed.json'][0]['version']='different'
+    before=copy.deepcopy(m.diagnostics.state)
+    evidence=health.active_evidence(m)
+    value=health.current(u,evidence)
+    if case=='legacy-event':
+        assert value['status']=='current'
+    elif case in {'evicted','legacy-missing'}:
+        assert value['status']=='unchecked' and not value['actionRequired']
+        assert 'activation receipt' in value['detail']
+        assert evidence['activationUnknown']
+    else:
+        assert value['actionRequired'] and value['status']!='current'
+    assert m.diagnostics.state==before
+
+
+async def test_configuration_revalidation_gap_is_neutral_but_failed_proof_is_not(tmp_path,monkeypatch):
+    m,stage,_,_=mounted_fixture(tmp_path,monkeypatch)
+    m._active_update_evidence=health.active_evidence(m);m._update_health_configuration_revision=1
+    m.service.state['configurationRevision']=2
+    health.publish(m)
+    assert not m.service.state['updates']['currentStatus']['actionRequired']
+    (stage/'profiles-qualified.json').write_text('{}')
+    await health.refresh(m);health.publish(m)
+    assert m.service.state['updates']['currentStatus']['actionRequired']

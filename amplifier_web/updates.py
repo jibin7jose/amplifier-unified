@@ -865,13 +865,14 @@ class UpdateManager:
                 public = group_sources(checked)
                 available = sum(row.get('status') == 'update' for row in public)
                 blocked = sequence['stage'] == 'included' and sequence['included']['issues']
+                failed_check = any(row.get('status') == 'check_failed' for row in checked)
                 if not available and not blocked:sequence['stage'] = 'complete';sequence['install'] = False
                 from .update_health import refresh as refresh_health
                 await refresh_health(self)
-                await self.publish(phase='error' if blocked else 'available' if available else 'checked',
+                await self.publish(phase='error' if blocked and failed_check else 'checked' if blocked else 'available' if available else 'checked',
                     sequence=sequence, items=public+[application], application=application, appAvailable=False,
                     available=available, lastCheck=time.time(),
-                    error='An included component could not be checked or has local changes. Review its details before continuing.' if blocked else None,
+                    error='An included component could not be checked. Review its details before continuing.' if blocked and failed_check else None,
                     detail='Included components will be installed before checking the remaining sources.' if sequence['stage']=='included' and available else 'Component check complete.')
             except Exception:
                 await self.publish(phase='error', error='Update check failed. Your installed sources are unchanged.')

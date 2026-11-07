@@ -111,6 +111,8 @@ def snapshot(state, *, session_items=None):
         if row.get('status') in {'update','check_failed','local_changes'}:
             status=row['status'];label={'update':'Update available','check_failed':'Could not check','local_changes':'Local edits preserved'}[status]
             add('source:'+row['id'],label+' · '+row['label'],'maintenance','updates',row.get('detail',''),[status,row.get('latest'),row.get('current')])
+            if status == 'local_changes':
+                items[-1]['informational'] = True  # Intentional customization is not repair debt.
     current = updates.get('currentStatus') or {}
     if current.get('actionRequired'):
         add('updates:current', current['title'], 'maintenance', 'updates',
