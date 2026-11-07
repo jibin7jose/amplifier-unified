@@ -61,6 +61,43 @@ async def test_correction_keeps_turn_and_usage_and_receipt(active):
     assert telemetry.turn_id == 'original'
 
 
+@pytest.mark.parametrize("ending,disposition", [
+    ("steering.applied", "applied"), ("steering.failed", "held"),
+    ("native.outcome_unknown", "unknown"),
+])
+async def test_native_phases_update_exact_ui_command_without_replay(active, ending, disposition):
+    app, runtime, session = active
+    await correction(app, expectedGenerationId="generation")
+    for phase in ("steering.accepted", "steering.pending"):
+        await event(app, phase)
+        assert session["messages"][-1]["steering"]["disposition"] == "queued"
+        assert "contextAt" not in session["messages"][-1]["steering"]
+    await event(app, ending, generation="another-generation")
+    assert session["messages"][-1]["steering"]["disposition"] == "queued"
+    await event(app, ending)
+    duplicate = await correction(app, expectedGenerationId="generation")
+    assert duplicate["duplicate"] and duplicate["steering"]["disposition"] == disposition
+    assert runtime.steer.await_count == 1 and not runtime.sent
+
+
+async def test_native_delivery_phases_survive_late_send_ack_and_passive_check(active):
+    app, runtime, session = active
+    async def steer(*args):
+        for phase in ('sent', 'accepted', 'pending'):
+            await app.on_runtime_event('runtime.steering', {
+                'sessionId': session['id'], 'event': 'steering.' + phase,
+                'input_id': 'correction', 'target_generation_id': 'generation', 'delivery': 'native'})
+        return {'accepted': True, 'disposition': 'queued', 'mode': 'native', 'phase': 'sent'}
+    runtime.steer.side_effect = steer
+    receipt = await correction(app, expectedGenerationId='generation')
+    assert receipt['steering']['mode'] == 'native'
+    assert receipt['steering']['phase'] == 'pending'
+    assert 'contextAt' not in receipt['steering']
+    checked = await app.dispatch('conversation.delivery', {'sessionId': session['id'], 'inputId': 'correction'})
+    assert checked['result']['steering']['phase'] == 'pending'
+    assert runtime.steer.await_count == 1
+
+
 @pytest.mark.parametrize('disposition', ['applied', 'held', 'unknown'])
 async def test_late_ack_cannot_erase_runtime_disposition(active, disposition):
     app, runtime, session = active

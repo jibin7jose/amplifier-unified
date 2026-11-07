@@ -89,7 +89,8 @@ async def test_native_early_tool_reaches_real_host_precondition(app, tmp_path, m
     native._connect = AsyncMock()
     native._guard_assembled_params_with_provider_count = AsyncMock(return_value=None)
     native._provider_count_available = lambda: False
-    client = SimpleNamespace(responses=SimpleNamespace()); client.with_options = lambda **kw: client
+    client = SimpleNamespace(base_url='https://api.openai.com/v1', responses=SimpleNamespace())
+    client.with_options = lambda **kw: client
     native._client = client
     native_owner = SimpleNamespace(coordinator=c, config={'background_delegate': True},
         runtime=SimpleNamespace(emit=AsyncMock()), start_native_job=start, native_job=lambda identity: None,

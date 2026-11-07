@@ -90,6 +90,9 @@ async def admit(controls, runtime, args, activation, authorize, stop_epoch=lambd
 
 
 def _steering_capability(controls):
+    native = controls.coordinator.get_capability("web.native_provider")
+    if native is not None and native.status().get("steering") == "native":
+        return {"version": 1, "mode": "native", "submit": native.submit_steering}
     capability = controls.coordinator.get_capability("live.steering")
     if (isinstance(capability, dict) and type(capability.get("version")) is int
             and capability["version"] == 1 and capability.get("mode") == "request_boundary"

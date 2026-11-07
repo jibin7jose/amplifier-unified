@@ -52,7 +52,8 @@ def target(session, expected=None, allow_next_turn=False):
     return identity
 
 
-def record(service, session, input_id, disposition, reason=None, *, preserve_pending_post=False):
+def record(service, session, input_id, disposition, reason=None, *, preserve_pending_post=False,
+           mode=None, phase=None):
     message = find_message(session, input_id)
     if not message or not message.get('steering'):
         return
@@ -62,6 +63,13 @@ def record(service, session, input_id, disposition, reason=None, *, preserve_pen
             steering['disposition'] in {'held', 'unknown'} and disposition == 'queued'):
         return
     steering['disposition'] = disposition
+    if mode in {'native', 'request_boundary'}:
+        steering['mode'] = mode
+    # Late socket-send acknowledgement must not erase provider acceptance.
+    # Neither proves application until a distinct successor exists.
+    phases = {'sent': 0, 'accepted': 1, 'pending': 2, 'applied': 3}
+    if phase in phases and phases[phase] >= phases.get(steering.get('phase'), -1):
+        steering['phase'] = phase
     # Restart is not admission evidence. Keep an unresolved fence available for
     # an exact later held/applied observation, without replay or new promotion.
     if not (preserve_pending_post and (message.get('navigationPost') or {}).get('disposition') == 'pending'):
@@ -114,14 +122,18 @@ def observe(service, session, kind, payload):
     message = find_message(session, payload.get('input_id'))
     if not message or (message.get('steering') or {}).get('generationId') != payload.get('target_generation_id'):
         return
-    disposition = {'steering.applied': 'applied', 'steering.held': 'held',
-                   'steering.unknown': 'unknown'}.get(payload.get('event'))
+    disposition = {'steering.sent': 'queued', 'steering.accepted': 'queued', 'steering.pending': 'queued',
+                   'steering.applied': 'applied', 'steering.held': 'held',
+                   'steering.failed': 'held', 'steering.unknown': 'unknown',
+                   'native.outcome_unknown': 'unknown'}.get(payload.get('event'))
     if disposition:
-        record(service, session, message['inputId'], disposition, payload.get('reason'))
+        record(service, session, message['inputId'], disposition, payload.get('reason'),
+               mode=payload.get('delivery'), phase=payload.get('event', '').removeprefix('steering.'))
 
 
 async def send(service, session, text, input_id, preserve_draft):
     message = find_message(session, input_id)
+    result = None
     try:
         sender = getattr(service.runtime, 'steer', None)
         if sender is None:
@@ -145,7 +157,9 @@ async def send(service, session, text, input_id, preserve_draft):
         disposition, reason = 'unknown', 'Delivery could not be confirmed. This message will not be sent again automatically.'
     async with service.lock:
         current = service._session(session['id'])
-        record(service, current, input_id, disposition, reason)
+        record(service, current, input_id, disposition, reason,
+               mode=result.get('mode') if isinstance(result, dict) else None,
+               phase=result.get('phase') if isinstance(result, dict) else None)
         saved = find_message(current, input_id)
         if saved['steering']['disposition'] in {'queued', 'applied', 'next_turn'}:
             service._clear_sent_draft(current, message, text, preserve_draft)
@@ -188,5 +202,6 @@ async def submit(controls, runtime, args, activation, stop_epoch):
     # The capability checks the generation again before admission. User input
     # does not use the automatic-task continuation guard: a paused task must
     # still be able to receive the user's correction during its current run.
-    return await capability['submit'](Input('steer', text, id=args['inputId'],
+    result = await capability['submit'](Input('steer', text, id=args['inputId'],
         attachments=tuple(args.get('attachments', [])), activation=activation), args['targetGenerationId'])
+    return {**result, 'mode': capability['mode']}

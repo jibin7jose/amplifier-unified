@@ -16,3 +16,10 @@ test('unknown outcome is explicit and active work never allows compaction',()=>{
  assert.match(html,/outcome is unknown/);assert.match(html,/not replayed/);
  assert.match(html,/disabled=""[^>]*data-action="runtime.control"[^>]*>Compact/);
 });
+test('eligibility is not live qualification or application',()=>{
+ const html=renderToStaticMarkup(React.createElement(NativeProviderSettings,{results:{'native.status':{supported:true,model:'gpt-6.1-terra'}},run:()=>{},busy:false,active:false}));
+ assert.match(html,/eligible for gpt-6.1-terra/);
+ assert.match(html,/not verified by this check/);
+ assert.match(html,/queued, not applied/);
+ assert.match(html,/successor response/);
+});

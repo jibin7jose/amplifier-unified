@@ -319,3 +319,135 @@ async def test_summary_effort_keeps_budget_and_surface_dispatch_on_one_request(s
     assert dispatched[0][0].reasoning_effort == 'low'
     assert dispatched[0][1]['reasoning_effort'] == budgets[0][1]['reasoning_effort'] == 'low'
     assert selected.selection['effort'] == 'high'
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("legacy_saved", [False, True])
+async def test_selected_real_sdk_parsed_history_count_and_generation(
+    tmp_path, monkeypatch, streaming, legacy_saved,
+):
+    """PR #144 crosses Unified storage, real Core/Streaming and selection.
+
+    Only external HTTP is scripted. SDK parsed objects, request serialization,
+    provider capture/replay, token count and the loop's completion are real.
+    """
+    import copy
+    import json
+    import socket
+
+    import httpx
+    from openai import AsyncOpenAI, omit
+    from openai.lib._parsing._responses import parse_response
+    from openai.types.responses import Response
+    from amplifier_core import AmplifierSession
+    from amplifier_foundation.session.history import SessionHistoryStore
+    from amplifier_module_provider_openai import OpenAIProvider
+    from amplifier_web.host.storage import SessionStore
+
+    def deny_network(*args, **kwargs):
+        raise AssertionError("Parsed-history qualification must not use the network")
+    async def deny_http(*args, **kwargs):
+        deny_network()
+    monkeypatch.setattr(socket.socket, "connect", deny_network)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", deny_http)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.setenv("AMPLIFIER_WEB_HOME", str(tmp_path / "web"))
+    monkeypatch.setenv("AMPLIFIER_HOME", str(tmp_path / "amplifier"))
+
+    def wire_response(output, identity):
+        return {"id": identity, "object": "response", "created_at": 1,
+                "model": "gpt-6.1-terra", "status": "completed", "output": output,
+                "parallel_tool_calls": True, "tool_choice": "auto", "tools": [],
+                "usage": {"input_tokens": 12, "output_tokens": 2, "total_tokens": 14,
+                          "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+                          "output_tokens_details": {"reasoning_tokens": 0}}}
+
+    text = {"type": "message", "id": "comment-1", "role": "assistant",
+            "status": "completed", "phase": None,
+            "content": [{"type": "output_text", "text": "Reading.", "annotations": []}]}
+    call = {"type": "function_call", "id": "wire-read", "call_id": "call-read",
+            "name": "read", "arguments": '{"parsed":"keep","parsed_arguments":1}',
+            "status": "completed", "future": {"parsed": "keep"}}
+    sdk_parsed = parse_response(
+        text_format=omit, input_tools=[], response=Response.model_validate(
+            wire_response([text, call], "original")))
+    sdk_saved = sdk_parsed.model_dump(mode="json", exclude_unset=True)["output"]
+    assert "parsed" in sdk_saved[0]["content"][0] and "parsed_arguments" in sdk_saved[1]
+    original = OpenAIProvider(api_key="synthetic", config={"default_model": "gpt-5.6"})
+    captured = original._convert_to_chat_response(sdk_parsed)
+    assert captured.metadata["openai:output_items"] == [text, call]
+    metadata = copy.deepcopy(captured.metadata)
+    if legacy_saved:
+        metadata["openai:output_items"] = sdk_saved
+    messages = [
+        {"role": "user", "content": "Read the synthetic key."},
+        {"role": "assistant", "content": "Reading.", "metadata": metadata,
+         "tool_calls": [tool.model_dump() for tool in captured.tool_calls]},
+        {"role": "tool", "tool_call_id": "call-read", "name": "read", "content": "actual-result"},
+    ]
+    before = copy.deepcopy(messages)
+    store = SessionStore(tmp_path / "sessions", legacy_home=tmp_path / "legacy")
+    store.save("parsed-selected", messages, {"name": "Parsed selected replay"})
+    history = store.history("parsed-selected")
+    assert isinstance(history, SessionHistoryStore)
+    loaded, _ = SessionStore(store.base_dir, legacy_home=tmp_path / "legacy").load("parsed-selected")
+    assert loaded == history.load(include_events=False).messages == before
+
+    sent = []
+    final = {**text, "id": "final-1", "phase": "final_answer",
+             "content": [{"type": "output_text", "text": "Verified once.", "annotations": []}]}
+    def transport(request):
+        body = json.loads(request.content)
+        sent.append((request.url.path, body))
+        assert body["model"] == "gpt-6.1-terra"
+        assert text in body["input"] and call in body["input"]
+        for item in body["input"]:
+            assert "parsed_arguments" not in item
+            if isinstance(item.get("content"), list):
+                assert all("parsed" not in part for part in item["content"])
+        if request.url.path == "/v1/responses/input_tokens":
+            return httpx.Response(200, json={"input_tokens": 12})
+        assert request.url.path == "/v1/responses"
+        response = wire_response([final], "final-response")
+        if not streaming:
+            return httpx.Response(200, json=response)
+        events = [
+            {"type": "response.created", "sequence_number": 0,
+             "response": {**response, "status": "in_progress", "output": []}},
+            {"type": "response.completed", "sequence_number": 1, "response": response},
+        ]
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, text="".join(
+            f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events))
+
+    session = AmplifierSession({
+        "session": {"orchestrator": {"module": "loop-streaming", "config": {
+            "max_iterations": 2, "min_delay_between_calls_ms": 0}},
+            "context": {"module": "context-simple"}}, "providers": [],
+    })
+    async with AsyncOpenAI(api_key="synthetic", base_url="https://api.openai.com/v1", max_retries=0,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(transport))) as client:
+        await session.initialize()
+        try:
+            context = session.coordinator.get("context")
+            await context.set_messages(loaded)
+            context_before = copy.deepcopy(await context.get_messages())
+            provider = OpenAIProvider(client=client, coordinator=session.coordinator, config={
+                "default_model": "gpt-5.6", "use_streaming": streaming, "max_retries": 0})
+            choices = {"instance": "configured", "model": "gpt-6.1-terra", "effort": "high"}
+            selected = SelectedProvider(provider, copy.deepcopy(choices))
+            await session.coordinator.mount("providers", selected, name="configured")
+            assert await session.execute("Continue without repeating the read.") == "Verified once."
+            after = await context.get_messages()
+            assert after[:len(context_before)] == context_before  # Retain Core's sequence metadata too.
+            assert after[-1]["metadata"]["openai:output_items"] == [final]
+            assert sum(m["role"] == "tool" for m in after) == 1
+            assert provider.default_model == "gpt-5.6" and selected.selection == choices
+            assert selected.get_info().defaults["model"] == "gpt-6.1-terra"
+        finally:
+            await session.cleanup()
+    counts = [body for path, body in sent if path.endswith("/input_tokens")]
+    creates = [body for path, body in sent if path == "/v1/responses"]
+    assert counts and len(creates) == 1
+    assert all(body["input"] == creates[0]["input"] for body in counts)
+    assert creates[0]["reasoning"]["effort"] == "high"
+    assert store.history("parsed-selected").load(include_events=False).messages == before

@@ -39,6 +39,15 @@ test('another browser can check saved delivery and confirm one explicit resend',
  assert.deepEqual(calls[1],{action:'conversation.retry',args:{sessionId:'chat',inputId:'original',confirmUncertain:true}});
  assert.equal(retryCalls.length,0);await act(async()=>root.unmount());
 });
+for(const [phase,label] of Object.entries({sent:'Sending live direction',accepted:'Accepted; applying live direction',pending:'Accepted; queued at the provider',applied:'Live direction applied to the successor response'})){
+ test(`native ${phase} is not presented as app-held boundary input`,async()=>{
+  const message={id:'m',inputId:'direction',steering:{generationId:'run',mode:'native',phase,disposition:phase==='applied'?'applied':'queued'}};
+  let root;await act(async()=>{root=create(React.createElement(MessageDelivery,{message,session:{id:'chat',status:'working',messages:[message]}}))});
+  assert.match(JSON.stringify(root.toJSON()),new RegExp(label));
+  assert.doesNotMatch(JSON.stringify(root.toJSON()),/waiting for its next step|Added to the active run|Send again|Retry/);
+  await act(async()=>root.unmount());
+ });
+}
 test('a local-only message explicitly retries its original identity without claiming to repeat work',async()=>{
  const {root,calls,retryCalls}=await fixture(false);
  await act(async()=>button(root,'Check delivery').props.onClick());

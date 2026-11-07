@@ -28,7 +28,8 @@ class Coordinator:
         self.provider._last_native_request=(request,{})
         compact=AsyncMock(return_value=SimpleNamespace(content=json.dumps({'output':[
             {'type':'compaction','id':'private-id','encrypted_content':'OPAQUE_PRIVATE_FIXTURE'}]})))
-        client=SimpleNamespace(responses=SimpleNamespace(with_raw_response=SimpleNamespace(compact=compact)))
+        client=SimpleNamespace(base_url='https://api.openai.com/v1',
+                               responses=SimpleNamespace(with_raw_response=SimpleNamespace(compact=compact)))
         client.with_options=lambda **kwargs:client
         self.provider._client=client
         self.providers={'fixture-selected':self.provider}

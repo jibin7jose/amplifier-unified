@@ -39,3 +39,61 @@ The synthetic overlay alone enables unrestricted managed stdin and adds real `ho
 `saved_artifact_acceptance.py --run <finished-run> --output <new-folder>` and `saved_budget_acceptance.py` provide passive follow-up inspections with runtime execution disabled.
 
 No spreadsheet calculation engine was available, so spreadsheet formula recalculation is untested. Image interpretation, physical audio, provider quota retrieval, worker-descendant accounting, deployment and release are outside this acceptance.
+
+## Immediate composer direction (November 2026 correction)
+
+The normal composer sends `conversation.send` immediately while a run is active.
+It captures that run's generation and the next-message configuration revision.
+The worker chooses the actual mounted transport; the browser does not infer native
+support from a model name or silently enable `native_provider`. Explicit opt-in is
+preserved. A documented model, opt-in, selected mount and effective SDK endpoint
+qualify the transport, but do not establish that a response is currently steerable.
+`native.status.activeNativeResponse` reports the actual response/generation when
+ready. The final provider admission still rechecks ownership, selection and Stop.
+
+Native receipts distinguish socket sent, provider accepted, provider pending and
+distinct successor applied. “Sending live direction” is not provider acceptance.
+“Accepted; applying live direction” is not application. Provider-pending direction
+is explicitly queued **at the provider**, not held by the app for its next step.
+Boundary-only models keep ordinary next-request context insertion. Tools already
+running are not interrupted or undone. With no steerable native response (including
+a running tool or a successor already pending), the message is retained with a
+no-send explanation; it is not silently replayed in another generation.
+
+The maintained offline browser check uses production built assets, RuntimeManager,
+a subprocess Worker, Core and loop-live. Only the external provider transports are
+scripted. It clicks the normal composer, holds the parent response in flight and
+requires `response.steer` on the wire **before** releasing its terminal frame.
+Separate checkpoints test sent/accepted/applied labels, one distinct successor,
+one final, no artificial second turn, ordinary-model boundary behavior,
+tool/no-response refusal, exact generation/config revision and private-draft reload
+without replay. This is not a paid-provider or deployed-demo acceptance claim.
+
+```sh
+cd frontend
+AMPLIFIER_TEST_PYTHON=/path/to/qualified-runtime/bin/python \
+  AMPLIFIER_DIRECTION_EVIDENCE=/path/to/new-evidence \
+  npm run test:immediate-direction-browser
+```
+
+### Same-instance human demo acceptance plan
+
+The deployment owner stages the final reviewed commit **with its matching built
+assets** on existing instance `53b4cd12`; this correction does not launch a DTU,
+change its service or submit a paid request. Keep the selected provider, exact
+model/effort, opt-in and progressive-output setting unchanged.
+
+1. Verify the deployed commit, build ID and loaded worker/provider/loop provenance.
+2. In the normal browser composer, send a task that keeps a model response active.
+3. While that response is in flight, click Send with a short new direction.
+4. Verify sending → provider accepted → distinct successor applied, not an app-held
+   next-step label. Compare the exact input's sent receipt with the parent terminal.
+5. Verify one final for the directed response and no new user turn or repeated tools.
+6. Check a boundary-only model separately: its input waits for the next request,
+   without claiming immediate native effect. A tool/no-response phase must explain
+   the absence of immediate delivery; Stop and changed configuration must refuse
+   stale input without replay. Preserve any newer private draft.
+
+Keep socket-send, provider acceptance, successor application and model obedience
+as separate observations. If no delayed dispatch is observed, report the wording
+defect and the discriminating test rather than inventing a queueing defect.

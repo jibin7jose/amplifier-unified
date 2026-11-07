@@ -92,6 +92,234 @@ async def test_unsupported_selected_model_or_endpoint_falls_back_without_switch(
     assert c.get_capability('web.native_provider').status()['steering']=='request_boundary'
 
 
+@pytest.mark.parametrize("model", [
+    "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra",
+    "gpt-5.6", "gpt-5.6-terra", "gpt-6", "gpt-6.1", "gpt-6.1-terra-preview",
+    "gpt-6-astra-2026-11-06", "GPT-6-astra", "", None, 6, [],
+])
+async def test_native_admission_uses_provider_exact_policy(tmp_path, monkeypatch, model):
+    from amplifier_module_provider_openai import OpenAIProvider
+    from amplifier_module_provider_openai._capabilities import get_request_policy
+    from amplifier_web.host.session import SelectedProvider
+    monkeypatch.setenv("AMPLIFIER_WEB_HOME", str(tmp_path))
+    original = OpenAIProvider(api_key="fixture", config={"default_model": "gpt-6-astra"})
+    c = Coordinator(original)
+    c.loop.root_provider = SelectedProvider(original, {"instance": "configured", "model": model})
+    await install_native(c.loop, c, c.providers)
+    host = c.get_capability("web.native_provider")
+    assert host.status()["supported"] is get_request_policy(model).supports_steering
+    assert original._client is None and not host.path.exists()
+
+
+@pytest.mark.parametrize("endpoint", [
+    "https://api.openai.com/v1", "https://api.openai.com/v1/",
+    "http://api.openai.com/v1", "https://proxy.example/v1",
+    "https://deployment.openai.azure.com/openai/v1", "https://api.openai.com:443/v1",
+    "https://user:password@api.openai.com/v1", "https://api.openai.com/v1?api-version=1",
+    "https://api.openai.com/v1#fragment", "https://api.openai.com/v1;custom", "https://[broken",
+])
+async def test_only_official_endpoint_is_admitted(tmp_path, monkeypatch, endpoint):
+    from amplifier_module_provider_openai import OpenAIProvider
+    monkeypatch.setenv("AMPLIFIER_WEB_HOME", str(tmp_path))
+    original = OpenAIProvider(api_key="fixture", config={"default_model": "gpt-6.1-terra"})
+    original.base_url = endpoint
+    c = Coordinator(original)
+    await install_native(c.loop, c, c.providers)
+    host = c.get_capability("web.native_provider")
+    assert host.status()["supported"] is (endpoint in {
+        "https://api.openai.com/v1", "https://api.openai.com/v1/"})
+    assert original._client is None
+
+
+@pytest.mark.parametrize("source", [
+    "environment", "configured", "configured_url", "configured_sdk_url", "injected", "injected_url",
+])
+@pytest.mark.parametrize("endpoint", ["https://api.openai.com/v1", "https://proxy.invalid/v1"])
+async def test_effective_sdk_endpoint_admission_and_ordinary_fallback(tmp_path, monkeypatch, source, endpoint):
+    import socket
+    import httpx
+    from openai import AsyncOpenAI
+    from openai._base_client import URL as SDKURL
+    from amplifier_core.message_models import ChatRequest, Message
+    from amplifier_module_provider_openai import OpenAIProvider
+    from amplifier_module_loop_live.scope import LIVE_OWNER
+    from amplifier_web.host.session import SelectedProvider
+
+    async def deny_network(*args, **kwargs):
+        raise AssertionError("Endpoint qualification must not use the network")
+    def deny_socket(*args, **kwargs):
+        raise AssertionError("Endpoint qualification must not use the network")
+    monkeypatch.setattr(socket.socket, "connect", deny_socket)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", deny_network)
+    monkeypatch.setattr("websockets.connect", deny_network)
+    monkeypatch.setenv("AMPLIFIER_WEB_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    requests = []
+    def transport(request):
+        body = json.loads(request.content)
+        requests.append((request.url, body))
+        assert str(request.url).startswith(endpoint + "/")
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"input_tokens": 5})
+        assert request.url.path == "/v1/responses"
+        return httpx.Response(200, json={
+            "id": "ordinary", "object": "response", "created_at": 1,
+            "model": "gpt-6.1-terra", "status": "completed",
+            "output": [{"type": "message", "id": "message-ordinary", "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Ordinary works.", "annotations": []}]}],
+            "usage": {"input_tokens": 5, "output_tokens": 2, "total_tokens": 7}})
+    config = {"default_model": "gpt-6.1-terra", "use_streaming": False, "max_retries": 0}
+    client = None
+    if source == "environment":
+        monkeypatch.setenv("OPENAI_BASE_URL", endpoint)
+    elif source.startswith("configured"):
+        # Explicit configuration wins over a conflicting environment.
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://environment.invalid/v1")
+        config["base_url"] = (SDKURL(endpoint) if source == "configured_sdk_url"
+                              else httpx.URL(endpoint) if source.endswith("_url") else endpoint)
+    else:
+        # An existing SDK client wins over both config and environment.
+        conflicting = ("https://configured.invalid/v1" if endpoint == "https://api.openai.com/v1"
+                       else "https://api.openai.com/v1")
+        monkeypatch.setenv("OPENAI_BASE_URL", conflicting)
+        config["base_url"] = conflicting
+        client = AsyncOpenAI(api_key="fixture", max_retries=0,
+            base_url=httpx.URL(endpoint) if source.endswith("_url") else endpoint,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(transport)))
+    original = OpenAIProvider(api_key="fixture", client=client, config=config)
+    c = Coordinator(original)
+    selected = SelectedProvider(original, {"instance": "configured", "model": "gpt-6.1-terra"})
+    c.loop.root_provider = selected
+    # Lazy SDK construction is observed only if a real ordinary completion runs,
+    # never during install/status. Retain the real constructor and serialization.
+    builds = []
+    def sdk(**kwargs):
+        builds.append(kwargs)
+        return AsyncOpenAI(**{**kwargs, "http_client": httpx.AsyncClient(
+            transport=httpx.MockTransport(transport))})
+    monkeypatch.setattr("amplifier_module_provider_openai.AsyncOpenAI", sdk)
+    try:
+        await install_native(c.loop, c, c.providers)
+        host = c.get_capability("web.native_provider")
+        official = endpoint == "https://api.openai.com/v1"
+        for _ in range(2):
+            assert host.status()["supported"] is official
+            assert host.status()["steering"] == ("native" if official else "request_boundary")
+        assert original._client is client and not builds and not requests
+        if official:
+            assert selected.original is host.provider
+        else:
+            assert c.providers["configured"] is selected.original is original
+            token = LIVE_OWNER.set(SimpleNamespace(coordinator=c, context=c.context, config={}))
+            try:
+                reply = await selected.complete(ChatRequest(
+                    messages=[Message(role="user", content="Synthetic ordinary input")], max_output_tokens=16))
+            finally:
+                LIVE_OWNER.reset(token)
+            assert reply.content[0].text == "Ordinary works."
+            assert len([body for url, body in requests if url.path == "/v1/responses"]) == 1
+            assert len(builds) == (client is None)
+            assert host.provider is None and not host.path.exists()
+    finally:
+        actual_client = (c.get_capability("web.native_provider").provider or original)._client
+        if actual_client is not None:
+            await actual_client.close()
+
+
+@pytest.mark.parametrize("value", [
+    "https://api.openai.com/v1", "https://api.openai.com/v1/",
+    "http://api.openai.com/v1", "https://proxy.invalid/v1",
+    "https://api.openai.com:444/v1", "https://user:pass@api.openai.com/v1",
+    "https://api.openai.com/v1?key=value", "https://api.openai.com/v1#fragment",
+    "https://api.openai.com/v1;parameters",
+])
+@pytest.mark.parametrize("source", ["environment", "configured_url", "client"])
+async def test_effective_endpoint_sources_keep_strict_url_checks(monkeypatch, value, source):
+    import httpx
+    from openai import AsyncOpenAI
+    from amplifier_web.native_provider import _official_endpoint
+    provider = SimpleNamespace(base_url=None, _client=None)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    if source == "environment":
+        monkeypatch.setenv("OPENAI_BASE_URL", value)
+    elif source == "configured_url":
+        provider.base_url = httpx.URL(value)
+    else:
+        # SDK base_url is an httpx.URL. Constructing a client makes no requests.
+        provider._client = AsyncOpenAI(api_key="fixture", base_url=value)
+    try:
+        assert _official_endpoint(provider) is (value in {
+            "https://api.openai.com/v1", "https://api.openai.com/v1/"})
+    finally:
+        if provider._client is not None:
+            await provider._client.close()
+
+
+def test_endpoint_status_never_stringifies_unknown_objects_or_uses_missing_client_url(monkeypatch):
+    from amplifier_web.native_provider import _official_endpoint
+    class PretendURL:
+        def __str__(self):
+            raise AssertionError("Unknown endpoint types must not be stringified")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    for provider in [
+        SimpleNamespace(base_url=PretendURL(), _client=None),
+        SimpleNamespace(base_url="https://api.openai.com/v1", _client=SimpleNamespace()),
+        SimpleNamespace(base_url=None, _client=SimpleNamespace(base_url=PretendURL())),
+        SimpleNamespace(base_url="", _client=None),
+    ]:
+        assert not _official_endpoint(provider)
+    monkeypatch.delenv("OPENAI_BASE_URL")
+    assert _official_endpoint(SimpleNamespace(base_url=None, _client=None))
+
+
+@pytest.mark.parametrize("extra,final", [
+    ({}, "gpt-6-sol"),
+    ({"model": "gpt-6.1-terra"}, "gpt-6.1-terra"),
+    ({"model": "gpt-5.6", "extra_body": {"model": "gpt-6-luna"}}, "gpt-6-luna"),
+    ({"model": "gpt-6-astra", "extra_body": {"model": "gpt-5.6"}}, "gpt-5.6"),
+    ({"extra_body": {"model": ["gpt-6-astra"]}}, None),
+    ({"extra_body": "not an object"}, None),
+])
+async def test_status_uses_pure_provider_final_precedence(tmp_path, monkeypatch, extra, final):
+    from amplifier_module_provider_openai import OpenAIProvider
+    from amplifier_module_provider_openai._capabilities import get_request_policy
+    from amplifier_web.host.session import SelectedProvider
+    monkeypatch.setenv("AMPLIFIER_WEB_HOME", str(tmp_path))
+    original = OpenAIProvider(api_key="fixture", config={
+        "default_model": "gpt-5.6", "extra_request_params": extra})
+    c = Coordinator(original)
+    selection = {"instance": "configured", "model": "gpt-6-sol"}
+    c.loop.root_provider = SelectedProvider(original, copy.deepcopy(selection))
+    before = copy.deepcopy(original._extra_params_warned_keys)
+    await install_native(c.loop, c, c.providers)
+    host = c.get_capability("web.native_provider")
+    status = host.status()
+    assert status["model"] == final
+    assert status["supported"] is get_request_policy(final).supports_steering
+    assert c.loop.root_provider.selection == selection
+    assert original.default_model == "gpt-5.6"
+    assert original._extra_params_warned_keys == before and original._client is None
+    if host.provider:
+        c.providers["configured"] = OpenAIProvider(api_key="fixture", config={
+            "default_model": "gpt-5.6", "extra_request_params": extra})
+        assert host.status()["steering"] == "request_boundary"  # Same name/model is not the same mount.
+
+
+async def test_provider_subclass_and_prewrapped_instance_are_not_native(tmp_path, monkeypatch):
+    from amplifier_module_provider_openai import OpenAIProvider
+    monkeypatch.setenv("AMPLIFIER_WEB_HOME", str(tmp_path))
+    class AzureLikeProvider(OpenAIProvider):
+        pass
+    for cls, wrapped in [(AzureLikeProvider, False), (OpenAIProvider, True)]:
+        original = cls(api_key="fixture", config={"default_model": "gpt-6.1-terra"})
+        if wrapped:
+            original.complete = AsyncMock()
+        c = Coordinator(original)
+        await install_native(c.loop, c, c.providers)
+        assert c.get_capability("web.native_provider").provider is None
+        assert c.providers["configured"] is original and original._client is None
+
+
 @pytest.mark.asyncio
 async def test_durable_receipts_reconcile_restart_unknown_without_replay(tmp_path):
     c=Coordinator(fake())
@@ -446,7 +674,7 @@ async def test_parent_unknown_only_relabels_steer_when_its_input_was_sent(tmp_pa
         assert host.path.read_bytes() == before
 
 
-@pytest.mark.parametrize('event', ['steering.pending', 'native.error', 'native.connection.renewed'])
+@pytest.mark.parametrize('event', ['native.error', 'native.connection.renewed'])
 async def test_unhandled_observation_is_not_receipted_as_a_bound_send(tmp_path, event):
     c = Coordinator(fake())
     host = NativeProviderHost(c, c.loop, tmp_path)
@@ -590,6 +818,7 @@ async def test_shared_control_compacts_only_idle_and_never_returns_private_opaqu
     host.identity=host.selected_identity()
     host.provider=SimpleNamespace(get_info=c.providers['configured'].get_info, native_status=lambda:{'supported':True,'compactAvailable':True,'checkpoint':'created'},
         native_compact=AsyncMock(return_value={'checkpoint':'created'}),native_export_checkpoint=lambda:{'output':'opaque-secret'})
+    c.providers['configured'] = host.provider
     c.caps['live.checkpoint']=AsyncMock()
     runtime=SimpleNamespace(generation=None,queued_inputs=0)
     controls=RuntimeControls(SimpleNamespace(session_id=c.session_id,coordinator=c),runtime)
@@ -676,6 +905,7 @@ async def test_compaction_capacity_denial_prevents_sdk_and_success_records_usage
         native_status=lambda:{'supported':True,'checkpoint':'created'},
         native_compact=AsyncMock(return_value={'checkpoint':'created','usage':{'input_tokens':7,'output_tokens':3}}),
         native_export_checkpoint=lambda:{'output':'private'})
+    c.providers['configured'] = host.provider
     async def deny(row):raise ValueError('capacity denied')
     c.telemetry.admission_guard=deny
     with pytest.raises(ValueError,match='capacity denied'):await host.compact()
@@ -715,7 +945,8 @@ async def test_selected_observed_surface_native_budget_checkpoint_and_reconnect(
     request=ChatRequest(messages=[Message(role='system',content='factory instructions'),Message(**c.messages[0])],max_output_tokens=32)
     opaque=[{'type':'compaction','encrypted_content':'PRIVATE OPAQUE'}]
     compact=AsyncMock(return_value=SimpleNamespace(content=json.dumps({'output':opaque,'usage':{'input_tokens':2,'output_tokens':1}})))
-    client=SimpleNamespace(responses=SimpleNamespace(with_raw_response=SimpleNamespace(compact=compact)))
+    client=SimpleNamespace(base_url='https://api.openai.com/v1',
+                           responses=SimpleNamespace(with_raw_response=SimpleNamespace(compact=compact)))
     client.with_options=lambda **kwargs:client
     native._client=client
     native._provider_count_available=lambda:False

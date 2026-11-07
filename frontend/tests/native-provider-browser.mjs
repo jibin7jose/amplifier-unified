@@ -1,4 +1,4 @@
-import {openChatAdvancedPage} from './browser-chat-pages.mjs';
+import {openChatAdvancedPage,showFixtureConversation} from './browser-chat-pages.mjs';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {chromium} from '@playwright/test';
@@ -12,12 +12,13 @@ const page=await browser.newPage({viewport:{width:1100,height:900},extraHTTPHead
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 try{
  await page.goto(origin);await page.waitForSelector('#amp-one');
+ await showFixtureConversation(page);
  await page.getByRole('textbox',{name:'Message Amplifier'}).fill('Unsent native fixture draft');
  await page.waitForFunction(()=>window.amplifier.getState().view.draft==='Unsent native fixture draft');
  const before=await page.evaluate(()=>window.amplifier.getState().selectedSessionId);
  await openChatAdvancedPage(page,'Context & recovery');
  await page.getByRole('button',{name:'Check provider support',exact:true}).click();
- await page.getByText('Native direction is available for this selected model.',{exact:true}).waitFor();
+ await page.getByText(/Native direction is eligible for/).waitFor();
  await page.getByRole('button',{name:'Compact provider context',exact:true}).click();
  await page.getByText('Saved provider context: created.',{exact:true}).waitFor();
  const agent=await page.request.post(origin+'/fixture/agent-native');

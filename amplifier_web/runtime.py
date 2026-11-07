@@ -200,7 +200,7 @@ def normalize_event(event: dict, session_id: str, input_id: str | None = None):
     if kind in {"steering.sent", "steering.accepted", "steering.applied", "steering.pending", "steering.failed", "steering.held", "steering.unknown", "native.outcome_unknown"}:
         return "runtime.steering", {**base, "event": kind, **{key: event[key] for key in
             ("input_id", "response_id", "steer_id", "accepted", "reason", "execution_replayed",
-             "target_generation_id", "disposition", "generation_id") if key in event}}
+             "target_generation_id", "disposition", "generation_id", "delivery") if key in event}}
     if kind.startswith("job."):
         statuses = {"queued": "queued", "returned": "completed", "failed": "error",
                     "cancelled": "cancelled", "cancel_requested": "stopping", "recovered": "interrupted"}

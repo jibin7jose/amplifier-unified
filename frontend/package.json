@@ -73,6 +73,7 @@
     "test:schedules-browser": "node tests/schedules-browser.mjs",
     "test:voice-visual-browser": "node tests/voice-visual-frame-browser.mjs && node tests/voice-visual-browser.mjs && node tests/computer-visual-browser.mjs",
     "test:message-delivery-browser": "node tests/message-delivery-browser.mjs",
+    "test:immediate-direction-browser": "node tests/immediate-direction-browser.mjs",
     "test:toolbar-browser": "node tests/app-toolbar-browser.mjs",
     "test:worktrees-browser": "node tests/worktrees-browser.mjs",
     "test:connectors-browser": "node tests/connectors-browser.mjs",

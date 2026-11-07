@@ -40,6 +40,7 @@
     {"id": "draft-provider-refresh", "command": ["node", "tests/draft-provider-refresh-browser.mjs"]},
     {"id": "provider-selection", "command": ["node", "tests/provider-selection-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/provider-selection"}},
     {"id": "provider-native", "command": ["node", "tests/provider-native-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/provider-native", "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"}},
+    {"id": "immediate-direction", "command": ["node", "tests/immediate-direction-browser.mjs"], "env": {"AMPLIFIER_DIRECTION_EVIDENCE": "{root}/output/browser-checks/immediate-direction", "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"}},
     {"id": "draft-discovery-recovery", "command": ["node", "tests/draft-discovery-recovery-browser.mjs"]},
     {"id": "new-chat-recovery", "command": ["node", "tests/new-chat-recovery-browser.mjs"]},
     {"id": "feedback", "command": ["node", "tests/feedback-browser.mjs"]},

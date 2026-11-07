@@ -27,6 +27,11 @@ export function MessageDelivery({message,session,delivery,localDelivery,dispatch
  const steering=message.steering||report?.steering;
  if(steering){
   const labels={next_turn:'Received for the next turn',sending:'Sending message to the active run…',queued:'Received by the active run; waiting for its next step…',applied:'Added to the active run’s context',held:'Message not delivered. The run ended or could not accept steering.',unknown:'Steering delivery could not be confirmed. Nothing was resent.'};
+  if(steering.mode==='native'){
+   labels.sending='Sending live direction…';
+   labels.queued=steering.phase==='pending'?'Accepted; queued at the provider until a successor response can start…':steering.phase==='accepted'?'Accepted; applying live direction…':'Sending live direction…';
+   labels.applied='Live direction applied to the successor response';
+  }
   return <span className="a-message-delivery" role="status"><span>{labels[steering.disposition]||labels.unknown}</span>
    {steering.reason&&<span className="a-delivery-detail"> {steering.reason}</span>}
    {['unknown','queued','sending'].includes(steering.disposition)&&<button type="button" className="a-link" disabled={pending} onClick={check}>{pending?'Checking…':'Check delivery'}</button>}

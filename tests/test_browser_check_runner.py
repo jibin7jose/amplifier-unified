@@ -235,8 +235,9 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     breadbin_addition = breadbin_browser_addition(rows, set())
     question_fade_addition = question_fade_browser_addition(rows, set())
     context_addition = context_inspector_browser_addition(rows, set())
+    immediate_addition = immediate_direction_browser_addition(rows, set())
     historical_rows = [row for row in rows
-                       if not (canvas_additions | breadbin_addition | question_fade_addition | context_addition).intersection(row['command'])]
+                       if not (canvas_additions | breadbin_addition | question_fade_addition | context_addition | immediate_addition).intersection(row['command'])]
     # Expanded exact .149 workflow invocations, including compound npm scripts.
     # Deliberate coverage changes must update this migration oracle explicitly.
     additions = {
@@ -329,7 +330,7 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     assert [row for row in rows if row['id'] in recovery_ids] == recovery_additions
     original = [row for row in historical_rows if row['id'] not in additions and row['id'] not in recovery_ids]
     assert len(original) == 65 and len(historical_rows) == 132
-    assert len(rows) == 137  # Five independently validated owners are additive.
+    assert len(rows) == 138  # Six independently validated owners are additive.
     # Existing scenarios retain their commands; only evidence ownership changes.
     evidence = {
         'bundle': {'AMPLIFIER_BUNDLE_SCREENSHOT': '{root}/output/browser-checks/bundle-mobile.png'},
@@ -632,6 +633,43 @@ def question_fade_browser_addition(rows, readiness_scripts):
     return {script}
 
 
+def immediate_direction_browser_addition(rows, readiness_scripts):
+    """Validate the new real-worker owner without changing frozen coverage."""
+    script = 'tests/immediate-direction-browser.mjs'
+    owners = [row for row in rows if row['id'] == 'immediate-direction' or script in row['command']]
+    assert owners == [{
+        'id': 'immediate-direction', 'command': ['node', script],
+        'env': {'AMPLIFIER_DIRECTION_EVIDENCE': '{root}/output/browser-checks/immediate-direction',
+                'AMPLIFIER_TEST_PYTHON': '{root}/.venv/bin/python'},
+    }], f'{script}: expected one exact ordinary source owner and environment'
+    assert script not in readiness_scripts, f'{script}: duplicate readiness owner'
+    return {script}
+
+
+@pytest.mark.parametrize('fault', ['missing', 'duplicate', 'command', 'identity',
+                                  'python', 'evidence', 'readiness'])
+def test_immediate_direction_browser_owner_rejects_invalid_coverage(fault):
+    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    owner = next(row for row in rows if row['id'] == 'immediate-direction')
+    readiness = set()
+    if fault == 'missing':
+        rows.remove(owner)
+    elif fault == 'duplicate':
+        rows.append({**owner, 'id': 'immediate-direction-extra'})
+    elif fault == 'command':
+        owner['command'] = ['node', 'tests/message-outbox-browser.mjs']
+    elif fault == 'identity':
+        owner['id'] = 'immediate-direction-renamed'
+    elif fault == 'python':
+        del owner['env']['AMPLIFIER_TEST_PYTHON']
+    elif fault == 'evidence':
+        owner['env']['AMPLIFIER_DIRECTION_EVIDENCE'] = '{root}/output/browser-checks/other'
+    else:
+        readiness.add('tests/immediate-direction-browser.mjs')
+    with pytest.raises(AssertionError, match='immediate-direction'):
+        immediate_direction_browser_addition(rows, readiness)
+
+
 def context_inspector_browser_addition(rows, readiness_scripts):
     """New feature owner; preserve every frozen preceding coverage count."""
     script = 'tests/context-inspector-browser.mjs'
@@ -784,10 +822,11 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     canvas_additions = canvas_browser_additions(plan['scenarios'], readiness_scripts)
     question_fade_addition = question_fade_browser_addition(plan['scenarios'], readiness_scripts)
     context_addition = context_inspector_browser_addition(plan['scenarios'], readiness_scripts)
+    immediate_addition = immediate_direction_browser_addition(plan['scenarios'], readiness_scripts)
     # Freeze all three prior counts; validate each new owner before subtracting
     # the additions so missing or duplicated coverage cannot disappear.
     previous_scripts = ((readiness_scripts | extended_scripts) - {state_stream, update_delivery}
-                        - provider_additions - breadbin_addition - canvas_additions - question_fade_addition - context_addition)
+                        - provider_additions - breadbin_addition - canvas_additions - question_fade_addition - context_addition - immediate_addition)
     assert len(previous_scripts - {attachment, cancellation, shared_landing, tool_details, tool_previews, attachment_experience, pin_reorder, approval, dormant, shared_work} - feature_additions - voice_additions) == 146
     assert len(previous_scripts - {shared_work, 'tests/delegate-work-stream-browser.mjs', 'tests/client-traffic-browser.mjs'} - voice_additions) == 164
     assert len(previous_scripts) == 171

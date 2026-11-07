@@ -2,9 +2,11 @@
 import copy
 import json
 import inspect
+import os
 import time
 import uuid
 from contextvars import ContextVar
+from dataclasses import replace
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
@@ -12,6 +14,35 @@ from .host.config import app_home, write_private
 from .session_files import validate_id
 
 _STEER_INPUT = ContextVar('unified_native_steer_input', default=None)
+_STEER_GENERATION = ContextVar('unified_native_steer_generation', default=None)
+
+
+def _official_endpoint(provider):
+    """Inspect the SDK's effective route without triggering lazy client creation."""
+    try:
+        client = getattr(provider, "_client", None)
+        if client is not None:
+            # An injected/initialized client is the actual dispatch route. An
+            # absent URL is unknown, not permission to use config or defaults.
+            value = getattr(client, "base_url", None)
+        else:
+            value = getattr(provider, "base_url", None)
+            if value is None:
+                value = os.environ.get("OPENAI_BASE_URL")
+            if value is None:
+                value = "https://api.openai.com/v1"
+        from httpx import URL
+        from openai._base_client import URL as SDKURL
+        if isinstance(value, (URL, SDKURL)):
+            value = str(value)
+        elif not isinstance(value, str):
+            return False  # Do not qualify arbitrary objects through __str__.
+        endpoint = urlparse(value)
+        return (endpoint.scheme == "https" and endpoint.netloc == "api.openai.com"
+                and endpoint.path.rstrip('/') == '/v1'
+                and not endpoint.query and not endpoint.fragment and not endpoint.params)
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 
 class NativeProviderHost:
@@ -82,6 +113,9 @@ class NativeProviderHost:
                 raise ValueError("Native send binding is ambiguous or full")
             attempt_id = attempt['id'] if attempt else uuid.uuid4().hex
             generation = getattr(self.coordinator.get_capability('live.runtime'), 'generation', None) or {}
+            if (data.get('operation') == 'response.steer' and _STEER_GENERATION.get() is not None
+                    and generation.get('id') != _STEER_GENERATION.get()):
+                raise ValueError("Native steering generation changed before submission")
             callback = self.bind_send_lifecycle(
                 attempt_id=attempt_id, generation_id=generation.get('id'), admitted_call_id=admission.id)
             self.send_bindings[data['send_id']] = {
@@ -152,7 +186,7 @@ class NativeProviderHost:
             generation = getattr(runtime, 'generation', None) or {}
             cancellation = getattr(self.coordinator, 'cancellation', None)
             activation = self.coordinator.get_capability('live.activation')
-            if (self.selected_identity() != self.identity or generation.get('id') != binding['generationId']
+            if (not self.binding_current() or generation.get('id') != binding['generationId']
                     or getattr(runtime, 'stop_requested', False) or getattr(runtime, 'closed', False)
                     or activation is not None and not activation.current_valid
                     or getattr(cancellation, 'is_cancelled', False)):
@@ -277,6 +311,7 @@ class NativeProviderHost:
                 phases = {"native.request": "sent", "steering.sent": "sent",
                           "native.response.created": "running", "native.completed": "completed",
                           "native.outcome_unknown": "unknown", "steering.accepted": "pending",
+                          "steering.pending": "pending",
                           "steering.applied": "applied", "steering.failed": "failed"}
                 if kind not in phases:
                     return  # Other transport observations do not identify a send outcome.
@@ -297,13 +332,18 @@ class NativeProviderHost:
                         if (response != owned[0].get("currentResponseId")
                                 or type(data.get("pending_steering", False)) is not bool):
                             raise ValueError("Native completion does not match its observed response")
-                    if kind in {"steering.sent", "steering.accepted"}:
+                    if kind in {"steering.sent", "steering.accepted", "steering.pending"}:
                         if response != owned[0]["response_id"]:
                             raise ValueError("Native steering parent changed")
+                    if kind == "steering.pending":
+                        if owned[0]["outcome"] != "pending" or not owned[0].get("steerId"):
+                            raise ValueError("Native pending input precedes acceptance")
+                        owned[0]["awaitingRequiredInput"] = True
                     if kind == "steering.applied":
                         if (owned[0]["outcome"] != "pending" or response == owned[0]["response_id"]
                                 or not data.get("steer_id") or data.get("steer_id") != owned[0].get("steerId")):
                             raise ValueError("Native steering successor is not its accepted input")
+                        owned[0]["awaitingRequiredInput"] = False
                     if kind == "steering.accepted":
                         steer_id = data.get("steer_id")
                         if (owned[0]["outcome"] != "sent" or not isinstance(steer_id, str)
@@ -366,21 +406,107 @@ class NativeProviderHost:
 
     def selected_identity(self):
         selected, original, instance, _ = self.selected_mount()
-        info = selected.get_info() if selected else None
+        try:
+            info = selected.get_info() if selected else None
+        except (ValueError, TypeError, AttributeError):
+            info = None
         if inspect.isawaitable(info):
             if inspect.iscoroutine(info):
                 info.close()
             info = None
         defaults = (info.get("defaults", {}) if isinstance(info, dict) else getattr(info, "defaults", {})) or {}
-        return {"instance": instance, "model": defaults.get("model"),
+        model = defaults.get("model")
+        if not isinstance(model, str) or not model:
+            model = None
+        elif callable(getattr(original, "_assemble_initial_responses_params", None)):
+            # Status has no ChatRequest yet. Use the provider's pure planner for
+            # the configured selection, including its final SDK JSON overlay.
+            # Dispatch still qualifies its own actual final request below.
+            try:
+                from amplifier_core.message_models import ChatRequest
+                from amplifier_module_provider_openai import OpenAIProvider
+                from amplifier_module_provider_openai.native import NativeResponsesProvider
+                if isinstance(original, OpenAIProvider):
+                    params, _, _ = OpenAIProvider._assemble_initial_responses_params(
+                        original, ChatRequest(messages=[], model=model), model=model)
+                    model = NativeResponsesProvider._native_wire_params(params).get("model")
+            except (ImportError, ValueError, TypeError, AttributeError):
+                model = None  # Malformed/unavailable planning is not eligibility.
+        if not isinstance(model, str) or not model:
+            model = None
+        return {"instance": instance, "model": model,
                 "selection": copy.deepcopy(getattr(selected, "selection", {}))}
+
+    def binding_current(self):
+        return (getattr(self.loop, "config", {}).get("native_provider") is True
+                and self.selected_mount()[1] is self.provider
+                and _official_endpoint(self.provider)
+                and self.selected_identity() == self.identity)
+
+    def active_response(self):
+        """Actual steering readiness, not configured/model eligibility."""
+        runtime = self.coordinator.get_capability("live.runtime")
+        provider = self.provider
+        if (provider is None or not self.binding_current()
+                or getattr(provider, "owner", None) is not self.loop
+                or not getattr(provider, "response_id", None)
+                or getattr(provider, "inflight", None)
+                or getattr(provider, "awaiting_successor", None)
+                or getattr(provider, "_steer_preparing", False)
+                or not getattr(runtime, "generation", None)
+                or getattr(runtime, "closed", False) or getattr(runtime, "stop_requested", False)
+                or getattr(runtime, "steering_closed", False)):
+            return None
+        return {"responseId": provider.response_id, "generationId": runtime.generation["id"]}
+
+    async def submit_steering(self, command, generation_id):
+        """Generation-bound UI/peer input, never an ordinary inbox fallback.
+
+        loop-live deliberately does not offer its request-boundary capability
+        for a native mount. This host bridge uses the existing provider send
+        admission instead, without weakening the loop's boundary-only contract.
+        """
+        runtime = self.coordinator.get_capability("live.runtime")
+        if (not isinstance(generation_id, str) or not 1 <= len(generation_id) <= 128
+                or command.kind != "steer" or command.source != "user"
+                or not isinstance(command.id, str) or not 1 <= len(command.id) <= 128
+                or not command.text.strip() or len(command.text) > runtime.max_input_chars
+                or command.target_generation_id not in (None, generation_id)):
+            raise ValueError("An exact generation and valid steering input are required")
+        command = replace(command, target_generation_id=generation_id)
+        previous = runtime.accepted.get(command.id)
+        if previous:
+            if previous != command:
+                raise ValueError("Command identity reused with different content")
+            return copy.deepcopy(runtime.steering_outcomes[command.id])
+        if (not self.provider or not self.binding_current() or runtime.closed or runtime.stop_requested
+                or runtime.steering_closed or (runtime.generation or {}).get("id") != generation_id
+                or command.attachments):
+            return {"accepted": False, "reason": "The native run changed or cannot accept this input."}
+        if self.active_response() is None:
+            return {"accepted": False, "mode": "native", "disposition": "held",
+                    "reason": "No active native response is ready for live direction. Running tools are not interrupted; nothing was sent or queued for a later turn."}
+        if len(runtime.accepted) >= 2000:
+            raise RuntimeError("Session input limit reached; start a new session")
+        # Reserve once before any await. Neither duplicate control calls nor a
+        # lost acknowledgement may publish this command into a later generation.
+        runtime.accepted[command.id] = command
+        outcome = {"accepted": True, "inputId": command.id, "generationId": generation_id,
+                   "disposition": "unknown", "mode": "native"}
+        runtime.steering_outcomes[command.id] = outcome
+        sent = await self.provider.steer_live(command)
+        if not sent:
+            outcome.update(accepted=False, disposition="held",
+                           reason="No native response is ready for steering. Nothing was sent.")
+        return copy.deepcopy(runtime.steering_outcomes[command.id])
 
     def status(self):
         current = self.selected_identity()
-        selected = self.provider is not None and current == self.identity
-        status = self.provider.native_status() if selected else {"supported": False, "reason": self.reason if not self.provider else "The selected provider changed; remount to enable its native transport."}
+        selected = self.provider is not None and self.binding_current()
+        status = self.provider.native_status() if selected else {"supported": False, "reason": self.reason if not self.provider else "The selected provider or native configuration changed; remount to enable its native transport."}
         return {**status, "enabled": bool(getattr(self.loop, "config", {}).get("native_provider") is True),
                 "identity": current, "model": current["model"], "steering": "native" if selected else "request_boundary",
+                "activeNativeResponse": self.active_response(),
                 "receipt": copy.deepcopy({k: v for k, v in self.state.items() if k != "receipts"}),
                 "receipts": copy.deepcopy(self.state.get("receipts", [])[-32:]),
                 "originalsAvailable": True}
@@ -408,7 +534,7 @@ class NativeProviderHost:
         self.save()  # A failed submitting receipt prevents the external send.
 
     async def compact(self):
-        if not self.provider or self.selected_identity() != self.identity:
+        if not self.provider or not self.binding_current():
             raise ValueError(self.status().get("reason", "Native provider unavailable"))
         checkpoint = self.coordinator.get_capability("live.checkpoint")
         if checkpoint:
@@ -421,7 +547,7 @@ class NativeProviderHost:
         result = await observe(self.provider, SimpleNamespace(model=self.identity["model"]),
             lambda: self.provider.native_compact(canonical=canonical, identity=self.identity),
             label="Compact provider context")
-        if await self.coordinator.get("context").get_messages() != revision or self.selected_identity() != self.identity:
+        if await self.coordinator.get("context").get_messages() != revision or not self.binding_current():
             self.provider._discard_checkpoint("history_changed_during_compaction")
             raise ValueError("History changed during compaction; provider state was discarded")
         record = self.provider.native_export_checkpoint()
@@ -440,19 +566,25 @@ async def install_native(loop, coordinator, providers):
         return providers
     try:
         from amplifier_module_provider_openai import OpenAIProvider
+        from amplifier_module_provider_openai._capabilities import get_request_policy
         from amplifier_module_provider_openai.native import NativeResponsesProvider, NativeSendAdmission, NATIVE_REQUEST as PROVIDER_REQUEST
     except ImportError:
         host.reason = "The installed provider does not include its optional native transport."
         return providers
     selected, original, _, link = host.selected_mount()
     identity = host.selected_identity()
-    if type(original) is not OpenAIProvider or identity["model"] != "gpt-6-astra":
-        host.reason = "Native steering is available only for the selected OpenAI gpt-6-astra model."
+    if type(original) is not OpenAIProvider or not get_request_policy(identity["model"]).supports_steering:
+        host.reason = "Native steering requires a selected OpenAI model with documented exact-ID steering support."
         return providers
-    endpoint = urlparse(original.base_url or "https://api.openai.com/v1")
-    if endpoint.scheme != "https" or endpoint.netloc != "api.openai.com" or endpoint.path.rstrip('/') != '/v1':
+    unresolved = (host.state.get("outcome") in {"unknown", "pending"}
+                  or any(row.get("outcome") == "unknown" for row in host.state.get("sends", [])))
+    if not _official_endpoint(original):
         host.reason = "This configured endpoint does not support the native OpenAI transport."
-        return providers
+        if not unresolved:
+            return providers
+        # Keep only the provider's recovery fence when an endpoint changed over
+        # restart. It cannot acquire a native owner on this route, and its
+        # unresolved state refuses ordinary transport before any SDK dispatch.
     if "complete" in original.__dict__:
         host.reason = "The provider already has an instance wrapper; native transport must be installed before it."
         return providers
@@ -460,6 +592,31 @@ async def install_native(loop, coordinator, providers):
 
     class LoopNativeProvider(NativeResponsesProvider):
         """Bridge provider-owned native calls to the loop's recovery ledger."""
+
+        def _native_eligible(self, params):
+            # Never advertise one selected model while natively sending another.
+            # The provider owns precedence and exact-ID eligibility; pending or
+            # uncertain state still refuses its ordinary fallback.
+            # Inspect only the final model field, not another copy of growing
+            # request history. The provider's pure plan owns the payload.
+            final = (params.get("extra_body") or {}).get("model", params.get("model"))
+            return super()._native_eligible(params) and final == host.identity["model"]
+
+        async def _emit(self, kind, **data):
+            runtime = getattr(self.owner, "runtime", None)
+            command = getattr(runtime, "accepted", {}).get(data.get("input_id"))
+            if command and command.target_generation_id:
+                data["target_generation_id"] = command.target_generation_id
+                data["delivery"] = "native"
+            await super()._emit(kind, **data)
+            outcome = getattr(runtime, "steering_outcomes", {}).get(data.get("input_id"))
+            if outcome and command and command.target_generation_id == outcome["generationId"]:
+                phase = {"steering.sent": "queued", "steering.accepted": "queued", "steering.pending": "queued",
+                         "steering.applied": "applied", "steering.failed": "held",
+                         "native.outcome_unknown": "unknown"}.get(kind)
+                if phase:
+                    outcome["disposition"] = phase
+                    outcome["phase"] = kind.removeprefix("steering.")
 
         async def complete(self, request, **kwargs):
             # Utility/ordinary requests must not inherit a caller's native job
@@ -490,6 +647,7 @@ async def install_native(loop, coordinator, providers):
             attempt = delivery.begin_steer()
             token = WORK_ATTEMPT.set((delivery, attempt))
             steer_token = _STEER_INPUT.set(getattr(command, 'id', None))
+            generation_token = _STEER_GENERATION.set(getattr(command, 'target_generation_id', None))
             try:
                 invoke = super().steer_live
                 return await observe(self, SimpleNamespace(model=host.identity['model']),
@@ -499,17 +657,18 @@ async def install_native(loop, coordinator, providers):
                     delivery.finish_work(attempt, failed=True)
                 raise
             finally:
+                _STEER_GENERATION.reset(generation_token)
                 _STEER_INPUT.reset(steer_token)
                 WORK_ATTEMPT.reset(token)
 
     def owned_loop():
         owner = LIVE_OWNER.get()
         return owner if (getattr(owner, "coordinator", None) is coordinator
-                         and host.selected_identity() == host.identity) else None
+                         and host.binding_current()) else None
     host.identity = identity
     host.provider = LoopNativeProvider.wrap(original, owner_getter=owned_loop,
         lifecycle=host.send_lifecycle, trace=host.work_trace, prepare_send=host.prepare_send)
-    if host.state.get("outcome") in {"unknown", "pending"}:
+    if unresolved:
         host.provider.request_uncertain = True
     if host.checkpoint_path.exists():
         try:

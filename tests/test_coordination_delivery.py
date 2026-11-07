@@ -754,7 +754,7 @@ async def native_outbound_probe(app, tmp_path, monkeypatch, fault):
                 from amplifier_module_loop_live.scope import LIVE_OWNER
                 native.owner = None
                 native._provider_count_available = lambda: False
-                client = SimpleNamespace(responses=SimpleNamespace())
+                client = SimpleNamespace(base_url='https://api.openai.com/v1', responses=SimpleNamespace())
                 client.with_options = lambda **options: client
                 native._client = client
                 token = LIVE_OWNER.set(native_owner)
