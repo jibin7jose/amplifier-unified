@@ -99,6 +99,10 @@ govern work. These are controls and correctness requirements, not substitute
 approval ceremonies. The [standing authorization contract](../workspaces/configuration-authority.md#unattended-full-access-direction)
 defines this direction separately from demonstrated implementation.
 
+The [autonomous-progress proposal](../workspaces/contracts/autonomous-progress.v1-candidate.md)
+applies this principle first to own-task settings waits and continuation. It is a
+draft, not implemented behavior; diagnosis and delivery live in its linked design note.
+
 ### 11. Available resources govern throughput
 Ordinary work has no default turn, member, queued-work or retained-resource count
 ceiling. Planning estimates are not reasons to stop an unfinished task. Actual

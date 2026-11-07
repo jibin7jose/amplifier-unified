@@ -4,6 +4,10 @@ Use the [source and ownership map](docs/source-context.md) to select relevant
 authored code, contracts and tests, and distinguish generated output and retained
 evidence. The path selector does not change packaging or release validation.
 
+For behavior or architecture proposals, use [vision and contract guidance](docs/vision-and-contracts.md).
+Keep one owner per promise, distinguish proposed behavior from qualified behavior,
+and connect changed promises to focused checks under the existing release policy.
+
 Keep repository content useful without exposing a contributor's environment.
 This applies to code, fixtures, documentation, screenshots, logs, issues and
 pull-request descriptions.
