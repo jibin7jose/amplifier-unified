@@ -31,6 +31,7 @@ README.md source-context=documentation
 /frontend/vite.config.js source-context=configuration
 /amplifier_web/runtime_deps/compatibility.txt source-context=configuration
 /amplifier_web/THIRD_PARTY_NOTICES.txt source-context=documentation
+/tests/fixtures/library-performance.md source-context=documentation
 uv.lock source-context=locks
 package-lock.json source-context=locks
 *.png source-context=assets
@@ -49,6 +50,13 @@ package-lock.json source-context=locks
 /docs/settings-inventory.csv source-context=evidence
 /frontend/tests/standard-ux-controls.json source-context=evidence linguist-generated=true
 /frontend/tests/standard-ux-inventory.json source-context=evidence linguist-generated=true
+# Exact historical qualification records; current guides and fixtures stay visible.
+/docs/workspaces/evidence/collaboration-fable-assets.json source-context=evidence
+/docs/workspaces/evidence/collaboration-fable-results.json source-context=evidence
+/docs/workspaces/evidence/collaboration-fable-runtime.json source-context=evidence
+/docs/workspaces/evidence/collaboration-gaps-assets.json source-context=evidence
+/docs/workspaces/evidence/collaboration-gaps-results.json source-context=evidence
+/tests/fixtures/model_catalog_candidates.json source-context=evidence
 
 # Built delivery, including copied source, vendor resources and license notices.
 # Preserve committed bytes and existing source/build/installed parity checks.
