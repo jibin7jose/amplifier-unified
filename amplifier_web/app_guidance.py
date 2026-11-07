@@ -249,7 +249,10 @@ async def install_app_access(coordinator, bridge):
         if callable(observe):provider = observe(provider)
         for original, wrapped in transformed:
             if original is provider:return wrapped
-        wrapped = SurfaceProvider(WorkRecoveringProvider(provider, coordinator), delivery,
+        recovery = WorkRecoveringProvider(provider, coordinator)
+        from .provider_capture import observe as capture_observe, bind_wrapper
+        capture_observe(bind_wrapper, recovery, provider)
+        wrapped = SurfaceProvider(recovery, delivery,
                                   coordinator=coordinator)
         transformed.append((provider, wrapped))
         del transformed[:-16]

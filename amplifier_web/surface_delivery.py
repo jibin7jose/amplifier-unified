@@ -183,6 +183,7 @@ class SurfaceProvider:
     def __init__(self, original, delivery, *, coordinator=None):
         self.original, self.delivery = original, delivery
         self.prepared = []
+        self._capture_tickets = []
         self.refused = []
         self.refusal_overflow = False
         from .performance_diagnostics import TIMING_ENABLED, time_preparation
@@ -281,6 +282,8 @@ class SurfaceProvider:
         enter this list, and a fresh observation cannot replace old authority.
         """
         from .request_refit import RequestFitChanged
+        from . import provider_capture as capture
+        capture.observe(capture.invalidate, self, request)
         row = next((row for row in self.refused if row[0] is request and row[1] is error), None)
         if (row is None or not isinstance(error, RequestFitChanged)
                 or error.reason not in {'content_changed', 'binding_missing', 'binding_changed'}):
@@ -302,21 +305,40 @@ class SurfaceProvider:
         except RequestFitChanged as error:
             error.local_refusal = True
             raise
-        return await self._budget(budget, cached, request_options=request_options, **kwargs)
+        ticket = capture.observe(capture.begin_fit, self, request, cached, request_options, kwargs)
+        try:
+            with capture.fitting(ticket, self.original, cached):
+                decision = await self._budget(budget, cached, request_options=request_options, **kwargs)
+            capture.finish_fit(ticket, decision)
+            return decision
+        except BaseException:
+            if ticket is not None:ticket.close()
+            raise
 
     def __getattr__(self, name):
         method = getattr(self.original, name)
         if name == 'stream' and callable(method):
             async def stream(request, **kwargs):
-                request = await self._prepare(request, commit=True)
+                from . import provider_capture as capture
+                ticket = capture.observe(capture.take, self, request)
+                try:
+                    request = await self._prepare(request, commit=True)
+                except BaseException:
+                    if ticket is not None:ticket.close()
+                    raise
                 from .coordination_delivery import WORK_ATTEMPT
-                attempt = self.delivery.begin_work(request, streaming=True) if hasattr(self.delivery, 'begin_work') else None
+                try:
+                    attempt = self.delivery.begin_work(request, streaming=True) if hasattr(self.delivery, 'begin_work') else None
+                except BaseException:
+                    if ticket is not None:ticket.close()
+                    raise
                 async def within_attempt(operation):
                     # __anext__ and aclose may run in different consumer tasks.
                     # Never carry a ContextVar token across an outward yield.
                     token = WORK_ATTEMPT.set((self.delivery, attempt) if attempt else None)
                     try:
-                        return await operation()
+                        with capture.dispatch(ticket, self.original, request):
+                            return await operation()
                     finally:
                         WORK_ATTEMPT.reset(token)
                 iterator = None
@@ -345,25 +367,48 @@ class SurfaceProvider:
                     finally:
                         if attempt:
                             self.delivery.close_work_stream(attempt)
+                        if ticket is not None:ticket.close()
             return stream
         if name == 'request_budget' and callable(method):
             async def budget(request, *, request_options=None, **kwargs):
+                from . import provider_capture as capture
+                capture.observe(capture.invalidate, self, request)
+                original_request = request
                 request = await self._prepare(request, explicit_budget=True)
+                ticket = capture.observe(capture.begin_fit, self, original_request, request, request_options, kwargs)
                 actual = self._budget
                 if self.timing_coordinator is not None:
                     from .performance_diagnostics import time_preparation
                     actual = time_preparation(self.timing_coordinator, 'provider.budget', actual)
-                return await actual(method, request, request_options=request_options, **kwargs)
+                try:
+                    with capture.fitting(ticket, self.original, request):
+                        decision = await actual(method, request, request_options=request_options, **kwargs)
+                    capture.finish_fit(ticket, decision)
+                    return decision
+                except BaseException:
+                    if ticket is not None:ticket.close()
+                    raise
             return budget
         return method
 
     async def complete(self, request, **kwargs):
-        request = await self._prepare(request, commit=True)
+        from . import provider_capture as capture
+        ticket = capture.observe(capture.take, self, request)
+        try:
+            request = await self._prepare(request, commit=True)
+        except BaseException:
+            if ticket is not None:ticket.close()
+            raise
         from .coordination_delivery import WORK_ATTEMPT
-        attempt = self.delivery.begin_work(request) if hasattr(self.delivery, 'begin_work') else None
+        try:
+            attempt = self.delivery.begin_work(request) if hasattr(self.delivery, 'begin_work') else None
+        except BaseException:
+            if ticket is not None:ticket.close()
+            raise
         token = WORK_ATTEMPT.set((self.delivery, attempt) if attempt else None)
         try:
-            response = await self.original.complete(request, **kwargs)
+            with capture.dispatch(ticket, self.original, request):
+                response = await self.original.complete(request, **kwargs)
             if hasattr(self.delivery, 'finish_work'):
                 self.delivery.finish_work(attempt, response)
             return response
@@ -373,3 +418,4 @@ class SurfaceProvider:
             raise
         finally:
             WORK_ATTEMPT.reset(token)
+            if ticket is not None:ticket.close()

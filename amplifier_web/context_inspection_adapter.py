@@ -5,7 +5,7 @@ import asyncio
 import inspect
 import weakref
 
-from .context_inspection import projection, budget_public, number, request_fingerprint
+from .context_inspection import projection, budget_public, number, fingerprint_request, RequestFingerprint
 from .context_inspection_store import InspectionStore, preferences
 
 
@@ -34,17 +34,17 @@ class ContextInspection:
             cleanup(self.drain)
 
     def budget(self, request, options, decision, provider=None):
-        signature = request_fingerprint(request, options)
+        fingerprint = fingerprint_request(request, options)
         # Retain a bounded absence receipt too. None may mean unsupported input,
         # and a bounded fingerprint refusal is not absence of provider support.
         try:
             reference = weakref.ref(request)
         except TypeError:
             reference = lambda: None  # Exact value matching can still qualify.
-        self.budgets = (self.budgets + [(reference, signature, budget_public(decision),
+        self.budgets = (self.budgets + [(reference, fingerprint, budget_public(decision),
                                        provider, weakref.ref(asyncio.current_task()))])[-4:]
 
-    async def begin(self, row, request, provider, options, provider_defaults=None):
+    async def begin(self, row, request, provider, options, provider_defaults=None, captured_budget=None):
         config = preferences(self.home)
         metadata, bodies = provider_policy(provider)
         enabled = config['enabled'] and metadata
@@ -54,27 +54,60 @@ class ContextInspection:
             return
         if len(self.pending) >= 4:
             return  # Observation pressure never limits model execution.
-        signature = request_fingerprint(request, options) if self.budgets else None
         task = asyncio.current_task()
         # Final revalidation may make an unchanged ChatRequest copy. The exact
         # bounded fingerprint includes all fields/options, not merely its text.
         # Never borrow a receipt from another provider or concurrent task.
         scoped = [v for v in self.budgets if v[3] is provider and v[4]() is task]
+        if captured_budget is not None:
+            scoped = []  # The final-fit owner already validated; do not rescan.
+        # Cross-provider/task receipts cannot match. Do not traverse this request
+        # merely because some unrelated task has a pending preflight.
+        fingerprint = (fingerprint_request(request, options) if scoped else
+                       RequestFingerprint(None, 'not_evaluated', 'no_scoped_preflight'))
+        signature = fingerprint.signature
         exact = [v for v in scoped if v[0]() is request]
-        copied = [v for v in scoped if signature and v[1] == signature]
+        copied = [v for v in scoped if signature and v[1].signature == signature]
         # Two identical candidates have no unique causal witness. Do not choose
         # by arrival order; retaining fewer numbers is better than false evidence.
         entry = exact[-1] if exact else copied[0] if len(copied) == 1 else None
         observed = (entry[1], entry[2]) if entry else None
-        matched = bool(observed and signature and observed[0] == signature)
+        matched = bool(observed and signature and observed[0].signature == signature)
         budget = observed[1] if matched else {}
-        budget_status = ('captured' if budget else 'not_reported' if matched else
-                         'binding_bounded' if observed and (not signature or not observed[0]) else
-                         'request_changed' if observed else 'ambiguous' if len(copied) > 1 else
-                         'unsupported' if not callable(getattr(provider, 'request_budget', None)) else 'not_captured')
+        # Missing equality must not erase evidence that preflight was observed.
+        # A candidate in the interval is NOT proof it belongs to this dispatch.
+        relevant = [entry] if entry else scoped
+        incomplete = [v[1].status for v in relevant if v[1].status != 'complete']
+        if fingerprint.status not in {'complete', 'not_evaluated'}:
+            incomplete.append(fingerprint.status)
+        budget_status = (
+            'captured' if budget else 'not_reported' if matched else
+            'ambiguous' if len(copied) > 1 and not exact else
+            'binding_bounded' if 'bounded' in incomplete else
+            'binding_unsupported' if 'unsupported' in incomplete else
+            'request_changed' if exact else 'unmatched_preflight' if scoped else
+            'unsupported' if not callable(getattr(provider, 'request_budget', None)) else 'not_captured')
+        binding_evidence = {
+            'scopedPreflightCount': len(scoped),
+            'dispatchFingerprint': fingerprint.public(),
+            'preflightFingerprints': [v[1].public() for v in scoped],
+            'association': ('same_object' if matched and exact else 'exact_copy' if matched else
+                            'ambiguous' if budget_status == 'ambiguous' else 'unproven' if scoped else 'none'),
+        }
         # Any dispatch ends this provider/task's preflight interval. A later
         # identical call must not inherit a receipt left by an earlier attempt.
         self.budgets = [v for v in self.budgets if v[4]() is not None and not (v[3] is provider and v[4]() is task)]
+        if captured_budget is not None:
+            budget = captured_budget['budget']
+            budget_status = captured_budget['status']
+            binding_evidence = {
+                'scopedPreflightCount': 0,  # Legacy pool count, not a ticket count.
+                'dispatchFingerprint': {'status': 'not_evaluated', 'reason': 'fitted_owner_ticket'},
+                'preflightFingerprints': [],
+                'association': 'fitted_owner_ticket' if budget_status in {'captured', 'not_reported'} else 'unproven',
+                'fitTicket': {'observed': True, 'status': budget_status,
+                              'reason': captured_budget.get('reason')},
+            }
         context = self.coordinator.get('context')
         context_config = getattr(context, 'config', {}) or {}
         context_limit = number(getattr(context, 'max_tokens', None))
@@ -96,11 +129,14 @@ class ContextInspection:
         missing_budget = {
             'captured': 'The provider budget decision did not report this field.',
             'not_reported': 'The provider returned no usable budget decision for this input.',
-            'binding_bounded': 'The request exceeded bounded attribution or contained opaque values; its preflight receipt could not be bound safely.',
+            'binding_bounded': 'Preflight was observed in this provider/task interval, but a fingerprint exceeded the observation allowance. Exact request association is unproven; no candidate budget is substituted.',
+            'binding_unsupported': 'Preflight was observed in this provider/task interval, but a fingerprint contains an unsupported representation. Exact request association is unproven; no candidate budget is substituted.',
             'request_changed': 'The request or options changed after preflight; that count is not evidence for this captured request.',
-            'not_captured': 'No matching preflight budget decision was retained for this request.',
+            'not_captured': 'No preflight observation was retained in this provider/task interval. Its cause was not captured.',
+            'unmatched_preflight': 'Preflight was observed in this provider/task interval, but no complete fingerprint matches the dispatch. Request association is unproven; no candidate budget is substituted.',
             'unsupported': 'This mounted provider does not support preflight budget decisions.',
             'ambiguous': 'More than one identical preflight candidate was retained; no unique request association was proven.',
+            'ticket_unavailable': 'The fitted-owner ticket became unavailable or was superseded. Its fixed disposition is retained; no candidate budget is substituted.',
         }[budget_status]
         def evidence(value, source, reason):
             return {'status': 'captured' if value is not None else 'unavailable',
@@ -128,7 +164,7 @@ class ContextInspection:
             'requestInputAllowance': budget.get('input_limit_tokens'),
             'reservedOutput': reserve,
             'configuredContextBudget': context_limit, 'compactionThreshold': threshold},
-            budget=budget, budgetStatus=budget_status, limitEvidence=limit_evidence,
+            budget=budget, budgetStatus=budget_status, budgetBinding=binding_evidence, limitEvidence=limit_evidence,
             bodyRecording=enabled and bodies and config['bodies'])
         # Build synchronously from the actual admitted object, before any await
         # can permit another task to mutate a shared request. Storage alone runs

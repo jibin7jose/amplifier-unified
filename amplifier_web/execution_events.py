@@ -175,12 +175,15 @@ class ExecutionEvents:
         admission_input = self.admission_input(sid)
         purpose=CALL_PURPOSE.get()
         if purpose:parent,turn=None,purpose.get('turnId',turn)
+        call_id = "llm:"+str(uuid.uuid4())
+        from .provider_capture import claim, consume, observe
+        capture = observe(claim, self, sid, provider, request, call_id) if not purpose else None
         info = provider.get_info()
         if inspect.isawaitable(info):
             info = await info
         defaults = (info.get("defaults", {}) if isinstance(info, dict) else getattr(info,"defaults",{})) or {}
         provider_id = info.get("id") if isinstance(info, dict) else getattr(info, "id", type(provider).__name__)
-        row = {"id":"llm:"+str(uuid.uuid4()),"parentId":parent,"turnId":turn,"sessionId":sid,
+        row = {"id":call_id,"parentId":parent,"turnId":turn,"sessionId":sid,
                "admissionInputId":admission_input,
                "rootSessionId":self.root_id,"producerId":self.producer_id,"kind":"llm","phase":"running","label":label or (purpose["label"] if purpose else "Model call"),
                "provider":str(provider_id)[:160],
@@ -199,7 +202,15 @@ class ExecutionEvents:
             delivery, attempt = active
             delivery.admit_work(attempt, row, guarded=self.admission_guard is not None)
         from .context_inspection_adapter import safe_observe
-        await safe_observe(self.context_inspectors.get(sid), 'begin', row, request, provider, request_options, defaults)
+        # Synchronous passive validation after the existing awaits. No guard,
+        # quota, Work join, refit or provider-entry authority is changed here.
+        observer = self.context_inspectors.get(sid)
+        captured_budget = (observe(consume, capture, self, row, provider, request, request_options)
+                           if observer is not None else None)
+        if captured_budget is None:
+            await safe_observe(observer, 'begin', row, request, provider, request_options, defaults)
+        else:
+            await safe_observe(observer, 'begin', row, request, provider, request_options, defaults, captured_budget)
         return row
 
     async def provider_call(self, sid, provider, request, invoke, *, label=None, run_id=None, request_options=None):
@@ -296,7 +307,9 @@ class ExecutionEvents:
             decision = original_budget(request, **kwargs)
             decision = await decision if inspect.isawaitable(decision) else decision
             from .context_inspection_adapter import safe_observe
-            await safe_observe(self.context_inspectors.get(sid), 'budget', request, kwargs, decision, provider)
+            from .provider_capture import observe, owns_budget
+            if not observe(owns_budget, self, provider, request):
+                await safe_observe(self.context_inspectors.get(sid), 'budget', request, kwargs, decision, provider)
             return decision
 
         original_compact = getattr(provider, "compact_context", None)
