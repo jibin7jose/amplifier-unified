@@ -37,6 +37,11 @@ def test_missing_current_proof_keeps_actionable_limitation_without_touching_hist
     elif damage=='lock':(project/'uv.lock').write_text('changed')
     else:m.diagnostics.state['completedBatches']=[]
     evidence=update_health.active_evidence(m)
-    assert not evidence
-    assert update_health.current(m.service.state['updates'],evidence)['actionRequired']
+    status=update_health.current(m.service.state['updates'],evidence)
+    if damage=='activation':
+        assert evidence['activationUnknown']
+        assert status['status']=='unchecked' and not status['actionRequired']
+    else:
+        assert not evidence
+        assert status['actionRequired']
     assert m.diagnostics.state['activeFailures']==old

@@ -220,19 +220,27 @@ Each application update has an attempt ID and separate receipts for candidate in
 
 The update owner publishes one derived `currentStatus` from its current operation,
 desired sources and verified active generation. Earlier diagnostic failures are
-history, not an independent health registry. For a legacy component-source
+history, not an independent health registry. For an older component preparation
 failure, positive current configuration, recorded/actual graph and exact activation
 evidence can establish current health without matching old requested URL labels
 or update-tier batch counts. This does not rewrite or resolve the historical
 attempt. A missing package, changed configuration/source, newer failure, incomplete
 desired check, partial or uncertain activation remains a current limitation.
 No installation or model call runs just to clear old attention.
+An exact verified app restart also supersedes older candidate failures only when
+their requested feature scope is known and present. Intentional local source
+changes remain protected, informational customization rather than repair debt.
+If bounded activation history has aged out, a matching selected graph can be
+reported as retained with activation verification unavailable, not falsely healthy
+or a request to reinstall. Newer failures, failed activation and unrelated source
+scope remain actionable. Settings revalidation uses a neutral pending state.
 
 Automatic preparation remembers the input witness and disposition of its last
 attempt. An unchanged deterministic source/configuration conflict performs no
 duplicate copy, resolver or installer work. Changed source/configuration/application
 inputs or an explicit install request can re-evaluate; transient failures use a
-bounded backoff. Interrupted or unknown effects are not automatically replayed.
+bounded backoff. Interrupted or unknown effects are not replayed by either
+automatic ticks or a fresh install request without reconciliation.
 These are preparation scheduling decisions, never authority to bypass source,
 qualification, activation or restart guards.
 
