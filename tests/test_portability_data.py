@@ -74,6 +74,44 @@ def test_valid_payload_preserves_configurator_intent_and_exact_native_bytes(payl
     assert data.decode_file(payload['native']['transcript.jsonl']) == b'{"role": "user", "content": "Saved fixture history"}'
 
 
+@pytest.mark.parametrize('alteration', [None, 'public-hash', 'resource-hash', 'missing-body', 'missing-nested'])
+def test_shared_canvas_body_validation_and_exact_receipt_install(app, payload, alteration):
+    body = {'content': '<p>Résumé 🌳</p>', 'surface': {'nested': [1, {'label': 'é'}]}}
+    reference = digest(json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode())
+    public = json.dumps(body, ensure_ascii=False, sort_keys=True).encode()
+    row = payload['outputs'][0]
+    row.update(kind='canvas', bodyFormat='canvas-json-v1', body={'$resource': reference},
+               canvasSource={'$resource': reference}, sha256=digest(public), bytes=len(public))
+    payload['resources'] = {reference: body}
+    payload['outputReceipts'][0]['value'] = copy.deepcopy(row)
+    if alteration == 'public-hash':
+        row['sha256'] = '0' * 64
+    elif alteration == 'resource-hash':
+        body['content'] = 'Changed source'
+    elif alteration == 'missing-body':
+        payload['resources'].clear()
+    elif alteration == 'missing-nested':
+        body['surface']['asset'] = {'$resource': '0' * 64}
+        updated = digest(json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode())
+        payload['resources'] = {updated: body}
+        row.update(body={'$resource': updated}, canvasSource={'$resource': updated},
+                   sha256=digest(json.dumps(body, ensure_ascii=False, sort_keys=True).encode()))
+        payload['outputReceipts'][0]['value'] = copy.deepcopy(row)
+    if alteration:
+        before = snapshot(app)
+        with pytest.raises(ValueError):
+            data.validate(payload)
+        assert snapshot(app) == before
+        return
+    original = copy.deepcopy(payload)
+    data.validate(payload)
+    data.install_outputs(app, payload)
+    installed = snapshot(app)
+    data.install_outputs(app, copy.deepcopy(payload))
+    assert snapshot(app) == installed and payload == original
+    assert json.loads(app.db.execute('SELECT value FROM output_receipts').fetchone()[0]) == row
+
+
 @pytest.mark.parametrize('name', ['metadata.json', 'metadata.json.backup'])
 @pytest.mark.parametrize('metadata', [None, [], 'invalid', 42])
 def test_metadata_requires_an_object_with_controlled_rejection(payload, name, metadata):

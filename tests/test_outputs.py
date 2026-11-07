@@ -1,5 +1,7 @@
+import asyncio
 import copy
 import hashlib
+import json
 import subprocess
 
 import pytest
@@ -182,14 +184,23 @@ async def test_writing_versions_survive_restart_and_corrupt_content_fails(tmp_pa
     finally:await restored.close()
 
 
-async def test_download_requires_auth_and_serves_exact_inert_bytes(authenticated_client,tmp_path):
+@pytest.mark.parametrize('kind', ['writing', 'canvas'])
+async def test_download_requires_auth_and_serves_exact_inert_bytes(authenticated_client,tmp_path,kind):
     from amplifier_web.server import create_app
     app=await create_app(tmp_path/'app',workspace=tmp_path,runtime=Runtime(),voice=False,preload_providers=False,background_updates=False)
     service=app['service'];await service.dispatch('session.create',{})
-    record=(await service.dispatch('outputs.write',{'sessionId':service._session()['id'],'title':'Inert','content':'<script>alert(1)</script>','variant':'document'}))['result']
+    expected = b'<script>alert(1)</script>'
+    if kind == 'canvas':
+        await service.dispatch('canvas.show', {'kind': 'html', 'title': 'Inert', 'content': expected.decode()})
+        canvas = service.state['canvasArtifacts'][-1]
+        expected = json.dumps(service.state_resource(canvas['body']['$resource']), ensure_ascii=False, sort_keys=True).encode()
+        record = (await service.dispatch('outputs.attach', {'sessionId': service._session()['id'],
+            'kind': 'canvas', 'title': 'Inert', 'canvasId': canvas['id']}))['result']
+    else:
+        record=(await service.dispatch('outputs.write',{'sessionId':service._session()['id'],'title':'Inert','content':expected.decode(),'variant':'document'}))['result']
     client=await authenticated_client(app)
     response=await client.get('/api/outputs/'+record['id']+'/content')
-    assert response.status==200 and await response.read()==b'<script>alert(1)</script>'
+    assert response.status==200 and await response.read()==expected
     assert response.headers['Content-Disposition'].startswith('attachment;') and "sandbox" in response.headers['Content-Security-Policy']
     client.session.cookie_jar.clear()
     response=await client.get('/api/outputs/'+record['id']+'/content',headers={'Authorization':''},allow_redirects=False)
@@ -207,3 +218,104 @@ async def test_fork_carries_only_outputs_anchored_to_retained_messages(app):
     values=app.outputs.store.list(target['id'])['items']
     assert len(values)==1 and values[0]['forkSource']['outputId']==anchored['id']
     assert values[0]['body']==anchored['body'] and len(app.outputs.store.list(sid)['items'])==original_count
+
+
+async def test_canvas_output_shares_immutable_body_across_edit_retry_fork_and_restart(app):
+    from amplifier_web.resource_files import collect, prepare, put
+    sid = app._session()['id']
+    message = app._session()['messages'][0]['id']
+    await app.dispatch('canvas.show', {'kind': 'html', 'title': 'Original', 'content': '<p>Résumé 🌳</p>'})
+    canvas = copy.deepcopy(app.state['canvasArtifacts'][-1])
+    original = app.state_resource(canvas['body']['$resource'])
+    expected = json.dumps(original, ensure_ascii=False, sort_keys=True).encode()
+    old_wrapper = prepare({'encoding': 'utf-8', 'data': expected.decode()}).identity
+    args = {'sessionId': sid, 'kind': 'canvas', 'title': 'Saved', 'canvasId': canvas['id'], 'messageId': message}
+    saved = (await app.dispatch('outputs.attach', args, command_id='saved-canvas'))['result']
+    assert saved['body'] == saved['canvasSource'] == canvas['body']
+    assert saved['bodyFormat'] == 'canvas-json-v1'
+    assert saved['sha256'] == hashlib.sha256(expected).hexdigest()
+    assert saved['bytes'] == len(expected)
+    assert not app.db.execute('SELECT 1 FROM state_resources WHERE id=?', (old_wrapper,)).fetchone()
+    # The resource encoding has different whitespace from the public download.
+    assert saved['body']['$resource'] != saved['sha256']
+    assert app.outputs.content(saved) == await app.outputs.content_async(saved) == expected
+    await app.dispatch('canvas.versions.revise', {'id': canvas['id'], 'expectedRevision': canvas['revision'], 'content': '<p>Changed</p>'})
+    assert next(row for row in app.state['canvasArtifacts'] if row['id'] == canvas['id'])['body'] != saved['body']
+    await app.dispatch('outputs.unlink', {'sessionId': sid, 'id': saved['id'], 'expectedRevision': 1})
+    duplicate = (await app.dispatch('outputs.attach', args, command_id='saved-canvas'))['result']
+    assert duplicate == {**saved, 'duplicate': True}
+    assert saved['body']['$resource'] not in collect(app.db, app.state)
+    linked = (await app.dispatch('outputs.relink', {'sessionId': sid, 'id': saved['id'], 'expectedRevision': 2}))['result']
+    app.outputs.fork(sid, {'id': 'canvas-fork', 'messages': [{'id': message}]})
+    forked = app.outputs.store.list('canvas-fork')['items'][0]
+    assert forked['body'] == saved['body'] and forked['bodyFormat'] == saved['bodyFormat']
+    assert app.outputs.content(forked) == expected
+    app._save()
+    await app.close()
+    restored = AppService(app.data_dir, workspace=app.default_workspace, runtime=Runtime())
+    try:
+        read = (await restored.dispatch('outputs.read', {'sessionId': sid, 'id': saved['id']}))['result']
+        assert read['text'].encode() == expected and read['revision'] == linked['revision']
+        assert restored.outputs.content(restored.outputs.store.read(forked['id'])) == expected
+        legacy = {**saved, 'body': put(restored.db, {'encoding': 'utf-8', 'data': expected.decode()})}
+        legacy.pop('bodyFormat')
+        assert restored.outputs.content(legacy) == expected
+    finally:
+        await restored.close()
+
+
+async def test_canvas_edit_and_real_gc_between_capture_and_commit_keep_original_body(app, monkeypatch):
+    from amplifier_web.storage_migration import _maintenance_async
+    from amplifier_web.resource_files import put
+    sid = app._session()['id']
+    await app.dispatch('canvas.show', {'kind': 'html', 'title': 'Before edit', 'content': '<p>Original</p>'})
+    canvas = copy.deepcopy(app.state['canvasArtifacts'][-1])
+    reference = canvas['body']['$resource']
+    expected = json.dumps(app.state_resource(reference), ensure_ascii=False, sort_keys=True).encode()
+    captured, resume = asyncio.Event(), asyncio.Event()
+    original_lock, original_read = app.lock, app.state_resource
+    source_read = False
+
+    def observe_source(identity):
+        nonlocal source_read
+        value = original_read(identity)
+        if identity == reference and asyncio.current_task() is pending:
+            source_read = True
+        return value
+
+    class InterleavingLock:
+        def __getattr__(self, name):
+            return getattr(original_lock, name)
+
+        async def __aenter__(self):
+            return await original_lock.__aenter__()
+
+        async def __aexit__(self, *args):
+            result = await original_lock.__aexit__(*args)
+            if asyncio.current_task() is pending and source_read and not captured.is_set():
+                captured.set()
+                await resume.wait()
+            return result
+
+    monkeypatch.setattr(app, 'lock', InterleavingLock())
+    monkeypatch.setattr(app, 'state_resource', observe_source)
+    pending = asyncio.create_task(app.dispatch('outputs.attach', {'sessionId': sid, 'kind': 'canvas',
+        'title': 'Snapshot before edit', 'canvasId': canvas['id']}, command_id='interleaved-canvas'))
+    try:
+        await asyncio.wait_for(captured.wait(), 10)
+        assert not app.outputs.store.list(sid)['items']
+        await app.dispatch('canvas.versions.revise', {'id': canvas['id'],
+            'expectedRevision': canvas['revision'], 'content': '<p>Revised</p>'})
+        current = next(row for row in app.state['canvasArtifacts'] if row['id'] == canvas['id'])
+        assert current['body'] != canvas['body']
+        assert any(version['body'] == canvas['body'] for version in current['versions'])
+        unreferenced = put(app.db, {'unreferenced': 'Collect this fixture body'})
+        app.db.commit()
+        await _maintenance_async(app)
+        assert not app.db.execute('SELECT 1 FROM state_resources WHERE id=?', (unreferenced['$resource'],)).fetchone()
+        assert app.state_resource(reference) == json.loads(expected)
+    finally:
+        resume.set()
+        result = await asyncio.wait_for(pending, 10)
+    assert result['result']['body'] == canvas['body']
+    assert await app.outputs.content_async(result['result']) == expected

@@ -12,6 +12,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from amplifier_outputs import OutputRegistry
+from amplifier_outputs.content import CANVAS_JSON, canvas_snapshot_bytes
 from amplifier_outputs.git_review import anchors, snapshot as git_snapshot
 
 MAX_FILE = 8*1024*1024
@@ -102,7 +103,9 @@ class Outputs:
 
     @staticmethod
     def decode_content(record,value):
-        if record.get('bodyFormat') == 'canvas-image-v1':
+        if record.get('bodyFormat') == CANVAS_JSON:
+            data = canvas_snapshot_bytes(value)
+        elif record.get('bodyFormat') == 'canvas-image-v1':
             prefix = 'data:image/png;base64,'
             content = value.get('content')
             if not isinstance(content, str) or not content.startswith(prefix):
@@ -372,8 +375,9 @@ class Outputs:
                         canvas=next((r for r in self.app.state.get('canvasArtifacts',[]) if r['id']==args['canvasId'] and r.get('sessionId')==session['id']),None)
                         if not canvas:raise ValueError('This saved canvas is unavailable in the conversation.')
                         body=self.app.state_resource(canvas['body']['$resource'])
-                        data=json.dumps(body,ensure_ascii=False,sort_keys=True).encode()
-                        value.update(canvasId=canvas['id'],canvasKind=canvas['kind'],canvasSource=copy.deepcopy(canvas['body']),filename='canvas.json',versionEvidence='snapshot')
+                        data=canvas_snapshot_bytes(body)
+                        value.update(canvasId=canvas['id'],canvasKind=canvas['kind'],canvasSource=copy.deepcopy(canvas['body']),
+                            body=copy.deepcopy(canvas['body']),bodyFormat=CANVAS_JSON,filename='canvas.json',versionEvidence='snapshot')
                 else:
                     parsed=urlsplit(args['url'])
                     if parsed.scheme not in {'http','https'} or not parsed.hostname or parsed.username or parsed.password or any(ord(c)<32 for c in args['url']):
@@ -427,13 +431,17 @@ class Outputs:
                         if args.get('expectedSha256') and digest!=args['expectedSha256']:
                             raise ValueError('File contents changed from the expected version.')
                         from .resource_files import put
-                        if action == 'outputs.attachImage':
-                            body = {'content': 'data:image/png;base64,' + base64.b64encode(data).decode()}
-                            value.update(bodyFormat='canvas-image-v1', canvasId=uuid.uuid4().hex)
-                        else:
-                            try:body={'encoding':'utf-8','data':data.decode('utf-8')}
-                            except UnicodeDecodeError:body={'encoding':'base64','data':base64.b64encode(data).decode()}
-                        value.update(body=put(self.app.db,body),sha256=digest,bytes=len(data))
+                        # Canvas already owns the captured immutable body. Other
+                        # outputs adopt their bytes through the existing formats.
+                        if value.get('bodyFormat') != CANVAS_JSON:
+                            if action == 'outputs.attachImage':
+                                body = {'content': 'data:image/png;base64,' + base64.b64encode(data).decode()}
+                                value.update(bodyFormat='canvas-image-v1', canvasId=uuid.uuid4().hex)
+                            else:
+                                try:body={'encoding':'utf-8','data':data.decode('utf-8')}
+                                except UnicodeDecodeError:body={'encoding':'base64','data':base64.b64encode(data).decode()}
+                            value['body']=put(self.app.db,body)
+                        value.update(sha256=digest,bytes=len(data))
                     result=self.store.create(session['id'],value)
                     if action == 'outputs.attachImage':
                         from .canvas_library import image_output

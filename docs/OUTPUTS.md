@@ -14,6 +14,19 @@ Forks copy only linked outputs anchored to retained message IDs, reuse immutable
 
 `amplifier_outputs` owns portable relationship storage and read-only Git evidence. Unified owns authorization, workspace/source access, private resources and presentation. No provider-specific artifact library is required.
 
+New saved Canvas outputs reuse the Canvas's immutable resource with the
+`canvas-json-v1` body format. Their downloaded JSON bytes and SHA-256 keep the
+existing representation; later Canvas edits cannot alter that saved output.
+Older encoded snapshots remain readable. `canvasSource` remains a provenance
+alias to the same resource, so it does not retain a second content blob.
+
+Task transfer containing this format requires a destination with the
+`canvas-json-v1` reader. An older reader rejects it before destination staging or
+signed readiness, so source ownership is not released. Cancel that prepared
+transfer to keep working on the source, or update the destination and retry.
+Matching readers preserve the exact saved bytes and historical output-command
+receipts on transfer and return; no receipt conversion or content replay occurs.
+
 Validation:30 backend checks across output, resource-retention, server and canvas behavior;210 frontend checks including safe Markdown writing blocks. Actual service/Chromium validates edited writing vs original message, exact file download after source edits, real local Git review/line notes, unlink/restore/reload, mobile bounds, selected chat/draft preservation and zero model calls. This does not establish rendered document fidelity or remote provider/account acceptance.
 
 ## Explicit visual inspection

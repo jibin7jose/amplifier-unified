@@ -1,6 +1,7 @@
 """Delayed output reads cannot commit across a task ownership boundary."""
 import asyncio
 import copy
+import json
 from pathlib import Path
 from threading import Event
 
@@ -82,6 +83,96 @@ async def release_to(left, right, sid, left_home, right_home, repository, monkey
 async def activate(app, sid, staged, released):
     return (await app.dispatch('portability.activate', {'sessionId': sid, 'id': staged['id'],
         'expectedRevision': staged['revision'], 'path': released['receiptPath']}))['result']
+
+
+async def attach_saved_canvas(app, sid):
+    await app.dispatch('canvas.show', {'kind': 'html', 'title': 'Transfer Canvas', 'content': '<p>Résumé 🌳</p>'})
+    canvas = app.state['canvasArtifacts'][-1]
+    args = {'sessionId': sid, 'kind': 'canvas', 'title': 'Saved Canvas', 'canvasId': canvas['id'], 'messageId': 'typed'}
+    record = (await app.dispatch('outputs.attach', args, command_id='canvas-transfer-output'))['result']
+    assert record['body'] == canvas['body'] == record['canvasSource']
+    return record, args
+
+
+async def test_shared_canvas_transfer_roundtrip_preserves_exact_bytes_and_historical_retry(tmp_path, monkeypatch):
+    app, target, source, destination, root, destrepo, sid, *_ = await setup_hosts(tmp_path, monkeypatch)
+    try:
+        host_env(monkeypatch, source)
+        saved, args = await attach_saved_canvas(app, sid)
+        expected = await app.outputs.content_async(saved)
+        receipt = app.db.execute('SELECT fingerprint,value FROM output_receipts WHERE id=?', ('canvas-transfer-output',)).fetchone()
+        await app.dispatch('outputs.unlink', {'sessionId': sid, 'id': saved['id'], 'expectedRevision': 1})
+        for left, right, left_home, right_home, repo in (
+                (app, target, source, destination, destrepo), (target, app, destination, source, root)):
+            staged, released = await release_to(left, right, sid, left_home, right_home, repo, monkeypatch)
+            host_env(monkeypatch, right_home)
+            await activate(right, sid, staged, released)
+            current = right.outputs.store.read(saved['id'])
+            assert current['body'] == saved['body'] and current['bodyFormat'] == 'canvas-json-v1'
+            assert not current['linked'] and current['revision'] == 2
+            assert await right.outputs.content_async(current) == expected
+            transferred = right.db.execute('SELECT fingerprint,value FROM output_receipts WHERE id=?', ('canvas-transfer-output',)).fetchone()
+            assert transferred[0] == receipt[0] and json.loads(transferred[1]) == json.loads(receipt[1])
+            duplicate = (await right.dispatch('outputs.attach', args, command_id='canvas-transfer-output'))['result']
+            assert duplicate == {**saved, 'duplicate': True}
+            assert not right.runtime.workers
+    finally:
+        host_env(monkeypatch, source); await app.close()
+        host_env(monkeypatch, destination); await target.close()
+
+
+async def test_canvas_body_reader_refusal_keeps_source_recoverable(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from amplifier_foundation.session import SharedSessionStore
+    from amplifier_web import portability, portability_data
+    app, target, source, destination, root, destrepo, sid, *_ = await setup_hosts(tmp_path, monkeypatch)
+    try:
+        host_env(monkeypatch, source)
+        saved, args = await attach_saved_canvas(app, sid)
+        expected = await app.outputs.content_async(saved)
+        receipt, export_args = await export(app, target, sid, root)
+        prepared = copy.deepcopy(app.portability.node.get(receipt['id']))
+        fence = SharedSessionStore(root, sid).transfer_fence()
+        assert fence['phase'] == 'staged'
+
+        def unsupported_reader(payload):
+            # Model a peer without this codec. The frozen older implementation
+            # was separately exercised; this guards the ordering of side effects.
+            if any(row.get('bodyFormat') == 'canvas-json-v1' for row in payload['outputs']):
+                raise ValueError('Unsupported saved Canvas body format')
+            portability_data.validate(payload)
+
+        async def forbidden_readiness(*_):
+            raise AssertionError('Unsupported payload must fail before readiness')
+
+        with monkeypatch.context() as patch:
+            patch.setattr(portability, 'data', SimpleNamespace(validate=unsupported_reader))
+            patch.setattr(target.portability, 'destination_checks', forbidden_readiness)
+            host_env(patch, destination)
+            for _ in range(2):
+                with pytest.raises(AppError, match='Unsupported saved Canvas body format'):
+                    await target.dispatch('portability.stage', {'path': receipt['package'], 'repository': str(destrepo)})
+                assert not target.portability.node.path(receipt['id']).exists()
+                assert not (target.portability.node.directory / 'checkouts' / receipt['id']).exists()
+                assert not target.state['sessions'] and not target.runtime.workers
+                assert not target.db.execute('SELECT 1 FROM output_records').fetchone()
+        host_env(monkeypatch, source)
+        with pytest.raises(AppError):
+            await app.dispatch('portability.release', {'sessionId': sid, 'id': receipt['id'],
+                'expectedRevision': receipt['revision'], 'path': receipt['package']})
+        assert app.portability.node.get(receipt['id']) == prepared
+        assert SharedSessionStore(root, sid).transfer_fence() == fence
+        duplicate = (await app.app_bridge('dispatch', {'action': 'portability.export',
+            'id': 'export-original', 'args': export_args}, sid))['result']
+        assert duplicate['duplicate'] and duplicate['phase'] == 'prepared'
+        await app.dispatch('portability.cancel', {'sessionId': sid, 'id': receipt['id'],
+            'expectedRevision': receipt['revision'], 'evidence': 'Peer needs the saved Canvas body reader.'})
+        held = SharedSessionStore(root, sid).acquire(app='source-restored'); held.release()
+        assert (await app.dispatch('outputs.attach', args, command_id='canvas-transfer-output'))['result'] == {**saved, 'duplicate': True}
+        assert await app.outputs.content_async(saved) == expected
+    finally:
+        host_env(monkeypatch, source); await app.close()
+        host_env(monkeypatch, destination); await target.close()
 
 
 @pytest.mark.parametrize(('kind', 'boundary'), [
