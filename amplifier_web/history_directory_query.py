@@ -4,8 +4,9 @@ Filtering, ordering and counts run in SQLite. Only the requested page is decoded
 querying history never admits a session or starts its runtime.
 """
 import json
+from typing import Any
 
-from .chat_navigation import PAGE_SIZE, valid_recent_limit, _matches
+from .chat_navigation import ChatPageResult, PAGE_SIZE, valid_recent_limit, _matches
 from .navigation_summary import path_labels
 
 
@@ -171,16 +172,17 @@ def _chat_row(directory, row, labels):
     return result
 
 
-def chats(directory, state, *, section=None):
+def chats(directory, state: dict[str, Any], *, section: str | None = None) -> ChatPageResult:
     sql, params, scope, counts, order, workspaces, total = _chat_query(directory, state, section)
     view = state.get('view', {})
+    result: ChatPageResult
     if section == 'shortcuts':
         limit = view.get('navRecentLimit', 20)
         limit = limit if valid_recent_limit(limit) else 20
         scope.update(limit=limit, viewRevision=view.get('navRecentRevision', 0))
         start, end = 0, min(total, limit)
         result = {'total': total, 'remaining': total-end, 'limit': limit, 'start': start, 'end': end,
-                  'scope': scope, 'dataRevision': state.get('revision', 0), 'activityCounts': counts}
+                  'scope': scope, 'dataRevision': state.get('revision', 0), 'activityCounts': counts, 'items': []}
     else:
         size = (40 if total > 50 else 50) if section else PAGE_SIZE
         saved = view.get('navChatPage')
@@ -195,7 +197,7 @@ def chats(directory, state, *, section=None):
         pages = max(1, (total+size-1)//size)
         index = max(0, min(pages-1, requested))
         start, end = index*size, min(total, (index+1)*size)
-        result = {'total':total,'index':index,'pages':pages,'start':start,'end':end,'scope':scope,'activityCounts':counts}
+        result = {'total':total,'index':index,'pages':pages,'start':start,'end':end,'scope':scope,'activityCounts':counts,'items':[]}
     labels = path_labels(row['path'] for row in workspaces)
     rows = _rows(directory, sql + f' SELECT * FROM filtered ORDER BY {order} LIMIT ? OFFSET ?', [*params,end-start,start])
     result['items'] = [_chat_row(directory,row,labels) for row in rows]

@@ -14,9 +14,10 @@ import sqlite3
 from threading import get_ident
 import uuid
 from pathlib import Path
+from typing import Any
 
 from .performance_diagnostics import count
-from .chat_navigation import timestamp
+from .chat_navigation import ChatPageResult, timestamp
 
 
 COLUMNS = ('id', 'native_id', 'native_project', 'parent_id', 'native_parent_id',
@@ -845,7 +846,7 @@ class HistoryDirectory:
             self._closed = True
             self.db.close()
 
-    def chats(self, state, *, section=None):
+    def chats(self, state: dict[str, Any], *, section: str | None = None) -> ChatPageResult:
         from .history_directory_query import chats
         return chats(self, state, section=section)
 

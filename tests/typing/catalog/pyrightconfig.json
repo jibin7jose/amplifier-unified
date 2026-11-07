@@ -1,0 +1,11 @@
+{
+  "include": [
+    "consumer.py",
+    "../../../amplifier_web/history_directory_query.py"
+  ],
+  "extraPaths": [
+    "../../.."
+  ],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "basic"
+}

@@ -4,10 +4,36 @@ import copy
 import math
 import time
 import uuid
+from typing import Any, TypedDict
 
 from .session_navigation import is_top_level, is_agent_created
 from .managed_chats import is_managed
 from .navigation_summary import activity, path_labels, task_blocked
+
+class ChatPage(TypedDict):
+    """Common navigation envelope; row and scope payloads keep their own owners."""
+
+    items: list[dict[str, Any]]
+    total: int
+    start: int
+    end: int
+    scope: dict[str, Any]
+    activityCounts: dict[str, int]
+
+
+class PagedChatPage(ChatPage):
+    index: int
+    pages: int
+
+
+class ShortcutChatPage(ChatPage):
+    remaining: int
+    limit: int
+    dataRevision: int
+
+
+ChatPageResult = PagedChatPage | ShortcutChatPage
+
 
 PAGE_SIZE = 100
 RECENT_LIMITS = (20, 40, 60, 80, 100)
@@ -403,7 +429,7 @@ def catalog(state, *, indexed=None, pin_first=True):
     return rows, scope, counts
 
 
-def snapshot(state, *, indexed=None, section=None):
+def snapshot(state: dict[str, Any], *, indexed=None, section: str | None = None) -> ChatPageResult:
     view = state.get('view', {})
     # Section counts are computed before the activity filter, so switching from
     # Attention to Working still reports the full matching count for each.

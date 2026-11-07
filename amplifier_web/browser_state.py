@@ -3,10 +3,12 @@
 Directory queries provide pages/counts; SessionIndex owns admitted live rows.
 Explicit full-state compatibility is separate from ordinary browser projections.
 """
+from collections.abc import Callable
+from typing import Any
 from copy import deepcopy
 from collections import OrderedDict
 from .browser_detail import project
-from .chat_navigation import snapshot as chat_snapshot, _matches, recent_activity
+from .chat_navigation import ChatPage, snapshot as chat_snapshot, _matches, recent_activity
 from .session_navigation import is_top_level
 from .session_activity import navigation_busy
 
@@ -143,7 +145,8 @@ class SessionIndex:
                 if direct_child(self.by_id[key], parent)]
 
 
-def navigation(state, *, chats=chat_snapshot, index=None, directory=None):
+def navigation(state, *, chats: Callable[[dict[str, Any]], ChatPage] = chat_snapshot,
+               index=None, directory=None):
     index = index or SessionIndex(state)
     chat = chats(state)
     header_view = {**state.get('view', {}), 'navChatScope': 'workspace', 'navFilter': '', 'navArchive': 'active', 'navCollection': None}
