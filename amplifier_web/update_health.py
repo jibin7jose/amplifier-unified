@@ -132,6 +132,87 @@ def record_retry(batch, key, failure, previous=None):
                       'retryAt': time.time() + min(3600, 60 * 2 ** min(count - 1, 6))}
 
 
+def pointer_witness(manager):
+    """Exact durable pointer bytes, including absence; no moving-ref inference."""
+    from .updates import active_release
+    active_release(manager.home)  # Reject malformed identities, not just hash them.
+    path = manager.directory / 'active.json'
+    if path.is_symlink():
+        raise ValueError('The component pointer is not an owned file.')
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return None
+
+
+async def candidate_copy(proof, operation, *args):
+    """Cancellation must not pretend a to_thread copy has stopped.
+
+    Only the initial, candidate-only snapshot copies use this helper. If the
+    owned thread does not settle promptly, retain the inspection fence instead.
+    No subsequent fetch, installer or native initialization is started here.
+    """
+    import asyncio
+    proof['copySettled'] = False
+    task = asyncio.create_task(asyncio.to_thread(operation, *args))
+    task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), 5)
+        except (Exception, asyncio.CancelledError):
+            pass
+        raise
+    finally:
+        proof['copySettled'] = task.done() and not task.cancelled()
+
+
+def reconcile_preparation(manager):
+    """Permit fresh intent only after a proven inactive, settled copy attempt.
+
+    Called under the update lock. Never resumes the old candidate or infers
+    settlement for legacy/unknown fetch, validation, activation or rollback.
+    """
+    diagnostics = manager.diagnostics.state
+    batch = diagnostics.get('batch', {})
+    proof = batch.get('preparation', {})
+    state = manager.service.state['updates']
+    candidate = proof.get('candidate')
+    if (diagnostics.get('storageUnavailable') or diagnostics.get('kind') != 'ecosystem' or batch.get('kind') != 'ecosystem'
+            or batch.get('attemptId') != diagnostics.get('attemptId')
+            or not isinstance(candidate, str) or not re.fullmatch('[a-f0-9]{32}', candidate)
+            or diagnostics.get('revision') != candidate
+            or proof.get('boundary') != 'copy-only' or proof.get('copySettled') is not True
+            or not proof.get('interruptedAt') or 'activeBefore' not in proof
+            or any(state.get(key) for key in ('pendingApp', 'pendingRelease', 'pendingRollback',
+                                              'pendingRestart', 'pendingReplacement', 'pendingSmartTools'))
+            or state.get('phase') == 'activating'):
+        return False
+    try:
+        from .updates import active_release
+        stage = manager.directory / 'releases' / candidate
+        if (stage.is_symlink() or stage.resolve() != manager.directory.resolve() / 'releases' / candidate
+                or [stage.stat().st_dev, stage.stat().st_ino] != proof.get('directoryIdentity')
+                or any((stage / name).exists() for name in ('plan.json', 'validated.json'))
+                or candidate in (active_release(manager.home).get('current'), active_release(manager.home).get('previous'))
+                or pointer_witness(manager) != proof['activeBefore']):
+            return False
+        latest = diagnostics.get('latest', {})
+        if (latest.get('attemptId') != batch['attemptId'] or latest.get('status') != 'interrupted'
+                or latest.get('phase') != 'ecosystem-stage'):
+            return False
+        if any(row.get('attemptId') == batch['attemptId'] and
+               row.get('phase') in {'ecosystem-activation', 'ecosystem-rollback'}
+               for row in diagnostics.get('events', [])):
+            return False
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+    batch['retry'] = {**batch['retry'], 'mode': 'fresh-intent', 'reconciledAt': time.time()}
+    manager.diagnostics.record('ecosystem-preparation-reconciled', 'succeeded')
+    return True
+
+
 def failure_events(state):
     """Bounded old-state import; no scope matching, mutation, or recovery claims."""
     diagnostics = state.get('diagnostics', {})
@@ -245,19 +326,19 @@ def current(state, evidence=None):
         return result('action-required', 'Some tools were not updated',
                       'Their current versions remain installed. Review the failed tool to retry or keep its current version.',
                       action='tools')
-    if local_changes:
-        return result('unchecked', 'Custom sources kept',
-                      'Local source changes are kept as configured and are not replaced automatically. Source details remain available; no repair is required for intentional customization.')
     if state.get('available') or seq.get('nextStage') or any(
             (seq.get(tier) or {}).get('available') for tier in ('included', 'other')):
         return result('available', 'Updates available', 'The app and eligible components can update while preserving configured pins and local sources.', action='install')
-    if seq.get('stage') == 'complete' and app.get('status') == 'current':
+    if local_changes or seq.get('stage') == 'complete' and app.get('status') == 'current':
         if evidence.get('activationUnknown'):
             return result('unchecked', 'Current components kept',
                           'The installed graph matches its recorded qualification. Its older activation receipt is no longer retained, so full activation verification is unavailable. No reinstall is requested.')
         if not evidence:
             return result('unverified', 'Component verification is incomplete',
                           'The active component graph or configuration could not be verified. Current components are kept. Check for updates and inspect diagnostics if this remains.', action='check')
+        if local_changes:
+            return result('unchecked', 'Custom sources kept',
+                          'Local source changes are kept as configured and are not replaced automatically. Source details remain available; no repair is required for intentional customization.')
         return result('current', 'You’re up to date', 'The current application and qualified components are ready. Earlier attempts remain in history; configured fixed versions are kept.')
     return result('unchecked', 'Check for updates', 'The full desired component state has not been checked.', action='check')
 

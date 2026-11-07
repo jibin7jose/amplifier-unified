@@ -178,8 +178,11 @@ async def test_interrupted_preparation_cannot_be_replayed_by_manual_intent(tmp_p
     m.lock=asyncio.Lock();m.awaiting_restart=lambda:False
     m.diagnostics.state['batch']={'retry':{'mode':'inspect','inputKey':'old'}}
     before=copy.deepcopy(m.diagnostics.state)
-    with pytest.raises(ValueError,match='interrupted'):
-        await UpdateManager.install(m,automatic=automatic)
+    if automatic:
+        await UpdateManager.install(m,automatic=True)
+    else:
+        with pytest.raises(ValueError,match='interrupted'):
+            await UpdateManager.install(m)
     assert m.diagnostics.state==before
 
 
@@ -245,3 +248,99 @@ async def test_configuration_revalidation_gap_is_neutral_but_failed_proof_is_not
     (stage/'profiles-qualified.json').write_text('{}')
     await health.refresh(m);health.publish(m)
     assert m.service.state['updates']['currentStatus']['actionRequired']
+
+
+@pytest.mark.parametrize('case',['available','invalid-graph','local-only'])
+def test_local_customization_does_not_mask_available_updates_or_invalid_graph(tmp_path,monkeypatch,case):
+    m,stage,_,_=mounted_fixture(tmp_path,monkeypatch);u=m.service.state['updates']
+    u['diagnostics']['activeFailures']={}
+    u['items']=[{'id':'custom','label':'Custom source','status':'local_changes','updateTier':'included'}]
+    if case=='available':u['available']=1
+    elif case=='invalid-graph':(stage/'runtime-installed.json').write_text('[]')
+    value=health.current(u,health.active_evidence(m))
+    assert value['status']=={'available':'available','invalid-graph':'unverified','local-only':'unchecked'}[case]
+    assert value['actionRequired']==(case=='invalid-graph')
+
+
+async def test_inspection_fence_quietly_waits_through_ten_actual_automatic_ticks(tmp_path,monkeypatch):
+    from amplifier_web.updates import UpdateManager
+    m,_,_,_=mounted_fixture(tmp_path,monkeypatch)
+    m.service.state['settings']={'updates':{'autoInstall':True,'autoCheck':True}}
+    m.service.state['updates'].update(phase='available',available=1)
+    m.diagnostics.state['batch']={'retry':{'mode':'inspect'}}
+    m.awaiting_restart=lambda:False
+    # Any further work is a defect: tick must wait before checks/staging or its
+    # exception handler can create another background-update failure.
+    async def forbidden(*a,**kw):pytest.fail('automatic retry work')
+    m.check=m.install=m.publish=forbidden
+    before=copy.deepcopy(m.service.state)
+    for _ in range(10):await UpdateManager.tick(m)
+    assert m.service.state==before
+
+
+async def interrupted_copy_fixture(tmp_path,monkeypatch):
+    """Cancel a real copy thread in the actual install orchestration."""
+    import threading
+    from amplifier_web import updates, update_storage, session_files
+    m,_,_,_=mounted_fixture(tmp_path,monkeypatch)
+    m.lock=asyncio.Lock();m.closed=False;m.awaiting_restart=lambda:False
+    m.independent_tool_results=lambda s:False
+    m.service.lock=asyncio.Lock()
+    u=m.service.state['updates'];u.update(phase='available',available=1,sequence={'stage':'included'})
+    m.inventory=[{'id':'fixture','kind':'runtime environment','status':'update','eligible':True,'latest':'A'}]
+    calls={'stage':0}
+    async def publish(**kw):u.update(kw)
+    async def stage(*a):calls['stage']+=1;raise RuntimeError('fresh candidate stopped before validation')
+    m.publish=publish;m.stage_cache_sources=stage
+    monkeypatch.setattr(health,'preparation_key',lambda m,rows:'A')
+    source=tmp_path/'copy-source';source.mkdir();(source/'keep').write_text('unchanged')
+    monkeypatch.setattr(updates,'foundation_home',lambda h:source)
+    monkeypatch.setattr(session_files,'amplifier_home',lambda:tmp_path/'empty-shared')
+    started=threading.Event();release=threading.Event();finished=threading.Event()
+    copy_snapshot=update_storage.copy_snapshot
+    def copy_with_gate(source,target):
+        started.set()
+        assert release.wait(3), 'test did not release its owned copy'
+        result=copy_snapshot(source,target);finished.set()
+        return result
+    monkeypatch.setattr(update_storage,'copy_snapshot',copy_with_gate)
+    task=asyncio.create_task(updates.UpdateManager.install(m))
+    assert await asyncio.to_thread(started.wait,3)
+    task.cancel()
+    await asyncio.sleep(0)  # Give cancellation the blocked owned copy to settle.
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):await task
+    assert finished.is_set()
+    assert calls=={'stage':0}
+    proof=m.diagnostics.state['batch']['preparation']
+    assert proof['boundary']=='copy-only' and proof['copySettled']
+    assert (source/'keep').read_text()=='unchanged'
+    return m,calls,copy.deepcopy(proof),copy.deepcopy(m.diagnostics.state['lastFailure'])
+
+
+@pytest.mark.parametrize('case',['safe','pointer-drift','promotion','rollback','unsettled','validation','legacy','stage-replaced'])
+async def test_manual_fresh_candidate_requires_actual_settled_copy_and_unchanged_pointer(tmp_path,monkeypatch,case):
+    from amplifier_web.updates import UpdateManager
+    m,calls,proof,failure=await interrupted_copy_fixture(tmp_path,monkeypatch)
+    u=m.service.state['updates'];batch=m.diagnostics.state['batch'];old=m.diagnostics.state['attemptId']
+    if case=='pointer-drift':
+        (m.directory/'active.json').write_text(json.dumps({'current':'b'*32}))
+    elif case=='promotion':u['pendingRelease']=proof['candidate']
+    elif case=='rollback':u['pendingRollback']='c'*32
+    elif case=='unsettled':batch['preparation']['copySettled']=False
+    elif case=='validation':batch['preparation']['boundary']='preparing'
+    elif case=='legacy':batch.pop('preparation')
+    elif case=='stage-replaced':batch['preparation']['directoryIdentity']=[0,0]
+    if case=='safe':
+        await UpdateManager.install(m)
+        assert calls=={'stage':1}
+        assert m.diagnostics.state['attemptId']!=old
+        assert m.diagnostics.state['revision']!=proof['candidate']
+        assert any(row['phase']=='ecosystem-preparation-reconciled' for row in m.diagnostics.state['events'])
+        assert any(group.get('latest')==failure for group in m.diagnostics.state['activeFailures'].values())
+    else:
+        before=copy.deepcopy(m.diagnostics.state)
+        with pytest.raises(ValueError,match='no proof'):await UpdateManager.install(m)
+        assert m.diagnostics.state==before
+        assert calls=={'stage':0}

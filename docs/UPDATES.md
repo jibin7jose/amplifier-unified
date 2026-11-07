@@ -239,8 +239,13 @@ Automatic preparation remembers the input witness and disposition of its last
 attempt. An unchanged deterministic source/configuration conflict performs no
 duplicate copy, resolver or installer work. Changed source/configuration/application
 inputs or an explicit install request can re-evaluate; transient failures use a
-bounded backoff. Interrupted or unknown effects are not replayed by either
-automatic ticks or a fresh install request without reconciliation.
+bounded backoff. Interrupted or unknown effects wait quietly on automatic ticks.
+A fresh install request can reconcile only a recorded, settled candidate-only
+snapshot copy with the same durable active pointer and no activation/rollback
+handoff. It creates a new candidate, never resumes the interrupted copy. Unknown
+or legacy operations, unsettled threads, fetch/installer/native initialization
+and activation effects remain fenced; cancellation alone proves none of them
+safe to replay.
 These are preparation scheduling decisions, never authority to bypass source,
 qualification, activation or restart guards.
 

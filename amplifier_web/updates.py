@@ -937,9 +937,12 @@ class UpdateManager:
         if self.awaiting_restart() or self.lock.locked():return
         state = self.service.state['updates']
         if (self.diagnostics.state.get('batch', {}).get('retry') or {}).get('mode') == 'inspect':
-            # Explicit intent is not evidence about an interrupted operation.
-            # Do not discard its inspection fence by beginning a new batch.
-            raise ValueError('The previous update was interrupted. Inspect its diagnostics and reconcile its outcome before another installation.')
+            if automatic:
+                return  # Waiting is not another failed attempt or a new event.
+            from .update_health import reconcile_preparation
+            async with self.lock:
+                if not reconcile_preparation(self):
+                    raise ValueError('The interrupted update has no proof of settled candidate-only preparation. Inspect its diagnostics before another installation; its outcome is not replayed.')
         if state.get('sequence', {}).get('stage') == 'included' and state['sequence'].get('included', {}).get('issues'):
             await self.publish(detail='Resolve the included component issues and check again before installing.')
             return
@@ -1003,25 +1006,34 @@ class UpdateManager:
             self.diagnostics.record('ecosystem-stage','started',commandId=stage_id)
             stage=self.directory/'releases'/release
             stage.mkdir(parents=True,mode=0o700)
+            from .update_health import pointer_witness, candidate_copy
+            proof = {'candidate': release, 'activeBefore': pointer_witness(self),
+                     'directoryIdentity': [stage.stat().st_dev, stage.stat().st_ino],
+                     'boundary': 'copy-only', 'copySettled': True}
+            self.diagnostics.state['batch']['preparation'] = proof
             source=foundation_home(self.home)
             phase='ecosystem-stage'
             try:
                 await self.publish(phase='staging',detail='Preparing an isolated copy of the ecosystem…',error=None)
                 if source.exists():
                     from .update_storage import copy_snapshot
-                    await self.diagnostics.run('ecosystem-copy',asyncio.to_thread,copy_snapshot,source,stage/'foundation')
+                    await self.diagnostics.run('ecosystem-copy',candidate_copy,proof,copy_snapshot,source,stage/'foundation')
                 else:
                     (stage/'foundation').mkdir()
                 for name in ('config','routing'):
-                    if (self.home/name).exists(): await asyncio.to_thread(shutil.copytree,self.home/name,stage/name)
+                    if (self.home/name).exists(): await candidate_copy(proof,shutil.copytree,self.home/name,stage/name)
                 from .session_files import amplifier_home
                 shared_home=amplifier_home()
                 shared_stage=stage/'shared-config'
                 shared_stage.mkdir(mode=0o700)
                 for name in ('settings.yaml','keys.env','routing'):
                     original=shared_home/name
-                    if original.is_dir():await asyncio.to_thread(shutil.copytree,original,shared_stage/name)
-                    elif original.is_file():await asyncio.to_thread(shutil.copy2,original,shared_stage/name)
+                    if original.is_dir():await candidate_copy(proof,shutil.copytree,original,shared_stage/name)
+                    elif original.is_file():await candidate_copy(proof,shutil.copy2,original,shared_stage/name)
+                # Beyond plain snapshots, preparation can invoke shared source
+                # stores, installers and native hooks. Do not infer their effects
+                # or settlement from a CancelledError.
+                proof['boundary'] = 'preparing'
                 for config_file in (stage/'config').rglob('*.yaml'):
                     config_file.write_text(config_file.read_text().replace(str(source),str(stage/'foundation')))
                 shared_settings = shared_stage/'settings.yaml'
@@ -1063,6 +1075,7 @@ class UpdateManager:
             except BaseException as error:
                 from .update_diagnostics import exception_facts, failure_guidance
                 interrupted=isinstance(error,asyncio.CancelledError)
+                if interrupted:proof['interruptedAt'] = time.time()
                 status='interrupted' if interrupted else 'failed'
                 failure=self.diagnostics.state.get('lastFailure',{})
                 if failure.get('attemptId')!=self.diagnostics.state.get('attemptId'):
@@ -1431,6 +1444,8 @@ class UpdateManager:
         from .update_drain import observe_waiters
         await observe_waiters(self)
         if self.awaiting_restart():return
+        if (self.diagnostics.state.get('batch', {}).get('retry') or {}).get('mode') == 'inspect':
+            return  # An uncertain outcome is a stable wait, not background failure.
         if getattr(self, '_update_health_initial', False):
             self._update_health_initial = False
             from .update_health import refresh as refresh_health
