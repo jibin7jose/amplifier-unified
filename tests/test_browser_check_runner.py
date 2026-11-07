@@ -330,7 +330,8 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     assert [row for row in rows if row['id'] in recovery_ids] == recovery_additions
     original = [row for row in historical_rows if row['id'] not in additions and row['id'] not in recovery_ids]
     assert len(original) == 65 and len(historical_rows) == 132
-    assert len(rows) == 138  # Six independently validated owners are additive.
+    # Preserve the preceding total after validating the exact new layout owner.
+    assert len([row for row in rows if row['id'] != 'context-inspector-layout']) == 138
     # Existing scenarios retain their commands; only evidence ownership changes.
     evidence = {
         'bundle': {'AMPLIFIER_BUNDLE_SCREENSHOT': '{root}/output/browser-checks/bundle-mobile.png'},
