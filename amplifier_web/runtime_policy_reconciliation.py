@@ -263,7 +263,10 @@ class Collector:
         return {'version': VERSION, 'configuration': configuration(config), 'packages': packages,
                 # Private preparation evidence, never copied into update diagnostics.
                 'batchPaths': {name: str(path) for name, path in batch.names.items()},
-                'protectedPaths': sorted(str(path) for path in self.local_sources | self.local_manifests)}
+                'protectedPaths': sorted(str(path) for path in self.local_sources | self.local_manifests),
+                'observedReferences': [list(row) for row in sorted(self.references)],
+                'localSources': sorted(map(str, self.local_sources)),
+                'localManifests': sorted(map(str, self.local_manifests))}
 
 
 def exact_constraint_pin(constraint):
@@ -567,3 +570,58 @@ async def reconcile(manager, stage, project, collect):
               'offeredPackages': sorted(first.get('packages', {})),
               'migrated': {name: checked[name] for name in selected}}
     write_private(stage / RECEIPT, json.dumps(result, indent=2) + '\n')
+    # Only this invocation may reuse its collection. A migration changes checked
+    # policy, bindings and/or resolver input and always needs fresh composition.
+    return {'selection': first, 'generation': old_generation} if not selected else None
+
+
+def policy_inputs(stage, project):
+    """Small explicit control inputs; no persistent cache or arbitrary settings."""
+    paths = [Path(stage) / name for name in (
+        'runtime-sources.json', 'runtime-install-overrides.txt', 'profiles.json')]
+    paths += [Path(project) / name for name in ('pyproject.toml', 'uv.lock', 'uv.toml')]
+    # Include declarations/bindings consumed by composition, not credential files
+    # or every cached payload. Local/custom inputs cannot use this shortcut.
+    for folder in ('config', 'shared-config', 'foundation/registry.json', 'foundation/cache/.source-bindings'):
+        path = Path(stage) / folder
+        paths.extend([path] if path.is_file() else sorted(
+            p for p in path.rglob('*') if p.is_file() and p.suffix in {'.json', '.yaml', '.yml', '.toml'}))
+    return ([(str(path), hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None)
+             for path in paths] +
+            [(key, hashlib.sha256(os.environ.get(key, '').encode()).hexdigest()) for key in
+             ('UV_CONFIG_FILE', 'UV_OVERRIDE', 'UV_CONSTRAINT', 'UV_BUILD_CONSTRAINT', 'AMPLIFIER_SOURCE_STORE')])
+
+
+async def reuse_collection(manager, stage, project, observed, inputs):
+    """Re-observe identities without launching a second composition process.
+
+    Changed controls/config/source/bindings return no reuse. The normal fresh
+    collection, alignment, exact guard, installer and profile probes still run.
+    """
+    from types import SimpleNamespace
+    from .host.config import read_config
+    from .updates import active_release
+    selection = (observed or {}).get('selection')
+    if not selection or 'observedReferences' not in selection:
+        return None
+    if selection.get('localSources') or selection.get('localManifests'):
+        return None
+    generation = active_release(manager.home).get('current')
+    if generation != observed['generation'] or policy_inputs(stage, project) != inputs:
+        return None
+    config = read_config(Path(stage) / 'qualification-workspace', home=stage,
+                         shared_home=Path(stage) / 'shared-config', global_only=True)
+    if configuration(config) != selection.get('configuration'):
+        return None
+    collector = Collector()
+    collector.references = {tuple(row) for row in selection['observedReferences']}
+    collector.local_sources = {Path(path) for path in selection['localSources']}
+    collector.local_manifests = {Path(path) for path in selection['localManifests']}
+    try:
+        current = await collector.report(SimpleNamespace(names=selection['batchPaths']), config)
+    except (OSError, ValueError, KeyError):
+        return None
+    if (current != selection or policy_inputs(stage, project) != inputs
+            or active_release(manager.home).get('current') != generation):
+        return None
+    return current

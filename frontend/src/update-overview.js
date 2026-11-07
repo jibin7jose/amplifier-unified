@@ -83,12 +83,16 @@ export function updateOverview(updates={},options={},attentionItems=[]){
  const appDetail=replacement?(updates.error||updates.detail||'The installation outcome is unknown. Work remains paused until the qualified app and dependencies are verified on a new host.'):updates.pendingRestart?(updates.error||updates.detail||(restartFailed?'The app installed, but its restart did not complete. Restart Amplifier Unified manually to continue.':'The app is installed. Waiting for a healthy restarted host before resuming work.')):updates.pendingApp?updates.error||'The app passed validation and will restart when conversations, worker lanes, smart tools, and calls are idle.':app.detail;
  const notice={phase:restartFailed||updates.error||['error','interrupted'].includes(updates.phase)?'error':updates.pendingRestart||overview.active||replacement?'working':updates.phase==='installed'?'success':'neutral',
   message:updates.error||(['error','interrupted'].includes(updates.phase)?updates.detail||'The update did not finish.':overview.active||replacement||overview.pending||updates.phase==='installed'?updates.detail:'')};
- const attention=attentionItems.filter(item=>item.page==='updates'&&item.actionRequired);
+ const attention=attentionItems.filter(item=>item.id==='updates:current'&&item.actionRequired);
  const result={...overview,attention,application:{state:appState,label:appLabels[appState]||appState,detail:appDetail},notice};
- // A current operation (including an uncertain restart) has its own result.
- // Older unresolved episodes remain visible below, but cannot overwrite it.
- if(!overview.failed&&!overview.busy&&attention.length){
-  return {...result,title:attention[0].title,detail:attention[0].detail,tone:'error',busy:false,processing:false};
+ // The bundled host owns current health. Historical receipts and read badges
+ // cannot override it or independently classify the installation.
+ const current=updates.currentStatus;
+ if(current&&(!overview.active&&!overview.pending||current.actionRequired)){
+  const tone={current:'ready',working:'working',waiting:'working',retrying:'working',
+   available:'available',protected:'error','action-required':'error',unverified:'error',unchecked:'neutral'}[current.status]||'neutral';
+  return {...result,title:current.title,detail:current.detail,tone,current,
+   failed:!!current.actionRequired,busy:overview.busy,processing:!current.actionRequired&&['working','retrying'].includes(current.status)};
  }
  if(overview.tone==='working'&&overview.currentProgress&&!updates.initialPreparation){
   return {...result,title:'Finishing your update',detail:'We’re preparing and checking the updated components. This continues automatically.'};

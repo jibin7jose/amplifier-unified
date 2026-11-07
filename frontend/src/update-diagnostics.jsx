@@ -17,7 +17,8 @@ export function diagnosticReceipt(diagnostics,reconciliation){
  };
  const verified=reconciliation?Object.fromEntries(['attemptId','version','revision','verifiedAt'].filter(key=>reconciliation[key]!==undefined).map(key=>[key,reconciliation[key]])):undefined;
  const failureDispositions=(diagnostics.failureDispositions||[]).slice(-20).map(row=>({id:row.id,at:row.at,target:row.target,occurrence:row.occurrence,occurrences:row.occurrences,status:'acknowledged-uncertainty',recoveryVerified:false,firstFailure:clean(row.firstFailure),latestFailure:clean(row.latestFailure)}));
- return JSON.stringify({attemptId:diagnostics.attemptId,lastFailure:clean(diagnostics.lastFailure),reconciliation:verified,events:(diagnostics.events||[]).slice(-50).map(clean),failureDispositions},null,2);
+ const previousAttempts=Object.values(diagnostics.activeFailures||{}).map(group=>({first:clean(group.first),latest:clean(group.latest),occurrences:group.occurrences}));
+ return JSON.stringify({attemptId:diagnostics.attemptId,lastFailure:clean(diagnostics.lastFailure),reconciliation:verified,events:(diagnostics.events||[]).slice(-50).map(clean),previousAttempts,failureDispositions},null,2);
 }
 export function reconciledFailure(updates){
  const receipt=updates.reconciliation,failure=updates.diagnostics?.lastFailure;
@@ -55,15 +56,18 @@ export function UpdateIssueSummary({state}){
 }
 export function UpdateDiagnostics({state,act}){
  const updates=state.updates||{},diagnostics=updates.diagnostics||{},failure=diagnostics.lastFailure,events=diagnostics.events||[];
- if(!events.length&&!failure)return null;
+ const history=Object.values(diagnostics.activeFailures||{});
+ if(!events.length&&!failure&&!history.length)return null;
  const expanded=!!state.view?.maintenanceDraft?.updateDiagnosticsExpanded;
  const selected=events.filter(event=>event.attemptId===diagnostics.attemptId);
  const rows=selected.filter(event=>event.status!=='started'||!selected.some(later=>later.commandId&&later.commandId===event.commandId&&later.status!=='started'));
- const resolved=reconciledFailure(updates);
+ const resolved=reconciledFailure(updates),historyOnly=updates.currentStatus?.status==='current';
  const firstFailure=events.find(event=>event.attemptId===(failure?.attemptId||diagnostics.attemptId)&&failedStatuses.includes(event.status))||failure;
  const FailureIcon=resolved?Check:AlertCircle;
  return <div className="a-update-diagnostics" data-part="update-diagnostics">
-  {failure&&<div className={'a-update-failure'+(resolved?' resolved':'')} role="status"><FailureIcon aria-hidden="true"/><div><strong>{resolved?'Previous update issue resolved':'Last update issue'}: {label(failure.phase)}</strong><p>{resolved?'The current installation is verified healthy. The original failure remains in the receipt for reference.':facts(failure)||'The phase did not finish. Review the receipt before retrying.'}</p><span className="a-caption">Attempt <code>{failure.attemptId||'Not recorded'}</code></span></div></div>}
+  {failure?.attemptId&&failure.attemptId!==diagnostics.attemptId&&['checking','staging','validating','activating'].includes(updates.phase)&&<p className="a-caption">This is a different update attempt. The earlier failure remains in diagnostic history.</p>}
+  {!!history.length&&<details data-part="update-attempt-history"><summary>Previous failed attempts ({history.reduce((sum,row)=>sum+row.occurrences,0)})</summary><p className="a-caption">These are historical outcomes, not the current update status. No earlier attempt is rewritten as successful.</p><ul>{history.map(row=><li key={row.id}><strong>{label(row.latest?.phase)}</strong><p>{facts(row.latest||{})}</p><span className="a-caption">{row.occurrences} occurrence{row.occurrences===1?'':'s'} · {new Date((row.latest?.at||0)*1000).toLocaleString()}</span></li>)}</ul></details>}
+  {failure&&!historyOnly&&<div className={'a-update-failure'+(resolved?' resolved':'')} role="status"><FailureIcon aria-hidden="true"/><div><strong>{resolved?'Previous update issue resolved':'Last update issue'}: {label(failure.phase)}</strong><p>{resolved?'The current installation is verified healthy. The original failure remains in the receipt for reference.':facts(failure)||'The phase did not finish. Review the receipt before retrying.'}</p><span className="a-caption">Attempt <code>{failure.attemptId||'Not recorded'}</code></span></div></div>}
   <button type="button" className="a-link a-update-diagnostics-toggle" data-action="view.update" aria-expanded={expanded} onClick={()=>act('view.update',{patch:{maintenanceDraft:{...state.view?.maintenanceDraft,updateDiagnosticsExpanded:!expanded}}})}>{expanded?<ChevronDown/>:<ChevronRight/>}{expanded?'Hide update details':'View update details'}</button>
   {expanded&&<div className="a-update-diagnostic-details">
    {firstFailure&&firstFailure.id!==failure?.id&&<p className="a-caption">{resolved?'First historical issue':'First recorded issue'}: {label(firstFailure.phase)} · {facts(firstFailure)}</p>}

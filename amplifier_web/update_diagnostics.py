@@ -205,79 +205,11 @@ class UpdateDiagnostics:
             if failure and not recovered:
                 self._track_failure(failure)
         self._pending_failure = None
-        self.reconcile_runtime()
-
-    def reconcile_runtime(self):
-        """Settle dependency failures from an already qualified, active generation.
-
-        Repository labels are not package identities. Use the installed graph,
-        complete batch scope and exact activation receipt, including on reload;
-        checking for updates or reusing a catalog-only runtime proves none of this.
-        """
-        active = self.state.get('activeFailures', {})
-        if not active:
-            return
-        from .updates import active_release
-        try:
-            pointer = active_release(self.manager.directory.parent)
-            generation = pointer.get('current')
-            if not generation:
-                return
-            batch = None
-            for candidate in reversed(self.state.get('completedBatches', [])):
-                if candidate.get('kind') != 'ecosystem' or candidate.get('phase') != 'ecosystem-activation':
-                    continue
-                revision = candidate.get('revision')
-                if revision is None:  # Older batches retained identity in their event.
-                    revision = next((row.get('revision') for row in self.state['events']
-                        if row.get('kind') == 'ecosystem' and row.get('phase') == 'ecosystem-activation'
-                        and row.get('status') == 'succeeded' and row.get('attemptId') == candidate.get('attemptId')
-                        and row.get('at') == candidate.get('completedAt')), None)
-                if revision == generation:
-                    batch = candidate
-                    break
-            if not batch:
-                return
-            stage = self.manager.directory / 'releases' / generation
-            plan = json.loads((stage / 'plan.json').read_text())
-            marker = json.loads((stage / 'validated.json').read_text())
-            if (plan.get('mode') != 'worker' or marker.get('generationSchema') != 1
-                    or marker.get('workerProtocol') != 1 or marker.get('updateTier') != batch.get('tier')
-                    or not (0 < batch['startedAt'] <= marker['createdAt'] <= pointer['at'] <= batch['completedAt'])):
-                return
-            installed = json.loads((stage / 'runtime-installed.json').read_text())
-            if not isinstance(installed, list) or any(not isinstance(row, dict) or not isinstance(row.get('name'), str) for row in installed):
-                return
-            packages = {row['name'] for row in installed}
-            scope = set(batch.get('components', []))
-            if not scope or len(scope) != batch.get('componentCount'):
-                return
-        except (OSError, ValueError, TypeError, KeyError, AttributeError):
-            return  # Missing or uncertain proof retains the original failure.
-        recovered = {}
-        for key, group in active.items():
-            failure = group['latest']
-            package = failure.get('package') or failure.get('probe', {}).get('package')
-            reason = failure.get('reason') or failure.get('probe', {}).get('reason')
-            prior_scope = set(group.get('components', []))
-            if (group['kind'] == 'ecosystem' and group.get('tier') == batch.get('tier')
-                    and reason in RUNTIME_SOURCE_REASONS and package in packages
-                    and prior_scope and len(prior_scope) == group.get('componentCount') and prior_scope <= scope
-                    and failure.get('id') and 0 < failure.get('at', 0) < batch['startedAt']):
-                recovered[key] = {'firstFailure': group.get('first', failure), 'latestFailure': failure}
-        if not recovered:
-            return
-        receipt = {'id': uuid.uuid4().hex, 'at': time.time(), 'kind': 'ecosystem',
-                   'phase': 'ecosystem-reconcile', 'status': 'succeeded',
-                   'attemptId': batch['attemptId'], 'revision': generation,
-                   'recoveries': list(recovered.values())}
-        # Preserve original occurrences in the existing journal, not a new
-        # status registry or an invented user acknowledgement of uncertainty.
-        self.state['events'] = (self.state['events'] + [receipt])[-50:]
-        self.state['latest'] = receipt
-        for key in recovered:
-            del active[key]
-        self._retain(receipt)
+        from .update_health import retain_preparation
+        retain_preparation(self.state)
+        # Legacy activeFailures is retained diagnostic history, not another
+        # current-health authority. UpdateManager projects verified current
+        # desired/active state without rewriting earlier attempt outcomes.
 
     def _track_failure(self, event):
         phase = event.get('phase', '')
@@ -326,8 +258,7 @@ class UpdateDiagnostics:
     def _settle_failure(self, phase):
         # Preparation, accepted restart, checks, skips and partial installs are
         # not verified recovery. These completion events already have owner guards.
-        kind = {'ecosystem-activation': 'ecosystem', 'ecosystem-rollback': 'ecosystem',
-                'restart-ack': 'application', 'restart-reconcile': 'application',
+        kind = {'restart-ack': 'application', 'restart-reconcile': 'application',
                 'restart-superseded': 'application'}.get(phase)
         if not kind:
             return
@@ -407,6 +338,8 @@ class UpdateDiagnostics:
         return result
 
     def begin(self,kind,revision=None,attempt_id=None,*,tier=None,components=(),application_extras=None):
+        from .update_health import retain_preparation
+        retain_preparation(self.state)
         self._pending_failure = None
         previous_revision = self.state.get('revision')
         identity=attempt_id if isinstance(attempt_id,str) and re.fullmatch(r'[a-f0-9]{32}',attempt_id) else uuid.uuid4().hex
@@ -542,8 +475,6 @@ class UpdateDiagnostics:
         elif status == 'succeeded':
             self._settle_failure(phase)
         self._retain(event)
-        if phase == 'ecosystem-activation' and status == 'succeeded':
-            self.reconcile_runtime()
         return event
 
     def _retain(self, event):

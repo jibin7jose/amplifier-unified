@@ -561,14 +561,16 @@ test('authored constraint names the source check without claiming local edits',(
 });
 
 
-test('unresolved component attention opens details consistently without downgrading the installed app',()=>{
- const initial=state({phase:'checked',sequence:{stage:'complete'}});
- initial.attention={items:[{id:'updates:failure:old',page:'updates',actionRequired:true,read:true,
-  title:'Component update needs attention',detail:'A saved component failure is unresolved.'}]};
+test('current component status opens details without treating historical failures as health',()=>{
+ const initial=state({phase:'checked',sequence:{stage:'complete'},currentStatus:{
+  status:'protected',title:'Component source needs review',detail:'Current source conflict.',actionRequired:true,action:'sources'}});
+ initial.attention={items:[{id:'updates:current',page:'updates',actionRequired:true,read:true,
+  title:'Component source needs review',detail:'Current source conflict.'}]};
  const html=renderToStaticMarkup(React.createElement(UpdateSettings,{state:initial,act:()=>{}}));
  assert.match(html,/data-part="ecosystem-update-details" open=""/);
  assert.match(html,/Advanced details · review issue/);
- assert.match(html,/Component update needs attention/);
+ assert.match(html,/Component source needs review/);
+ assert.match(html,/Review source details/);
  assert.match(html,/Latest release installed/);
  assert.doesNotMatch(html,/You’re up to date|Ready for new work/);
 });
