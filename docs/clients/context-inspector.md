@@ -14,6 +14,37 @@ master/detail split at intermediate widths, and a bounded navigation column with
 an expanding reader above 1100px. Resizing keeps the selected request, category,
 item and text page mounted, with no additional inspection reads.
 
+The request selector and compact usage summary remain above the explorer.
+On desktop, the item list and the reader each own the remaining pane height and
+their own wheel/keyboard scroll. A long list cannot move a short reader out of
+view or create an outer blank runway. Captured text has no nested fixed-height
+scroll box. Narrow panes show either the list or the reader, with explicit
+Back to items and restored item focus. A single-page item has no dead pagination.
+
+Known exact model windows have a labeled reported-input/output-reserve comparison;
+it is not a provider-wire count or fit guarantee. Unknown windows use a distinct
+unknown-denominator summary, never a filled bar or inferred percentage. Detailed
+source/reason evidence and composition are disclosed on demand; identical missing
+causes are grouped without dropping their field names. Unknown, not captured,
+not reported and explicitly automatic evidence retain their distinct meanings.
+The native Canvas header stays one row at narrow widths. Its named document,
+focus and close controls remain reachable; the selected tab is revealed on resize.
+On narrow panes individual tab closing is in Open documents, not a duplicate
+button that consumes the selected title's width. Other documents keep the same
+Canvas selection and dirty-view guards.
+The inspector places the shell-owned Details toggle beside its request selector,
+instead of spending a second empty toolbar row on it; the shell still owns
+Details focus, narrow overlay inertness and dismissal.
+Below 650px, selecting an item condenses the request and capacity summary into
+one expandable row. It keeps reported input and known/unknown model window visible;
+expanding restores the selector, full capacity visualization and evidence.
+Secondary item measurements disclose separately. Back restores the full overview,
+while width changes and these disclosures retain the selected request and text page.
+If reported input plus the captured reserve exceeds the known model window,
+the comparison names the excess in text and its accessible description rather
+than reporting zero remaining. Busy passive refresh retains keyboard focus on
+the request controls and suppresses duplicate requests.
+
 Item headings show a short source name. A compact label helps distinguish
 same-name sources; the expandable provenance section retains the complete
 captured label and a named Copy control. Full paths do not dominate the reader.
@@ -140,3 +171,10 @@ entry/drilldown/reader, pagination, unknown/no-record/empty states, errors, cros
 late responses, keyboard, actual Canvas divider/focus transitions, retained other
 documents and 320/390px and full-width light/dark layouts. Source inspection and scripted
 checks are not live-provider or released-package qualification.
+
+`frontend/tests/context-inspector-layout-browser.mjs` covers the 60-source
+long-list/short-reader regression and paged long readers at actual wheel and
+keyboard start/middle/end positions. It records whole viewport images and DOM
+scroll geometry, narrow native-divider and full-window transitions, 320/390px
+navigation, other Canvas documents and known/unknown window states. Pixel review
+must identify the images and observer separately from these functional checks.

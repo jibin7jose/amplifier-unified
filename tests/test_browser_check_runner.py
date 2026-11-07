@@ -330,7 +330,8 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     assert [row for row in rows if row['id'] in recovery_ids] == recovery_additions
     original = [row for row in historical_rows if row['id'] not in additions and row['id'] not in recovery_ids]
     assert len(original) == 65 and len(historical_rows) == 132
-    assert len(rows) == 138  # Six independently validated owners are additive.
+    # Preserve the preceding total after validating the exact new layout owner.
+    assert len([row for row in rows if row['id'] != 'context-inspector-layout']) == 138
     # Existing scenarios retain their commands; only evidence ownership changes.
     evidence = {
         'bundle': {'AMPLIFIER_BUNDLE_SCREENSHOT': '{root}/output/browser-checks/bundle-mobile.png'},
@@ -672,24 +673,28 @@ def test_immediate_direction_browser_owner_rejects_invalid_coverage(fault):
 
 def context_inspector_browser_addition(rows, readiness_scripts):
     """New feature owner; preserve every frozen preceding coverage count."""
-    script = 'tests/context-inspector-browser.mjs'
-    assert [row for row in rows if script in row['command']] == [{
-        'id': 'context-inspector', 'command': ['node', script],
-        'env': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/context-inspector'},
-    }], f'{script}: expected one exact ordinary source owner'
-    assert script not in readiness_scripts, f'{script}: duplicate readiness owner'
-    return {script}
+    scripts = set()
+    for name in ('context-inspector', 'context-inspector-layout'):
+        script = f'tests/{name}-browser.mjs'
+        assert [row for row in rows if script in row['command']] == [{
+            'id': name, 'command': ['node', script],
+            'env': {'AMPLIFIER_TEST_ARTIFACTS': f'{{root}}/output/browser-checks/{name}'},
+        }], f'{script}: expected one exact ordinary source owner'
+        assert script not in readiness_scripts, f'{script}: duplicate readiness owner'
+        scripts.add(script)
+    return scripts
 
 
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'environment', 'readiness'])
-def test_context_inspector_browser_owner_is_distinct(fault):
+@pytest.mark.parametrize('name', ['context-inspector', 'context-inspector-layout'])
+def test_context_inspector_browser_owner_is_distinct(fault, name):
     rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
-    owner = next(row for row in rows if row['id'] == 'context-inspector')
+    owner = next(row for row in rows if row['id'] == name)
     readiness = set()
     if fault == 'missing': rows.remove(owner)
     elif fault == 'duplicate': rows.append(dict(owner))
     elif fault == 'environment': owner['env'] = {}
-    else: readiness.add('tests/context-inspector-browser.mjs')
+    else: readiness.add(f'tests/{name}-browser.mjs')
     with pytest.raises(AssertionError, match='context-inspector'):
         context_inspector_browser_addition(rows, readiness)
 

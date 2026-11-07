@@ -1,12 +1,20 @@
 import React,{createContext,useContext,useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import {hasLocalCanvasEdits} from './canvas-reload-guard.js';
+import {Info} from 'lucide-react';
 
 // Controls share one stable surface. Pinning changes its layout, never the viewers.
 export const CanvasControlsHost=createContext(undefined);
 // Primary common actions have their own stable compact row. Inline viewers keep
 // their existing controls: absence of this context is not a second toolbar.
 export const CanvasPrimaryActionsHost=createContext(undefined);
+// A live tool may place the canonical Details toggle in its own compact header.
+// The shell still owns focus, overlay state and dismissal.
+export const CanvasDetailsAction=createContext(null);
+export function CanvasDetailsButton(){
+ const action=useContext(CanvasDetailsAction);
+ return action?<button type="button" className="a-icon" aria-label="Canvas details" title="Canvas details" aria-expanded={action.expanded} aria-controls="canvas-options" onClick={action.toggle}><Info/></button>:null;
+}
 const CanvasVersionLoadHost=createContext(null);
 export function CanvasVersionLoadProvider({children,view}){
  const state=useState(null),pending=useRef(false);
