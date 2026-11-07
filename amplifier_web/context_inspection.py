@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 
 CATEGORIES = (('instructions', 'Instructions & files'), ('conversation', 'Conversation & results'),
               ('summary', 'Compacted summary'), ('reminders', 'Reminders'), ('tools', 'Tools & media'))
@@ -237,57 +238,102 @@ def budget_public(decision):
     return result
 
 
-def request_fingerprint(request, options):
-    """Ephemeral exact binding for small requests; no fingerprint is published.
+@dataclass(frozen=True)
+class RequestFingerprint:
+    """Private equality witness plus fixed, content-free failure evidence."""
+    signature: str | None
+    status: str
+    reason: str | None = None
+
+    def public(self):
+        return {'status': self.status, 'reason': self.reason}
+
+
+class _FingerprintUnavailable(Exception):
+    def __init__(self, status, reason):
+        self.status, self.reason = status, reason
+
+
+def fingerprint_request(request, options, *, work=None):
+    """Complete bounded binding, never a digest of an inspected prefix.
 
     Large/opaque requests simply lose optional pre-send count attribution.
-    This bound avoids a new full encoding of unlimited media to fill the UI.
+    Only fixed failure codes can be published; no content, keys or hash escape.
     """
     digest = hashlib.sha256()
     remaining, nodes = MAX_TEXT_CHARS, 20_000
+    work = work if work is not None else {}
+    work.update(nodes=0, encodedCharacters=0)
+
+    def unavailable(status, reason):
+        raise _FingerprintUnavailable(status, reason)
+
     def visit(value, depth=0):
         nonlocal remaining, nodes
         nodes -= 1
-        if nodes < 0 or depth > 24:
-            raise ValueError('binding allowance')
+        if nodes < 0:
+            unavailable('bounded', 'node_limit')
+        work['nodes'] += 1
+        if depth > 24:
+            unavailable('bounded', 'depth_limit')
         fields = getattr(type(value), 'model_fields', None)
         if isinstance(fields, dict):
             if getattr(type(value), 'model_computed_fields', None):
-                raise ValueError('computed binding fields')
+                unavailable('unsupported', 'computed_fields')
+            if len(fields) > 4096:
+                unavailable('bounded', 'container_limit')
             digest.update(b'm')
             for name in sorted(fields):
                 visit(name, depth + 1)
                 visit(getattr(value, name), depth + 1)
             visit(getattr(value, 'model_extra', None), depth + 1)
         elif isinstance(value, dict):
-            if len(value) > 4096 or any(not isinstance(k, str) for k in value):
-                raise ValueError('unsupported binding')
+            if len(value) > 4096:
+                unavailable('bounded', 'container_limit')
+            if any(not isinstance(k, str) for k in value):
+                unavailable('unsupported', 'mapping_key')
             digest.update(b'd')
             for name in sorted(value):
                 visit(name, depth + 1)
                 visit(value[name], depth + 1)
         elif isinstance(value, (list, tuple)):
             if len(value) > 4096:
-                raise ValueError('binding allowance')
+                unavailable('bounded', 'container_limit')
             digest.update(b'l')
             for child in value:
                 visit(child, depth + 1)
         elif value is None or type(value) in (str, bool, int, float):
             if isinstance(value, str) and len(value) > remaining:
-                raise ValueError('binding allowance')
+                unavailable('bounded', 'character_limit')
             encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
             remaining -= len(encoded)
             if remaining < 0:
-                raise ValueError('binding allowance')
+                unavailable('bounded', 'character_limit')
+            work['encodedCharacters'] += len(encoded)
             digest.update(encoded.encode())
         else:
-            raise ValueError('unsupported binding')
+            unavailable('unsupported', 'value_type')
         digest.update(b';')
-    options = options or {}
-    options = {**(options.get('request_options') or {}), **{k: v for k, v in options.items() if k not in {'context_estimate', 'request_options'}}}
     try:
+        options = options or {}
+        if not isinstance(options, dict):
+            unavailable('unsupported', 'options_type')
+        nested = options.get('request_options') or {}
+        if not isinstance(nested, dict):
+            unavailable('unsupported', 'options_type')
+        if len(options) > 4096 or len(nested) > 4096:
+            unavailable('bounded', 'container_limit')
+        options = {**nested, **{k: v for k, v in options.items()
+                               if k not in {'context_estimate', 'request_options'}}}
         visit(request)
         visit(options)
+    except _FingerprintUnavailable as error:
+        return RequestFingerprint(None, error.status, error.reason)
     except (ValueError, TypeError):
-        return None
-    return digest.hexdigest()
+        return RequestFingerprint(None, 'unsupported', 'encoding')
+    return RequestFingerprint(digest.hexdigest(), 'complete')
+
+
+def request_fingerprint(request, options):
+    """Compatibility for internal equality callers; None is never equality."""
+    return fingerprint_request(request, options).signature

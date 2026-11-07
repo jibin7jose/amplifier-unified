@@ -343,7 +343,7 @@ async def test_runtime_attribute_budget_and_unavailable_reasons_are_frozen(tmp_p
     assert header['limits']['compactionThreshold'] == 4900
     assert header['limits']['reservedOutput'] == 321
     assert header['budgetStatus'] == 'not_captured'
-    assert 'No matching' in header['limitEvidence']['providerCount']['reason']
+    assert 'No preflight observation' in header['limitEvidence']['providerCount']['reason']
     context.max_tokens = 9999
     assert observer.store.read()['selected']['limits'] == header['limits']
 
@@ -387,7 +387,7 @@ async def test_copied_request_receipt_never_crosses_provider_task_or_options(tmp
     assert observer.store.read()['selected']['budgetStatus'] == 'not_captured'
     await provider.complete(value.model_copy(deep=True), temperature=.5)
     await observer.drain()
-    assert observer.store.read()['selected']['budgetStatus'] == 'not_captured'
+    assert observer.store.read()['selected']['budgetStatus'] == 'unmatched_preflight'
     await provider.complete(value.model_copy(deep=True))
     await observer.drain()
     assert observer.store.read()['selected']['budgetStatus'] == 'not_captured', 'unmatched dispatch retires old preflight'
