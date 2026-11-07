@@ -43,6 +43,11 @@ saved defaults, not a claim that every mounted tool has that access. Shell
 policies are separate. The existing **Project file access** form is shared by
 chats in that workspace and is not reset by this control.
 
+Execution wrappers must forward hook-owned tool policy to the actual executing
+tool. Reading a delegate's attributes while shadowing policy writes on the
+wrapper leaves approvals disconnected. Work keeps its own execution identity
+and checks; tool approval callbacks retain their ordinary allow/deny behavior.
+
 Save and reset both require `file_access` at `session` scope for agents, including
 when reset restores wider inherited access. Direct user controls use the same
 action. Native children cannot administer the root or bypass inherited ceilings.

@@ -128,6 +128,13 @@ async def install_app_access(coordinator, bridge):
                 self._work_check = value
             def __getattr__(self, name):
                 return getattr(self.original, name)
+            def __setattr__(self, name, value):
+                if name in ('original', 'mounted_name', '_work_check', '_work_delivery_guard'):
+                    object.__setattr__(self, name, value)
+                else:
+                    # Hooks configure the mounted tool. Keep their policy on
+                    # the delegate that executes, not shadowed on this wrapper.
+                    setattr(self.original, name, value)
             async def execute(self, arguments):
                 from .performance_diagnostics import tool_scope
                 with tool_scope(coordinator, self.mounted_name) as timing:
