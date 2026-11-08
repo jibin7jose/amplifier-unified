@@ -44,7 +44,7 @@ class ContextInspection:
         self.budgets = (self.budgets + [(reference, fingerprint, budget_public(decision),
                                        provider, weakref.ref(asyncio.current_task()))])[-4:]
 
-    async def begin(self, row, request, provider, options, provider_defaults=None, captured_budget=None,
+    def begin(self, row, request, provider, options, provider_defaults=None, captured_budget=None,
                     capture_diagnostic=None):
         config = preferences(self.home)
         metadata, bodies = provider_policy(provider)
@@ -202,6 +202,21 @@ class ContextInspection:
     async def drain(self):
         if self.pending:
             await asyncio.gather(*(asyncio.shield(task) for task in tuple(self.pending.values())), return_exceptions=True)
+
+
+def safe_begin(observer, *args):
+    """The bundled begin boundary cannot suspend after final validation."""
+    if observer is None:
+        return
+    try:
+        method = observer.begin
+        if inspect.iscoroutinefunction(method):
+            return  # Unsupported observer, never open an execution validation gap.
+        result = method(*args)
+        if inspect.iscoroutine(result):
+            result.close()
+    except Exception:
+        return
 
 
 async def safe_observe(observer, method, *args):

@@ -171,6 +171,18 @@ class ExecutionEvents:
         return self.admission_inputs.get(sid, self.admission_inputs.get(self.root_id, self.turn_id))
 
     async def _begin_provider_call(self, sid, provider, request, *, label=None, run_id=None, request_options=None):
+        from . import request_projection
+        projection_guard = request_projection.claim(self, provider, request)
+        try:
+            return await self._prepare_provider_call(sid, provider, request,
+                label=label, run_id=run_id, request_options=request_options,
+                projection_guard=projection_guard)
+        finally:
+            request_projection.release(projection_guard)
+
+    async def _prepare_provider_call(self, sid, provider, request, *, label=None,
+                                     run_id=None, request_options=None, projection_guard=None):
+        from . import request_projection
         parent,turn = self.parent(sid)
         admission_input = self.admission_input(sid)
         purpose=CALL_PURPOSE.get()
@@ -202,15 +214,22 @@ class ExecutionEvents:
         if active and not purpose:
             delivery, attempt = active
             delivery.admit_work(attempt, row, guarded=self.admission_guard is not None)
-        from .context_inspection_adapter import safe_observe
+        try:
+            request_projection.validate(projection_guard, request, request_options or {})
+        except Exception as error:
+            from .session_health import exception_details
+            self.publish({**row, 'phase': 'error', 'endedAt': time.time(),
+                          'failure': exception_details(error)})
+            raise
+        from .context_inspection_adapter import safe_begin
         # Synchronous passive validation after the existing awaits. No guard,
         # quota, Work join, refit or provider-entry authority is changed here.
         observer = self.context_inspectors.get(sid)
         captured_budget = (observe(consume, capture, self, row, provider, request, request_options)
                            if observer is not None else None)
         diagnostic = observe(public_trace, trace, capture, captured_budget)
-        await safe_observe(observer, 'begin', row, request, provider, request_options,
-                           defaults, captured_budget, diagnostic)
+        safe_begin(observer, row, request, provider, request_options,
+                   defaults, captured_budget, diagnostic)
         return row
 
     async def provider_call(self, sid, provider, request, invoke, *, label=None, run_id=None, request_options=None):

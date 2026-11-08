@@ -182,6 +182,7 @@ class SurfaceProvider:
     """Same augmentation for budget checks, complete and streaming protocols."""
     def __init__(self, original, delivery, *, coordinator=None):
         self.original, self.delivery = original, delivery
+        self.coordinator = coordinator
         self.prepared = []
         self._capture_tickets = []
         self.refused = []
@@ -192,23 +193,36 @@ class SurfaceProvider:
             self._prepare = time_preparation(coordinator, 'surface.prepare', self._prepare)
             self.refit_request = time_preparation(coordinator, 'provider.refit', self.refit_request)
 
-    async def _prepare(self, request, commit=False, *, explicit_budget=False, refit_binding=None):
+    async def _prepare(self, request, commit=False, *, explicit_budget=False, refit_binding=None,
+                       projection_out=None):
         entry = next((row for row in self.prepared if row[0] is request), None)
         refused = any(row[0] is request for row in self.refused) or (entry is None and self.refusal_overflow)
         if refused and not explicit_budget:
             raise ValueError("The request was refused before transport; a new explicit budget/refit is required.")
         if entry is None:
+            projection_validate = None
+            project = (self.coordinator.get_capability('computer_use.prepare_request')
+                       if self.coordinator is not None else None)
+            prepared_input = request
+            if callable(project):
+                prepared_input, source_validate = project(request)
+                if source_validate is not None:
+                    def projection_validate():
+                        if self.coordinator.get_capability('computer_use.prepare_request') is not project:
+                            raise ValueError('Computer projection owner changed')
+                        source_validate()
             refit = getattr(self.delivery, 'prepare_refit', None)
-            cached = (await refit(request, self.original, binding=refit_binding)
+            cached = (await refit(prepared_input, self.original, binding=refit_binding)
                       if refit_binding is not None and callable(refit)
-                      else await self.delivery.prepare(request, self.original))
+                      else await self.delivery.prepare(prepared_input, self.original))
             if refused and hasattr(self.delivery, "revalidate"):
                 # Stabilize revoked visual/context warnings BEFORE the new
                 # measurement. Never replace fitted bytes during transport.
                 cached = await self.delivery.revalidate(cached)
             boundary = hasattr(self.delivery, "finalize_work")
-            entry = (request, cached, cached.model_dump_json() if boundary else None,
-                     self.delivery.work_request(cached) if boundary else None)
+            entry = (request, cached, cached.model_dump_json() if boundary or projection_validate is not None else None,
+                     self.delivery.work_request(cached) if boundary else None,
+                     projection_validate)
             if refit_binding is not None:
                 from .request_refit import RequestFitChanged
                 self.delivery.check_execution_scope(refit_binding['executionScope'])
@@ -226,12 +240,14 @@ class SurfaceProvider:
                     current['assuranceUnavailable'] = True
             self.prepared = (self.prepared + [entry])[-4:]
             self.refused = [row for row in self.refused if row[0] is not request]
-        _, cached, fitted, binding = entry
+        _, cached, fitted, binding = entry[:4]
+        if projection_out is not None:
+            projection_out[:] = [fitted, entry[4] if len(entry) > 4 else None]
         if commit:
             try:
                 if hasattr(self.delivery, "revalidate"):
                     cached = await self.delivery.revalidate(cached)
-                if fitted is not None:
+                if fitted is not None and hasattr(self.delivery, "finalize_work"):
                     cached = await self.delivery.finalize_work(cached, fitted=fitted, binding=binding)
             except Exception as error:
                 # Only the pretransport checks are covered. A sent/unknown
@@ -251,7 +267,8 @@ class SurfaceProvider:
                            and entry[1].model_dump_json() == fitted else None)
                 if reduced is None and hasattr(self.delivery, "discard_work"):
                     self.delivery.discard_work(binding)
-                self.refused.append((request, error, binding, reduced))
+                self.refused.append((request, error, binding, reduced,
+                                     entry[4] if len(entry) > 4 else None))
                 if len(self.refused) > 16:
                     self.refused.pop(0)
                     self.refusal_overflow = True
@@ -298,7 +315,8 @@ class SurfaceProvider:
             self.delivery.check_execution_scope(binding['executionScope'])
             cached = row[3]
             if cached is not None and self.delivery.work_request(cached) is binding:
-                self.prepared = (self.prepared + [(request, cached, cached.model_dump_json(), binding)])[-4:]
+                self.prepared = (self.prepared + [(request, cached, cached.model_dump_json(), binding,
+                                                  row[4] if len(row) > 4 else None)])[-4:]
                 self.refused = [item for item in self.refused if item[0] is not request]
             else:
                 cached = await self._prepare(request, explicit_budget=True, refit_binding=binding)
@@ -322,8 +340,9 @@ class SurfaceProvider:
                 from . import provider_capture as capture
                 ticket = capture.observe(capture.take, self, request)
                 trace = capture.observe(capture.describe_take, self, request, ticket)
+                projection = []
                 try:
-                    request = await self._prepare(request, commit=True)
+                    request = await self._prepare(request, commit=True, projection_out=projection)
                 except BaseException:
                     if ticket is not None:ticket.close()
                     raise
@@ -338,7 +357,8 @@ class SurfaceProvider:
                     # Never carry a ContextVar token across an outward yield.
                     token = WORK_ATTEMPT.set((self.delivery, attempt) if attempt else None)
                     try:
-                        with capture.dispatch(ticket, self.original, request, trace):
+                        from .request_projection import dispatch as projection_dispatch
+                        with projection_dispatch(self.original, request, *projection, kwargs), capture.dispatch(ticket, self.original, request, trace):
                             return await operation()
                     finally:
                         WORK_ATTEMPT.reset(token)
@@ -396,8 +416,9 @@ class SurfaceProvider:
         from . import provider_capture as capture
         ticket = capture.observe(capture.take, self, request)
         trace = capture.observe(capture.describe_take, self, request, ticket)
+        projection = []
         try:
-            request = await self._prepare(request, commit=True)
+            request = await self._prepare(request, commit=True, projection_out=projection)
         except BaseException:
             if ticket is not None:ticket.close()
             raise
@@ -409,7 +430,8 @@ class SurfaceProvider:
             raise
         token = WORK_ATTEMPT.set((self.delivery, attempt) if attempt else None)
         try:
-            with capture.dispatch(ticket, self.original, request, trace):
+            from .request_projection import dispatch as projection_dispatch
+            with projection_dispatch(self.original, request, *projection, kwargs), capture.dispatch(ticket, self.original, request, trace):
                 response = await self.original.complete(request, **kwargs)
             if hasattr(self.delivery, 'finish_work'):
                 self.delivery.finish_work(attempt, response)

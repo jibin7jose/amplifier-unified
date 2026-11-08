@@ -114,6 +114,51 @@ can explain a future capture. Existing captures are never backfilled.
 
 ### Passive final-fit budget attribution
 
+Computer screenshot projection is prepared before `SurfaceProvider` calls its
+existing delivery/fitting owner. When the independently released hook advertises
+`computer_use.prepare_request`, the host retains its image-source validator with
+the bounded prepared record. The hook's no-op projection preserves object identity;
+already-projected blocks pass unchanged through its ordinary provider wrapper.
+Ordinary CLI/Agent clients do not need the Unified integration.
+
+Delivery requires both the host integration and the selected component graph.
+The app lock records accepted OpenAI `c8104f327b9286bff49c589f804969a5a9d0ba9d`
+and computer-use `951181f829cd6b3de7653a31bf8826f8a0b76456` for its affected
+development/optional dependencies. The computer hook also comes from the selected
+Foundation behavior/cache; updating the app's desktop-tool package alone does not
+replace that hook. Existing qualified workers preserve their installed graph.
+After app adoption, the normal included-component update must qualify and activate
+the selected provider and hook/tool revisions before claiming these fixes are
+loaded. Explicit pins, forks and excluded behaviors remain protected. Verify
+installed graph/source receipts and then a naturally occurring call; an app version
+or a moving `main` declaration is not loaded-dependency evidence.
+
+Image validation is **execution evidence, not optional diagnostic evidence**. It
+runs synchronously after metadata/admission and before provider entry, including
+when Work, the inspector or a numeric ticket is absent. The current registered
+projection owner, original capture/tool/file identity and exact fitted request and
+options must still match. Refusal records the admitted call's error and never
+silently retries or substitutes pixels. Its one complete current encoding is shared
+with numeric attribution when present. Existing no-image diagnostic mismatches
+still suppress attribution only. No skip registry or public request token is added.
+Normal no-Work provider recovery revalidates the same prepared image source at
+each real entry; it cannot reuse an exhausted numeric ticket. Concurrent/nested
+admission cannot borrow the in-progress entry. Closing the dispatch clears its
+request, provider, validator and fitted-value references, including inherited
+contexts. The bundled inspector's `begin` callback is synchronous; an unexpected
+async replacement is omitted, not awaited after final validation. Storage remains
+background work and terminal persistence still drains its exact pending write.
+
+The explicit cross-repository fixture is
+`tests/fixtures/computer_projection_worker.py`. It requires the reviewed
+computer-use hook/tool, Live/Boundary modules and OpenAI SDK/provider in an isolated
+prepared environment. Run with `PYTHONPATH=tests:$PYTHONPATH python -m pytest
+tests/fixtures/computer_projection_worker.py`; missing prerequisites fail rather
+than skip. It generates PNGs through the canonical tool with a fake backend,
+intercepts HTTP and forbids sockets. This is candidate-graph proof, not a live
+desktop/vendor claim or permission to change installed dependencies. Ordinary
+host guard regressions remain in `tests/test_request_projection.py`.
+
 `SurfaceProvider` already owns a full fitted `ChatRequest` serialization. Its
 private capture ticket shares that exact immutable string (no second prompt copy)
 with a particular budget attempt and normalized dispatch options. Original request

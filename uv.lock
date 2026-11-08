@@ -306,7 +306,7 @@ dependencies = [
 [[package]]
 name = "amplifier-module-provider-openai"
 version = "1.0.0"
-source = { git = "https://github.com/microsoft/amplifier-module-provider-openai?rev=main#de94d275d62987441c5375957e7a0102d6736941" }
+source = { git = "https://github.com/microsoft/amplifier-module-provider-openai?rev=main#c8104f327b9286bff49c589f804969a5a9d0ba9d" }
 dependencies = [
     { name = "httpx" },
     { name = "openai" },
@@ -324,7 +324,7 @@ native = [
 [[package]]
 name = "amplifier-module-tool-computer-use"
 version = "0.1.0"
-source = { git = "https://github.com/microsoft/amplifier-bundle-computer-use?subdirectory=modules%2Ftool-computer-use&rev=main#08faa0cf17876be47d7a272e702769c4702dcba5" }
+source = { git = "https://github.com/microsoft/amplifier-bundle-computer-use?subdirectory=modules%2Ftool-computer-use&rev=main#951181f829cd6b3de7653a31bf8826f8a0b76456" }
 dependencies = [
     { name = "pillow" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },

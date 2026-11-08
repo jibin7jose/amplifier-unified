@@ -401,7 +401,9 @@ def consume(value, execution, row, provider, request, options):
             # ONE complete current encoding, independent of retained candidates.
             # Exact equality to the already-owned full fitted representation,
             # never Work's pre-admission digest or an inspector prefix hash.
-            if request.model_dump_json() == ticket.fitted:
+            from .request_projection import validated_encoding
+            encoded = validated_encoding(request)
+            if (encoded if encoded is not None else request.model_dump_json()) == ticket.fitted:
                 budget = ticket.decision
                 status = 'captured' if budget else 'not_reported'
         return {'budget': budget, 'status': status, 'reason': None if budget else status}
