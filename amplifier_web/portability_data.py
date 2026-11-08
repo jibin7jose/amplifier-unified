@@ -6,7 +6,7 @@ from pathlib import Path
 import stat
 
 from amplifier_portability.capsule import validate_bytes, validate_public, _regular_bytes
-from amplifier_outputs.content import CANVAS_JSON, canvas_snapshot_bytes
+from amplifier_outputs.content import CANVAS_IMAGE, body_bytes
 from amplifier_worktrees.git import digest
 from .host.storage import SessionStore
 from .session_files import validate_id
@@ -231,10 +231,11 @@ def _validate(value):
             raise ValueError('Output lineage must remain in the transferred task')
         if row.get('body'):
             resource = value['resources'][row['body']['$resource']]
-            if row.get('bodyFormat') == CANVAS_JSON:
-                content = canvas_snapshot_bytes(resource)
-            else:
-                content = base64.b64decode(resource['data'], validate=True) if resource['encoding'] == 'base64' else resource['data'].encode()
+            content = body_bytes(resource, row.get('bodyFormat'))
+            if row.get('bodyFormat') == CANVAS_IMAGE:
+                # The encoded data URL was scanned above; its decoded bytes
+                # need the same credential check as legacy base64 resources.
+                validate_bytes(content)
             if digest(content) != row.get('sha256'):
                 raise ValueError('Output content differs from its saved evidence hash')
     if any(row['outputId'] not in output_ids for row in value['comments']):

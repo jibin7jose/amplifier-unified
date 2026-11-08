@@ -12,7 +12,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from amplifier_outputs import OutputRegistry
-from amplifier_outputs.content import CANVAS_JSON, canvas_snapshot_bytes
+from amplifier_outputs.content import CANVAS_IMAGE, CANVAS_JSON, body_bytes, canvas_snapshot_bytes
 from amplifier_outputs.git_review import anchors, snapshot as git_snapshot
 
 MAX_FILE = 8*1024*1024
@@ -109,16 +109,7 @@ class Outputs:
 
     @staticmethod
     def decode_content(record,value):
-        if record.get('bodyFormat') == CANVAS_JSON:
-            data = canvas_snapshot_bytes(value)
-        elif record.get('bodyFormat') == 'canvas-image-v1':
-            prefix = 'data:image/png;base64,'
-            content = value.get('content')
-            if not isinstance(content, str) or not content.startswith(prefix):
-                raise ValueError('Saved image source is unavailable.')
-            data = base64.b64decode(content[len(prefix):], validate=True)
-        else:
-            data=base64.b64decode(value['data'],validate=True) if value['encoding']=='base64' else value['data'].encode()
+        data = body_bytes(value, record.get('bodyFormat'))
         if hashlib.sha256(data).hexdigest()!=record['sha256']:
             raise ValueError('Saved output content no longer matches its evidence hash.')
         return data
@@ -442,7 +433,7 @@ class Outputs:
                         if value.get('bodyFormat') != CANVAS_JSON:
                             if action == 'outputs.attachImage':
                                 body = {'content': 'data:image/png;base64,' + base64.b64encode(data).decode()}
-                                value.update(bodyFormat='canvas-image-v1', canvasId=uuid.uuid4().hex)
+                                value.update(bodyFormat=CANVAS_IMAGE, canvasId=uuid.uuid4().hex)
                             else:
                                 try:body={'encoding':'utf-8','data':data.decode('utf-8')}
                                 except UnicodeDecodeError:body={'encoding':'base64','data':base64.b64encode(data).decode()}

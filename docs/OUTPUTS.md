@@ -27,6 +27,11 @@ transfer to keep working on the source, or update the destination and retry.
 Matching readers preserve the exact saved bytes and historical output-command
 receipts on transfer and return; no receipt conversion or content replay occurs.
 
+Generated PNG outputs use their existing `canvas-image-v1` resource on transfer,
+including Canvas publications, edit lineage and historical command receipts.
+The destination needs that body reader too; decoded image bytes retain the
+ordinary transfer credential scan and evidence-size limits.
+
 Validation:30 backend checks across output, resource-retention, server and canvas behavior;210 frontend checks including safe Markdown writing blocks. Actual service/Chromium validates edited writing vs original message, exact file download after source edits, real local Git review/line notes, unlink/restore/reload, mobile bounds, selected chat/draft preservation and zero model calls. This does not establish rendered document fidelity or remote provider/account acceptance.
 
 ## Explicit visual inspection
