@@ -493,8 +493,12 @@ reads remain passive and never acquire a native writer or replay work.
 
 ### Optional shared task list
 
-An explicit assignment may keep at most 128 work items in its existing canonical
-assignment receipt. The commissioning owner creates and edits unclaimed items,
+**Current implementation:** an assignment retains at most 128 work items, including
+completed and cancelled items. The accepted lifetime/paging revision below has
+not yet been implemented or qualified; it supersedes that ceiling when shipped.
+
+An explicit assignment owns its shared work items. The commissioning owner
+creates and edits unclaimed items,
 sets dependencies, cancels unfinished items, and explicitly reassigns responsibility
 to a current bound member. Bound members can read the list and atomically claim a
 ready item for themselves. A claim records responsibility, not a running process,
@@ -534,6 +538,43 @@ waits include these observations in their change token, without incrementing
 the assignment/item revision, loading transcripts or starting dormant runtimes.
 The same projection serves user and agent reads. A status observation never
 releases a claim, completes a dependency or authorizes takeover.
+
+#### Shared-task lifetime and observation revision — accepted direction
+
+An assignment can continue creating work after earlier items finish; there is no
+default lifetime task-count ceiling. Completed and cancelled items retain their
+identities, dependency meaning and reported results. This revision does not expire
+history, start workers, remove Stop or alter authorization. Existing operator
+limits and actual storage/execution failures remain explicit. `maxOpenTasks`
+continues to govern commissioned roots, not shared task declarations.
+
+`assignment.tasks.list` returns a bounded current page, defaulting to unfinished
+items, with explicit scope, coverage and continuation. Blocked, stale and
+unavailable claimed items remain unfinished. Terminal history has explicit pages;
+`assignment.tasks.read` returns the full exact item and current claim authority
+without unrelated items. Omission never means absent, finished or unowned.
+Dependencies and edits can resolve items outside the current page. Pages are
+current observations, not a frozen whole-assignment snapshot; continuation can
+progress during other work, and changed or invalid coverage is explicit.
+
+`assignment.tasks.wait` observes the requested page and visible holder activity,
+rechecking membership after a wake. It neither scans terminal history for its
+change token nor resumes work. Current assignment reads and newly accepted
+assignment-control results expose task-list/detail references instead of the
+whole board. Task mutation arguments, revision/claim fences and the exact item
+in a new task-mutation result retain their meaning.
+
+Conversion and paging never rewrite previously accepted command results or
+make retry execute work again. Historical results may retain their original
+shape; current authority still requires a current read. Conversion preserves
+task identities and leaves either the complete original or complete converted
+assignment authoritative after interruption. An older reader must refuse a
+converted assignment it cannot interpret, never treat it as an empty list.
+
+The [design and transition](../shared-task-history.md) records the accepted
+minor-release response change, reviewed consumers, matching-reader backup
+boundary and incremental implementation. These are targets, not new runtime
+behavior or qualification claims.
 
 New commissioned roots share an explicit host-owned assignment with their
 commissioning root. Existing peers and historical commissioning records are
