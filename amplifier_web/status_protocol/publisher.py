@@ -125,7 +125,9 @@ class Publisher:
                     while not self._closing and time.monotonic() < deadline:
                         self._condition.wait(timeout=max(0, deadline - time.monotonic()))
                 heartbeat = time.monotonic() >= next_heartbeat
-                ids = set(self._rows) - self._ended if heartbeat else set()
+                # Ended rows remain here only until their final write succeeds.
+                # Retry them on the existing heartbeat, never a dirty-work loop.
+                ids = set(self._rows) if heartbeat else set()
                 ids.update(self._dirty)
                 values = [(key, self._rows[key], key in self._ended) for key in ids]
                 self._dirty.clear()

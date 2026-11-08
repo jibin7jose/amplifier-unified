@@ -103,7 +103,9 @@ explicitly scoped publication does not claim all host history was inspected.
 
 Heartbeat defaults to two seconds, stale TTL to ten; each record is at most 64 KiB.
 Snapshot writes use a private temporary file and atomic replacement (0600 files,
-0700 directories on POSIX). Write errors cannot fail a model turn. A blocked
+0700 directories on POSIX). A failed final snapshot retries on the existing
+heartbeat, releasing its observation slot after a successful write. Write errors
+cannot fail a model turn. A blocked
 filesystem can make snapshots stale; shutdown waits at most two seconds for its
 daemon writer. This is local-filesystem support, not a guarantee for arbitrary
 network mounts.

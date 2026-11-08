@@ -104,6 +104,57 @@ def test_session_bound_terminal_retention_and_bounded_discovery(tmp_path):
         publisher.close()
 
 
+@pytest.mark.parametrize(('operation', 'lifecycle'), [('end', 'ended'), ('suspend', 'unobserved')])
+def test_terminal_write_retries_on_heartbeat_and_releases_capacity(tmp_path, monkeypatch, operation, lifecycle):
+    from amplifier_web.status_protocol import publisher as writer
+    original = writer.atomic
+    attempts = []
+
+    def fail_once(path, value):
+        if value['lifecycle'] == lifecycle:
+            attempts.append(time.monotonic())
+            if len(attempts) == 1:
+                raise OSError('temporary write failure')
+        return original(path, value)
+
+    monkeypatch.setattr(writer, 'atomic', fail_once)
+    directory = tmp_path/'status'
+    publisher = Publisher(directory, host='cli', version='test', max_sessions=1, heartbeat=.05, coalesce=.01)
+    try:
+        assert publisher.submit('one', {})
+        until(lambda: discover(directory)['sessions'])
+        getattr(publisher, operation)('one')
+        until(lambda: 'one' in publisher._retained)
+        assert len(attempts) == 2 and publisher.failures == 1
+        assert discover(directory)['sessions'][0]['lifecycle'] == lifecycle
+        assert publisher.submit('two', {})
+        until(lambda: any(row['where']['sessionId'] == 'two' for row in discover(directory)['sessions']))
+    finally:
+        publisher.close()
+    assert not publisher._thread.is_alive()
+
+
+def test_persistent_terminal_failure_retries_at_heartbeat_and_close_still_finishes(tmp_path, monkeypatch):
+    from amplifier_web.status_protocol import publisher as writer
+    attempts = []
+
+    def fail(path, value):
+        attempts.append(time.monotonic())
+        raise OSError('unavailable status filesystem')
+
+    monkeypatch.setattr(writer, 'atomic', fail)
+    publisher = Publisher(tmp_path/'status', host='cli', version='test', heartbeat=.1, coalesce=.01)
+    try:
+        assert publisher.submit('one', {})
+        publisher.end('one')
+        until(lambda: len(attempts) >= 3)
+        # Failure does not immediately requeue dirty work in a busy loop.
+        assert attempts[2] - attempts[0] >= .1
+    finally:
+        publisher.close()
+    assert not publisher._thread.is_alive()
+
+
 def test_hook_only_accepts_successful_plan_and_never_serializes_tool_content(tmp_path):
     publisher = Publisher(tmp_path/'status', host='cli', version='test')
     observer = Observer(publisher, 'root')
