@@ -64,6 +64,32 @@ async def test_unknown_references_or_modified_receipts_never_trigger_removal(tmp
     assert project.exists()
 
 
+@pytest.mark.parametrize(('failure', 'stage', 'reason'), [
+    (TimeoutError('private timeout detail'), 'inspection', 'timeout'),
+    (retention.ProbeFailure('process-failed'), 'inspection', 'process-failed'),
+    (retention.ProbeFailure('invalid-response'), 'inspection', 'invalid-response'),
+    (ValueError('private configuration path'), 'inspection', 'unavailable'),
+    (ValueError('private generation path'), 'protected-generations', 'unavailable'),
+])
+async def test_reference_failure_keeps_storage_and_reports_only_bounded_facts(
+        tmp_path, monkeypatch, failure, stage, reason):
+    manager, names, project = manager_fixture(tmp_path, monkeypatch)
+    async def inspect(*args, **kwargs):
+        raise failure
+    def protect(*args):
+        raise failure
+    monkeypatch.setattr(retention, 'inspect_references' if stage == 'inspection' else 'protected_generations',
+                        inspect if stage == 'inspection' else protect)
+    result = await retention.reclaim(manager, inspect_only=True)
+    detail = result['referenceFailure']
+    assert (detail['stage'], detail['reason']) == (stage, reason)
+    assert 0 <= detail['elapsedMs'] < 2000
+    assert result['complete'] is False and result['candidates'] == []
+    assert 'private' not in json.dumps(result)
+    assert all((manager.directory / 'releases' / name).is_dir() for name in names)
+    assert project.exists()
+
+
 async def test_live_generation_lease_prevents_cleanup_while_unrelated_work_continues(tmp_path, monkeypatch):
     import os
     from amplifier_web.generation_leases import acquire
@@ -178,6 +204,32 @@ async def test_final_reference_timeout_retains_candidate_and_releases_admission(
     monkeypatch.setattr(retention, 'inspect_references', inspect)
     assert (await retention.reclaim(manager))['removed'] == 0
     assert (manager.directory / 'releases' / names[3]).exists()
+    assert not manager.service.runtime_lifecycle_lock.locked()
+
+
+@pytest.mark.parametrize('delayed_call', [2, 3])
+async def test_delayed_final_reference_snapshot_cannot_retire_newly_used_copy(
+        tmp_path, monkeypatch, delayed_call):
+    manager, names, project = manager_fixture(tmp_path, monkeypatch)
+    folder = manager.directory / 'releases' / names[3]
+    calls, now = 0, 100.0
+    monkeypatch.setattr(retention, 'time', SimpleNamespace(monotonic=lambda: now))
+
+    async def inspect(manager, *, timeout):
+        nonlocal calls, now
+        calls += 1
+        snapshot = manager.service.state['referenced']
+        if calls == delayed_call:
+            assert manager.service.runtime_lifecycle_lock.locked()
+            # The worker completed before this reference appeared, but host
+            # delivery exceeded the final check's original end-to-end budget.
+            manager.service.state['referenced'] += str(folder)
+            now += timeout + .1
+        return snapshot
+
+    monkeypatch.setattr(retention, 'inspect_references', inspect)
+    assert (await retention.reclaim(manager))['removed'] == 0
+    assert calls == delayed_call and folder.exists() and project.exists()
     assert not manager.service.runtime_lifecycle_lock.locked()
 
 
@@ -325,10 +377,11 @@ async def test_readonly_probe_is_terminated_on_timeout_or_cancellation(tmp_path,
     import sys
     original = asyncio.create_subprocess_exec
     created, spawned = asyncio.Event(), []
+    parent_loop = asyncio.get_running_loop()
     async def create(*args, **kwargs):
         proc = await original(sys.executable, '-c', 'import time; time.sleep(60)', **kwargs)
         spawned.append(proc)
-        created.set()
+        parent_loop.call_soon_threadsafe(created.set)
         return proc
     monkeypatch.setattr(asyncio, 'create_subprocess_exec', create)
     task = asyncio.create_task(retention._probe('generation', {}, timeout=60 if cancel else 0.1))

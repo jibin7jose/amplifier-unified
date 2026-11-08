@@ -147,13 +147,14 @@ async def settings_probe(windows, monkeypatch, tmp_path):
     from amplifier_web import provider_health, setup
 
     owner, _ = windows
-    configured = SimpleNamespace(providers=[{
+    configured = SimpleNamespace(configured_connections=[{
         'id': 'one', 'module': 'provider-fixture',
         'config': {'api_key': 'synthetic-private', 'base_url': 'https://fixture.invalid'},
     }], module_sources={})
     manager = SimpleNamespace(
         home=tmp_path / 'home', probe_command=['C:\\payload venv\\python.exe', 'probe.py'],
         config=lambda _: configured)
+    manager.probe_snapshot = lambda *args: setup.SetupManager.probe_snapshot(manager, *args)
     records = []
     monkeypatch.setattr(setup, 'os', SimpleNamespace(environ={'BOUND': 'fixture'}))
     monkeypatch.setattr(provider_health, 'record',
@@ -161,7 +162,8 @@ async def settings_probe(windows, monkeypatch, tmp_path):
     owner.stdout = asyncio.StreamReader()
     owner.stdout.feed_data(json.dumps({
         'info': {'id': 'fixture'}, 'configSchema': {'fields': []},
-        'models': [{'id': 'model-fixture'}], 'test': {'reachable': True},
+        'models': [{'id': 'model-fixture'}], 'modelsProvenance': 'provider-api',
+        'test': {'reachable': True},
     }).encode())
 
     async def probe(action='providers.schema'):
@@ -428,6 +430,10 @@ async def test_posix_creation_cancellation_still_shields_spawn_and_finalizer(
         process.returncode = -SIGKILL
 
     process = SimpleNamespace(pid=12345, returncode=None, wait=wait)
+    async def communicate():
+        await wait()
+        return b'', b''
+    process.communicate = communicate
     monkeypatch.setattr(probe_process.asyncio, 'create_subprocess_exec', start)
     task = asyncio.create_task(probe_process.spawn('probe'))
     await entered.wait()

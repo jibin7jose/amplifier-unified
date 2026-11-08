@@ -26,6 +26,12 @@ INSPECTION_SECONDS = 5
 REFERENCE_SECONDS = 2
 
 
+class ProbeFailure(ValueError):
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__('Storage inspection could not be verified')
+
+
 async def _probe(operation, values, *, timeout):
     """Run owned storage work in a process we can actually stop.
 
@@ -34,31 +40,35 @@ async def _probe(operation, values, *, timeout):
     operates only on a detached retirement payload, outside admission.
     Private reference text is returned only to this caller, never diagnostics.
     """
-    proc = await asyncio.create_subprocess_exec(
+    from .probe_process import isolated
+
+    payload = json.dumps(values).encode()
+    return await isolated(lambda: _probe_process(operation, payload, timeout))
+
+
+async def _probe_process(operation, payload, timeout):
+    from .probe_process import spawn, stop
+
+    proc = await spawn(
         sys.executable, '-m', __name__, operation,
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL, start_new_session=os.name != 'nt',
+        stderr=asyncio.subprocess.DEVNULL,
     )
+    # Keep draining during stop, including a full pipe or an exited root with
+    # live descendants. Cancelling the caller must not cancel this reader first.
+    exchange = asyncio.create_task(proc.communicate(payload))
     try:
         output, _ = await asyncio.wait_for(
-            proc.communicate(json.dumps(values).encode()), timeout,
+            asyncio.shield(exchange), timeout,
         )
         if proc.returncode:
-            raise ValueError('Storage inspection could not be verified')
-        return json.loads(output)
+            raise ProbeFailure('process-failed')
+        try:
+            return json.loads(output)
+        except (ValueError, UnicodeError):
+            raise ProbeFailure('invalid-response') from None
     finally:
-        if proc.returncode is None:
-            try:
-                if os.name != 'nt':
-                    import signal
-                    os.killpg(proc.pid, signal.SIGKILL)
-                else:
-                    proc.kill()
-            except ProcessLookupError:
-                pass
-            # Drain pipes after cancellation as well: wait() alone can wait
-            # forever for a paused stdout transport after a large response.
-            await proc.communicate()
+        await stop(proc, exchange)
 
 
 def workspace_paths(manager):
@@ -93,6 +103,19 @@ async def inspect_references(manager, *, timeout):
     # Copy only placement metadata; never load conversation bodies or events.
     workspaces = workspace_paths(manager)
     return await _probe('references', {'home': str(manager.home), 'workspaces': workspaces}, timeout=timeout)
+
+
+async def fresh_references(manager, *, timeout):
+    """Removal admission also bounds delivery, not only child inspection.
+
+    An initial inventory may use a completed result after host-loop delay. A
+    final removal check must defer if that delay consumes its existing budget.
+    """
+    started = time.monotonic()
+    references = await inspect_references(manager, timeout=timeout)
+    if time.monotonic() - started >= timeout:
+        raise TimeoutError('Reference admission budget exhausted')
+    return references
 
 
 async def verify_generation(project, folder, *, timeout):
@@ -491,13 +514,14 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
         if value <= 0:
             raise TimeoutError('Storage maintenance budget exhausted')
         return value
-    def result(reason=None):
+    def result(reason=None, reference_failure=None):
         cursors = {key: getattr(manager, attribute) for key, attribute in (
             ('generationCursor', '_retention_cursor'), ('retiredCursor', '_retired_cursor'))
             if getattr(manager, attribute, None)}
         return {'removed': removed, 'retained': retained, **cursors,
                 **({'retentionReasons': retention_reasons} if retention_reasons else {}),
                 **({'candidates': candidates, 'protectedIds': sorted(inspected_protected), 'complete': complete and not reason} if inspect_only else {}),
+                **({'referenceFailure': reference_failure} if reference_failure else {}),
                 **({'reason': reason} if reason else {})}
     prior = manager.service.state['updates'].get('storage', {})
     if maintenance_blocked(manager):
@@ -534,11 +558,18 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
             removed += 1
         except (OSError, ValueError, TypeError, TimeoutError):
             retained += 1
+    reference_stage = 'inspection'
+    reference_started = time.monotonic()
     try:
         references = await inspect_references(manager, timeout=remaining(REFERENCE_SECONDS))
+        reference_stage = 'protected-generations'
         protected = protected_generations(manager)
-    except (OSError, ValueError, KeyError, TypeError, TimeoutError, subprocess.SubprocessError):
-        return result('References could not be verified; all storage was kept.')
+    except (OSError, ValueError, KeyError, TypeError, TimeoutError, subprocess.SubprocessError) as exc:
+        reason = ('timeout' if isinstance(exc, TimeoutError) else
+                  exc.reason if isinstance(exc, ProbeFailure) else 'unavailable')
+        return result('References could not be verified; all storage was kept.', {
+            'stage': reference_stage, 'reason': reason,
+            'elapsedMs': round((time.monotonic() - reference_started) * 1000, 2)})
     folders = _folders(manager)
     cursor = getattr(manager, '_retention_cursor', prior.get('generationCursor', ''))
     folders = [p for p in folders if p.name > cursor] + [p for p in folders if p.name <= cursor]
@@ -639,7 +670,7 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
                 # Refresh external process/configuration references at the
                 # deletion boundary. This read-only probe has a short timeout;
                 # incomplete inspection always retains the candidate.
-                fresh = await inspect_references(manager, timeout=remaining(REFERENCE_SECONDS))
+                fresh = await fresh_references(manager, timeout=remaining(REFERENCE_SECONDS))
                 if maintenance_blocked(manager):
                     return result('Storage maintenance deferred while an update is pending.')
                 if (folder.name in protected_generations(manager)
@@ -659,7 +690,7 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
                     raise ValueError('Files changed during qualification')
                 # Measuring yielded; preserve newly active work, settings and
                 # receipts before either publishing eligibility or retiring.
-                latest_references = await inspect_references(manager, timeout=remaining(REFERENCE_SECONDS))
+                latest_references = await fresh_references(manager, timeout=remaining(REFERENCE_SECONDS))
                 if (maintenance_blocked(manager) or folder.name in protected_generations(manager)
                         or str(folder) in latest_references or str(project) in latest_references
                         or (not modern and manager.busy()) or folder.is_symlink() or project.is_symlink()

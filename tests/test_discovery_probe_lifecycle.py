@@ -51,7 +51,7 @@ async def test_cancel_during_pipe_connection_closes_discovery_descendants(monkey
     elif owner == 'provider':
         from amplifier_web.setup import SetupManager
         manager = SetupManager(tmp_path)
-        monkeypatch.setattr(manager, 'config', lambda _: SimpleNamespace(providers=[], module_sources={}))
+        monkeypatch.setattr(manager, 'config', lambda _: SimpleNamespace(configured_connections=[], module_sources={}))
         request = manager.probe('providers.schema', {'module': 'provider-fixture'}, str(tmp_path))
     else:
         from amplifier_web.registry import RegistryManager
@@ -153,10 +153,10 @@ async def test_defaults_payload_environment_output_and_error_contract(monkeypatc
     monkeypatch.setattr('amplifier_web.runtime.RuntimeManager._command',
         lambda self, **kwargs: [sys.executable, '-c', code, 'unused'])
     result = await draft_defaults.resolve_defaults(tmp_path, str(tmp_path), bundle='synthetic',
-        global_only=True, session_id='exact', catalog=True, refresh=True, replacement={'model': 'example'})
+        global_only=True, session_id='exact', refresh=True, replacement={'model': 'example'})
     assert result == {'bundle': 'synthetic', 'globalOnly': True, 'request': {
         'home': str(tmp_path), 'workspace': str(tmp_path), 'bundle': 'synthetic',
-        'globalOnly': True, 'sessionId': 'exact', 'catalog': True, 'refresh': True,
+        'globalOnly': True, 'sessionId': 'exact', 'catalog': False, 'refresh': True,
         'replacement': {'model': 'example'}, 'desiredBundle': False}}
     monkeypatch.setattr('amplifier_web.runtime.RuntimeManager._command',
         lambda self, **kwargs: [sys.executable, '-c', 'print(\'{"error":"synthetic"}\')', 'unused'])

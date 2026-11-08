@@ -95,7 +95,7 @@ async def test_runner_waiting_for_install_lock_rechecks_removal_admission(owned,
     assert folder.exists() and app.smart_tools.state['installations']==[item] and not effects
 
 
-@pytest.mark.parametrize('change',['new-file','changed-file'])
+@pytest.mark.parametrize('change',['new-file','changed-file','delayed-reference'])
 async def test_runner_final_async_reference_guard_preserves_new_user_work(owned,monkeypatch,change):
     import asyncio
     from amplifier_web.smart_tool_lifecycle import Lifecycle
@@ -109,20 +109,30 @@ async def test_runner_final_async_reference_guard_preserves_new_user_work(owned,
     app.smart_tools._change=mutate
     app.smart_tools.uninstall=Lifecycle.uninstall.__get__(app.smart_tools)
     private.write_json(runner.record_path(app,'c'*32),{**records[0],'state':'superseded'})
-    calls=0;effects=[]
+    calls=0;effects=[];now=100.0
+    monkeypatch.setattr(retention,'time',SimpleNamespace(monotonic=lambda:now))
     user_file=source/('private-notes.txt' if change=='new-file' else 'code.py')
     async def references(*args,**kwargs):
-        nonlocal calls
+        nonlocal calls,now
         calls+=1
         if calls==2:
             # The actual canonical remover has acquired both locks and measured
             # its original inventory, then awaits this final process probe.
             await asyncio.sleep(0)
-            user_file.write_text('User work added during the final guard')
+            if change=='delayed-reference':
+                # The returned snapshot predates a new external reference;
+                # delivery consumed the existing two-second admission budget.
+                (app.data_dir/'settings.yaml').write_text(str(folder))
+                now+=2.1
+            else:
+                user_file.write_text('User work added during the final guard')
         return ''
     monkeypatch.setattr(retention,'inspect_references',references)
     await runner.retire(app,selected={item['id']},evidence=lambda status,row:effects.append(status))
     assert calls==2
-    assert user_file.read_text()=='User work added during the final guard'
+    if change=='delayed-reference':
+        assert folder.exists() and not effects
+    else:
+        assert user_file.read_text()=='User work added during the final guard'
     assert app.smart_tools.state['installations']==[item]
     assert 'completed' not in effects

@@ -98,6 +98,20 @@ async def test_automatic_cleanup_honors_disable_and_retention_then_keeps_receipt
     assert cleanup.read(app)['lastCleanup'] == result
 
 
+async def test_reference_failure_survives_preview_and_saved_cleanup_receipt(app, monkeypatch):
+    async def unavailable(*args, **kwargs):
+        raise retention.ProbeFailure('process-failed')
+    monkeypatch.setattr(retention, 'inspect_references', unavailable)
+    preview = await cleanup.preview(app)
+    assert preview['referenceFailure']['reason'] == 'process-failed'
+    assert not preview['complete'] and preview['selectedFileBytes'] == 0
+    result = await cleanup.run(app, 'failed-reference')
+    assert result['referenceFailure']['reason'] == 'process-failed'
+    assert cleanup.read(app)['lastCleanup']['referenceFailure'] == result['referenceFailure']
+    assert result['effects'] == [] and result['removedFileBytes'] == 0
+    assert all((app.update_manager.directory / 'releases' / name).is_dir() for name in app.names)
+
+
 async def test_reference_appearing_after_preview_wins(app, monkeypatch):
     settings(app, keepDays=0)
     original = cleanup.preview

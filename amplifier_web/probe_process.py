@@ -1,8 +1,9 @@
-"""Keep discovery-process ownership across cancellation during creation."""
+"""Own finite subprocess probes across creation, cancellation and loop delays."""
 import asyncio
 import os
 import signal
 import sys
+import threading
 
 
 class _WindowsProbe:
@@ -90,9 +91,48 @@ async def _settle(task):
     return result
 
 
+async def isolated(operation):
+    """Supervise a finite probe independently of the caller's event loop.
+
+    Keep its pipe readers and deadline runnable during host publication. The
+    executor task is shielded, never abandoned: cancellation reaches the owned
+    operation once and waits for its process cleanup and worker-loop shutdown.
+    """
+    lock = threading.Lock()
+    owner = None
+    cancelled = False
+
+    async def invoke():
+        nonlocal owner
+        with lock:
+            if cancelled:
+                raise asyncio.CancelledError
+            owner = asyncio.get_running_loop(), asyncio.current_task()
+        try:
+            return await operation()
+        finally:
+            with lock:
+                owner = None  # Clear before asyncio.run closes the worker loop.
+
+    worker = asyncio.create_task(asyncio.to_thread(lambda: asyncio.run(invoke())))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        with lock:
+            cancelled = True
+            if owner is not None:
+                loop, task = owner
+                loop.call_soon_threadsafe(task.cancel)
+        try:
+            await _settle(worker)
+        except asyncio.CancelledError:
+            pass
+        raise  # A cleanup failure above deliberately takes precedence.
+
+
 async def _stop(process, readers=(), grace=0):
+    readers = tuple(asyncio.ensure_future(reader) for reader in readers)
     if isinstance(process, _WindowsProbe):
-        readers = tuple(asyncio.ensure_future(reader) for reader in readers)
         try:
             # The public owner offers finite force-close, not graceful signals.
             # Close even after payload exit: only the owner proves tree/I/O exit.
@@ -110,7 +150,8 @@ async def _stop(process, readers=(), grace=0):
         return
     if os.name == 'nt':
         raise RuntimeError('Native probe cleanup requires its Windows Job owner.')
-    if process.returncode is None:
+    # Root exit does not imply tree exit: a descendant can still hold a pipe.
+    if process.returncode is None or any(not reader.done() for reader in readers):
         def send(force):
             try:
                 if os.name == 'posix':
@@ -121,7 +162,7 @@ async def _stop(process, readers=(), grace=0):
                     process.terminate()
             except ProcessLookupError:
                 pass
-        if grace:
+        if grace and process.returncode is None:
             send(False)
             try:
                 await asyncio.wait_for(process.wait(), grace)
@@ -153,6 +194,9 @@ async def spawn(*command, **kwargs):
                 process = await start
             except OSError:
                 return
-            await _stop(process)
+            # Creation may finish with a full stdout pipe. Drain concurrently
+            # before waiting for tree exit, just as after ownership transfer.
+            drain = asyncio.create_task(process.communicate())
+            await _stop(process, (drain,))
         await _settle(asyncio.create_task(finish_start()))
         raise

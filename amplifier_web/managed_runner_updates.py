@@ -380,8 +380,8 @@ async def retire(app, *, inspect_only=False, selected=None, evidence=None, inspe
                     continue
                 loop = asyncio.get_running_loop()
                 async def admit(candidate=candidate):
-                    from .update_retention import inspect_references
-                    references = await inspect_references(app.update_manager, timeout=2)
+                    from .update_retention import fresh_references
+                    references = await fresh_references(app.update_manager, timeout=2)
                     if any(path in references for path in candidate['paths']):
                         raise ValueError('This runner became used before removal.')
                     if evidence:

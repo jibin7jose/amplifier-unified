@@ -294,6 +294,7 @@ async def preview(app):
             **{key: generations[key] for key in ('generationCursor', 'retiredCursor') if key in generations},
             **({'runtimeCursor': runtimes['runtimeCursor']} if 'runtimeCursor' in runtimes else {}),
             **({'retentionReasons': generations['retentionReasons']} if generations.get('retentionReasons') else {}),
+            **({'referenceFailure': generations['referenceFailure']} if generations.get('referenceFailure') else {}),
             'protected': protected[:128], 'protectedCount': len(protected),
             'observedProtected': observed_protected,
             '_observations': seen,
@@ -334,7 +335,7 @@ async def run(app, identity, *, expected_revision=None, automatic=False, authori
         store(app, OBSERVATION, seen)
         result = {'id': identity, 'expectedRevision': expected_revision, 'status': 'running', 'startedAt': now, 'policy': settings,
                   'operationOutputCursor': operation_cursor,
-                  **{key: report[key] for key in ('generationCursor', 'retiredCursor', 'runtimeCursor', 'retentionReasons', 'workspaceArchiveCursor') if key in report},
+                  **{key: report[key] for key in ('generationCursor', 'retiredCursor', 'runtimeCursor', 'retentionReasons', 'referenceFailure', 'workspaceArchiveCursor') if key in report},
                   'selectedFileBytes': report['selectedFileBytes'], 'removedFileBytes': 0,
                   'effects': [], 'completeInspection': report['complete']}
         if authority is not None:
