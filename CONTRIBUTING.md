@@ -4,6 +4,34 @@ Use the [source and ownership map](docs/source-context.md) to select relevant
 authored code, contracts and tests, and distinguish generated output and retained
 evidence. The path selector does not change packaging or release validation.
 
+## Development setup
+
+A raw Git checkout is a development source tree, distinct from a published source
+archive. Use Python 3.13, uv and Node.js 22 with npm in an owned test environment,
+following the workspace's DTU rules. Prepare dependencies once, then build the
+client after relevant frontend or package-version changes:
+
+```sh
+uv sync --locked --group dev --group artifacts
+npm ci --prefix frontend
+npm run build --prefix frontend
+```
+
+Reuse prepared dependencies while their lockfiles match. The canonical frontend
+build writes `amplifier_web/static`; keep that generated output committed for now.
+Do not edit minified assets. Follow the [release preparation and asset recovery
+guidance](docs/validation/release-qualification.md#preparing-a-version-change) when
+moving an exact build from its owned environment back to the source checkout.
+
+Published wheels **and source archives** already contain this complete built UI,
+including vendor assets and licenses. Building a wheel from a released source
+archive uses the declared Python build backend, without Node, npm or a frontend
+download. It still requires the declared Python build dependencies; installation
+resolves the normal application/runtime dependencies. Release packaging verifies
+the same static file set and bytes in both formats before publishing.
+
+## Contribution guidance
+
 For behavior or architecture proposals, use [vision and contract guidance](docs/vision-and-contracts.md).
 Keep one owner per promise, distinguish proposed behavior from qualified behavior,
 and connect changed promises to focused checks under the existing release policy.

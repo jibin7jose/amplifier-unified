@@ -157,6 +157,23 @@ def plan(root, selected_revision=None, *, fetch_tag=False):
     return {"version": version, "tag": tag, "revision": revision, "existing_tag": bool(tags)}
 
 
+def verify_frontend(root, names, read, label):
+    """Both release formats carry the complete, already-built frontend."""
+    prefix = "amplifier_web/static/"
+    files = {path.relative_to(root).as_posix(): path
+             for path in (root / prefix).rglob("*") if path.is_file()}
+    packaged = {name for name in names if name.startswith(prefix) and not name.endswith("/")}
+    if prefix + "index.html" not in files or packaged != files.keys():
+        raise ValueError(label + " frontend file list differs from validated assets")
+    for name, path in files.items():
+        if read(name) != path.read_bytes():
+            raise ValueError(label + " does not contain the validated frontend bytes: " + name)
+    index = read(prefix + "index.html").decode()
+    for asset in re.findall(r'(?:src|href)=["\'](/assets/[^"\']+)["\']', index):
+        if prefix.rstrip("/") + asset not in packaged:
+            raise ValueError(label + " frontend references a missing asset")
+
+
 def verify_dist(root, dist, expected):
     if version_at(root) != expected:
         raise ValueError("Checkout version changed during release")
@@ -172,19 +189,16 @@ def verify_dist(root, dist, expected):
         info = Parser().parsestr(archive.read(metadata[0]).decode()) if len(metadata) == 1 else {}
         if info.get("Name") != "amplifier-unified" or info.get("Version") != expected:
             raise ValueError("Wheel metadata does not match release version")
-        prefix = "amplifier_web/"
+        verify_frontend(root, names, archive.read, "Wheel")
         files = [path for path in (root / "amplifier_web").rglob("*")
-                 if path.is_file() and (path.suffix in {".py", ".js"} or path.name == 'release-notes.json' or path.is_relative_to(root / "amplifier_web/static")
+                 if path.is_file() and not path.is_relative_to(root / "amplifier_web/static")
+                 and (path.suffix in {".py", ".js"} or path.name == 'release-notes.json'
                                        or path.is_relative_to(root / "amplifier_web/runtime_deps"))
                  and "__pycache__" not in path.parts and path.suffix != ".pyc"]
         for path in files:
             relative = path.relative_to(root).as_posix()
             if relative not in names or archive.read(relative) != path.read_bytes():
                 raise ValueError("Wheel does not contain the validated source/assets: " + relative)
-        index = archive.read(prefix + "static/index.html").decode()
-        for asset in re.findall(r'(?:src|href)=["\'](/assets/[^"\']+)["\']', index):
-            if prefix + "static" + asset not in names:
-                raise ValueError("Packaged frontend references a missing asset")
     with tarfile.open(sources[0]) as archive:
         names = archive.getnames()
         reject_ci_checkouts(names)
@@ -195,6 +209,8 @@ def verify_dist(root, dist, expected):
             raise ValueError("Source archive does not match release version")
         if notes and archive.extractfile(prefix + 'amplifier_web/release-notes.json').read() != (root / 'amplifier_web/release-notes.json').read_bytes():
             raise ValueError('Source archive does not contain validated release notes')
+        verify_frontend(root, [entry.name.removeprefix(prefix) for entry in archive.getmembers() if entry.isfile()],
+                        lambda name: archive.extractfile(prefix + name).read(), "Source archive")
     (dist / "SHA256SUMS").write_text("".join(
         f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in [*wheels, *sources]))
 

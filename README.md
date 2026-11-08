@@ -190,6 +190,12 @@ registration; the launcher separately checks that the app responds.
 
 The first message can take a few minutes while Unified prepares its runtime.
 
+Published wheels and source archives (`.tar.gz` release assets) include the built
+web client. Installing either format needs no Node.js, npm or frontend download;
+Python and runtime dependencies are still resolved normally. A raw Git checkout
+is a development source tree: rebuilding or changing its client requires Node.js
+and npm. See the [development setup](CONTRIBUTING.md#development-setup).
+
 After installation, open **Settings → Updates** to check for and install updates,
 review any failed checks, or choose the automatic check interval. See the
 [update guide](docs/UPDATES.md) for active-work handling and recovery details.

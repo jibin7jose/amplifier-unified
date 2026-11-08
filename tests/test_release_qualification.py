@@ -208,7 +208,7 @@ def test_workflow_consolidates_checks_without_sharing_publication_credentials():
         assert f'--lane {lane}' in commands
     # Distribution bytes and their receipt are frozen before isolated native setup.
     assert commands.index('uv build') < commands.index('--lane package') < commands.index('runtime-project')
-    assert commands.index('--lane frontend') < commands.index('runtime-project')
+    assert commands.index('npm run build --prefix frontend') < commands.index('--lane frontend') < commands.index('uv build')
     assert commands.count('qualify_host_dependencies.py --verify') == 3
     assert steps[0]['with']['fetch-depth'] == "${{ inputs.release_revision != '' && '0' || '1' }}"
     assert 'plan --revision "$SELECTED_RELEASE_REVISION" --fetch-tag' in commands

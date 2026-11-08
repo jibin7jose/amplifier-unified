@@ -145,6 +145,17 @@ the frontend checks itself when that proof is unavailable; an earlier version's
 proof does not qualify the new version. Package/native qualification and candidate
 receipts remain fresh under the existing publication workflow.
 
+Frontend proof reuse or the canonical build validates the staged
+`amplifier_web/static` tree **before** packaging. Both the wheel and source archive
+must contain its complete exact file set and bytes, including runtime-loaded
+vendor files, build metadata and licenses. A published source archive is ready to
+build into a wheel using Python build dependencies alone; installation never
+downloads or builds the frontend. Raw Git development checkouts may require Node
+and npm to produce updated assets; see [development setup](../../CONTRIBUTING.md#development-setup).
+The source-archive round-trip regression exercises the real package backend with
+Node absent and network/process creation denied. It is an affected packaging
+check, not an additional universal release campaign.
+
 Routine release verification ends after the hosted published-package smoke.
 Absent a concrete failure, do not repeat its exact-candidate wheel, source or
 asset checks manually after publication. Record the workflow result and finish

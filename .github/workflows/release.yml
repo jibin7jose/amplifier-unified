@@ -70,30 +70,6 @@ jobs:
         env:
           RELEASE_CANDIDATE: ${{ steps.candidate.outputs.candidate }}
         run: echo "RELEASE_CANDIDATE=$RELEASE_CANDIDATE" >> "$GITHUB_ENV"
-      # Full Python coverage runs locally or in python-checks.yml on demand.
-      - name: Build and verify distributions
-        env:
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          uv run --no-sync python scripts/qualify_host_dependencies.py --verify --evidence "$RUNNER_TEMP/host-resolution"
-          uv build
-          python "$RUNNER_TEMP/release-tools/release.py" verify --version "$RELEASE_VERSION"
-          uv venv "$RUNNER_TEMP/release-smoke"
-          uv pip install --python "$RUNNER_TEMP/release-smoke/bin/python" --overrides "$RUNNER_TEMP/host-resolution/qualified-overrides.txt" dist/*.whl
-          cd "$RUNNER_TEMP"
-          env -u PYTHONPATH "$RUNNER_TEMP/release-smoke/bin/python" -I -c 'from amplifier_web.app_updates import PROBE; exec(PROBE)'
-      - name: Bind verified distributions to the candidate
-        run: python "$RUNNER_TEMP/release-tools/release_qualification.py" receipt --evidence "$RUNNER_TEMP/host-resolution" --candidate "$RELEASE_CANDIDATE" --lane package --destination "$RUNNER_TEMP/package.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release-distributions
-          path: dist
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: package-qualification
-          path: ${{ runner.temp }}/package.json
-          if-no-files-found: error
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
@@ -124,6 +100,32 @@ jobs:
         with:
           name: frontend-qualification
           path: ${{ runner.temp }}/frontend.json
+          if-no-files-found: error
+      # The preceding exact-source proof or build verifies the staged static tree.
+      # Package those same bytes in both formats; installation never builds the UI.
+      # Full Python coverage runs locally or in python-checks.yml on demand.
+      - name: Build and verify distributions
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          uv run --no-sync python scripts/qualify_host_dependencies.py --verify --evidence "$RUNNER_TEMP/host-resolution"
+          uv build
+          python "$RUNNER_TEMP/release-tools/release.py" verify --version "$RELEASE_VERSION"
+          uv venv "$RUNNER_TEMP/release-smoke"
+          uv pip install --python "$RUNNER_TEMP/release-smoke/bin/python" --overrides "$RUNNER_TEMP/host-resolution/qualified-overrides.txt" dist/*.whl
+          cd "$RUNNER_TEMP"
+          env -u PYTHONPATH "$RUNNER_TEMP/release-smoke/bin/python" -I -c 'from amplifier_web.app_updates import PROBE; exec(PROBE)'
+      - name: Bind verified distributions to the candidate
+        run: python "$RUNNER_TEMP/release-tools/release_qualification.py" receipt --evidence "$RUNNER_TEMP/host-resolution" --candidate "$RELEASE_CANDIDATE" --lane package --destination "$RUNNER_TEMP/package.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-distributions
+          path: dist
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-qualification
+          path: ${{ runner.temp }}/package.json
           if-no-files-found: error
       - name: Resolve declared private runtime dependency
         id: runtime-dependency

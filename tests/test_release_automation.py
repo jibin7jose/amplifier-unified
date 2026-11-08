@@ -42,7 +42,7 @@ def distributions(root):
         for path in (root/'amplifier_web').rglob('*'):
             if path.is_file():wheel.write(path,path.relative_to(root))
     with tarfile.open(dist/'amplifier_unified-1.2.3.tar.gz','w:gz') as source:
-        for path in (root/'pyproject.toml',root/'amplifier_web/__init__.py',root/'amplifier_web/release-notes.json'):
+        for path in [root/'pyproject.toml', *(path for path in (root/'amplifier_web').rglob('*') if path.is_file())]:
             source.add(path,'amplifier_unified-1.2.3/'+str(path.relative_to(root)))
     return dist
 
@@ -293,10 +293,92 @@ def test_release_distribution_verification_checks_source_assets_and_references(r
     release.verify_dist(repository,dist,'1.2.3')
     assert len((dist/'SHA256SUMS').read_text().splitlines())==2
     (repository/'amplifier_web/static/assets/app.js').write_text('different')
-    with pytest.raises(ValueError,match='validated source/assets'):release.verify_dist(repository,dist,'1.2.3')
+    with pytest.raises(ValueError,match='validated frontend bytes'):release.verify_dist(repository,dist,'1.2.3')
     (repository/'amplifier_web/static/index.html').write_text('<script src="/assets/missing.js"></script>')
     distributions(repository)
     with pytest.raises(ValueError,match='missing asset'):release.verify_dist(repository,dist,'1.2.3')
+
+
+@pytest.mark.parametrize('kind', ['wheel', 'source'])
+@pytest.mark.parametrize('change', ['missing', 'changed', 'extra'])
+@pytest.mark.parametrize('asset', ['build.json', 'vendor/pdfjs/font.bin', 'licenses/vendor.txt'])
+def test_release_requires_complete_frontend_bytes_in_both_formats(repository, kind, change, asset):
+    """Files not directly referenced by index.html still belong to the release."""
+    relative = 'amplifier_web/static/' + asset
+    path = repository / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'validated content')
+    dist = distributions(repository)
+    if kind == 'wheel':
+        target = next(dist.glob('*.whl'))
+        with zipfile.ZipFile(target) as archive:
+            entries = {name: archive.read(name) for name in archive.namelist()}
+        name = relative
+    else:
+        target = next(dist.glob('*.tar.gz'))
+        with tarfile.open(target) as archive:
+            entries = {entry.name: archive.extractfile(entry).read() for entry in archive.getmembers()}
+        name = 'amplifier_unified-1.2.3/' + relative
+    if change == 'missing':
+        del entries[name]
+    elif change == 'changed':
+        entries[name] = b'wrong content'
+    else:
+        entries[name + '.obsolete'] = b'old output'
+    if kind == 'wheel':
+        with zipfile.ZipFile(target, 'w') as archive:
+            for name, data in entries.items():
+                archive.writestr(name, data)
+    else:
+        with tarfile.open(target, 'w:gz') as archive:
+            for name, data in entries.items():
+                entry = tarfile.TarInfo(name)
+                entry.size = len(data)
+                archive.addfile(entry, io.BytesIO(data))
+    with pytest.raises(ValueError, match='frontend'):
+        release.verify_dist(repository, dist, '1.2.3')
+    assert not (dist / 'SHA256SUMS').exists()
+
+
+def test_released_sdist_rebuilds_complete_ui_without_node_or_network(tmp_path):
+    """Exercise the real build backend and policy, outside the source checkout."""
+    pytest.importorskip('hatchling.build')
+    root = Path(__file__).parents[1]
+    dist = tmp_path / 'dist'
+    dist.mkdir()
+    empty_path = tmp_path / 'empty-path'
+    empty_path.mkdir()
+    builder = tmp_path / 'build.py'
+    builder.write_text('''import os, shutil, socket, subprocess, sys
+from hatchling.build import build_sdist, build_wheel
+os.environ["PATH"] = sys.argv[3]
+assert shutil.which("node") is None and shutil.which("npm") is None
+def deny(event, args):
+    if event.startswith("socket.") or event in {"subprocess.Popen", "os.system", "os.posix_spawn", "os.exec", "os.spawn"}:
+        raise RuntimeError("Build attempted network or an external process: " + event)
+sys.addaudithook(deny)
+for probe in (lambda: socket.create_connection(("127.0.0.1", 9)),
+              lambda: subprocess.run([sys.executable, "-V"])):
+    try:
+        probe()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("Build isolation probe was not denied")
+print((build_sdist if sys.argv[1] == "sdist" else build_wheel)(sys.argv[2]))
+''')
+    command = [sys.executable, '-I', str(builder)]
+    subprocess.run([*command, 'sdist', str(dist), str(empty_path)], cwd=root,
+                   check=True, capture_output=True, text=True, timeout=120)
+    extracted = tmp_path / 'extracted'
+    with tarfile.open(next(dist.glob('*.tar.gz'))) as archive:
+        archive.extractall(extracted, filter='data')
+    source = next(extracted.iterdir())
+    assert not (source / '.git').exists()
+    subprocess.run([*command, 'wheel', str(dist), str(empty_path)], cwd=source,
+                   check=True, capture_output=True, text=True, timeout=120)
+    release.verify_dist(root, dist, release.version_at(root))
+    assert len((dist / 'SHA256SUMS').read_text().splitlines()) == 2
 
 
 @pytest.mark.parametrize('kind', ['wheel', 'source'])
@@ -432,7 +514,7 @@ def test_invalid_package_never_creates_a_tag_or_release(repository,monkeypatch):
     (repository/'amplifier_web/static/assets/app.js').write_text('unvalidated bytes')
     def run(*args,**kwargs):calls.append(args);return revision
     monkeypatch.setattr(release,'run',run)
-    with pytest.raises(ValueError,match='validated source/assets'):
+    with pytest.raises(ValueError,match='validated frontend bytes'):
         release.publish(repository,'example/app','v1.2.3',revision,dist)
     assert calls==[('git','rev-parse','HEAD')]
 
