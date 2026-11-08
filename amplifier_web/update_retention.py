@@ -664,6 +664,12 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
             # lock is held during qualification, Git inspection or hashing.
             if maintenance_blocked(manager):
                 return result('Storage maintenance deferred while an update is pending.')
+            if inspect_only:
+                # A preview is an inspection snapshot, not removal authority.
+                # Reclaim repeats qualification and admission if selected later.
+                candidates.append({'kind': 'ecosystem', 'id': folder.name,
+                    'label': 'Unused component version', 'paths': paths, **measured})
+                continue
             async with manager.service.runtime_lifecycle():
                 if maintenance_blocked(manager):
                     return result('Storage maintenance deferred while an update is pending.')
@@ -689,7 +695,7 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
                 if admission['stamp'] != measured['stamp']:
                     raise ValueError('Files changed during qualification')
                 # Measuring yielded; preserve newly active work, settings and
-                # receipts before either publishing eligibility or retiring.
+                # receipts before retiring.
                 latest_references = await fresh_references(manager, timeout=remaining(REFERENCE_SECONDS))
                 if (maintenance_blocked(manager) or folder.name in protected_generations(manager)
                         or str(folder) in latest_references or str(project) in latest_references
@@ -698,10 +704,6 @@ async def reclaim(manager, *, inspect_only=False, selected=None, evidence=None):
                         or marker.read_text() != marker_text or graph.read_text() != graph_text
                         or _retirement_paths(manager, folder, project) != paths):
                     inspected_protected.add(folder.name)
-                    continue
-                if inspect_only:
-                    candidates.append({'kind': 'ecosystem', 'id': folder.name,
-                        'label': 'Unused component version', 'paths': paths, **measured})
                     continue
                 if evidence:
                     evidence('attempting', {'kind': 'ecosystem', 'id': folder.name, **measured})

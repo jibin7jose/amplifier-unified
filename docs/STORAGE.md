@@ -387,6 +387,10 @@ ecosystem candidates, eight purpose-installed runner candidates and eight
 qualified dependency layers, with time
 limits and a retained cursor. The cleanup policy saves that cursor in its durable
 receipt and restores it after restart; a scan position is never deletion authority.
+Preview results are inspection snapshots, not removal authority. Read-only
+previews do not acquire the runtime activation lock or repeat removal-admission
+probes. Removing a selected copy reruns qualification and the owner's current-use
+checks under its existing removal boundary.
 Protected copies include bounded reasons distinguishing unverified source,
 unverified extra files, local edits, and a changed or incomplete final check.
 Incomplete inspection is labeled; uninspected

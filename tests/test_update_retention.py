@@ -49,6 +49,35 @@ async def test_cleanup_keeps_current_rollback_referenced_and_shared_runtime(tmp_
     assert not (manager.directory / 'releases' / names[3]).exists()
 
 
+async def test_cleanup_preview_completes_while_runtime_admission_is_occupied(tmp_path, monkeypatch):
+    manager, names, project = manager_fixture(tmp_path, monkeypatch)
+    async with manager.service.runtime_lifecycle():
+        result = await asyncio.wait_for(retention.reclaim(manager, inspect_only=True), 2)
+    assert result['complete'] is True
+    assert [row['id'] for row in result['candidates']] == [names[3]]
+    assert result['removed'] == 0
+    assert all((manager.directory / 'releases' / name).exists() for name in names)
+    assert project.exists()
+    assert not (manager.directory / 'retired').exists()
+
+
+@pytest.mark.parametrize('protection', ['active', 'configuration'])
+async def test_cleanup_preview_never_authorizes_later_removal(tmp_path, monkeypatch, protection):
+    manager, names, project = manager_fixture(tmp_path, monkeypatch)
+    preview = await retention.reclaim(manager, inspect_only=True)
+    selected = {row['id'] for row in preview['candidates']}
+    assert selected == {names[3]}
+    if protection == 'active':
+        (manager.directory / 'active.json').write_text(json.dumps({
+            'current': names[3], 'previous': names[0]}))
+    else:
+        manager.service.state['referenced'] += '\n' + str(manager.directory / 'releases' / names[3])
+    result = await retention.reclaim(manager, selected=selected)
+    assert result['removed'] == 0
+    assert all((manager.directory / 'releases' / name).exists() for name in names)
+    assert project.exists()
+
+
 async def test_unknown_references_or_modified_receipts_never_trigger_removal(tmp_path, monkeypatch):
     manager, names, project = manager_fixture(tmp_path, monkeypatch)
     def unavailable(home):
