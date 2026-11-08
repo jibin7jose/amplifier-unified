@@ -1,11 +1,13 @@
 """Uncapped admission checks authority, not every member's historical usage."""
 import copy
+import json
 
 import pytest
 
 from amplifier_web import assignments, cold_display
 from amplifier_web.capacity import admission
 from amplifier_web.resource_files import put
+from amplifier_web.service import AppError
 from test_assignments import app, call, limits, start
 
 
@@ -107,3 +109,89 @@ async def test_uncapped_assignment_stop_keeps_admission_closed_without_usage_rea
     assert not result['allowed'] and not result['waiting']
     assert result['reasons'] == ['This assignment was stopped; automatic work is suppressed.']
     assert 'assignmentId' not in candidate
+
+
+@pytest.mark.parametrize('retained,unrelated', [(1, 1), (128, 1), (1, 2048)])
+async def test_uncapped_reservation_skips_member_state_and_unrelated_requests(app, monkeypatch, record_property, retained, unrelated):
+    source = app.state['sessions'][0]
+    value = await start(app)
+    for index in range(retained):
+        member = app._new_session({'title': f'Retained helper {index}'})
+        member['task'] = {'status': 'completed'}
+        app.state['sessions'].append(member)
+        value['members'][member['id']] = {'status': 'bound', 'role': 'commissioned'}
+    for index in range(unrelated):
+        app.collaboration.insert(f'unrelated-{index}', 'fixture', {
+            'commandAction': 'coordination.send', 'delivery': 'queued',
+            'target': {'sessionId': f'other-{index}'}, 'text': 'Retained request body ' * 64})
+    app.assignments.save(value)
+    app.db.commit()
+    assert app.db.execute("SELECT count(*) FROM commands WHERE id LIKE 'unrelated-%'").fetchone()[0] == unrelated
+    before = copy.deepcopy(value)
+    reads = []
+    steps = 0
+    original_session = app._session
+
+    def session(identity=None, *, hydrate=True):
+        reads.append((identity, hydrate))
+        return original_session(identity, hydrate=hydrate)
+
+    def progress():
+        nonlocal steps
+        steps += 1
+        return 0
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(app, '_session', session)
+        app.db.set_progress_handler(progress, 1)
+        try:
+            result = app.assignments.reserve_member(source, 'next-helper', 'reserve-next')
+        finally:
+            app.db.set_progress_handler(None, 0)
+    record_property('reservation_work', json.dumps({'retained': retained, 'unrelated': unrelated,
+                    'sessionReads': len(reads), 'sqliteInstructions': steps}))
+    assert reads == []
+    # Measured 507 instructions across all three shapes, versus 33,311 when
+    # scanning 2,048 unrelated requests. Allow SQL variation, not retained-row work.
+    assert steps < 1000
+    after = app.assignments.current(source)
+    assert result == before['id']
+    assert after['revision'] == before['revision'] + 1
+    assert after['members'].pop('next-helper') == {
+        'status': 'reserved', 'role': 'commissioned',
+        'creatorSessionId': source['id'], 'creationOperationId': 'reserve-next'}
+    assert after['members'] == before['members'] and after['limits'] == before['limits']
+    assert app.runtime.inputs == []
+
+
+@pytest.mark.parametrize('condition,open_task', [
+    ('idle', False), ('detached', False), ('retired', False), ('not_created', False),
+    ('reserved', True), ('missing', True), ('working', True), ('pending', True),
+    ('generation', True), ('task', True), ('preparing', True),
+])
+async def test_reservation_still_enforces_each_configured_open_task_source(app, condition, open_task):
+    source, member = app.state['sessions']
+    value = await start(app)
+    value['limits']['maxOpenTasks'] = 1
+    sid = 'missing-member' if condition == 'missing' else member['id']
+    value['members'][sid] = {'status': condition if condition in {
+        'detached', 'retired', 'not_created', 'reserved'} else 'bound', 'role': 'commissioned'}
+    member['status'] = 'working' if condition == 'working' else 'idle'
+    member['task'] = {'status': 'active' if condition == 'task' else 'completed'}
+    if condition == 'pending':
+        app.collaboration.insert('pending-fixture', 'fixture', {
+            'commandAction': 'coordination.send', 'delivery': 'queued', 'target': {'sessionId': sid}})
+    elif condition == 'generation': member['collaborationGeneration'] = {'id': 'active', 'terminal': False}
+    elif condition == 'preparing': app.runtime._preparations = {sid: object()}
+    app.assignments.save(value)
+    app.db.commit()
+    before = copy.deepcopy(value)
+    if open_task:
+        with pytest.raises(AppError, match='assignment open-task limit'):
+            app.assignments.reserve_member(source, 'next-helper', 'reserve-next')
+        assert app.assignments.current(source) == before
+    else:
+        assert app.assignments.reserve_member(source, 'next-helper', 'reserve-next') == value['id']
+        after = app.assignments.current(source)
+        assert all(after['members'][key] == row for key, row in before['members'].items())
+    assert app.runtime.inputs == []

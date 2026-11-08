@@ -215,27 +215,28 @@ class Assignments:
         limits = value['limits']
         if limits['maxMembers'] is not None and self.active_member_count(value) >= limits['maxMembers']:
             self.service.collaboration.error('The assignment member limit is reached. Retire a finished member to release a slot; its history and usage stay retained.', 429)
-        pending = {row[0] for row in self.service.db.execute("""SELECT DISTINCT
-            json_extract(receipt,'$.target.sessionId') FROM commands
-            WHERE json_extract(receipt,'$.commandAction')='coordination.send'
-            AND json_extract(receipt,'$.delivery') IN ('queued','submitting','pending_steer')""")}
-        opened = 0
-        for key, member in value['members'].items():
-            if key == value['ownerSessionId'] or member['status'] in {'detached', 'retired', 'not_created'}:
-                continue
-            try:
-                row = self.service._session(key, hydrate=False)
-            except Exception:
-                row = None
-            active = (row or {}).get('collaborationGeneration') or {}
-            task = (row or {}).get('task') or self.service.coordination.task(key)
-            if (member['status'] == 'reserved' or row is None or row.get('status') in LIVE | {'busy', 'stopping'} or key in pending
-                    or active.get('id') and not active.get('terminal')
-                    or task.get('status') in {'active', 'running', 'working'}
-                    or key in getattr(self.service.runtime, '_preparations', {})):
-                opened += 1
-        if limits['maxOpenTasks'] is not None and opened >= limits['maxOpenTasks']:
-            self.service.collaboration.error('The assignment open-task limit is reached, including nested commissioned work.', 429)
+        if limits['maxOpenTasks'] is not None:
+            pending = {row[0] for row in self.service.db.execute("""SELECT DISTINCT
+                json_extract(receipt,'$.target.sessionId') FROM commands
+                WHERE json_extract(receipt,'$.commandAction')='coordination.send'
+                AND json_extract(receipt,'$.delivery') IN ('queued','submitting','pending_steer')""")}
+            opened = 0
+            for key, member in value['members'].items():
+                if key == value['ownerSessionId'] or member['status'] in {'detached', 'retired', 'not_created'}:
+                    continue
+                try:
+                    row = self.service._session(key, hydrate=False)
+                except Exception:
+                    row = None
+                active = (row or {}).get('collaborationGeneration') or {}
+                task = (row or {}).get('task') or self.service.coordination.task(key)
+                if (member['status'] == 'reserved' or row is None or row.get('status') in LIVE | {'busy', 'stopping'} or key in pending
+                        or active.get('id') and not active.get('terminal')
+                        or task.get('status') in {'active', 'running', 'working'}
+                        or key in getattr(self.service.runtime, '_preparations', {})):
+                    opened += 1
+            if opened >= limits['maxOpenTasks']:
+                self.service.collaboration.error('The assignment open-task limit is reached, including nested commissioned work.', 429)
         value['members'][sid] = {'status': 'reserved', 'role': 'commissioned',
                                 'creatorSessionId': source['id'], 'creationOperationId': operation}
         value['revision'] += 1
