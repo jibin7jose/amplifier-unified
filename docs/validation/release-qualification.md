@@ -176,9 +176,29 @@ python scripts/frontend_build_artifact.py verify --directory /path/to/downloaded
 
 Verification is read-only. It rejects changed non-static inputs, changed local
 environment files, corrupt/missing/extra output, links and oversized bundles.
-After verification, the owner can copy the bundle's `static/` contents into
-`amplifier_web/static/` in its own checkout, removing only obsolete generated
-files after checking for local work, then review and commit the asset diff.
+Build inputs with Git's `assume-unchanged` or `skip-worktree` flags must have those
+flags cleared first so local edits cannot be hidden from verification.
+To import it into an inactive task-owned checkout, run:
+
+```sh
+python scripts/frontend_build_artifact.py apply --directory /path/to/downloaded/frontend-build-output
+```
+
+Apply repeats verification, stages a complete replacement and removes obsolete
+generated files. It refuses staged, unstaged, untracked or ignored local static
+work, including empty directories. Already identical output is a no-op, preserving
+the index. Review and commit the resulting asset diff yourself; apply does neither.
+
+Rerun the same command after an interruption. One recovery directory under this
+checkout's Git metadata retains the original files until replacement verification
+succeeds, then is removed. A small reusable lock file remains. Recovery checks the
+source, index and both trees; conflicting edits stop it with the recovery path so
+you can preserve and resolve them. The `new/` tree inside that directory is
+disposable staging, not a place to edit files. Keep the downloaded artifact until
+apply completes. Checkout and Git metadata must share a filesystem. This is an
+offline source repair command, not a live deployment or concurrent-editor protocol;
+do not build or edit this checkout while it runs. Recovery covers process
+interruption, not power-loss durability.
 If the source has changed, build that source again instead of importing old output.
 This repair artifact never supplies release qualification or skips checks. The
 existing successful-run proof and committed-assets requirement still apply.
