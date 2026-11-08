@@ -236,8 +236,9 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     question_fade_addition = question_fade_browser_addition(rows, set())
     context_addition = context_inspector_browser_addition(rows, set())
     immediate_addition = immediate_direction_browser_addition(rows, set())
+    delivery_addition = delivery_warning_browser_addition(rows, set())
     historical_rows = [row for row in rows
-                       if not (canvas_additions | breadbin_addition | question_fade_addition | context_addition | immediate_addition).intersection(row['command'])]
+                       if not (canvas_additions | breadbin_addition | question_fade_addition | context_addition | immediate_addition | delivery_addition).intersection(row['command'])]
     # Expanded exact .149 workflow invocations, including compound npm scripts.
     # Deliberate coverage changes must update this migration oracle explicitly.
     additions = {
@@ -330,8 +331,8 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     assert [row for row in rows if row['id'] in recovery_ids] == recovery_additions
     original = [row for row in historical_rows if row['id'] not in additions and row['id'] not in recovery_ids]
     assert len(original) == 65 and len(historical_rows) == 132
-    # Preserve the preceding total after validating the exact new layout owner.
-    assert len([row for row in rows if row['id'] != 'context-inspector-layout']) == 138
+    # Preserve the preceding total after validating both exact additive owners.
+    assert len([row for row in rows if row['id'] not in {'context-inspector-layout', 'delivery-warning'}]) == 138
     # Existing scenarios retain their commands; only evidence ownership changes.
     evidence = {
         'bundle': {'AMPLIFIER_BUNDLE_SCREENSHOT': '{root}/output/browser-checks/bundle-mobile.png'},
@@ -607,6 +608,35 @@ def test_canvas_browser_additions_reject_changed_or_duplicate_ordinary_owner(can
         canvas_browser_additions(rows, readiness_scripts)
 
 
+def delivery_warning_browser_addition(rows, readiness_scripts):
+    script = 'tests/delivery-warning-browser.mjs'
+    expected = {'id': 'delivery-warning', 'command': ['node', script],
+                'env': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/delivery-warning'}}
+    owners = [row for row in rows if row['id'] == expected['id'] or script in row['command']]
+    assert owners == [expected], f'{script}: expected exactly one ordinary owner'
+    assert script not in readiness_scripts, f'{script}: duplicate readiness owner'
+    return {script}
+
+
+@pytest.mark.parametrize('fault', ['missing', 'duplicate', 'command', 'environment', 'readiness'])
+def test_delivery_warning_browser_owner_is_exact(fault):
+    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    owner = next(row for row in rows if row['id'] == 'delivery-warning')
+    readiness = set()
+    if fault == 'missing':
+        rows.remove(owner)
+    elif fault == 'duplicate':
+        rows.append(json.loads(json.dumps(owner)))
+    elif fault == 'command':
+        owner['command'].append('--extra')
+    elif fault == 'environment':
+        owner['env'] = {}
+    else:
+        readiness.add('tests/delivery-warning-browser.mjs')
+    with pytest.raises(AssertionError, match='delivery-warning'):
+        delivery_warning_browser_addition(rows, readiness)
+
+
 def canvas_browser_additions(rows, readiness_scripts):
     """Validate new Canvas owners before excluding them from frozen inventories."""
     scripts = set()
@@ -828,10 +858,11 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     question_fade_addition = question_fade_browser_addition(plan['scenarios'], readiness_scripts)
     context_addition = context_inspector_browser_addition(plan['scenarios'], readiness_scripts)
     immediate_addition = immediate_direction_browser_addition(plan['scenarios'], readiness_scripts)
+    delivery_addition = delivery_warning_browser_addition(plan['scenarios'], readiness_scripts)
     # Freeze all three prior counts; validate each new owner before subtracting
     # the additions so missing or duplicated coverage cannot disappear.
     previous_scripts = ((readiness_scripts | extended_scripts) - {state_stream, update_delivery}
-                        - provider_additions - breadbin_addition - canvas_additions - question_fade_addition - context_addition - immediate_addition)
+                        - provider_additions - breadbin_addition - canvas_additions - question_fade_addition - context_addition - immediate_addition - delivery_addition)
     assert len(previous_scripts - {attachment, cancellation, shared_landing, tool_details, tool_previews, attachment_experience, pin_reorder, approval, dormant, shared_work} - feature_additions - voice_additions) == 146
     assert len(previous_scripts - {shared_work, 'tests/delegate-work-stream-browser.mjs', 'tests/client-traffic-browser.mjs'} - voice_additions) == 164
     assert len(previous_scripts) == 171

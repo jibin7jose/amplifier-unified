@@ -1,4 +1,35 @@
 """Read positive delivery evidence without treating missing history as non-delivery."""
+import json
+
+
+def receipt_mapping(raw):
+    """Read a receipt without manufacturing a replacement for malformed bytes."""
+    try:
+        receipt = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return receipt if isinstance(receipt, dict) else None
+
+
+def receipt_delivery(raw, session_id, input_id):
+    """An exact, noncontradictory producer receipt; absence is not non-delivery."""
+    receipt = receipt_mapping(raw)
+    if receipt is None or receipt.get('sessionId') != session_id or receipt.get('inputId') != input_id:
+        return None
+    # Existing send receipts predate action labels. If supplied, they must agree.
+    if any(receipt[key] != 'conversation.send' for key in ('action', 'commandAction') if key in receipt):
+        return None
+    delivery = receipt.get('delivery')
+    if not isinstance(delivery, str) or delivery not in {'accepted', 'unknown', 'failed', 'sending', 'held', 'queued_for_update'}:
+        return None
+    if delivery == 'accepted':
+        if 'accepted' in receipt and receipt['accepted'] is not True:
+            return None
+        if receipt.get('error') or receipt.get('code'):
+            return None
+        if 'status' in receipt and (type(receipt['status']) is not int or not 200 <= receipt['status'] < 300):
+            return None
+    return delivery
 
 
 def find_message(session, input_id):

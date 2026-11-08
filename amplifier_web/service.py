@@ -4185,15 +4185,21 @@ class AppService:
             raise AppError(str(exc),409,code=receipt['code']) from exc
 
     async def _check_delivery(self, sid, input_id):
-        from .message_delivery import find_message
+        from .message_delivery import find_message, receipt_delivery
         async with self.lock:
             session = copy.deepcopy(self._session(sid))
             question = self.questions.for_input(sid, input_id)
+            row = self.db.execute('SELECT receipt FROM commands WHERE id=?', (input_id,)).fetchone()
+            receipt_status = receipt_delivery(row[0], sid, input_id) if row else None
         message = find_message(session, input_id)
         if message is None and question is not None:
             # The answer record survives a cold/pruned message projection.
             # Its exact input binding permits a passive evidence probe, not send.
             message = {'delivery': question['delivery']}
+        if message is None and receipt_status is not None:
+            # Exact command delivery survives a bounded/pruned message view.
+            # Command admission alone (accepted=True) is not input delivery.
+            message = {'delivery': {'status': receipt_status}}
         if message is None:
             return {'delivery': 'not_saved', 'message': 'This app has no saved copy. You can try sending the original message again with the same delivery identity.'}
         if message.get('steering'):
@@ -4202,6 +4208,8 @@ class AppService:
             return {'delivery': message['delivery']['status'], 'steering': copy.deepcopy(message['steering']),
                     'message': 'Steering status: ' + message['steering']['disposition'] + '. This correction is bound to its original run and was not sent again.'}
         status = message.get('delivery', {}).get('status', 'unknown')
+        if receipt_status == 'accepted':
+            status = 'accepted'
         if status in {'queued_for_update', 'held'}:
             return {'delivery': status, 'message': message['delivery'].get('reason') or 'Saved for delivery after the app update. Nothing has been sent yet.'}
         if status != 'accepted' and self.runtime and hasattr(self.runtime, 'delivery'):
@@ -4215,8 +4223,11 @@ class AppService:
             current = self._session(sid)
             current_message = find_message(current, input_id)
             current_question = self.questions.for_input(sid, input_id)
+            row = self.db.execute('SELECT receipt FROM commands WHERE id=?', (input_id,)).fetchone()
+            current_receipt_status = receipt_delivery(row[0], sid, input_id) if row else None
             if ((current_message and current_message.get('delivery', {}).get('status') == 'accepted') or
-                    (current_question and current_question['delivery']['status'] == 'accepted')):
+                    (current_question and current_question['delivery']['status'] == 'accepted') or
+                    current_receipt_status == 'accepted'):
                 status = 'accepted'
             if status == 'accepted':
                 self._delivery(current, input_id, status)
@@ -4245,13 +4256,15 @@ class AppService:
         return {'delivery': 'accepted', 'resent': not bool(isinstance(result, dict) and result.get('duplicate'))}
 
     def _delivery(self, session, input_id, status):
+        from .message_delivery import receipt_mapping
         # Question command IDs differ from their immutable answer input IDs.
         # Reconcile their canonical record even after its message left the view.
         if status == 'accepted' and (questions := getattr(self, 'questions', None)):
             questions.accept_delivery(session['id'], input_id)
         message = next((row for row in session['messages'] if row.get('inputId') == input_id and row.get('role') == 'user'), None)
         row = self.db.execute('SELECT receipt FROM commands WHERE id=?', (input_id,)).fetchone()
-        receipt = json.loads(row[0]) if row else {}
+        parsed_receipt = receipt_mapping(row[0]) if row else None
+        receipt = parsed_receipt if parsed_receipt is not None else {}
         message_bound = message is not None and 'delivery' in message
         # Voice delegation has no separate user bubble. Only its saved exact
         # input/session binding permits a receipt update without that message.
@@ -4274,7 +4287,9 @@ class AppService:
                 self._post_disposition(session, message, 'accepted' if status == 'accepted' else 'retained')
                 if message.get('navigationPost'):
                     receipt['navigationPost'] = copy.deepcopy(message['navigationPost'])
-        if row:
+        # Exact runtime evidence can reconcile the bound message, but does not
+        # authorize replacing malformed command evidence with an invented receipt.
+        if row and parsed_receipt is not None:
             if status == 'accepted' and message_bound:
                 # Acceptance/consumption and this receipt commit in the next
                 # synchronous owned publication under the service lock. Keep
@@ -4291,12 +4306,15 @@ class AppService:
 
     def _post_disposition(self, session, message, disposition):
         from .chat_navigation import finish_human_post
+        from .message_delivery import receipt_mapping
         finish_human_post(session, message, disposition)
         if not message or not message.get('navigationPost'):
             return
         row = self.db.execute('SELECT receipt FROM commands WHERE id=?', (message['inputId'],)).fetchone()
         if row:
-            receipt = json.loads(row[0])
+            receipt = receipt_mapping(row[0])
+            if receipt is None:
+                return
             receipt['navigationPost'] = copy.deepcopy(message['navigationPost'])
             self.db.execute('UPDATE commands SET receipt=? WHERE id=?', (json.dumps(receipt), message['inputId']))
 

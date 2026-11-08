@@ -1,19 +1,47 @@
-import React,{useState} from 'react';
+import React,{useEffect,useRef,useState} from 'react';
 import {AlertCircle,RotateCcw,LoaderCircle} from 'lucide-react';
+import {usePendingDeliveryCheck} from './pending-delivery-checks';
 
-export function MessageDelivery({message,session,delivery,localDelivery,dispatch,retry,discard}){
- const [pending,setPending]=useState(false),[report,setReport]=useState(null),[confirm,setConfirm]=useState(false),[error,setError]=useState('');
+export function MessageDelivery(props){
+ const inputId=props.message.inputId||props.localDelivery?.commandId;
+ return <DeliveryWarning key={JSON.stringify([props.session.id,inputId])} {...props}/>;
+}
+
+function DeliveryWarning({message,session,delivery,localDelivery,dispatch,retry,discard}){
+ const [submitting,setPending]=useState(false),[localReport,setReport]=useState(null),[confirm,setConfirm]=useState(false),[localError,setError]=useState('');
  const inputId=message.inputId||localDelivery?.commandId;
+ const checkOwner=usePendingDeliveryCheck(JSON.stringify([session.id,inputId]));
+ const pending=submitting||checkOwner.pending;
+ const report=localReport||checkOwner.settled?.result?.result,error=localError||checkOwner.settled?.error;
+ const storageKey=session.id&&inputId?'amplifier.deliveryWarning.v1:'+JSON.stringify([session.id,inputId]):null;
+ const [dismissed,setDismissed]=useState(()=>{try{return !!storageKey&&sessionStorage.getItem(storageKey)==='dismissed'}catch{return false}});
+ const [expanded,setExpanded]=useState(false),summary=useRef(null),mounted=useRef(true);
+ useEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[]);
+ useEffect(()=>{
+  if(report?.delivery==='accepted'||delivery?.status==='accepted'){
+   try{if(storageKey)sessionStorage.removeItem(storageKey)}catch{}
+  }
+ },[storageKey,report?.delivery,delivery?.status]);
+ const setWarningDismissed=value=>{
+  setDismissed(value);setExpanded(false);setConfirm(false);
+  try{if(storageKey){if(value)sessionStorage.setItem(storageKey,'dismissed');else sessionStorage.removeItem(storageKey)}}
+  catch{setError('Warning preference could not be saved in this browser. It may return after reload.')}
+  if(value)globalThis.requestAnimationFrame?.(()=>summary.current?.focus({preventScroll:true}));
+ };
  const blocked=session.configurationBusy||session.ownership?.status==='blocked'||session.workspaceAvailable===false||!!session.historyReadOnlyReason;
  const saved=session.messages?.some(m=>m.role==='user'&&m.inputId===inputId);
  const originalSubmission=!!localDelivery&&!saved;
  const working=['working','starting','running','stopping'].includes(session.status);
+ const active=working&&session.execution?.currentTurnId===inputId||
+  [delivery,localDelivery,message.delivery,{status:report?.delivery}].some(row=>['sending','queued','queued_for_update'].includes(row?.status));
+ const dismissible=!!storageKey&&!active&&['failed','unknown'].includes(delivery?.status);
  const check=async()=>{
-  if(pending)return;setPending(true);setError('');setConfirm(false);
+  if(pending)return;setReport(null);setError('');setConfirm(false);
   try{
    if(!session.id){setReport({delivery:'not_saved',message:'This message has no confirmed conversation yet. Retry the original submission to check or complete its delivery.'});return;}
-   const result=await dispatch('conversation.delivery',{sessionId:session.id,inputId},{feedback:false});setReport(result.result);
-  }catch(e){setError(e.message)}finally{setPending(false)}
+   const result=await checkOwner.run(()=>dispatch('conversation.delivery',{sessionId:session.id,inputId},{feedback:false}));
+   if(mounted.current)setReport(result.result);
+  }catch(e){if(mounted.current)setError(e.message)}
  };
  const resend=async()=>{
   if(pending)return;setPending(true);setError('');
@@ -38,12 +66,12 @@ export function MessageDelivery({message,session,delivery,localDelivery,dispatch
    {error&&<span role="alert">{error}</span>}
   </span>;
  }
- if(!delivery)return null;
+ if(!delivery||delivery.status==='accepted'||report?.delivery==='accepted')return null;
  if(delivery.status==='queued_for_update')return <span className="a-message-delivery" role="status">Saved · waiting for the app update. You do not need to send it again.</span>;
  if(delivery.status==='held')return <span className="a-message-delivery" role="status">{delivery.reason||'Message retained without sending.'}</span>;
- const sending=delivery.status==='sending';
+ const sending=['sending','queued'].includes(delivery.status);
  const preparing=session.status==='starting'||session.activity?.phase==='runtime-setup';
- return <>
+ const content=<>
   <span className="a-message-delivery" role="status">{sending?<><LoaderCircle className="a-progress-spinner"/>{preparing?'Preparing chat…':'Sending…'}</>:<><AlertCircle/>{delivery.status==='failed'?'Not sent':'Delivery not confirmed'}
    {delivery.status==='failed'?<button type="button" className="a-link" data-action="conversation.send" disabled={pending||blocked} onClick={()=>session.messages?.some(row=>row.inputId===inputId)?resend():retry(message)}><RotateCcw/>Retry</button>:<button type="button" className="a-link" data-action="conversation.delivery" disabled={pending||!inputId} onClick={check}><RotateCcw/>{pending?'Checking…':'Check delivery'}</button>}
   </>}</span>
@@ -53,5 +81,10 @@ export function MessageDelivery({message,session,delivery,localDelivery,dispatch
   {error&&<p role="alert" className="a-delivery-detail">{error}</p>}
   {!sending&&report&&!['accepted','sending'].includes(report.delivery)&&!confirm&&<button type="button" className="a-link" data-action="conversation.retry" disabled={pending||blocked||working} onClick={()=>originalSubmission?resend():setConfirm(true)}>{originalSubmission?'Retry original submission':'Send again'}</button>}
   {confirm&&<div className="a-delivery-confirm" role="alert"><p>The earlier attempt may have run even though delivery was not confirmed. Sending again could repeat that work. Your saved message and history will be kept.</p><button type="button" className="a-soft" disabled={pending} onClick={()=>setConfirm(false)}>Cancel</button><button type="button" className="a-primary" data-action="conversation.retry" disabled={pending||blocked||working} onClick={resend}>{pending?'Sending…':'Send this message again'}</button></div>}
+  {dismissible&&<button type="button" className="a-link" disabled={pending} onClick={()=>{if(!pending)setWarningDismissed(!dismissed)}}>{dismissed?'Show warning':'Dismiss warning'}</button>}
  </>;
+ return dismissible?<details className="a-delivery-warning" open={pending||!dismissed||expanded} onToggle={event=>{if(dismissed&&!pending)setExpanded(event.currentTarget.open)}}>
+  <summary ref={summary} hidden={!dismissed} aria-disabled={pending||undefined} onClick={event=>{if(pending)event.preventDefault()}}>Delivery details</summary>
+  {content}
+ </details>:content;
 }

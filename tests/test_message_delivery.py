@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -918,6 +919,119 @@ async def test_check_reconciles_positive_evidence_and_original_receipt(recovery)
     result = await app.dispatch('conversation.retry', recovery_args(app))
     assert result['result']['resent'] is False
     assert runtime.retries == []
+
+
+@pytest.mark.parametrize('prior,evidence,expected', [
+    ('accepted', 'unknown', 'accepted'),
+    ('unknown', 'accepted', 'accepted'),
+    ('unknown', 'unknown', 'unknown'),
+])
+async def test_check_exact_receipt_outside_message_window(recovery, prior, evidence, expected):
+    app, runtime, _ = recovery
+    sid = app._session()['id']
+    if prior == 'accepted':
+        app._delivery(app._session(), 'original', 'accepted')
+    app._session()['messages'] = []
+    runtime.evidence = evidence
+    # No full-history read or unrelated message is needed to prove this input.
+    result = await app._check_delivery(sid, 'original')
+    assert result['delivery'] == expected
+    assert app._session()['messages'] == []
+    assert runtime.sent == [] and runtime.retries == [] and runtime.started == []
+
+
+async def test_delivery_receipt_never_borrows_other_chat_or_generic_acceptance(recovery):
+    app, runtime, _ = recovery
+    sid = app._session()['id']
+    app._session()['messages'] = []
+    record = app.db.execute('SELECT receipt FROM commands WHERE id=?', ('original',)).fetchone()
+    receipt = json.loads(record[0])
+    assert receipt['sessionId'] == sid and receipt['inputId'] == 'original'
+    for change in ({'sessionId': 'other', 'delivery': 'accepted'}, {'inputId': 'other', 'delivery': 'accepted'},
+                   {'delivery': 'unknown', 'accepted': True}):
+        app.db.execute('UPDATE commands SET receipt=? WHERE id=?', (json.dumps({**receipt, **change}), 'original'))
+        runtime.evidence = 'unknown'
+        result = await app._check_delivery(sid, 'original')
+        assert result['delivery'] != 'accepted'
+    assert not runtime.sent and not runtime.retries
+
+
+@pytest.mark.parametrize('invalid', [
+    None, [], {'delivery': {}}, {'accepted': False}, {'status': 409},
+    {'status': 'failed'}, {'code': 'worker_startup_failed'}, {'error': 'refused'},
+    {'commandAction': 'session.delete'}, {'action': 'conversation.stop'},
+    {'commandAction': []}, {'accepted': 1},
+])
+async def test_delivery_rejects_malformed_or_contradictory_saved_receipt(recovery, invalid):
+    app, runtime, _ = recovery
+    sid = app._session()['id']
+    app._session()['messages'] = []
+    runtime.evidence = 'unknown'
+    base = {'sessionId': sid, 'inputId': 'original', 'accepted': True, 'delivery': 'accepted'}
+    receipt = {**base, **invalid} if isinstance(invalid, dict) else invalid
+    app.db.execute('UPDATE commands SET receipt=? WHERE id=?', (json.dumps(receipt), 'original'))
+    result = await app._check_delivery(sid, 'original')
+    assert result['delivery'] != 'accepted'
+    assert not runtime.sent and not runtime.retries and not runtime.started
+
+
+@pytest.mark.parametrize('raw', ['null', '[]', '{invalid JSON'])
+async def test_positive_delivery_preserves_malformed_receipt_bytes(recovery, raw, monkeypatch):
+    app, runtime, _ = recovery
+    session = app._session()
+    message = session['messages'][-1]
+    assert message['inputId'] == 'original' and message.get('navigationPost')
+    message['attachments'] = [{'id': 'kept', 'name': 'reference.txt'}]
+    before = copy.deepcopy(message)
+    db = app.db
+    if raw.startswith('{invalid'):
+        # The current indexed store rejects invalid JSON on write. Exercise a
+        # corrupt legacy read at the exact receipt seam, without removing indexes.
+        with pytest.raises(sqlite3.OperationalError, match='malformed JSON'):
+            db.execute('UPDATE commands SET receipt=? WHERE id=?', (raw, 'original'))
+        original_bytes = db.execute('SELECT receipt FROM commands WHERE id=?', ('original',)).fetchone()[0]
+
+        class CorruptReceiptRead:
+            def __getattr__(self, name):
+                return getattr(db, name)
+
+            def execute(self, sql, args=()):
+                if sql == 'SELECT receipt FROM commands WHERE id=?' and args == ('original',):
+                    return SimpleNamespace(fetchone=lambda: (raw,))
+                assert not (sql.startswith('UPDATE commands SET receipt=') and args[-1:] == ('original',))
+                return db.execute(sql, args)
+
+        monkeypatch.setattr(app, 'db', CorruptReceiptRead())
+    else:
+        db.execute('UPDATE commands SET receipt=? WHERE id=?', (raw, 'original'))
+        original_bytes = raw
+    runtime.evidence = 'accepted'
+    result = await app._check_delivery(session['id'], 'original')
+    assert result['delivery'] == 'accepted'
+    assert message['delivery']['status'] == 'accepted'
+    for key in ('id', 'inputId', 'text', 'attachments'):
+        assert message.get(key) == before.get(key)
+    assert app.db.execute('SELECT receipt FROM commands WHERE id=?', ('original',)).fetchone()[0] == raw
+    assert db.execute('SELECT receipt FROM commands WHERE id=?', ('original',)).fetchone()[0] == original_bytes
+    assert not runtime.sent and not runtime.retries and not runtime.started
+    # A later unknown observation cannot erase the independently confirmed message.
+    runtime.evidence = 'unknown'
+    assert (await app._check_delivery(session['id'], 'original'))['delivery'] == 'accepted'
+    assert app.db.execute('SELECT receipt FROM commands WHERE id=?', ('original',)).fetchone()[0] == raw
+
+
+@pytest.mark.parametrize('action', [None, 'conversation.send'])
+async def test_delivery_accepts_valid_legacy_and_named_send_receipt(recovery, action):
+    app, runtime, _ = recovery
+    sid = app._session()['id']
+    app._session()['messages'] = []
+    runtime.evidence = 'unknown'
+    receipt = {'sessionId': sid, 'inputId': 'original', 'accepted': True, 'delivery': 'accepted'}
+    if action:
+        receipt['commandAction'] = action
+    app.db.execute('UPDATE commands SET receipt=? WHERE id=?', (json.dumps(receipt), 'original'))
+    assert (await app._check_delivery(sid, 'original'))['delivery'] == 'accepted'
+    assert not runtime.sent and not runtime.retries
 
 
 async def test_retry_preserves_message_attachments_draft_and_identity(recovery):

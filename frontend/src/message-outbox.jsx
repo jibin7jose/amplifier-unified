@@ -5,7 +5,7 @@ export function readOutbox(storage){
 }
 export function outboxMessages(messages,entries,sessionId){
  const pending=entries.filter(row=>row.sessionId===(sessionId??null));
- const confirmed=messages.map(message=>{const entry=pending.find(row=>row.commandId===message.inputId);return entry&&!['accepted','queued_for_update','held'].includes(message.delivery?.status)?{...message,localDelivery:{...entry,...(message.delivery?.status==='failed'?{status:'failed'}:{})}}:message});
+ const confirmed=messages.map(message=>{const entry=pending.find(row=>row.commandId===message.inputId);return entry&&!['accepted','queued_for_update','held'].includes(message.delivery?.status)?{...message,localDelivery:{...entry,...(['failed','sending','queued'].includes(message.delivery?.status)?{status:message.delivery.status}:{})}}:message});
  return [...confirmed,...pending.filter(row=>!messages.some(message=>message.inputId===row.commandId)).map(row=>({id:row.id,inputId:row.commandId,role:'user',text:row.text,via:row.via,createdAt:row.createdAt,attachments:row.attachments,replyTo:row.replyTo,localDelivery:row}))];
 }
 export function useMessageOutbox(){
@@ -17,5 +17,10 @@ export function useMessageOutbox(){
   current.current=next;setEntries(next);try{sessionStorage.setItem(key,JSON.stringify(next));setStorageError(false)}catch{setStorageError(true)}
   return next.find(row=>row.id===id);
  },[]);
- return {entries,current,update,storageError};
+ const acknowledge=useCallback((sessionId,inputId,receipt)=>{
+  if(!sessionId||!inputId||receipt?.delivery!=='accepted')return;
+  for(const entry of current.current)
+   if(entry.sessionId===sessionId&&entry.commandId===inputId)update(entry.id,null);
+ },[update]);
+ return {entries,current,update,acknowledge,storageError};
 }
