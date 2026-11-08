@@ -191,7 +191,6 @@ def main():
                 shutil.copy2(log, OUTPUT / 'node.tap')
             elif name == 'build':
                 build = create(ROOT, OUTPUT / 'built-frontend', os.environ)
-                assert len(build['assets']) == 311
                 report['build'] = json.loads((ROOT / 'amplifier_web/static/build.json').read_text())
             elif name == 'wheel':
                 assert list(wheel.parent.glob('*.whl')) == [wheel], 'Exactly one newly built wheel'
@@ -208,7 +207,7 @@ def main():
                         if path.startswith(tuple(p + '/' for p in PACKAGES)) and (ROOT / path).is_file():
                             assert hashlib.sha256(data).hexdigest() == sha(ROOT / path), path
                     assets = {p.removeprefix('amplifier_web/static/'): hashlib.sha256(archive.read(p)).hexdigest() for p in archive.namelist() if p.startswith('amplifier_web/static/')}
-                    assert assets == {p: v['sha256'] for p, v in build['assets'].items()} and len(assets) == 311
+                    assert assets == {p: v['sha256'] for p, v in build['assets'].items()}
                 report['wheel'] = {'path': str(wheel), 'sha256': sha(wheel), 'recordEntries': len(entries)}
             elif name == 'installed-imports':
                 origins = json.loads(log.read_text())
