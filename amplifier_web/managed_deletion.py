@@ -44,6 +44,39 @@ def tombstones(db):
     return [json.loads(row[0]) for row in db.execute("SELECT value FROM managed_deletions WHERE phase IN ('confirmed','done')")]
 
 
+class CatalogSuppression:
+    """Interpret the existing deletion journal; never mutate the native catalog.
+
+    Managed-chat deletion owns its whole project. History cleanup owns only its
+    reviewed identities, including descendants, even when the review selected
+    every then-existing session. Future sessions in that workspace remain valid.
+    """
+    def __init__(self, db):
+        self.projects, self.ids = set(), set()
+        self.native = {}
+        for row in tombstones(db):
+            ids = row.get('ids', ())
+            if not row.get('preserveWorkspace'):
+                self.projects.add(row['project'])
+                self.ids.update(ids)
+            else:
+                self.native.setdefault(row['project'], set()).update(ids)
+
+    def contains(self, row):
+        from .session_identity import native_id, project
+        scope = project(row)
+        ids = {row['id'], native_id(row)}
+        return scope in self.projects or any(
+            identity in self.ids or identity in self.native.get(scope, ()) for identity in ids)
+
+    @staticmethod
+    def keys(groups):
+        return sorted(scope + '\0' + identity for scope, ids in groups.items() for identity in ids)
+
+    def signature(self):
+        return (sorted(self.projects), sorted(self.ids), self.keys(self.native))
+
+
 def removed(db, identity=None, workspace=None):
     return any(identity in row['ids'] or (not row.get('preserveWorkspace') and workspace == row['workspace']) for row in tombstones(db))
 

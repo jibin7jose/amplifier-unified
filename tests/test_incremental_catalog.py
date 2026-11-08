@@ -131,6 +131,52 @@ def test_transient_catalog_save_failure_reconnects_without_restart(tmp_path, mon
     assert {'kind': 'unavailable-catalog-cache'} not in recovered['issues']
 
 
+async def test_scoped_tombstone_keeps_last_counts_during_cache_failure_and_recovers(
+        tmp_path, app_factory, monkeypatch):
+    workspace = tmp_path/'workspace'
+    native_session(workspace, 'deleted-root')
+    sibling = native_session(workspace, 'sibling-root')
+    app = app_factory()
+    await app.history.refresh(force=True)
+    index = app.history.index
+    project = project_slug(workspace)
+    tombstone = {'id':'review','project':project,'workspace':str(workspace),
+                 'ids':['deleted-root'],'preserveWorkspace':True}
+    app.db.execute('INSERT INTO managed_deletions VALUES(?,?,?,?)',
+                   ('review','token','confirmed',json.dumps(tombstone)))
+    app.db.commit()
+    await app.history.refresh(force=True)
+    shared = app.state['sharedHistory']
+    assert shared['error'] is None and shared['sessionCount'] == 1
+    assert {row['id'] for row in app.directory.select(limit=10)} == {'sibling-root'}
+    counts = {key: shared[key] for key in
+              ('projectCount','sessionCount','workerSessionCount','internalSessionCount')}
+    def blocked(*args):
+        raise sqlite3.OperationalError('Synthetic cache write unavailable')
+    monkeypatch.setattr(index._catalog, 'save', blocked)
+    metadata = sibling/'metadata.json'
+    write_json(metadata, {**json.loads(metadata.read_text()),'name':'After cache recovery'})
+    monkeypatch.setattr(index, '_invalidations', lambda: (True, {(project,'sibling-root','metadata')}))
+    await app.history.refresh(force=False)
+    assert index._catalog is None
+    assert shared['error'] is None
+    assert {'kind':'unavailable-catalog-cache'} in shared['issues']
+    assert {key:shared[key] for key in counts} == counts
+    await app.history.refresh(force=False)
+    assert shared['reconciliation']['phase'] == 'unavailable'
+    assert {key:shared[key] for key in counts} == counts
+    index._cache_retry_at = 0
+    monkeypatch.setattr(index, '_invalidations', lambda: (True, set()))
+    await app.history.refresh(force=True)
+    assert index._catalog is not None and shared['error'] is None
+    assert {'kind':'unavailable-catalog-cache'} not in shared['issues']
+    assert shared['sessionCount'] == 1
+    page = app.directory.chats({**app.state, 'view':{
+        **app.state.get('view', {}),'navChatScope':'all'}}, section='recent')
+    assert [(row['id'],row['title']) for row in page['items']] == [('sibling-root','After cache recovery')]
+    assert app.runtime.started == [] and app.runtime.sent == []
+
+
 def test_transient_catalog_retry_deadline_wakes_quiet_watcher(tmp_path, monkeypatch):
     from types import SimpleNamespace
     home, workspace = tmp_path / 'native', tmp_path / 'workspace'

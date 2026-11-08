@@ -244,6 +244,18 @@ class NativeCatalog:
         with self.connect() as db:
             return db.execute('SELECT count(*) FROM native_rows WHERE ' + where, args).fetchone()[0]
 
+    def count_identities(self, project, identities):
+        """Count exact native/public aliases through scalar indexes, once each."""
+        with self.connect() as db:
+            return dict(db.execute('''WITH ids AS (SELECT value FROM json_each(?)), matched AS (
+                SELECT rowid,kind FROM native_rows WHERE namespace=? AND project=?
+                    AND identity IN (SELECT value FROM ids)
+                UNION
+                SELECT rowid,kind FROM native_rows WHERE namespace=? AND project=?
+                    AND public_id IN (SELECT value FROM ids))
+                SELECT kind,count(*) FROM matched GROUP BY kind''',
+                (json.dumps(sorted(identities)), self.namespace, project, self.namespace, project)))
+
     def generations(self):
         """Scalar committed invalidations; transcript stamps do not hash a library."""
         with self.connect() as db:

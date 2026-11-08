@@ -268,6 +268,15 @@ maintenance. Ordinary orphan cleanup is driven by subsequent successful saves,
 not an independent idle timer. Crash tests cover process exit around resource
 creation, not power-loss or filesystem corruption guarantees.
 
+Shared-history deletion suppresses only the reviewed session identities and
+their descendants in that native project. Reviewing all existing history is
+still a snapshot: other sessions and later new sessions in the surviving
+workspace remain discoverable. Confirmed cleanup-pending and completed receipts
+both suppress the deleted identities against a stale catalog and after restart.
+Managed-chat deletion retains its separate whole-owned-project scope.
+If the disposable catalog becomes unavailable, public counts retain their last
+values alongside the unavailable-cache diagnostic until recovery.
+
 The confirmed-deletion gate is deliberately conservative: an active backup or
 an uncertain retained resource graph anywhere in the library can defer **all**
 physical purge, including the deleted chat's folders and transcripts. The chat

@@ -235,11 +235,10 @@ def revision(directory,state):
             read.append(item)
             if kind == 'root':
                 workspace_read.append(item)
-    from .managed_deletion import tombstones
+    from .managed_deletion import CatalogSuppression
     suppression = digest([sorted(set(state.get('hiddenNativeSessions',[]))),
                           sorted(set(state.get('hiddenNativeWorkspaces',[]))),
-                          sorted(encoded((row.get('id'),row.get('project'),sorted(row.get('ids') or [])))
-                                 for row in tombstones(directory.db))])
+                          CatalogSuppression(directory.db).signature()])
     result = {key:(directory._native_namespace,tuple(effective_native[key]) if key in effective_native else native[2 if key=='navigation' else 0 if key=='sessions' else 1],local.get(key,0),
                  digest(sorted(overlays[key])),digest(pins if key=='sessions' else workspace_read if key in {'workspace','root_navigation'} else read),suppression)
             for key in COLLECTIONS}

@@ -695,8 +695,8 @@ class HistoryDirectory:
         # deletion authority; hiding a directory row never deletes a record.
         hidden = state.get('hiddenNativeSessions', [])
         hidden_workspaces = state.get('hiddenNativeWorkspaces', [])
-        from .managed_deletion import tombstones
-        deleted = tombstones(self.db)
+        from .managed_deletion import CatalogSuppression
+        deleted = CatalogSuppression(self.db)
         filters = ['r.id IN (SELECT id FROM requested_ids)'] if public_ids is not None else []
         if public_ids is not None:
             required_fields.add('id')
@@ -714,12 +714,18 @@ class HistoryDirectory:
             required_fields.update(('session_kind', 'parent_id'))
             filters.append("r.session_kind!='root' AND r.parent_id IS (SELECT id FROM child_input)")
         for column, values in (('hidden_id', hidden), ('workspace_id', hidden_workspaces),
-                               ('native_project', [row['project'] for row in deleted]),
-                               ('id', [sid for row in deleted for sid in row.get('ids', ())])):
+                               ('native_project', sorted(deleted.projects)),
+                               ('id', sorted(deleted.ids))):
             if values:
                 required_fields.add(column)
                 filters.append(f"COALESCE(r.{column},'') NOT IN (SELECT value FROM json_each(?))")
                 parameters.append(json.dumps(values))
+        if deleted.native:
+            required_fields.update(('native_project', 'native_id', 'id'))
+            native_keys = json.dumps(deleted.keys(deleted.native))
+            for identity in ('native_id', 'id'):
+                filters.append(f"COALESCE(r.native_project,'')||char(0)||COALESCE(r.{identity},'') NOT IN (SELECT value FROM json_each(?))")
+                parameters.append(native_keys)
         selected_columns = ','.join(name for name in COLUMNS if name in required_fields)
         output_columns = ','.join(name for name in COLUMNS if name in requested_fields)
         return (f'''WITH {local},{native}, all_directory_rows AS (
@@ -878,11 +884,10 @@ class HistoryDirectory:
                                     ' FROM history_local_rows WHERE id=?', (identity,)).fetchone()
             if saved is None or tuple(saved) != current:
                 overlays.append(current)
-        from .managed_deletion import tombstones
+        from .managed_deletion import CatalogSuppression
         suppression = (tuple(sorted(set(state.get('hiddenNativeSessions', ())))),
                        tuple(sorted(set(state.get('hiddenNativeWorkspaces', ())))),
-                       tuple(sorted(json.dumps((row.get('id'), row.get('project'), sorted(row.get('ids') or [])),
-                                              separators=(',', ':')) for row in tombstones(self.db))))
+                       CatalogSuppression(self.db).signature())
         stamp = (self._native_path, self._native_namespace,
                  local[0] if local else 0, native[0] if native else 0,
                  tuple(sorted(overlays, key=lambda row: row[0])), suppression,

@@ -622,10 +622,10 @@ class AutomaticHistory:
                         managed_paths = await asyncio.to_thread(catalog_locations, snapshot)
                     count(self.service, 'catalog.merge.full' if not delta_mode or full_merge
                           else 'catalog.merge.delta')
-                    from .managed_deletion import tombstones
-                    deleted_projects = {row['project'] for row in tombstones(self.service.db)}
-                    snapshot['workspaces'] = [row for row in snapshot['workspaces'] if row.get('nativeProject') not in deleted_projects]
-                    snapshot['sessions'] = [row for row in snapshot['sessions'] if row.get('nativeProject') not in deleted_projects]
+                    from .managed_deletion import CatalogSuppression
+                    deleted = CatalogSuppression(self.service.db)
+                    snapshot['workspaces'] = [row for row in snapshot['workspaces'] if row.get('nativeProject') not in deleted.projects]
+                    snapshot['sessions'] = [row for row in snapshot['sessions'] if not deleted.contains(row)]
                     count(self.service, 'catalog.merge.rows', len(snapshot['sessions']))
                     changed = bool(locations_changed or state.get('sharedHistory', {}).get('loading') or state.get('sharedHistory', {}).get('error')
                                    or directory_mode and (incoming['reset'] or incoming['sessions'] or incoming['removed'] or incoming['removedProjects']))
@@ -885,7 +885,7 @@ class AutomaticHistory:
                             or state['sharedHistory'].get('issueCount', 0) != len(issues)):
                         changed = True
                         globals_changed.add('sharedHistory')
-                    counts = (self._public_catalog_counts(incoming, deleted_projects)
+                    counts = (self._public_catalog_counts(incoming, deleted)
                               if delta_mode else {
                                   'projectCount': len(snapshot['workspaces']),
                                   'sessionCount': sum(row['sessionKind'] == 'root' for row in snapshot['sessions']),
@@ -936,25 +936,39 @@ class AutomaticHistory:
                             # a second disk error must not kill discovery.
                             pass
 
-    def _public_catalog_counts(self, incoming, deleted_projects):
+    def _public_catalog_counts(self, incoming, deleted):
         counts = {key: incoming[key] for key in
                   ('projectCount', 'sessionCount', 'workerSessionCount', 'internalSessionCount')}
+        if deleted.native and incoming.get('directoryReady') is False:
+            # The scanner reports its existing unavailable-cache issue/freshness.
+            # Raw totals cannot prove which reviewed rows are still indexed;
+            # retain last public counts until that same catalog owner recovers.
+            shared = self.service.state.get('sharedHistory', {})
+            return {key: shared.get(key, 0) for key in counts}
         # Retained tombstones can make public totals differ from native totals.
         # Recheck their compact receipts even when the scanner returns no rows.
-        for project in deleted_projects:
+        for project in deleted.projects:
             summary = self._catalog_workspaces.get(project)
             if summary is not None:
                 counts['projectCount'] -= 1
                 for key in ('sessionCount', 'workerSessionCount', 'internalSessionCount'):
                     counts[key] -= summary.get(key, 0)
+        for project, identities in deleted.native.items():
+            if project in deleted.projects:
+                continue
+            # Cleanup can be pending or discovery can lag the confirmed delete.
+            # Count only still-indexed reviewed rows, without loading bodies.
+            for kind, amount in self.index._catalog.count_identities(project, identities).items():
+                counts[{'root': 'sessionCount', 'worker': 'workerSessionCount',
+                        'internal': 'internalSessionCount'}[kind]] -= amount
         return counts
 
     def _catalog_facts_unchanged(self, incoming):
-        from .managed_deletion import tombstones
+        from .managed_deletion import CatalogSuppression
         shared = self.service.state.get('sharedHistory', {})
         if shared.get('loading') or shared.get('error'):
             return False
-        deleted = {row['project'] for row in tombstones(self.service.db)}
+        deleted = CatalogSuppression(self.service.db)
         counts = self._public_catalog_counts(incoming, deleted)
         issues = incoming.get('issues', [])
         reconciliation = {key: incoming.get('reconciliation', {}).get(key)

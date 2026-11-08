@@ -31,6 +31,56 @@ def change_native(catalog, project, workspace, changed=(), removed=()):
                  {project: before}, {}, set())
 
 
+def test_history_tombstones_keep_native_scope_and_legacy_project_fences(tmp_path):
+    state, directory, catalog, project, workspace = native_fixture(tmp_path, 2, 0)
+    other, other_workspace = seed(catalog, tmp_path/'other', 1)
+    state['workspaces'] = [workspace, other_workspace]
+    other_id = catalog.get(other, 'saved-00000')['id']
+    tombstone = {'id':'review', 'project':project, 'workspace':workspace['path'],
+                 'ids':['saved-00000'], 'preserveWorkspace':True,
+                 'historySelection':{'project':project, 'nativeId':'saved-00000'}}
+    directory.db.execute('INSERT INTO managed_deletions VALUES(?,?,?,?)',
+                         ('review','token','confirmed',json.dumps(tombstone)))
+    directory.db.commit()
+    # The stale native index still contains the deleted root. Another project's
+    # identical native ID remains a different conversation.
+    expected = {'saved-00001', other_id}
+    assert {row['id'] for row in directory.select(limit=10)} == expected
+    assert {row['id'] for row in directory.chats(state, section='recent')['items']} == expected
+    assert directory.root_count() == 2
+    # Retained managed-chat/legacy receipts keep their whole-project fence.
+    tombstone.pop('preserveWorkspace')
+    directory.db.execute('UPDATE managed_deletions SET value=? WHERE id=?', (json.dumps(tombstone),'review'))
+    directory.db.commit()
+    assert {row['id'] for row in directory.select(limit=10)} == {other_id}
+    assert directory.root_count() == 1
+
+
+def test_scoped_history_suppression_uses_existing_local_identity_fallback(tmp_path):
+    from amplifier_web.managed_deletion import CatalogSuppression
+
+    state, directory, catalog, project, workspace = native_fixture(tmp_path, 2, 0)
+    other, other_workspace = seed(catalog, tmp_path/'other', 1)
+    state['workspaces'] = [workspace, other_workspace]
+    # Local owners can lack nativeProject/nativeIdentity before discovery. The
+    # established workspace/runtime aliases must agree in merge and SQL paths.
+    rows = [{'id':'local-target','runtimeSessionId':'saved-00000',
+             'workspace':workspace['path'],'sessionKind':'root'},
+            {'id':'local-other','runtimeSessionId':'saved-00000',
+             'workspace':other_workspace['path'],'sessionKind':'root'}]
+    state['sessions'] = rows
+    directory.sync(rows, state)
+    tombstone = {'id':'review','project':project,'workspace':workspace['path'],
+                 'ids':['saved-00000'],'preserveWorkspace':True}
+    directory.db.execute('INSERT INTO managed_deletions VALUES(?,?,?,?)',
+                         ('review','token','done',json.dumps(tombstone)))
+    directory.db.commit()
+    deleted = CatalogSuppression(directory.db)
+    assert deleted.contains(rows[0]) and not deleted.contains(rows[1])
+    assert {row['id'] for row in directory.select(limit=10)} == {'local-other','saved-00001'}
+    assert directory.root_count() == 2
+
+
 @pytest.mark.parametrize('count', [270, 27000])
 def test_six_exact_summaries_have_bounded_sql_work_in_mixed_catalog(tmp_path, count):
     state, directory, catalog, project, workspace = native_fixture(tmp_path, count, 187)

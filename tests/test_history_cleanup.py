@@ -62,6 +62,83 @@ async def test_project_deletes_all_reviewed_sessions_and_survives_restart(app,tm
         assert (await reopened.dispatch('storage.historyDelete',args))['result']==result
     finally:await reopened.close()
 
+
+@pytest.mark.parametrize('whole_history', [False, True])
+@pytest.mark.parametrize('interrupted', [False, True])
+async def test_reviewed_history_scope_keeps_catalog_siblings_and_future_sessions(
+        app, tmp_path, monkeypatch, whole_history, interrupted):
+    from amplifier_web import managed_deletion
+    from test_automatic_history import native_session, files_snapshot
+
+    workspace = tmp_path/'project'
+    target = native_session(workspace, 'selected-root')
+    worker = native_session(workspace, 'selected-worker', metadata={'parent_id':'selected-root'})
+    sibling = native_session(workspace, 'sibling-root')
+    (workspace/'source.txt').write_text('Independent project file')
+    sibling_before = files_snapshot(sibling)
+    app.subscribe()
+
+    async def refresh(owner):
+        await owner.history.refresh(force=True)
+        for _ in range(100):
+            shared = owner.state['sharedHistory']
+            assert shared.get('error') is None, shared
+            if shared.get('reconciliation', {}).get('phase') == 'complete':
+                return
+            await owner.history.refresh(force=False)
+        pytest.fail('Synthetic history discovery did not complete')
+
+    await refresh(app)
+
+    def visible(owner, expected):
+        assert {row['id'] for row in owner.directory.select(limit=20)} == expected
+        roots = expected - {'selected-worker'}
+        page = owner.directory.chats({**owner.state, 'view': {
+            **owner.state.get('view', {}), 'navChatScope':'all'}}, section='recent')
+        assert {row['id'] for row in page['items']} == roots
+        assert page['total'] == owner.directory.root_count() == len(roots)
+        assert owner.state['sharedHistory']['sessionCount'] == len(roots)
+        assert owner.state['sharedHistory']['workerSessionCount'] == int('selected-worker' in expected)
+
+    visible(app, {'selected-root','selected-worker','sibling-root'})
+    selection = {'project':project_slug(workspace)}
+    if not whole_history:
+        selection['nativeId'] = 'selected-root'
+    review, args = await confirm(app, selection)
+    assert review['summary']['conversationCount'] == (3 if whole_history else 2)
+    stage = managed_deletion._stage
+    if interrupted:
+        def unavailable(*args, **kwargs):
+            raise OSError('Synthetic interrupted physical cleanup')
+        monkeypatch.setattr(managed_deletion, '_stage', unavailable)
+    result = (await app.dispatch('storage.historyDelete', args))['result']
+    assert result['deleted'] and result['cleanupPending'] is interrupted
+    assert target.exists() is interrupted and worker.exists() is interrupted
+    retained = set() if whole_history else {'sibling-root'}
+    # A pending purge leaves real native files and index rows behind. They must
+    # stay suppressed without hiding unrelated rows in the same project.
+    await refresh(app)
+    visible(app, retained)
+    future = native_session(workspace, 'future-root')
+    future_before = files_snapshot(future)
+    await refresh(app)
+    visible(app, retained | {'future-root'})
+    await app.close()
+    monkeypatch.setattr(managed_deletion, '_stage', stage)
+    reopened = AppService(app.data_dir, workspace=workspace)
+    try:
+        reopened.subscribe()
+        await refresh(reopened)
+        visible(reopened, retained | {'future-root'})
+        assert not target.exists() and not worker.exists()
+        assert files_snapshot(future) == future_before
+        if not whole_history:
+            assert files_snapshot(sibling) == sibling_before
+        assert (workspace/'source.txt').read_text() == 'Independent project file'
+        assert not (await reopened.dispatch('storage.historyDelete', args))['result']['cleanupPending']
+    finally:
+        await reopened.close()
+
 async def test_refuses_active_changed_linked_and_unverified_scopes(app,tmp_path):
     sid,path,selection=await seed(app,tmp_path)
     app._session(sid)['status']='working'

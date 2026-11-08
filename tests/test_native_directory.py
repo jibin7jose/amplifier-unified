@@ -33,6 +33,36 @@ def seed(catalog, workspace, number=27000):
     return project, summary
 
 
+@pytest.mark.parametrize('count', [3, 27000])
+def test_exact_identity_counts_use_project_scope_and_do_not_decode_bodies(tmp_path, monkeypatch, count):
+    from contextlib import contextmanager
+
+    catalog = NativeCatalog(tmp_path/'catalog.sqlite3', tmp_path/'native')
+    project, _ = seed(catalog, tmp_path/'one', count)
+    other, _ = seed(catalog, tmp_path/'two', 2)
+    alias = catalog.get(project, 'saved-00000')['id']
+    with catalog.connect() as db:
+        db.execute("UPDATE native_rows SET kind='worker' WHERE project=? AND identity='saved-00001'", (project,))
+        db.execute("UPDATE native_rows SET value='invalid body: counts must not read it'")
+    instructions = []
+    original = catalog.connect
+    @contextmanager
+    def observed():
+        with original() as db:
+            instructions.append(0)
+            def progress():
+                instructions[-1] += 1
+                return instructions[-1] > 5000
+            db.set_progress_handler(progress, 1)
+            yield db
+    monkeypatch.setattr(catalog, 'connect', observed)
+    assert catalog.count_identities(project, {'saved-00000', alias, 'saved-00001', 'missing'}) == {'root':1,'worker':1}
+    assert catalog.count_identities(other, {'saved-00000', alias}) == {'root':1}
+    assert catalog.count_identities(project, set()) == {}
+    # This also catches a scalar scan that would pass the invalid-body check.
+    assert len(instructions) == 3 and max(instructions) < 1000
+
+
 def test_warm_27000_directory_decodes_only_requested_rows(tmp_path, monkeypatch):
     home, workspace = tmp_path / 'home', tmp_path / 'workspace'
     workspace.mkdir()
