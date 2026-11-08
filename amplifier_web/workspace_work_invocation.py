@@ -394,15 +394,15 @@ class WorkInvocation:
             target = self.bound_root(sid)
             required, _ = self.required(sid)
             workspace = self.work.workspace({'sessionId': sid}, 'agent', sid)
-            limit = 20
-            while True:
-                discovery = self.work.listing(workspace, {'limit': limit}, owner=target['id'], context=True)
-                packet = {'available': True, 'discovery': discovery, 'required': required}
-                if len(json.dumps(packet, ensure_ascii=False).encode()) - input_identity_bytes(required) <= CONTEXT_BYTES:
-                    return packet
-                if limit <= 1:
-                    self.work.error('Work current projection exceeds its byte bound.', 413)
-                limit -= 1
+            identity_bytes = input_identity_bytes(required)
+            packet = {'available': True, 'discovery': None, 'required': required}
+            # Replace JSON null with the existing listing owner's fitted page.
+            overhead = len(json.dumps(packet, ensure_ascii=False).encode()) - 4 - identity_bytes
+            packet['discovery'] = self.work.listing(workspace, {'limit': 20}, owner=target['id'],
+                context=True, context_bytes=CONTEXT_BYTES - overhead)
+            if len(json.dumps(packet, ensure_ascii=False).encode()) - identity_bytes > CONTEXT_BYTES:
+                self.work.error('Work current projection exceeds its byte bound.', 413)
+            return packet
         except AppError as exc:
             # Work is an optional projection of coordination, not a prerequisite
             # for managed-location chats or other host coordination observations.

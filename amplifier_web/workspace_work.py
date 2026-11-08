@@ -209,7 +209,7 @@ class WorkspaceWork:
                 'status': (row or {}).get('status', 'unavailable'),
                 'needsReview': row is None or row.get('status') in {'stopped', 'failed', 'error', 'interrupted', 'cancelled'}}
 
-    def listing(self, workspace, args, *, owner=None, context=False):
+    def listing(self, workspace, args, *, owner=None, context=False, context_bytes=CONTEXT_BYTES):
         version = self.version(workspace)
         limit = min(args.get('limit', 20), 20 if context else 50)
         selected = args.get('filter', 'accepted')
@@ -289,7 +289,15 @@ class WorkspaceWork:
         page = result()
         page['observationVersion'] = fingerprint([scope, version, items, total])
         if context:
-            while len(json.dumps(page, ensure_ascii=False).encode()) > CONTEXT_BYTES and items:
+            while items:
+                size = len(json.dumps(page, ensure_ascii=False).encode())
+                if size <= min(context_bytes, CONTEXT_BYTES):
+                    break
+                # A tighter enclosing packet must not turn a usable one-item
+                # page into an empty success. Let that caller report overflow.
+                # Preserve standalone trimming when even one item exceeds 12 KiB.
+                if len(items) == 1 and size <= CONTEXT_BYTES:
+                    break
                 items.pop()
                 page = result()
                 page['observationVersion'] = fingerprint([scope, version, items, total])
