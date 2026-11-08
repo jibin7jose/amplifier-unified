@@ -9,8 +9,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import sys
-import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -308,20 +308,28 @@ async def main(home):
     app.router.add_post("/fixture/finish", finish)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
-    app["allowed_origins"] = app["allowed_origins"] | {url}
-    print(json.dumps({"url": url}), flush=True)
+    stopped = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    signals = (signal.SIGTERM, signal.SIGINT) if os.name == "posix" else ()
+    for signum in signals:
+        loop.add_signal_handler(signum, stopped.set)
     try:
-        await asyncio.Event().wait()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+        app["allowed_origins"] = app["allowed_origins"] | {url}
+        print(json.dumps({"fixture": "coordination-ui", "pid": os.getpid(), "base": url}), flush=True)
+        await stopped.wait()
     finally:
-        await runner.cleanup()
+        try:
+            await runner.cleanup()
+        finally:
+            for signum in signals:
+                loop.remove_signal_handler(signum)
 
 
 if __name__ == "__main__":
-    output = Path(os.environ.get("AMPLIFIER_TEST_OUTPUT_DIR", Path(__file__).resolve().parents[2] / "working-files"))
-    output.mkdir(parents=True, exist_ok=True)
-    # Retain both rounds, transcripts and receipts with the run's screenshots.
-    directory = tempfile.mkdtemp(prefix="coordination-fixture-", dir=output)
-    asyncio.run(main(Path(directory)))
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--home", type=Path, required=True, help="Exact synthetic home owned by the browser journey")
+    asyncio.run(main(parser.parse_args().home))

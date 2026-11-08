@@ -1,7 +1,7 @@
 import './composer-test-helpers.mjs';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 import {observeCoordinationDisclosures} from './coordination-disclosure-diagnostics.mjs';
-import {spawn} from 'node:child_process';
+import {startCoordinationFixture} from './coordination-fixture.mjs';
 import {createHash} from 'node:crypto';
 import {mkdir,mkdtemp,writeFile,unlink} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -14,10 +14,10 @@ const python=process.env.AMPLIFIER_TEST_PYTHON||root+'/.venv/bin/python';
 const outputBase=resolve(process.env.AMPLIFIER_TEST_OUTPUT_DIR||join(root,'working-files'));
 await mkdir(outputBase,{recursive:true});
 const outputDir=await mkdtemp(join(outputBase,'coordination-browser-'));
-const fixture=spawn(python,[root+'/tests/fixtures/coordination_ui_server.py'],{stdio:['ignore','pipe','inherit'],env:{...process.env,AMPLIFIER_TEST_OUTPUT_DIR:outputDir}});
-let browser,page,disclosureFacts;
+const fixture=await startCoordinationFixture({root,python,output:outputDir});
+let browser,page,disclosureFacts,failure,result;
 try{
- const url=await new Promise((resolve,reject)=>{let output='';const timeout=setTimeout(()=>reject(Error('startup')),15000);fixture.stdout.on('data',chunk=>{output+=chunk;for(const line of output.split('\n'))try{const row=JSON.parse(line);if(row.url){clearTimeout(timeout);resolve(row.url)}}catch{}});fixture.once('error',reject)});
+ const url=fixture.base;
  // ARM containers can opt into single-process Chromium for this fixture.
  browser=await chromium.launch({headless:true,...(process.env.UNIFIED_BROWSER_SINGLE_PROCESS==='1'?{args:['--no-zygote','--single-process','--disable-gpu']}: {})});
  page=await browser.newPage({viewport:{width:1100,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
@@ -509,8 +509,9 @@ try{
  }
  await page.getByRole('button',{name:'Close panel',exact:true}).click();await preserve();
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({passed:true,actualService:true,twoTargets:true,followupExactTarget:true,cursorReconnect:true,failedReadReconnect:true,noDuplicateReports:true,noRepeatedSubmission:true,interruptWhileWaiting:true,selectionAndDraftPreserved:true,mobileNoOverflow:true,noCoordinationForms:true,noGrantRequired:true,runtimeOwnedBindings:true,twoDistinctTaskRoots:true,twoArtifactRoundsPerRoot:true,firstRoundBytesRetained:true,laterReplyVersionsInspectable:true,malformedReferenceRepair:true,opaqueReferenceNotSaved:true,correctedRetentionRevision:true,latestOutcomeAfterRefresh:true,peerWokenGeneration:true,notifyNeverWakes:true,exactResultInspector:true,referencedArtifactOpen:true,qualifiedScriptedTerminal:true,continuationOncePerRequest:true,deterministicRuntime:true,emulatedTerminalAnchor:true,nativeRuntime:false,liveModelEvidence:false,providerCalls:false,outputDir}));
+ result={passed:true,actualService:true,twoTargets:true,followupExactTarget:true,cursorReconnect:true,failedReadReconnect:true,noDuplicateReports:true,noRepeatedSubmission:true,interruptWhileWaiting:true,selectionAndDraftPreserved:true,mobileNoOverflow:true,noCoordinationForms:true,noGrantRequired:true,runtimeOwnedBindings:true,twoDistinctTaskRoots:true,twoArtifactRoundsPerRoot:true,firstRoundBytesRetained:true,laterReplyVersionsInspectable:true,malformedReferenceRepair:true,opaqueReferenceNotSaved:true,correctedRetentionRevision:true,latestOutcomeAfterRefresh:true,peerWokenGeneration:true,notifyNeverWakes:true,exactResultInspector:true,referencedArtifactOpen:true,qualifiedScriptedTerminal:true,continuationOncePerRequest:true,deterministicRuntime:true,emulatedTerminalAnchor:true,nativeRuntime:false,liveModelEvidence:false,providerCalls:false,outputDir};
 }catch(error){
+ failure=error;
  try{
   const facts=disclosureFacts?.();
   if(facts){await writeFile(join(outputDir,'coordination-disclosure-failure.json'),JSON.stringify(facts,null,2)+'\n');console.error(JSON.stringify({coordinationDisclosureFailure:facts}))}
@@ -528,4 +529,7 @@ try{
    savedWatchCount:saved?.selected?.length??0,savedCursorCount:Object.keys(saved?.cursors||{}).length,
    savedReportCount:Object.values(saved?.results||{}).reduce((n,rows)=>n+(Array.isArray(rows)?rows.length:0),0)};
  })}))}catch{}
- await page?.screenshot({path:join(outputDir,'amplifier-coordination-failure.png')});console.error((await page?.locator("body").innerText())?.slice(-5000));throw error}finally{await browser?.close();fixture.kill()}
+ try{await page?.screenshot({path:join(outputDir,'amplifier-coordination-failure.png')});console.error((await page?.locator("body").innerText())?.slice(-5000))}catch{}
+ throw error
+}finally{await fixture.finish({close:[['Browser',()=>browser?.close()]],originalError:failure})}
+console.log(JSON.stringify(result));

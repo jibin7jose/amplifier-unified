@@ -1,6 +1,6 @@
 import './composer-test-helpers.mjs';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
-import {spawn} from 'node:child_process';
+import {startCoordinationFixture} from './coordination-fixture.mjs';
 import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -12,10 +12,10 @@ const python=process.env.AMPLIFIER_TEST_PYTHON||root+'/.venv/bin/python';
 const outputBase=resolve(process.env.AMPLIFIER_TEST_OUTPUT_DIR||join(root,'working-files'));
 await mkdir(outputBase,{recursive:true});
 const outputDir=await mkdtemp(join(outputBase,'request-cancellation-browser-'));
-const fixture=spawn(python,[root+'/tests/fixtures/coordination_ui_server.py'],{stdio:['ignore','pipe','inherit'],env:{...process.env,AMPLIFIER_TEST_OUTPUT_DIR:outputDir}});
-let browser,page;
+const fixture=await startCoordinationFixture({root,python,output:outputDir});
+let browser,page,failure,result;
 try{
- const url=await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>reject(Error('startup')),15000);fixture.stdout.on('data',chunk=>{output+=chunk;for(const line of output.split('\n'))try{const row=JSON.parse(line);if(row.url){clearTimeout(timer);resolve(row.url)}}catch{}});fixture.once('error',reject)});
+ const url=fixture.base;
  browser=await chromium.launch({headless:true,...(process.env.UNIFIED_BROWSER_SINGLE_PROCESS==='1'?{args:['--no-zygote','--single-process','--disable-gpu']}: {})});
  page=await browser.newPage({viewport:{width:1100,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
  page.setDefaultTimeout(10000);
@@ -94,10 +94,8 @@ try{
  await expect(composer).toHaveDraft('Keep my unsent guidance');
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),current.selected);
  assert.deepEqual(errors,[]);
- const evidence={queuedWithdrawn:true,otherRequestRetained:true,activeCancellationUnconfirmed:true,lostAcknowledgementSameIdentity:true,noWholeChatStop:true,noReplay:true,draftAndSelectionPreserved:true,mobileNoOverflow:true,rejectedAndUnknownRendering:true,reportRenderingUsesResponseFixtures:true,scriptedRuntime:true,liveModelEvidence:false,outputDir};
- await writeFile(join(outputDir,'result.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence));
-}catch(error){await page?.screenshot({path:join(outputDir,'failure.png')});throw error}
-finally{
- try{await page?.unrouteAll({behavior:'wait'})}
- finally{try{await browser?.close()}finally{fixture.kill()}}
-}
+ result={queuedWithdrawn:true,otherRequestRetained:true,activeCancellationUnconfirmed:true,lostAcknowledgementSameIdentity:true,noWholeChatStop:true,noReplay:true,draftAndSelectionPreserved:true,mobileNoOverflow:true,rejectedAndUnknownRendering:true,reportRenderingUsesResponseFixtures:true,scriptedRuntime:true,liveModelEvidence:false,outputDir};
+}catch(error){failure=error;await page?.screenshot({path:join(outputDir,'failure.png')}).catch(()=>{});throw error}
+finally{await fixture.finish({close:[['Page routes',()=>page?.unrouteAll({behavior:'wait'})],['Browser',()=>browser?.close()]],originalError:failure})}
+await writeFile(join(outputDir,'result.json'),JSON.stringify(result,null,2));
+console.log(JSON.stringify(result));

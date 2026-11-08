@@ -1,16 +1,16 @@
 import './composer-test-helpers.mjs';
 import {openChatAdvancedPage,showFixtureConversation} from './browser-chat-pages.mjs';
-import {spawn} from 'node:child_process';
+import {startCoordinationFixture} from './coordination-fixture.mjs';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {chromium,expect} from '@playwright/test';
 import assert from 'node:assert/strict';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const output=process.env.AMPLIFIER_TEST_OUTPUT||'/tmp/amplifier-assignments';await mkdir(output,{recursive:true});
-const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'/.venv/bin/python',[root+'/tests/fixtures/coordination_ui_server.py'],{stdio:['ignore','pipe','inherit']});
-let browser,page;
+const fixture=await startCoordinationFixture({root,output});
+let browser,page,failure,result;
 try{
- const url=await new Promise((resolve,reject)=>{let text='';const timer=setTimeout(()=>reject(Error('Fixture timeout')),20000);fixture.once('error',reject);fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exited '+code))});fixture.stdout.on('data',chunk=>{text+=chunk;for(const line of text.split('\n'))try{const row=JSON.parse(line);if(row.url){clearTimeout(timer);resolve(row.url)}}catch{}})});
+ const url=fixture.base;
  browser=await chromium.launch({headless:true});page=await browser.newPage({viewport:{width:1150,height:950},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  const action=(name,args={},meta={})=>page.evaluate(([name,args,meta])=>window.amplifier.dispatch(name,args,meta),[name,args,meta]);
@@ -75,6 +75,7 @@ try{
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),current.selected);
  await expect(composer).toHaveDraft('Private assignment draft');
  assert.deepEqual(errors,[]);
- await writeFile(output+'/report.json',JSON.stringify({passed:true,scenarios:['create','limits','optional-counts','stale','reload','lost-response','commission','stop','independent-preserved','private-draft','mobile'],errors,providerCalls:false},null,2));
-}catch(error){if(page)await page.screenshot({path:output+'/failure.png'}).catch(()=>{});throw error}
-finally{if(browser)await browser.close();fixture.kill('SIGTERM')}
+ result={passed:true,scenarios:['create','limits','optional-counts','stale','reload','lost-response','commission','stop','independent-preserved','private-draft','mobile'],errors,providerCalls:false};
+}catch(error){failure=error;if(page)await page.screenshot({path:output+'/failure.png'}).catch(()=>{});throw error}
+finally{await fixture.finish({close:[['Browser',()=>browser?.close()]],originalError:failure})}
+await writeFile(output+'/report.json',JSON.stringify(result,null,2));

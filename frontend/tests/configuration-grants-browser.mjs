@@ -1,6 +1,6 @@
 import './composer-test-helpers.mjs';
 import {showFixtureConversation,openChatAdvancedPage} from './browser-chat-pages.mjs';
-import {spawn} from 'node:child_process';
+import {startCoordinationFixture} from './coordination-fixture.mjs';
 import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -12,10 +12,10 @@ const python=process.env.AMPLIFIER_TEST_PYTHON||root+'/.venv/bin/python';
 const base=resolve(process.env.AMPLIFIER_TEST_OUTPUT_DIR||join(root,'working-files'));
 await mkdir(base,{recursive:true});
 const output=await mkdtemp(join(base,'configuration-grants-browser-'));
-const fixture=spawn(python,[root+'/tests/fixtures/coordination_ui_server.py'],{stdio:['ignore','pipe','inherit'],env:{...process.env,AMPLIFIER_TEST_OUTPUT_DIR:output}});
-let browser,page;
+const fixture=await startCoordinationFixture({root,python,output});
+let browser,page,failure,result;
 try{
- const url=await new Promise((resolve,reject)=>{let output='';const timeout=setTimeout(()=>reject(Error('startup')),15000);fixture.stdout.on('data',chunk=>{output+=chunk;for(const line of output.split('\n'))try{const row=JSON.parse(line);if(row.url){clearTimeout(timeout);resolve(row.url)}}catch{}});fixture.once('error',reject)});
+ const url=fixture.base;
  browser=await chromium.launch({headless:true});
  page=await browser.newPage({viewport:{width:1100,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
  page.setDefaultTimeout(10000);
@@ -67,7 +67,8 @@ try{
  await expect(composer).toHaveDraft('Retain this private unfinished draft');
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),current.selected);
  assert.deepEqual(errors,[]);
- const report={passed:true,hostApproval:true,reusableAuthority:true,revocation:true,reload:true,privateDraft:true,mobile:true,scriptedRuntime:true,realProvider:false};
- await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));
- console.log(JSON.stringify({output,...report}));
-}finally{await browser?.close();fixture.kill('SIGTERM')}
+ result={passed:true,hostApproval:true,reusableAuthority:true,revocation:true,reload:true,privateDraft:true,mobile:true,scriptedRuntime:true,realProvider:false};
+}catch(error){failure=error;throw error}
+finally{await fixture.finish({close:[['Browser',()=>browser?.close()]],originalError:failure})}
+await writeFile(join(output,'report.json'),JSON.stringify(result,null,2));
+console.log(JSON.stringify({output,...result}));

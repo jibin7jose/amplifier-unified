@@ -2,15 +2,15 @@ import {fixturePython} from './fixture-python.mjs';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 import './composer-test-helpers.mjs';
 import {openChatAdvancedPage} from './browser-chat-pages.mjs';
-import {spawn} from 'node:child_process';
+import {startCoordinationFixture} from './coordination-fixture.mjs';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import {chromium,expect} from '@playwright/test';
 const root=fileURLToPath(new URL('../../',import.meta.url));
-const fixture=spawn(fixturePython(root+'.venv/bin/python'),['-u',root+'tests/fixtures/coordination_ui_server.py'],{stdio:['ignore','pipe','inherit']});
-let browser;
+const fixture=await startCoordinationFixture({root,python:fixturePython(root+'.venv/bin/python')});
+let browser,failure,result;
 try{
- const url=await new Promise((resolve,reject)=>{let text='';const timer=setTimeout(()=>reject(Error('Fixture timeout')),20000);fixture.once('error',reject);fixture.stdout.on('data',chunk=>{text+=chunk;for(const line of text.split('\n'))try{const row=JSON.parse(line);if(row.url){clearTimeout(timer);resolve(row.url)}}catch{}})});
+ const url=fixture.base;
  browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1280,height:1000},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}}),errors=[],writes=[];
  page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/actions')writes.push(request.postDataJSON())});
  const inspect=()=>page.request.get(url+'/fixture').then(response=>response.json());
@@ -57,5 +57,7 @@ try{
  await board.getByRole('button',{name:'Discard task draft',exact:true}).click();await board.getByRole('button',{name:'Task history',exact:true}).click();await first.getByRole('button',{name:'View task details',exact:true}).click();await expect(board.getByRole('region',{name:'Task details'})).toContainText('Source review reported');
  const observed=await inspect();assert.deepEqual(observed.sent,initial.sent,'Task declarations, claims and reported completion must not start work');assert.deepEqual(observed.messages,initial.messages);assert.deepEqual(observed.stops,initial.stops);assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),initial.selected);
  await page.getByRole('button',{name:'Close panel',exact:true}).click();await expect(composer).toHaveDraft('Private task board draft');assert.deepEqual(errors,[]);
- console.log(JSON.stringify({passed:true,checks:['public task board','create dependency','blocked claim','lost acknowledgment same request','exact holder and revision','wrong claim rejected','reported completion separate from verification','dependency ready without execution','release edit cancel','private draft retained','active/history page replacement','independent prerequisite pages','off-page historical dependency retained'],limits:['scripted runtime; no real model or task execution']}));
-}finally{await browser?.close();fixture.kill()}
+ result={passed:true,checks:['public task board','create dependency','blocked claim','lost acknowledgment same request','exact holder and revision','wrong claim rejected','reported completion separate from verification','dependency ready without execution','release edit cancel','private draft retained','active/history page replacement','independent prerequisite pages','off-page historical dependency retained'],limits:['scripted runtime; no real model or task execution']};
+}catch(error){failure=error;throw error}
+finally{await fixture.finish({close:[['Browser',()=>browser?.close()]],originalError:failure})}
+console.log(JSON.stringify(result));
