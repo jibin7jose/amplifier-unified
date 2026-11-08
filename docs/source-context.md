@@ -60,6 +60,10 @@ catalog manifests remain test inputs. A generated-looking source file without a
 reproducible provenance record, such as the device client's `observed-dom.js`,
 stays visible for source review.
 
+The individually listed live-control, schedule, budget and native-provider JSON
+reports are retained evidence, including the failed continuity run. Their linked
+guides remain visible for current direction, reproduction and evidence limits.
+
 ## Follow the canonical boundary
 
 | Work | Current source entrypoints | Governing meaning |

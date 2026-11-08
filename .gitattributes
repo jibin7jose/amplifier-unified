@@ -58,6 +58,14 @@ package-lock.json source-context=locks
 /docs/workspaces/evidence/collaboration-gaps-assets.json source-context=evidence
 /docs/workspaces/evidence/collaboration-gaps-results.json source-context=evidence
 /tests/fixtures/model_catalog_candidates.json source-context=evidence
+# Finished acceptance records; their maintained guides/reproduction remain visible.
+/docs/validation/live-controls-2026-09-20.json source-context=evidence
+/docs/validation/live-schedule-2026-09-20.json source-context=evidence
+/docs/validation/saved-budget-2026-09-20.json source-context=evidence
+/docs/validation/native-provider-live-smoke.json source-context=evidence
+/docs/validation/native-continuity-live-report.json source-context=evidence
+/docs/validation/native-continuity-offline-report.json source-context=evidence
+/docs/validation/native-continuity-resume-report.json source-context=evidence
 
 # Built delivery, including copied source, vendor resources and license notices.
 # Preserve committed bytes and existing source/build/installed parity checks.
