@@ -2,6 +2,24 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {composerState,composerMarkdown,parseComposer,composerNewline,composerClipboard,composerEnter,composerDocument,composerSendDocument,insertQuote,changeQuote,toggleComposerMark,emptyComposerCode} from '../src/markdown-composer.js';
 import {undo,redo} from 'prosemirror-history';
+import {Node} from 'prosemirror-model';
+import {MarkdownSerializer} from 'prosemirror-markdown';
+test('ordinary drafts do not serialize discarded structured checkpoints',t=>{
+ const docs=['', 'A **small** draft', Array.from({length:300},(_,i)=>`Paragraph ${i}: **keep** this text.`).join('\n\n')].map(parseComposer);
+ const json=t.mock.method(Node.prototype,'toJSON'),markdown=t.mock.method(MarkdownSerializer.prototype,'serialize');
+ for(const doc of docs){
+  assert.equal(composerDocument(doc),null);
+  assert.equal(composerSendDocument(doc),null);
+ }
+ assert.equal(json.mock.callCount(),0);
+ assert.equal(markdown.mock.callCount(),0);
+});
+test('round-trippable commentary drops its checkpoint without serializing discarded nodes',t=>{
+ const doc=parseComposer('Keep **this**\n\nAnd this paragraph.');
+ const json=t.mock.method(Node.prototype,'toJSON');
+ assert.equal(composerDocument(doc,true),null);
+ assert.equal(json.mock.callCount(),0);
+});
 function editor(){const view={state:composerState(''),composing:false};view.dispatch=tr=>{view.state=view.state.apply(tr)};return view;}
 function type(view,text){for(const char of text){const {from,to}=view.state.selection;const handled=view.state.plugins.some(plugin=>plugin.props.handleTextInput?.(view,from,to,char,()=>view.state.tr.insertText(char)));if(!handled)view.dispatch(view.state.tr.insertText(char));}}
 test('closing Markdown marks format immediately and stop the mark at the cursor',()=>{

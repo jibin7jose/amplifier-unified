@@ -123,18 +123,21 @@ function commentaryContent(node){
  return {...node,...(node.attrs?{attrs}:{}),...(content?{content}:{})};
 }
 export function composerDocument(doc,preserveCommentary=false){
- const segments=[];let quoted=false,source=false;
- doc.forEach(node=>{
-  if(node.type.name==='reference'){quoted=true;segments.push({type:'quote',instanceId:node.attrs.instanceId,quote:node.attrs.quote});}
-  else {
-   if(node.type.name==='markdown_source')source=true;
-   segments.push({type:'text',text:composerMarkdown(composerSchema.nodes.doc.create(null,node)),content:node.toJSON()});
-  }
- });
+ let checkpoint=false;
+ doc.forEach(node=>{if(node.type.name==='reference'||node.type.name==='markdown_source')checkpoint=true;});
  // Markdown is the readable projection, not an exact editor checkpoint. Keep
  // structured commentary even after the last quote is removed if reparsing
  // would change it (for example, a split paragraph's trailing space).
- return quoted||source||preserveCommentary&&!parseComposer(composerMarkdown(doc)).eq(doc)?{version:1,segments}:null;
+ // Decide before serializing segments that ordinary drafts would discard.
+ if(!checkpoint&&(!preserveCommentary||parseComposer(composerMarkdown(doc)).eq(doc)))return null;
+ const segments=[];
+ doc.forEach(node=>{
+  if(node.type.name==='reference')segments.push({type:'quote',instanceId:node.attrs.instanceId,quote:node.attrs.quote});
+  else {
+   segments.push({type:'text',text:composerMarkdown(composerSchema.nodes.doc.create(null,node)),content:node.toJSON()});
+  }
+ });
+ return {version:1,segments};
 }
 // Private draft checkpoints are lossless editor state. Send keeps the existing
 // attributed-document contract: new syntax travels as literal commentary text,
