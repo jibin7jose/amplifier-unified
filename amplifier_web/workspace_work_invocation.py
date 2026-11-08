@@ -119,7 +119,7 @@ class WorkInvocation:
                 if not _link_current(self.work, link, workspace):
                     self.work.error('The commissioning owner claim is stale.')
                 assignment = self.service.assignments.current(source)
-                task = assignment['tasks'][link['taskId']]
+                task = self.service.assignments.tasks.get(assignment, link['taskId'])
                 claim = self.service.assignments.tasks.claim_status(assignment, task)
                 claims.append({'link': copy.deepcopy(link), 'taskRevision': task.get('revision'),
                                'claim': copy.deepcopy(claim)})

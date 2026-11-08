@@ -51,9 +51,7 @@ def require_finished(app, target, value, task):
         error('Wait for this member’s settings change to finish before retiring it.', 409)
     if task.get('id') and task.get('status') != 'completed':
         error('Complete this member’s saved task before retiring its participation.', 409)
-    if any((item.get('claim') or {}).get('sessionId') == target['id']
-           and item.get('status') not in {'completed', 'cancelled'}
-           for item in value.get('tasks', {}).values()):
+    if app.assignments.tasks.unfinished_claims(value, target['id']):
         error('Complete, release or reassign this member’s unfinished shared tasks before retiring it.', 409)
     if app.db.execute("""SELECT 1 FROM commands
             WHERE json_extract(receipt,'$.commandAction')='coordination.send'
@@ -153,7 +151,7 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
                     'senderSessionId': source['id'], 'targetSessionId': target['id'],
                     'previousMembership': previous,
                     'reuseBinding': reuse_binding(app, source, target, task),
-                    'result': {'assignment': copy.deepcopy(value), 'inputSent': False,
+                    'result': {'assignment': assignments.project(value), 'inputSent': False,
                                'activeMemberCount': assignments.active_member_count(value)}}
                 collaboration.insert(identity, digest, receipt)
                 app._publish_changes(sessions={source['id'], target['id']})

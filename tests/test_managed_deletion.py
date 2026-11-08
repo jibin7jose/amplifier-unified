@@ -620,6 +620,54 @@ async def test_confirmed_cleanup_recovers_before_view_hydration(app,tmp_path,mon
     finally:await restored.close()
 
 
+@pytest.mark.parametrize('deleted_role', ['owner', 'member', 'task-reference'])
+@pytest.mark.parametrize('restart', [False, True])
+async def test_deleted_assignment_header_closes_current_task_children_only(app, tmp_path, deleted_role, restart):
+    from test_assignment_tasks import create as create_task, change as change_task
+    owner, member, other = [await create(app, identity) for identity in ('task-owner', 'task-member', 'other-owner')]
+    value = app.assignments.ensure(owner, 'owned-assignment')
+    value['members'][member['id']] = {'status': 'bound', 'role': 'helper'}
+    member['assignmentId'] = value['id']
+    app.assignments.save(value)
+    task = await create_task(app, owner, identity='retained-item')
+    dependent = await create_task(app, owner, dependencies=[task['id']], identity='dependent-item')
+    victim = owner if deleted_role == 'owner' else member
+    if deleted_role == 'task-reference':
+        victim = await create(app, 'independent-reference')
+        claimed = (await change_task(app, owner, 'claim', task))['result']['task']
+        await change_task(app, owner, 'complete', claimed, report='Related evidence', references=[victim['id']])
+        assert not managed_deletion._mentions(app.assignments.current(owner), {victim['id']})
+    app.assignments.ensure(other, 'other-assignment')
+    unrelated = await create_task(app, other, identity='unrelated-item')
+    unrelated_key = app.assignments.tasks.key(unrelated['id'])
+    unrelated_before = app.db.execute('SELECT receipt FROM commands WHERE id=?', (unrelated_key,)).fetchone()[0]
+    # An old command containing only assignment identity did not mention the
+    # deleted chat before normalization. Do not broaden historical deletion.
+    historical = {'commandAction': 'historical.observation', 'assignmentId': value['id'], 'result': 'Kept'}
+    app.collaboration.insert('unrelated-history', 'historical', historical)
+    app._save()
+    observed = await preview(app, victim['id'])
+    if restart:
+        # Crash point after confirmation is durable, before any DB scrub. The
+        # real startup recovery runs before Assignments is assembled.
+        app.db.execute("UPDATE managed_deletions SET phase='confirmed' WHERE id=?", (victim['id'],))
+        app.db.commit()
+        await app.close()
+        active = AppService(app.data_dir, Runtime(), workspace=tmp_path)
+    else:
+        await delete(app, observed)
+        active = app
+    try:
+        assert active.collaboration.receipt(value['id'])['deleted']
+        assert active.collaboration.receipt(active.assignments.tasks.key(task['id']))['deleted']
+        assert active.collaboration.receipt(active.assignments.tasks.key(dependent['id']))['deleted']
+        assert active.db.execute('SELECT receipt FROM commands WHERE id=?', (unrelated_key,)).fetchone()[0] == unrelated_before
+        assert active.collaboration.receipt('unrelated-history') == historical
+    finally:
+        if active is not app:
+            await active.close()
+
+
 async def test_independent_recovery_copy_can_delete_without_deleting_original(app):
     original = await create(app)
     result = await command(app, 'web', 'session.recover', {'id': original['id']})

@@ -71,10 +71,15 @@ class Assignments:
         service.db.commit()
 
     def load(self, identity):
+        from .assignment_tasks import ASSIGNMENT_RECORD, STORAGE
         receipt = self.service.collaboration.receipt(identity)
-        if receipt.get('commandAction') != 'assignment.record':
+        kind = receipt.get('commandAction')
+        value = receipt.get('result', {})
+        if (not isinstance(value, dict) or kind not in {'assignment.record', ASSIGNMENT_RECORD}
+                or kind == ASSIGNMENT_RECORD and (value.get('taskStorage') != STORAGE or 'tasks' in value)
+                or kind == 'assignment.record' and 'taskStorage' in value):
             self.service.collaboration.error('The assignment record is unavailable.', 409)
-        return receipt['result']
+        return value
 
     def current(self, session):
         identity = session.get('assignmentId') or (session.get('collaboration') or {}).get('assignmentId')
@@ -87,8 +92,22 @@ class Assignments:
         return value if member['status'] not in {'detached', 'retired'} else None
 
     def save(self, value):
+        from .assignment_tasks import ASSIGNMENT_RECORD, STORAGE
+        if ('taskStorage' in value and value['taskStorage'] != STORAGE
+                or value.get('taskStorage') == STORAGE and 'tasks' in value):
+            self.service.collaboration.error('The assignment task storage layout is unavailable.', 409)
         self.service.collaboration.save(value['id'], {
-            'accepted': True, 'commandAction': 'assignment.record', 'result': value})
+            'accepted': True,
+            'commandAction': ASSIGNMENT_RECORD if value.get('taskStorage') == STORAGE else 'assignment.record',
+            'result': value})
+
+    def project(self, value):
+        """Preserve the current bounded public shape without internal hydration."""
+        from .assignment_tasks import STORAGE
+        result = copy.deepcopy(value)
+        if result.pop('taskStorage', None) == STORAGE:
+            result['tasks'] = self.tasks.board(value)
+        return result
 
     @asynccontextmanager
     async def mutation(self, source, identity, *, additional=()):
@@ -337,7 +356,7 @@ class Assignments:
         if not value:
             return {'assignment': None}
         usage = self.usage(value)
-        return {'assignment': value, 'usage': {key: item for key, item in usage.items() if key != 'receipts'},
+        return {'assignment': self.project(value), 'usage': {key: item for key, item in usage.items() if key != 'receipts'},
                 'inFlightCalls': sum(row.get('phase') in LIVE and not row.get('endedAt') for row in usage['receipts']),
                 **({'independentWork': self.external_requests(value)} if value['status'] == 'stopped' else {}),
                 'enforcement': 'Supported model admission only. Reservations are allowances; actual calls and effects may exceed them.'}
@@ -471,7 +490,7 @@ class Assignments:
                 value['revision'] += 1
                 self.save(value)
             receipt = {'accepted': True, 'commandAction': action, 'assignmentId': value['id'],
-                       'result': {'assignment': copy.deepcopy(value)},
+                       'result': {'assignment': self.project(value)},
                        'interruptions': {sid: 'requested' for sid in stops}, 'interruptionsPending': len(stops)}
             if recovery:
                 receipt['result']['stopRecovery'] = {'assignmentRevision': args['expectedRevision'], 'members': recovery}

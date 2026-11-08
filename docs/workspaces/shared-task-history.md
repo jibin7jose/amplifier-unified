@@ -1,10 +1,12 @@
 # Shared-task history without a lifetime ceiling
 
-**Accepted direction; implementation and qualification pending.** The
+**Accepted direction; storage batch implemented, response transition pending.** The
 [shared-task contract](contracts/execution.v2-candidate.md#shared-task-lifetime-and-observation-revision--accepted-direction)
-owns the observable promises. Current source still embeds all tasks in the
-assignment record and refuses the 129th item, including after earlier tasks
-finish. Removing only that refusal would make ordinary reads and writes grow
+owns the observable promises. Current source lazily separates current tasks into
+individual records and uses exact internal reads. It retains the 128-item ceiling
+and bounded whole-board public responses, including after earlier tasks finish.
+Paging and removal of that lifetime ceiling remain separate batches. Removing
+only that refusal would make public reads and responses grow
 with completed history, contrary to [VISION 11](../architecture/VISION.md#11-available-resources-govern-throughput).
 
 ## Owner and storage
@@ -49,10 +51,12 @@ never silently return a prefix or retain an unlimited whole-board fallback.
 
 ## Reader and backup boundary
 
-A distinct assignment-record kind can make the existing reader refuse a converted
-assignment when accessed. This is not a whole-host startup refusal. Prove the
-actual old-reader behavior and matching-reader restart before migration ships;
-an ignored flag that appears to mean an empty board is insufficient.
+Converted assignments use the distinct `assignment.record.v2` kind and
+`records-v1` task layout. An older reader refuses a converted assignment when
+accessed; this is not a whole-host startup refusal. Restart and backup restore
+require a matching reader. This storage-format transition ships in a minor
+release with explicit migration and matching-reader rollback guidance, even
+though public responses remain unchanged in this batch.
 
 The existing private backup owner captures all `app.sqlite3` rows from one WAL
 snapshot. Keeping current task records and command receipts there preserves their
@@ -65,11 +69,11 @@ must not strand newly separated task payloads.
 
 ## Reviewable batches and proof
 
-1. Record this contract/consumer transition; no storage changes.
-2. Add per-item records, atomic conversion and exact internal consumers while
+1. Recorded: this contract/consumer transition.
+2. Implemented: per-item records, atomic conversion and exact internal consumers,
    retaining the existing ceiling and response behavior for bounded old boards.
-3. Add indexed pages/detail/wait and coordinated bundled consumers/guidance.
-4. Remove the lifetime refusal after those paths qualify; ship the coherent
+3. Pending: indexed pages/detail/wait and coordinated bundled consumers/guidance.
+4. Pending: remove the lifetime refusal after those paths qualify; ship the coherent
    response change as a minor release.
 
 Extend maintained task, retirement, Work/review and backup tests for interruption,

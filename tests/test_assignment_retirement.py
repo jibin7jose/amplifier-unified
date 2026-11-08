@@ -99,6 +99,25 @@ async def test_retirement_releases_slot_preserving_history_usage_and_stop(app):
     assert app.assignments.usage(assignment)['metrics']['grossTotalTokens']['value'] == 15
 
 
+@pytest.mark.parametrize('terminal', ['complete', 'cancel'])
+async def test_normalized_current_claim_blocks_retirement_until_settled(app, terminal):
+    from test_assignment_tasks import create as create_shared_task, change
+    source, target, _ = await setup(app)
+    task = await create_shared_task(app, source)
+    claimed = (await change(app, target, 'claim', task))['result']['task']
+    value = app.assignments.current(source)
+    assert 'tasks' not in value
+    with pytest.raises(AppError, match='unfinished shared tasks'):
+        await retire(app, source, target)
+    await change(app, target if terminal == 'complete' else source, terminal, claimed,
+                 **({'report': 'Contribution finished'} if terminal == 'complete' else {}))
+    receipt = await retire(app, source, target)
+    assert receipt['result']['assignment']['members'][target['id']]['status'] == 'retired'
+    assert task['id'] in receipt['result']['assignment']['tasks']
+    assert 'taskStorage' not in receipt['result']['assignment']
+    assert app.assignments.tasks.get(app.assignments.current(source), task['id'])['status'] in {'completed', 'cancelled'}
+
+
 async def test_readmit_same_chat_fences_old_requests_and_keeps_spend(app):
     source, target, created = await setup(app)
     await limits(app, source, maxMembers=2, maxTotalTokens=100)

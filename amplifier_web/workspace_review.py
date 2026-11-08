@@ -50,7 +50,7 @@ def _claims(app, source, lookup):
     if app.assignments.tasks.member(value, source['id'], lookup=lookup) is None:
         return {'status': 'unavailable', 'items': [], 'total': None}
     items = []
-    for task in value.get('tasks', {}).values():
+    for task in app.assignments.tasks.unfinished_claims(value):
         if task.get('status') != 'claimed':
             continue
         claim = app.assignments.tasks.claim_status(value, task, lookup=lookup)

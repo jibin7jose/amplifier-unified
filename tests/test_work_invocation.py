@@ -211,6 +211,37 @@ async def test_required_set_is_delivered_association_not_all_owned_work(app, mon
     assert app.runtime.inputs == calls
 
 
+@pytest.mark.parametrize('transition', ['complete', 'reassign'])
+async def test_saved_owner_task_claim_is_rechecked_at_invocation_boundary(app, transition):
+    from test_assignments import start
+    from test_assignment_tasks import create as create_task, change as change_task
+    owner = app.state['sessions'][0]
+    await start(app)
+    task = await create_task(app, owner)
+    claimed = (await change_task(app, owner, 'claim', task))['result']['task']
+    item = (await create(app, owner, command='task-backed-work'))['result']['item']
+    item = (await change_work(app, owner, 'link', item, 'task-backed-link',
+        linkedSessionId=owner['id'], role='executor', candidate='b' * 40,
+        taskId=task['id'], claimId=claimed['claim']['id']))['result']['item']
+    created, child = await commissioned(app, owner, item, 'task-backed-commission')
+    before = (await current_work(app, child))['required']
+    assert before['status'] == 'available'
+    original = copy.deepcopy(app.collaboration.receipt(created['requestId'])['workAssociation'])
+    proof = original['references'][0]['sourceClaims'][0]
+    assert proof['taskRevision'] == claimed['revision'] and proof['claim']['id'] == claimed['claim']['id']
+    await change_task(app, owner, transition, claimed, 'after-capture',
+        **({'report': 'Original responsibility finished'} if transition == 'complete'
+           else {'holderSessionId': child['id']}))
+    after = (await current_work(app, child))['required']
+    assert after['status'] == 'unavailable'
+    assert 'claim' in after['coverage']['unsupportedInputs'][0]['reason'].lower()
+    assert after['effectAuthorized'] is False
+    checked = await revalidate(app, child, before['version'])
+    assert checked['current'] is False and checked['effectAuthorized'] is False
+    assert app.collaboration.receipt(created['requestId'])['workAssociation'] == original
+    assert len(app.runtime.inputs) == 1
+
+
 @pytest.mark.parametrize('patch', [
     {'expectedRevision': 999}, {'promiseRevision': 999}, {'candidate': 'c' * 40},
     {'workId': 'work:missing'},

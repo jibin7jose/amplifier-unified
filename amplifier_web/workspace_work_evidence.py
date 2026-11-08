@@ -54,7 +54,7 @@ def _link_current(work, link, workspace):
         return False
     if link.get('taskId'):
         value = work.service.assignments.current(row)
-        task = (value or {}).get('tasks', {}).get(link['taskId'])
+        task = work.service.assignments.tasks.get(value, link['taskId'])
         if not task or value['id'] != link['assignmentId']:
             return False
         claim = work.service.assignments.tasks.claim_status(value, task)
@@ -182,7 +182,7 @@ def mutate(work, verb, item, args, actor, origin, workspace):
             work.error('An execution task link needs both exact task and claim identities.', 400)
         if args.get('taskId'):
             value = work.service.assignments.current(row)
-            task = (value or {}).get('tasks', {}).get(args['taskId'])
+            task = work.service.assignments.tasks.get(value, args['taskId'])
             if not task or (work.service.assignments.current(actor) or {}).get('id') != value['id']:
                 work.error('The execution task must belong to both linked assignment members.', 403)
             claim = work.service.assignments.tasks.claim_status(value, task)

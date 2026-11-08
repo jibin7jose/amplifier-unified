@@ -41,7 +41,7 @@ async def test_atomic_agent_self_claim_has_one_winner_and_historical_retry(app):
     await change(app, winner, 'release', claimed, agent=True)
     retry = await change(app, winner, 'claim', task, 'claim-a' if winner is a else 'claim-b', agent=True)
     assert retry['duplicate'] and retry['historical'] and retry['result'] == receipt['result']
-    assert app.assignments.current(owner)['tasks'][task['id']]['status'] == 'open'
+    assert app.assignments.tasks.get(app.assignments.current(owner), task['id'])['status'] == 'open'
     assert 'tasks' not in receipt['result']  # A command does not duplicate the entire board.
 
 
@@ -107,7 +107,7 @@ async def test_stop_then_new_generation_does_not_restore_old_claim(app):
     with pytest.raises(AppError, match='stale'):
         await change(app, peer, 'complete', claimed, report='Late completion', agent=True)
     await change(app, owner, 'release', claimed)
-    assert app.assignments.current(owner)['tasks'][task['id']]['status'] == 'open'
+    assert app.assignments.tasks.get(app.assignments.current(owner), task['id'])['status'] == 'open'
 
 
 async def test_detachment_blocks_reads_retries_and_keeps_item_exclusive(app):
@@ -190,7 +190,7 @@ async def test_commit_failure_rolls_back_task_and_retry_applies_once(app, monkey
     monkeypatch.setattr(app, '_publish_changes', fail)
     with pytest.raises(sqlite3.OperationalError):
         await change(app, owner, 'claim', task, 'retry-claim')
-    assert app.assignments.current(owner)['tasks'][task['id']]['status'] == 'open'
+    assert app.assignments.tasks.get(app.assignments.current(owner), task['id'])['status'] == 'open'
     assert not app.db.execute("SELECT 1 FROM commands WHERE id='retry-claim'").fetchone()
     monkeypatch.setattr(app, '_publish_changes', original)
     first = await change(app, owner, 'claim', task, 'retry-claim')
@@ -207,7 +207,7 @@ async def test_lost_acknowledgement_retains_exact_claim(app, monkeypatch):
     monkeypatch.setattr(app, '_publish_changes', lost)
     with pytest.raises(ConnectionError):
         await change(app, owner, 'claim', task, 'lost-claim')
-    current = app.assignments.current(owner)['tasks'][task['id']]
+    current = app.assignments.tasks.get(app.assignments.current(owner), task['id'])
     monkeypatch.setattr(app, '_publish_changes', original)
     retry = await change(app, owner, 'claim', task, 'lost-claim')
     assert retry['duplicate'] and retry['result']['task']['claim']['id'] == current['claim']['id']
@@ -258,7 +258,7 @@ async def test_queued_completion_rechecks_replaced_source_after_lock(app):
         app.lock.release()
     with pytest.raises(AppError, match='current transport-bound'):
         await waiting
-    assert app.assignments.current(replacement)['tasks'][task['id']]['status'] == 'claimed'
+    assert app.assignments.tasks.get(app.assignments.current(replacement), task['id'])['status'] == 'claimed'
 
 
 @pytest.mark.parametrize('state,label', [('blocked', 'Work blocked'), ('paused', 'Task paused'),

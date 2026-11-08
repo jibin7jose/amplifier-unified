@@ -444,8 +444,20 @@ def _cleanup_db(db, plan):
         db.execute('DELETE FROM state_resources WHERE id=?', (identity,))
     for identity, value in db.execute('SELECT id,value FROM client_views').fetchall() if 'client_views' in tables else []:
         db.execute('UPDATE client_views SET value=? WHERE id=?', (_json(_scrub_local(json.loads(value), ids, set(plan['artifactIds']))), identity))
-    for identity, value in db.execute('SELECT id,receipt FROM commands').fetchall():
-        if _mentions(json.loads(value), ids):
+    # Preserve the old embedded board's deletion scope: a mention in its header
+    # or any current task invalidates the assignment and all current children.
+    # Recovery runs here before app assembly; retain IDs, not decoded bodies.
+    from .assignment_tasks import ASSIGNMENT_RECORD, RECORD
+    assignments = set()
+    for identity, encoded in db.execute("""SELECT id,receipt FROM commands
+            WHERE json_extract(receipt,'$.commandAction') IN (?,?)""", (ASSIGNMENT_RECORD, RECORD)):
+        value = json.loads(encoded)
+        if _mentions(value, ids):
+            assignments.add(identity if value['commandAction'] == ASSIGNMENT_RECORD else value['assignmentId'])
+    for identity, encoded in db.execute('SELECT id,receipt FROM commands').fetchall():
+        value = json.loads(encoded)
+        if (_mentions(value, ids) or identity in assignments or value.get('commandAction') == RECORD
+                and value.get('assignmentId') in assignments):
             db.execute('UPDATE commands SET receipt=? WHERE id=?', (_json({'accepted': False, 'deleted': True, 'error': 'This conversation was permanently deleted. Its work was not replayed.'}), identity))
     for table, column in (('output_receipts','value'), ('feedback_requests','receipt'), ('feedback_followups','receipt')):
         if table not in tables:
