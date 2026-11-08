@@ -4,6 +4,7 @@ WORK_QUERY_FIELDS = ('workHomeScope', 'workHomeQuery', 'workHomePages')
 STATUS_RESOURCES = {
     'workStatusAttention': 'attention', 'workStatusUnread': 'unread',
     'workStatusWorking': 'working', 'workStatusIdle': 'idle',
+    'workStatusWaiting': 'waiting', 'workStatusPaused': 'paused',
 }
 
 

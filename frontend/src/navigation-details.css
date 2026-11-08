@@ -7,7 +7,6 @@
 #amp-one .a-nav-slot .a-navigation-more svg{width:15px;height:15px}
 #amp-one .a-nav-slot .a-workspace-new-chat{width:28px;min-width:28px;height:32px;flex:0 0 28px;padding:4px;opacity:0}
 #amp-one .a-nav-slot .a-workspace-new-chat svg{width:16px;height:16px}
-#amp-one .a-workspace-select>.a-workspace-pin-mark{width:12px;height:12px;flex:0 0 12px;color:var(--a-muted)}
 #amp-one .a-nav-slot .a-workspace-row:hover>.a-workspace-new-chat,#amp-one .a-nav-slot .a-workspace-row:focus-within>.a-workspace-new-chat,#amp-one .a-nav-slot .a-workspace-row.is-peeking>.a-workspace-new-chat{opacity:1}
 #amp-one .a-nav-slot .a-nav-chat:hover .a-navigation-more,#amp-one .a-nav-slot .a-workspace-row:hover .a-navigation-more,#amp-one .a-nav-slot .is-peeking>.a-navigation-more,#amp-one .a-nav-slot .a-nav-chat:focus-within .a-navigation-more,#amp-one .a-nav-slot .a-workspace-row:focus-within .a-navigation-more{opacity:1}
 #amp-one .a-nav-slot .a-nav-chat.is-peeking,#amp-one .a-nav-slot .a-workspace-row.is-peeking{background:var(--a-soft)}

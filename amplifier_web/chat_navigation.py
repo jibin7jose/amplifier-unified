@@ -244,13 +244,13 @@ def view_patch(patch):
     for key in ('navStatusCollapsed', 'navStatusExpanded'):
         if key in patch:
             value = patch[key]
-            if not isinstance(value, list) or len(value) > 4 or any(
-                    item not in ('attention', 'unread', 'working', 'idle') for item in value):
+            if not isinstance(value, list) or len(value) > 6 or any(
+                    item not in ('attention', 'unread', 'working', 'idle', 'waiting', 'paused') for item in value):
                 raise ValueError('Choose valid sidebar status groups.')
     if 'navStatusPages' in patch:
         value = patch['navStatusPages']
         if not isinstance(value, dict) or any(
-                key not in ('attention', 'unread', 'working', 'idle')
+                key not in ('attention', 'unread', 'working', 'idle', 'waiting', 'paused')
                 or type(index) is not int or not 0 <= index <= 1_000_000 for key, index in value.items()):
             raise ValueError('Choose valid sidebar page indexes.')
     # Browsing is client presentation, never a change to the active chat/folder.
@@ -258,7 +258,7 @@ def view_patch(patch):
         raise ValueError('Choose home, chat, workspace, workspaces or chats.')
     if 'workHomeView' in patch and patch['workHomeView'] not in ('focus', 'brief', 'studio'):
         raise ValueError('Choose Focus, Brief or Studio.')
-    if 'workHomeFilter' in patch and patch['workHomeFilter'] not in ('all', 'attention', 'unread', 'working', 'idle'):
+    if 'workHomeFilter' in patch and patch['workHomeFilter'] not in ('all', 'attention', 'unread', 'working', 'idle', 'waiting', 'paused'):
         raise ValueError('Choose a work status.')
     if 'workHomeScope' in patch and (not isinstance(patch['workHomeScope'], str) or not 1 <= len(patch['workHomeScope']) <= 100):
         raise ValueError('Choose a work scope.')
@@ -266,7 +266,7 @@ def view_patch(patch):
         raise ValueError('Search text must be 500 characters or fewer.')
     if 'workHomePages' in patch:
         value = patch['workHomePages']
-        if not isinstance(value, dict) or any(key not in ('attention', 'unread', 'working', 'idle') or type(index) is not int or not 0 <= index <= 1_000_000 for key, index in value.items()):
+        if not isinstance(value, dict) or any(key not in ('attention', 'unread', 'working', 'idle', 'waiting', 'paused') or type(index) is not int or not 0 <= index <= 1_000_000 for key, index in value.items()):
             raise ValueError('Choose valid work page indexes.')
     if 'workWorkspaceTab' in patch and patch['workWorkspaceTab'] not in ('chats', 'work', 'files', 'details'):
         raise ValueError('Choose chats, work, files or details.')
@@ -309,7 +309,7 @@ def view_patch(patch):
         raise ValueError('navWorkspaceList must be a boolean.')
     if 'navLocationFilter' in patch and patch['navLocationFilter'] not in ('all', 'managed'):
         raise ValueError('Choose all locations or no workspace.')
-    if 'navStatusFilter' in patch and patch['navStatusFilter'] not in ('all', 'attention', 'working', 'unread', 'idle'):
+    if 'navStatusFilter' in patch and patch['navStatusFilter'] not in ('all', 'attention', 'working', 'unread', 'idle', 'waiting', 'paused'):
         raise ValueError('Choose all, attention, working, unread, or idle conversations.')
     if 'navChatScope' in patch and patch['navChatScope'] not in ('workspace', 'all'):
         raise ValueError('navChatScope must be workspace or all.')
@@ -407,7 +407,7 @@ def catalog(state, *, indexed=None, pin_first=True):
         summary = activity(session, bool(unread.get(session['id'])),
                            error_reviewed=session['id'] in reviewed_errors,
                            blocked=task_blocked(state, session['id']))
-        counts[summary['kind']] += 1
+        counts[summary['kind']] = counts.get(summary['kind'], 0) + 1
         if status_filter != 'all' and summary['kind'] != status_filter:
             continue
         rows.append({'id': session['id'], 'title': title, 'description': description,

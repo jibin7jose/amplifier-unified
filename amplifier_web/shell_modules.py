@@ -449,6 +449,7 @@ class ShellModules:
         if not _page_only and visible_ids:
             from .attention import reviewed_session_errors
             from .navigation_summary import activity, task_blocked
+            from .navigation_waiting import task_for
             admitted = projections.sessions(state).by_id
             attention = scoped['attention']
             reviewed = reviewed_session_errors(attention)
@@ -459,7 +460,8 @@ class ShellModules:
                 row = admitted.get(sid)
                 if row is not None:
                     activity_by_id[sid] = activity(row, bool(attention.get('sessions', {}).get(sid)),
-                        error_reviewed=sid in reviewed, blocked=task_blocked(state, sid))
+                        error_reviewed=sid in reviewed, blocked=task_blocked(state, sid),
+                        task=task_for(state, row), db=self.service.db)
         overview = ({'items': [copy.deepcopy(workspace)] if workspace else [], 'nextOffset': None} if pinned_scope else listing(self.service, {'query': '', 'offset': 0})) if wants('workspaceOverview') else None
         shortcuts = projections.workspace_shortcuts(scoped, workspace_id=workspace_id if pinned_scope else None) if wants('workspaceShortcuts') else None
         # Only summaries and the selected registration leave this query. No

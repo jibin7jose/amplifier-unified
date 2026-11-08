@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "scenarios": [
+    {"id": "navigation-waiting", "command": ["node", "tests/navigation-waiting-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/navigation-waiting", "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"}},
     {"id": "context-inspector", "command": ["node", "tests/context-inspector-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/context-inspector"}},
     {"id": "context-inspector-layout", "command": ["node", "tests/context-inspector-layout-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/context-inspector-layout"}},
     {"id": "adaptive-work", "command": ["node", "tests/adaptive-work-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/adaptive-work"}},

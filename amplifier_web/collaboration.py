@@ -1333,6 +1333,9 @@ class Collaboration:
     def observe(self, session, kind, payload):
         """Host event linkage, never prose classification or semantic success."""
         changed = self.watches.observe(session, kind, payload)
+        if kind in {'runtime.status', 'runtime.ended', 'runtime.error'} and not payload.get('activityOnly'):
+            from .navigation_waiting import affected_sources
+            changed.update(affected_sources(self.service.db, session['id']))
         if kind == 'runtime.delivery' and 'peerAdmission' in payload:
             return changed | self.reconcile_admission(session, payload)
         if (kind == 'runtime.ended' and not payload.get('backgroundOnly')
@@ -1344,6 +1347,10 @@ class Collaboration:
             # successful completion nor a staged reply: keep those outcomes
             # unqualified and never replay any previously accepted input.
             active = session.get('collaborationGeneration') or {}
+            # Passive presentation fence only. Configuration replacement can
+            # retain a terminal generation/task but not its old live wait view.
+            if active.get('id'):
+                session['_navigationEndedGeneration'] = active['id']
             if active and not active.get('terminal'):
                 active.update(terminal=True, completed=False,
                               detail='Worker exited before terminal generation evidence was received.')

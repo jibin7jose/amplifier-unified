@@ -38,7 +38,7 @@ FIELDS = {
     'historyReadOnlyReason', 'status', 'configurationBusy', 'configurationPending', 'fileAccessPending',
     'preparation', 'pendingConfiguration', 'ownership', 'completion', 'manualUnread', 'unreadCompletion',
     'error', 'errorAt', 'approvals', 'questions', 'collaboration', 'coordinationReference',
-    '_catalogId', '_catalogRecentAt', '_deleting',
+    '_catalogId', '_catalogRecentAt', '_deleting', '_navigationInput', '_navigationWaiting', '_navigationEndedGeneration',
 }
 PUBLIC_ID_BATCH = 128
 MEMBERSHIP_COLUMNS = ('id', 'native_id', 'native_project', 'parent_id', 'native_parent_id',
@@ -80,6 +80,9 @@ def initialize(db):
     db.execute('INSERT OR IGNORE INTO history_directory_order VALUES(1,0)')
     from .history_directory_observations import initialize as observation_initialize
     observation_initialize(db)
+    from .navigation_waiting import initialize as waiting_initialize
+    waiting_initialize(db)
+    db.execute('CREATE TABLE IF NOT EXISTS history_navigation_tasks(id TEXT PRIMARY KEY,value TEXT NOT NULL)')
 
 
 def ready(db):
@@ -116,7 +119,7 @@ def notices(row, state):
             for slot in range(session_item_count(row)) if (item := session_item_at(row, read, slot)) is not None]
 
 
-def _scalars(row, state, ordinal, *, dormant_task_active=None):
+def _scalars(row, state, ordinal, *, dormant_task_active=None, db=None):
     from .chat_navigation import navigation_activity, timestamp
     from .session_identity import native_id, project
     from .session_navigation import is_top_level, is_agent_created
@@ -128,10 +131,16 @@ def _scalars(row, state, ordinal, *, dormant_task_active=None):
     receipts = state.get('attentionRead', {})
     unread = any(receipts.get(item[2]) != item[3] for item in notice_rows)
     error_reviewed = any(item[4] and receipts.get(item[2]) == item[3] for item in notice_rows)
-    facts = activity(row, unread, error_reviewed=error_reviewed, blocked=task_blocked(state, row['id']))
-    base = activity(row, False, error_reviewed=False, blocked=task_blocked(state, row['id']))
+    from .navigation_waiting import task_for
+    task = task_for(state, row)
+    base = activity(row, False, error_reviewed=False, blocked=task_blocked(state, row['id']), task=task, db=db)
+    facts = (base if not unread and not error_reviewed else
+        activity(row, unread, error_reviewed=error_reviewed, blocked=task_blocked(state, row['id']), task=task, db=db))
     flags = activity_flags(row)
     value = summary(row)
+    from .navigation_waiting import input_boundary
+    value['_navigationInput'] = input_boundary(row)
+    value['_navigationWaiting'] = base.get('waiting')
     task = row.get('task') or state.get('runtimeControl', {}).get(row['id'], {}).get('task.get', {}).get('task') or {}
     # First directory migration visits every durable owner; subsequent keyed
     # saves refresh this bounded fact from its exact task authority. No task
@@ -420,18 +429,22 @@ class HistoryDirectory:
                 self.db.execute('UPDATE history_directory_order SET next=next+1 WHERE id=1')
             scalar_state = state
             dormant_task_active = None
+            if row['id'] in state.get('runtimeControl', {}) or 'task' in row:
+                from .navigation_waiting import save_task, task_for
+                save_task(self.db, row['id'], task_for(state, row))
             if row['id'] not in state.get('runtimeControl', {}):
                 # Metadata-only canonical updates must preserve a dormant task's
                 # saved admission/attention facts without loading its runtime/config body.
-                saved_task = self.db.execute("SELECT json_extract(value, '$.\"task.get\".task.id'), json_extract(value, '$.\"task.get\".task.status') FROM state_records WHERE kind='runtime' AND id=?", (row['id'],)).fetchone()
-                if saved_task and saved_task[1] is not None:
+                from .navigation_waiting import saved_task
+                task = saved_task(self.db, row['id'])
+                if task.get('status') is not None:
                     scalar_state = {**state, 'runtimeControl': {row['id']: {'task.get': {'task': {
-                        'id': saved_task[0], 'status': saved_task[1]}}}}}
+                        **task}}}}}
                 elif prior and row['id'] not in resident_ids and 'task' not in row:
                     # Metadata does not carry legacy session.task. Preserve its
                     # bounded saved fact until an admitted owner saves authority.
                     dormant_task_active = prior[1]
-            values, startup = _scalars(row, scalar_state, ordinal, dormant_task_active=dormant_task_active)
+            values, startup = _scalars(row, scalar_state, ordinal, dormant_task_active=dormant_task_active, db=self.db)
             current = self.db.execute('SELECT ' + ','.join(COLUMNS) + ',startup FROM history_local_rows WHERE id=?', (row['id'],)).fetchone()
             if current == (*values, startup):
                 continue
@@ -444,6 +457,7 @@ class HistoryDirectory:
             self.db.executemany('INSERT INTO history_directory_notices VALUES(?,?,?,?,?,?)', notices(row, state))
             changed = True
         for identity in deleted:
+            self.db.execute('DELETE FROM history_navigation_tasks WHERE id=?', (identity,))
             from .history_directory_observations import sync as observation_sync
             observation_sync(self, identity, state=state, deleted=True)
             removed = bool(self.db.execute('DELETE FROM history_local_rows WHERE id=?', (identity,)).rowcount)
@@ -480,7 +494,7 @@ class HistoryDirectory:
             ordinal = prior[0] if prior else f'{sequence:020d}'
             if prior is None:
                 sequence += 1
-            record, startup = _scalars(row, state, ordinal)
+            record, startup = _scalars(row, state, ordinal, db=self.db)
             values[row['id']] = (*record, startup)
         if values != self._live_values:
             self._live_values = values

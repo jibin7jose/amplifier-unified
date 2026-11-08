@@ -10,7 +10,8 @@ def task_blocked(state, sid):
     return task.get('status') == 'blocked'
 
 
-def activity(session, unread=False, *, error_reviewed=False, blocked=False):
+def activity(session, unread=False, *, error_reviewed=False, blocked=False, task=None, db=None):
+    task = task or session.get('task') or {}
     if any(row.get('status') in {None, 'pending'} for row in session.get('approvals', [])):
         return {'kind': 'attention', 'label': 'Approval requested'}
     if any(row.get('status') == 'pending' and row.get('required')
@@ -25,10 +26,18 @@ def activity(session, unread=False, *, error_reviewed=False, blocked=False):
         return {'kind': 'working', 'label': {'starting': 'Starting', 'stopping': 'Stopping'}.get(status, 'Working')}
     if flags['preparing']:
         return {'kind': 'working', 'label': 'Starting' if status == 'starting' else 'Preparing'}
-    if blocked or session.get('status') == 'blocked':
-        return {'kind': 'attention', 'label': 'Work blocked'}
     if (session.get('error') or status in {'error', 'failed'}) and not error_reviewed:
         return {'kind': 'attention', 'label': 'Needs attention'}
+    if status == 'interrupted':
+        return {'kind': 'attention', 'label': 'Outcome unknown'}
+    if status in {'stopped', 'cancelled', 'paused'} or task.get('status') == 'paused':
+        return {'kind': 'paused', 'label': 'Stopped' if status in {'stopped', 'cancelled'} else 'Paused'}
+    if blocked or task.get('status') == 'blocked' or status == 'blocked':
+        from .navigation_waiting import project
+        waiting = project(db, session, task)
+        if waiting:
+            return {'kind': 'waiting', 'label': 'Waiting for another chat', 'waiting': waiting}
+        return {'kind': 'attention', 'label': 'Work blocked'}
     if unread:
         return {'kind': 'unread', 'label': 'New response'}
     return {'kind': 'idle', 'label': 'Idle'}

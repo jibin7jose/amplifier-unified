@@ -205,7 +205,7 @@
 #amp-one.a-approachable-shell .a-pinned-chats .a-navigation-more{opacity:0}
 #amp-one.a-approachable-shell .a-pinned-chats :is(.a-nav-chat:hover,.a-nav-chat:focus-within,.a-workspace-row:hover,.a-workspace-row:focus-within,.is-peeking)>.a-navigation-more{opacity:1}
 @media(hover:none),(pointer:coarse){#amp-one.a-approachable-shell .a-pinned-chats .a-navigation-more{opacity:1;width:40px;height:44px}}
-#amp-one.a-approachable-shell :is(.a-pinned-chats,.a-pinned-drag) .a-workspace-row>.a-workspace-select{padding-inline:4px}
+#amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) :is(.a-nav-chat-select,.a-workspace-row>.a-workspace-select){padding-inline:8px;gap:8px}
 
 /* A collapsed sidebar consumes no width and cannot reopen on hover. */
 #amp-one.a-approachable-shell .a-work-nav-toggle{order:-1;flex:none}

@@ -15,9 +15,12 @@ export function activityFor(chat,state){
  if(chat.questions?.some(row=>row.status==='pending'&&row.required))return {kind:'attention',label:'Answer requested'};
  if(chat.questions?.some(row=>['unknown','rejected'].includes(row.delivery?.status)))return {kind:'attention',label:'Check answer delivery'};
  if(['starting','working','running','stopping'].includes(chat.status))return {kind:'working',label:chat.status==='starting'?'Starting':chat.status==='stopping'?'Stopping':'Working'};
- if(chat.status==='blocked'||chat.task?.status==='blocked'||state?.runtimeControl?.[chat.id]?.['task.get']?.task?.status==='blocked')return {kind:'attention',label:'Work blocked'};
  const errorReviewed=state?.attention?.items?.some(item=>item.id==='session:'+chat.id&&item.sessionId===chat.id&&item.read);
  if((chat.error||['error','failed'].includes(chat.status))&&!errorReviewed)return {kind:'attention',label:'Needs attention'};
+ const task=state?.runtimeControl?.[chat.id]?.['task.get']?.task||chat.task;
+ if(chat.status==='interrupted')return {kind:'attention',label:'Outcome unknown'};
+ if(['stopped','cancelled','paused'].includes(chat.status)||task?.status==='paused')return {kind:'paused',label:['stopped','cancelled'].includes(chat.status)?'Stopped':'Paused'};
+ if(chat.status==='blocked'||task?.status==='blocked')return {kind:'attention',label:'Work blocked'};
  if(state?.attention?.sessions?.[chat.id])return {kind:'unread',label:'New response'};
  return {kind:'idle',label:'Idle'};
 }

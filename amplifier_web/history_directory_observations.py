@@ -71,7 +71,7 @@ def complete(directory, saved, identity):
         saved[5] if saved[5] is not None else root_navigation_part(session, notices, navigation, project))
 
 
-def parts(row, *, blocked=False):
+def parts(row, *, blocked=False, task=None, db=None):
     from .client_observations import Observations
     facts = Observations.row_facts(None,row,{},frozenset())
     session,workspace,notices = facts
@@ -83,7 +83,7 @@ def parts(row, *, blocked=False):
                    timestamp(row.get(key)) if key=='createdAt' and row.get(key) is not None else
                    row.get(key) if row.get(key) is not None else defaults.get(key)
                    for key in NAVIGATION_FIELDS],session['agentCreated'],
-                  navigation_activity(row),activity(row,False,blocked=blocked))
+                  navigation_activity(row),activity(row,False,blocked=blocked,task=task,db=db))
     return (*tuple(encoded(value) for value in ((session,workspace),
         (session['role'],notices),Observations.count_facts(facts),navigation)),
         workspace_part(session, workspace, notices, navigation, row.get('nativeProject')),
@@ -126,13 +126,16 @@ def sync(directory,row,prior_summary_or_none=None,state=None,*,deleted=False):
     if previous is None and not isinstance(row,str):
         previous = native_parts(directory,row)
     from .navigation_summary import task_blocked
+    from .navigation_waiting import task_for, saved_task
     blocked = False
+    task = {}
     if not deleted:
         blocked = task_blocked(state or {}, identity)
+        task = task_for(state or {}, row)
         if identity not in (state or {}).get('runtimeControl', {}):
-            saved = directory.db.execute("SELECT json_extract(value, '$.\"task.get\".task.status') FROM state_records WHERE kind='runtime' AND id=?", (identity,)).fetchone()
-            blocked = bool(saved and saved[0] == 'blocked')
-    current = None if deleted else parts(row, blocked=blocked)
+            task = saved_task(directory.db, identity) or task
+            blocked = task.get('status') == 'blocked'
+    current = None if deleted else parts(row, blocked=blocked,task=task,db=directory.db)
     if deleted:
         directory.db.execute('DELETE FROM history_observation_rows WHERE id=?',(identity,))
     else:

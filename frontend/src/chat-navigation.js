@@ -80,7 +80,7 @@ export function chatPage(state,workspace,{section=null}={}){
  if(section==='recent'||section==='search')chats=chats.filter(chat=>scope.showAgentCreated||chat.agentCreated!==true||chat.id===selectedSessionId);
  const activityCounts={attention:0,working:0,unread:0,idle:0};
  chats=chats.map(chat=>({...chat,activity:activityFor(chat,state)}));
- for(const chat of chats)activityCounts[chat.activity.kind]++;
+ for(const chat of chats)activityCounts[chat.activity.kind]=(activityCounts[chat.activity.kind]||0)+1;
  if(statusFilter!=='all')chats=chats.filter(chat=>chat.activity.kind===statusFilter);
  const pageSize=section?(chats.length>50?40:50):CHAT_PAGE_SIZE;
  const inferred=mode==='all'||section==='recent'?0:Math.floor(Math.max(0,chats.findIndex(chat=>chat.id===selectedSessionId))/pageSize);

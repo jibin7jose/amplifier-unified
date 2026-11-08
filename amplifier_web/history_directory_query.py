@@ -137,9 +137,7 @@ def _chat_query(directory, state, section, *, activity_counts=True):
     total = 0
     if activity_counts:
         for kind, count in directory.db.execute(sql + ' SELECT activity_kind,COUNT(*) FROM eligible GROUP BY activity_kind', params):
-            if kind in counts: counts[kind] = count
-            # Include every group, even an unfamiliar activity kind. The public
-            # four counters and the complete filtered count have distinct jobs.
+            counts[kind] = count
             if status == 'all' or kind == status: total += count
     if status != 'all':
         sql += ', filtered AS (SELECT * FROM eligible WHERE activity_kind=?)'

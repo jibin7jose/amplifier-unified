@@ -10,8 +10,7 @@ export function ChatPlan({session,state,act,placement='composer',draft,onSection
  const active=items.find(item=>item.status==='in_progress');
  const current=plan.turnId&&plan.turnId===session.execution.currentTurnId;
  const working=current&&['working','running','starting'].includes(session.status);
- const interrupted=['error','failed','interrupted','cancelled','stopping'].includes(session.status);
- const status=working?'Working':interrupted?'Paused':'Unfinished';
+ const status=working?'Working':({error:'Failed',failed:'Failed',interrupted:'Outcome unknown',cancelled:'Cancelled',stopped:'Stopped',stopping:'Stopping',paused:'Paused'}[session.status]||'Unfinished');
  const expanded=onSectionChange?overviewSectionOpen(draft,'plan'):state?.view?.planExpanded?.[session.id]??placement!=='composer';
  return <section className={`a-chat-plan a-chat-plan-${placement}`} data-part="chat-plan" aria-label="Plan">
   <details key={`${session.id}:${placement}`} data-overview-section={onSectionChange?'plan':undefined} open={expanded}>

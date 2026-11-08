@@ -372,6 +372,33 @@ continue to supply colors, while the structural row rules prevent old wrapping
 and hidden-action styles from reintroducing the layout problem.
 
 Working, unresolved approval/error, and unread-response states are distinct.
+Verified dependency waits have a static clock, not a pause icon or an execution
+spinner. The selected chat shows a linked waiting target, or a count and local
+disclosure for several targets. Expanding does not select a chat or send a draft;
+only clicking a target uses normal chat navigation. Workspace activity keeps
+waiting separate from attention. A stopped or explicitly paused owner is not
+described as waiting; required questions, approvals and errors retain precedence.
+
+This is a passive projection of an agent-recorded dependency block and exact
+pending direct-request subscriptions. It is not an inventory of workers. A
+bounded typed task projection identifies the pre-block epoch without changing
+continuation authority. Existing saved source-generation/input identity prevents an
+old wait from reappearing after new input, runtime replacement, or Stop. A derived
+scalar index reads at most 17 current request references, showing at most 16 with an
+explicit continuation marker; historical receipt bodies are not decoded.
+The index is populated once when introduced; command insert/update/delete triggers
+maintain it in the canonical command transaction. It contains no request/report
+bodies and has no execution authority. Navigation does not parse retained runtime
+task history; keyed directory task facts are refreshed by the task observation owner.
+Recipient lifecycle publication visits only its indexed pending dependants so
+their displayed status can refresh; this work grows with actual dependants, not
+all retained chats or receipts.
+Missing legacy identity/provenance remains **Work blocked**, never a guessed
+target. A staged or returned report leaves the live-wait view; that does not
+qualify success or resolve the task. Target errors and unavailable targets remain
+explicit. Workspace and chat rows share icon/text columns; pin/unpin remains in
+the details menu, without a redundant inline workspace pin.
+
 Elapsed time comes from actual conversation activity, refreshed every 30 seconds;
 unknown timestamps display a dash. Pending approval titles, tool arguments,
 provider errors, and transcripts are not copied into the navigation projection.

@@ -10,6 +10,15 @@ test('navigation distinguishes unresolved input, active work, errors, and new re
  assert.equal(activityFor({id:'new'}, {attention:{sessions:{new:1}}}).kind,'unread');
  assert.equal(activityFor({activity:{kind:'attention',label:'Approval requested'}}).label,'Approval requested');
 });
+test('waiting is host evidence, pause and unknown interruption are different',()=>{
+ const waiting={kind:'waiting',label:'Waiting for another chat'};
+ assert.equal(activityFor({id:'owner',task:{status:'blocked'}},{navigationActivityById:{owner:waiting}}),waiting);
+ assert.equal(activityFor({id:'owner',task:{status:'blocked'},workers:[{status:'working'}]}).label,'Work blocked');
+ assert.equal(activityFor({status:'stopped'}).label,'Stopped');
+ assert.equal(activityFor({task:{status:'paused'}}).kind,'paused');
+ assert.equal(activityFor({status:'interrupted'}).label,'Outcome unknown');
+ assert.equal(activityFor({status:'working',task:{status:'paused'}}).kind,'working');
+});
 test('reviewing an exact failure clears its marker without hiding current obligations',()=>{
  const chat={id:'failed',status:'error',error:'Saved failure'};
  const item={id:'session:failed',sessionId:'failed',read:true,fingerprint:'current'};

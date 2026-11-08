@@ -255,6 +255,16 @@ def snapshot(state, derived, *, session_id=None, index=None, copies=None, client
     # into every browser progress snapshot. The worker's latest report remains.
     result['sessions'] = [{**row, 'workers': [{key: value for key, value in worker.items() if key != 'reportReceipts'}
                            for worker in row.get('workers', [])]} for row in result['sessions']]
+    # Only the selected owner's current, indexed waits; no transcript or peer
+    # configuration loads, and this read never consumes a return notification.
+    if directory is not None and selected_row:
+        from .navigation_summary import activity
+        from .navigation_waiting import task_for, target_details, saved_task
+        selected_task = task_for(state, selected_row) or saved_task(directory.db, selected_row['id'])
+        result['selectedActivity'] = {**activity(selected_row, task=selected_task, db=directory.db),
+                                      'sessionId': selected_row['id']}
+        if result['selectedActivity'].get('waiting'):
+            result['selectedActivity']['waiting'] = target_details(directory.db, result['selectedActivity']['waiting'])
     workspace_ids = {row.get('workspaceId') for row in result['sessions']} | {
         state.get('selectedWorkspaceId'), state.get('view', {}).get('workWorkspaceId')}
     explorer = derived.get('workspaceExplorer', {})

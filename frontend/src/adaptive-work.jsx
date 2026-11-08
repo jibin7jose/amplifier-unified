@@ -65,7 +65,7 @@ export function AdaptiveWorkHome({host,state,act,presentation}){
  }
  const focusKey=JSON.stringify([scope,view.workHomeScope||'all',query]);
  const savedFocus=focusCursor?.key===focusKey?focusCursor:null;
- const focusKind=filter!=='all'?filter:pages[savedFocus?.kind]?.items.length?savedFocus.kind:['attention','unread','working','idle'].find(key=>pages[key]?.items.length);
+ const focusKind=filter!=='all'?filter:pages[savedFocus?.kind]?.items.length?savedFocus.kind:Object.keys(groups).find(key=>pages[key]?.items.length);
  const focusPage=pages[focusKind],focus=focusPosition(focusPage,savedFocus?.kind===focusKind?savedFocus:null),focusChat=focus&&focusPage.items[focus.index];
  const focusMode=mode==='focus';
  const rememberFocus=value=>{setFocusCursor(value);saveFocusCursor(window,value)};
@@ -120,6 +120,8 @@ export function AdaptiveWorkHome({host,state,act,presentation}){
       {pageGroup('unread',mode==='brief'?3:4,{featured:mode==='brief'})}
       {mode==='studio'&&pageGroup('working',4)}
      </div>}{mode==='brief'&&pages.working.total>0&&<div className="a-home-running">{pageGroup('working',3,{compact:true})}</div>}
+     {pages.waiting?.total>0&&<div className="a-home-recent">{pageGroup('waiting',mode==='brief'?3:4,{compact:true})}</div>}
+     {pages.paused?.total>0&&<div className="a-home-recent">{pageGroup('paused',mode==='brief'?3:4,{compact:true})}</div>}
      <div className="a-home-recent">{pageGroup('idle',mode==='brief'?4:6,{compact:true})}</div></>}
    </>}
  </WorkLandingFrame>;

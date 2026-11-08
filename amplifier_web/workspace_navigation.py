@@ -232,7 +232,7 @@ def _index(state, *, aggregates=None):
         summary = activity(session, bool(unread_sessions.get(session.get('id'))),
                            error_reviewed=session.get('id') in reviewed_errors,
                            blocked=task_blocked(state, session['id']))
-        entry['activityCounts'][summary['kind']] += 1
+        entry['activityCounts'][summary['kind']] = entry['activityCounts'].get(summary['kind'], 0) + 1
         if summary['kind'] == 'attention':
             category = {'Work blocked': 'blocked', 'Approval requested': 'decision', 'Answer requested': 'decision'}.get(summary['label'], 'error')
             entry['activityCounts'][category] = entry['activityCounts'].get(category, 0) + 1

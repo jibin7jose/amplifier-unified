@@ -1,3 +1,5 @@
+import {workGroups} from './work-status.js';
+const workKinds=Object.keys(workGroups);
 export const workViews=['focus','brief','studio'];
 export function startingWorkView(presentation={}){
  return workViews.includes(presentation.workStartView)?presentation.workStartView:
@@ -12,7 +14,7 @@ export function homePatch(presentation={},extra={},view={}){
 // the matching resource before restoring; a loading placeholder has no height.
 export function workReadingKey(view,mode){
  return JSON.stringify([mode,view.workHomeScope||'all',view.workHomeQuery||'',view.workHomeFilter||'all',
-  ...['attention','unread','working','idle'].map(key=>view.workHomePages?.[key]||0)]);
+  ...workKinds.map(key=>view.workHomePages?.[key]||0)]);
 }
 export function rememberHomeScroll(pane,key,storageKey='amplifier.work-home-reading.v1'){
  const browser=pane.ownerDocument.defaultView;
@@ -28,7 +30,7 @@ export function rememberHomeScroll(pane,key,storageKey='amplifier.work-home-read
 export function currentWorkPage(value,view={},pinnedScope=null){
  return value?.scope===(pinnedScope||view.workHomeScope||'all')
   &&value?.requestedScope===(view.workHomeScope||'all')&&value?.query===(view.workHomeQuery||'')
-  &&['attention','unread','working','idle'].every(key=>(value.requestedPages?.[key]||0)===(view.workHomePages?.[key]||0));
+  &&workKinds.every(key=>(value.requestedPages?.[key]||0)===(view.workHomePages?.[key]||0));
 }
 export function currentWorkContext(value,view={},pinnedScope=null){
  return value?.scope===(pinnedScope||view.workHomeScope||'all')
@@ -40,7 +42,7 @@ const focusStorageKey='amplifier.work-home-focus.v1';
 export function readFocusCursor(browser){
  try{
   const value=JSON.parse(browser.sessionStorage.getItem(focusStorageKey));
-  return value&&typeof value.key==='string'&&['attention','unread','working','idle'].includes(value.kind)
+  return value&&typeof value.key==='string'&&workKinds.includes(value.kind)
    &&Number.isSafeInteger(value.page)&&value.page>=0&&Number.isSafeInteger(value.index)&&value.index>=-1
    &&(value.id===null||typeof value.id==='string')?value:null;
  }catch{return null}
