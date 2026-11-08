@@ -66,7 +66,7 @@ class Observations:
         except ValueError: return None
 
     def shape(self, row):
-        handoffs = [item for item in self.store.rows('outbox', row['sessionId']) if item['watchId'] == row['id']]
+        handoffs = self.store.rows('outbox', row['sessionId'], watch_id=row['id'])
         state = {'active':'running', 'ended':'completed', 'needs_review':'outcome_unknown'}.get(row['status'], row['status'])
         if handoffs and handoffs[-1]['phase'] == 'waiting_worker': state = 'waiting_input'
         elif handoffs and handoffs[-1]['phase'] == 'unknown': state = 'outcome_unknown'
@@ -186,9 +186,9 @@ class Observations:
         if action == 'observation.list': return {'watches': self.store.rows('watch', sid)}
         if action in {'observation.read', 'observation.report'}:
             watch = self.store.get('watch', args['id'], sid)
-            return {'watch': watch, 'runs': [r for r in self.store.rows('run', sid) if r['watchId'] == watch['id']], 'handoffs': [r for r in self.store.rows('outbox', sid) if r['watchId'] == watch['id']]}
+            return {'watch': watch, 'runs': self.store.rows('run', sid, watch_id=watch['id']), 'handoffs': self.store.rows('outbox', sid, watch_id=watch['id'])}
         if action == 'observation.request':
-            rows = [row for row in self.store.rows('watch', sid) if row['requestId'] == args['requestId']]
+            rows = self.store.rows('watch', sid, request_id=args['requestId'])
             return {'watch': rows[0] if rows else None}
         if action == 'observation.preview': return self.reviewed(sid, self.configuration(args), args, origin)
         request = text(args.get('requestId'), 'request identity', 200)
@@ -202,7 +202,7 @@ class Observations:
             if previous and previous['revision'] != args['expectedRevision']: raise ValueError('Observation revision changed')
             if action in {'observation.create', 'observation.resume'}:
                 if previous and (previous.get('terminal') or previous['status'] not in {'paused', 'needs_review'}): raise ValueError('Only a nonterminal paused watch can be reviewed and resumed')
-                if previous and any(row['watchId'] == previous['id'] for row in self.store.rows('outbox')): raise ValueError('A prior handoff cannot be rearmed')
+                if previous and self.store.exists('outbox', watch_id=previous['id']): raise ValueError('A prior handoff cannot be rearmed')
                 config = self.configuration(args)
                 review = self.reviewed(sid, config, args, origin)
                 if args['previewHash'] != review['previewHash']: raise ValueError('The quiet observation preview changed; review again')
@@ -225,8 +225,7 @@ class Observations:
         if not self.store.acquire(self.clock()): return
         from .updates import work_paused
         if work_paused(self.app.state): return
-        for watch in self.store.rows('watch'):
-            if watch['status'] != 'active': continue
+        for watch in self.store.rows('watch', status='active'):
             if not self.store.acquire(self.clock()): return
             try: reason = self.reason(watch)
             except (ValueError, OSError) as exc: reason = str(exc)
@@ -287,8 +286,7 @@ class Observations:
         return {'admitted': reason is None, 'reason': reason}
 
     async def handoffs(self):
-        for item in self.store.rows('outbox'):
-            if item['phase'] not in {'pending', 'waiting_worker'}: continue
+        for item in self.store.rows('outbox', phases=('pending', 'waiting_worker')):
             watch = self.store.get('watch', item['watchId'])
             if watch['status'] != 'ended':
                 self.store.outbox_phase(item['id'], ['pending', 'waiting_worker'], 'suppressed', self.clock()); continue

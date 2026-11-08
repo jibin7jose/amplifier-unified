@@ -288,6 +288,19 @@ call identity and default serialization. No model-provided flag grants this
 behavior. Compare overlapping waits with a serial baseline; do not claim remote
 provider latency or end-to-end live improvement from a synthetic transport.
 
+## Quiet background observations
+
+Quiet-watch storage has a separate history from client navigation observations.
+`tests/test_observation_store_queries.py` holds selected reads and active work fixed
+against 0, 100 and 1,000 unrelated retained watches. It measures actual SQLite
+instructions and decoded rows/bytes, compares exact reports and list ordering with
+the original scan, and preserves expiry, lease recovery and unknown handoffs.
+Session/watch/state indexes must constrain SQLite work before body decoding;
+fewer decoded rows alone can hide a broad index scan. The indexes derive from the
+existing canonical JSON and do not rewrite it. Their first creation reads retained
+records; this is not a constant-time startup claim. Complete public lists still
+grow with the requested records, and genuinely active work still requires visits.
+
 ## Provider requests and cache observations
 
 Keep reusable instructions, tools and accepted history stable while their meaning

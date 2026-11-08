@@ -19,6 +19,16 @@ class ObservationStore:
           CREATE TABLE IF NOT EXISTS observation_commands (id TEXT PRIMARY KEY, intent TEXT, result TEXT);
           CREATE TABLE IF NOT EXISTS observation_terminals (watch TEXT PRIMARY KEY, semantic_key TEXT, input_id TEXT UNIQUE);
           CREATE TABLE IF NOT EXISTS observation_lease (id INTEGER PRIMARY KEY, owner TEXT, until REAL);
+          CREATE INDEX IF NOT EXISTS observation_session ON observation_objects
+            (kind, json_extract(body,'$.sessionId'), id);
+          CREATE INDEX IF NOT EXISTS observation_watch ON observation_objects
+            (kind, json_extract(body,'$.watchId'), json_extract(body,'$.phase'), id);
+          CREATE INDEX IF NOT EXISTS observation_phase ON observation_objects
+            (kind, json_extract(body,'$.phase'), id);
+          CREATE INDEX IF NOT EXISTS observation_status ON observation_objects
+            (kind, json_extract(body,'$.status'), id);
+          CREATE INDEX IF NOT EXISTS observation_request ON observation_objects
+            (kind, json_extract(body,'$.sessionId'), json_extract(body,'$.requestId'), id);
         ''')
         self.owner = str(uuid.uuid4())
 
@@ -45,9 +55,40 @@ class ObservationStore:
         if sid is not None and value.get('sessionId') != sid: raise ValueError('Observation belongs to another conversation')
         return value
 
-    def rows(self, kind, sid=None):
-        rows = [json.loads(row[0]) for row in self.db.execute('SELECT body FROM observation_objects WHERE kind=?', (kind,))]
-        return [row for row in rows if sid is None or row.get('sessionId') == sid]
+    @staticmethod
+    def _selection(kind, sid=None, *, watch_id=None, phases=None, status=None, request_id=None, exclude_phase=None):
+        conditions, args = ['kind=?'], [kind]
+        for field, value in (('sessionId', sid), ('watchId', watch_id), ('status', status), ('requestId', request_id)):
+            if value is not None:
+                conditions.append(f"json_extract(body,'$.{field}')=?")
+                args.append(value)
+        if phases is not None:
+            conditions.append("json_extract(body,'$.phase') IN (" + ','.join('?' for _ in phases) + ')')
+            args.extend(phases)
+        if exclude_phase is not None:
+            conditions.append("json_extract(body,'$.phase') IS NOT ?")
+            args.append(exclude_phase)
+        # Without statistics SQLite may choose another kind-prefixed index and
+        # scan unrelated bodies for the remaining predicates. Select the exact
+        # owner/state index so fresh and restored stores have the same bound.
+        index = ('observation_watch' if watch_id is not None else
+                 'observation_request' if request_id is not None else
+                 'observation_status' if status is not None else
+                 'observation_phase' if phases is not None else
+                 'observation_session' if sid is not None else
+                 'sqlite_autoindex_observation_objects_1')
+        return 'observation_objects INDEXED BY ' + index + ' WHERE ' + ' AND '.join(conditions), args
+
+    def rows(self, kind, sid=None, **filters):
+        selection, args = self._selection(kind, sid, **filters)
+        # Keep the original (kind,id) primary-key iteration order even when an
+        # expression index selects a smaller set before decoding its bodies.
+        return [json.loads(row[0]) for row in self.db.execute(
+            'SELECT body FROM ' + selection + ' ORDER BY id', args)]
+
+    def exists(self, kind, **filters):
+        selection, args = self._selection(kind, **filters)
+        return self.db.execute('SELECT 1 FROM ' + selection + ' LIMIT 1', args).fetchone() is not None
 
     def command(self, identity, intent):
         row = self.db.execute('SELECT intent,result FROM observation_commands WHERE id=?', (identity,)).fetchone()
@@ -63,16 +104,14 @@ class ObservationStore:
             row = self.db.execute('SELECT owner,until FROM observation_lease WHERE id=1').fetchone()
             if row and row[0] != self.owner and row[1] > now: return False
             if row and row[0] != self.owner:
-                for item in self.rows('run'):
-                    if item['phase'] == 'reading':
-                        # Only a qualified read may be repeated after owner loss.
-                        item.update(phase='abandoned_read', updatedAt=now)
-                        self.put('run', item)
-                for item in self.rows('outbox'):
-                    if item['phase'] == 'submitting':
-                        item.update(phase='unknown', detail='Admission may have happened; no replay.', updatedAt=now)
-                        if item.get('presentationPhase') == 'claimed': item['presentationPhase'] = 'unknown'
-                        self.put('outbox', item)
+                for item in self.rows('run', phases=('reading',)):
+                    # Only a qualified read may be repeated after owner loss.
+                    item.update(phase='abandoned_read', updatedAt=now)
+                    self.put('run', item)
+                for item in self.rows('outbox', phases=('submitting',)):
+                    item.update(phase='unknown', detail='Admission may have happened; no replay.', updatedAt=now)
+                    if item.get('presentationPhase') == 'claimed': item['presentationPhase'] = 'unknown'
+                    self.put('outbox', item)
             self.db.execute('INSERT OR REPLACE INTO observation_lease VALUES (1,?,?)', (self.owner, now + 60))
             return True
 
@@ -84,8 +123,8 @@ class ObservationStore:
         with self.transaction():
             watch = self.get('watch', identity)
             if not self.owns(now) or watch['status'] != 'active' or watch['nextDue'] > now: return None
-            if any(row['watchId'] == identity and row['phase'] == 'reading' for row in self.rows('run')): return None
-            abandoned = next((r for r in self.rows('run') if r['watchId'] == identity and r['phase'] == 'abandoned_read' and r['watchRevision'] == watch['revision']), None)
+            if self.exists('run', watch_id=identity, phases=('reading',)): return None
+            abandoned = next((r for r in self.rows('run', watch_id=identity, phases=('abandoned_read',)) if r['watchRevision'] == watch['revision']), None)
             if abandoned:
                 abandoned.update(owner=self.owner, phase='reading', updatedAt=now)
                 watch.update(nextDue=now + watch['intervalSeconds'])
@@ -107,10 +146,9 @@ class ObservationStore:
             self.suppress(identity, now)
 
     def suppress(self, identity, now):
-        for row in self.rows('outbox'):
-            if row['watchId'] == identity and row['phase'] in {'pending', 'waiting_worker'}:
-                row.update(phase='suppressed', updatedAt=now)
-                self.put('outbox', row)
+        for row in self.rows('outbox', watch_id=identity, phases=('pending', 'waiting_worker')):
+            row.update(phase='suppressed', updatedAt=now)
+            self.put('outbox', row)
 
     def terminal(self, watch, outcome, now):
         """Called inside the same transaction as result acceptance/expiry."""
@@ -150,7 +188,7 @@ class ObservationStore:
             self.put('watch', watch)
             if outcome['status'] != 'pending': self.terminal(watch, outcome, now)
             # Audit pruning never removes terminal tombstones or outbox identities.
-            rows = sorted((r for r in self.rows('run') if r['watchId'] == watch['id'] and r['phase'] != 'reading'), key=lambda r:r['createdAt'], reverse=True)
+            rows = sorted(self.rows('run', watch_id=watch['id'], exclude_phase='reading'), key=lambda r:r['createdAt'], reverse=True)
             for old in rows[100:]: self.db.execute("DELETE FROM observation_objects WHERE kind='run' AND id=?", (old['id'],))
             return True
 
