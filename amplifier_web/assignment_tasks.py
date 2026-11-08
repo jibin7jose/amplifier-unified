@@ -10,7 +10,7 @@ import uuid
 
 from amplifier_operations.coordination import fingerprint
 
-MAX_TASKS = 128
+LEGACY_MAX_TASKS = 128  # Accepted embedded maps; not a lifetime limit on task records.
 RECORD = 'assignment.task.record'
 ASSIGNMENT_RECORD = 'assignment.record.v2'
 STORAGE = 'records-v1'
@@ -86,13 +86,6 @@ class AssignmentTasks:
         row = self.service.db.execute('SELECT receipt FROM commands WHERE id=?', (key,)).fetchone()
         return self._record(value, key, row[0]) if row else None
 
-    def count(self, value):
-        if value.get('taskStorage') != STORAGE:
-            return len(value.get('tasks', {}))
-        return self.service.db.execute("""SELECT count(*) FROM commands
-            WHERE json_extract(receipt,'$.assignmentId')=?
-            AND json_extract(receipt,'$.commandAction')='assignment.task.record'""", (value['id'],)).fetchone()[0]
-
     def unfinished_claims(self, value, holder=None):
         if value.get('taskStorage') != STORAGE:
             return [task for task in value.get('tasks', {}).values()
@@ -128,7 +121,7 @@ class AssignmentTasks:
         if value.get('taskStorage') == STORAGE:
             return
         tasks = value.get('tasks', {})
-        if not isinstance(tasks, dict) or len(tasks) > MAX_TASKS:
+        if not isinstance(tasks, dict) or len(tasks) > LEGACY_MAX_TASKS:
             self.error('The legacy assignment task map is unavailable for bounded conversion.')
         for identity, task in tasks.items():
             if (not isinstance(identity, str) or not identity or not isinstance(task, dict)
@@ -375,8 +368,6 @@ class AssignmentTasks:
                 if verb == 'create':
                     if args['expectedAssignmentRevision'] != value['revision']:
                         self.error('The assignment revision changed; refresh before creating a task.')
-                    if self.count(value) >= MAX_TASKS:
-                        self.error('This assignment already retains 128 tasks. Existing task evidence is not discarded.', 429)
                     task = {'id': 'task:' + str(uuid.uuid5(uuid.NAMESPACE_URL, value['id'] + ':' + identity)),
                             'revision': 1, 'status': 'open', 'createdAt': time.time(), 'createdBy': source['id']}
                     task.update(self.content(value, task, args))

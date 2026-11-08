@@ -150,7 +150,7 @@ async def test_current_control_reference_is_caller_scoped_and_historical_result_
 
 
 async def test_active_page_and_exact_read_do_not_scan_retained_terminal_bodies(app, monkeypatch, record_property):
-    """Synthetic canonical records isolate query work; public create stays capped."""
+    """Synthetic canonical records isolate page work from retained task bodies."""
     import time
     import uuid
     owner, value, tasks = await seed(app, count=8)

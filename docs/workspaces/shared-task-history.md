@@ -1,12 +1,13 @@
 # Shared-task history without a lifetime ceiling
 
-**Storage and paged observation implemented; lifetime ceiling removal pending.** The
+**Implemented:** per-item storage, paged observation and creation without a
+lifetime task-count ceiling. The
 [shared-task contract](contracts/execution.v2-candidate.md#shared-task-lifetime-and-observation-revision--accepted-direction)
-owns the observable promises. Current source lazily separates current tasks into
-individual records and uses exact reads and active/history pages. It still retains
-the 128-item creation ceiling, including after earlier tasks finish. Removing
-that lifetime refusal is the next separate batch toward
+owns the observable promises. Completed and cancelled work remains available
+without exhausting the assignment's ability to create new tasks, following
 [VISION 11](../architecture/VISION.md#11-available-resources-govern-throughput).
+Existing Stop, claims, operator-selected execution limits and storage failures
+retain their meaning; this does not automatically start work or expire history.
 
 ## Owner and storage
 
@@ -18,14 +19,17 @@ actual active/history/claim queries. Keep task reports and reference strings
 inline; references do not become artifact pins.
 
 Exact reads fetch an item and its declared dependencies. Dependency edits check
-the affected graph; unrelated terminal history should not enter ordinary work.
+the reachable graph, which can include a long chain of completed prerequisites;
+unrelated terminal history does not enter that traversal or ordinary creation.
 Task changes, assignment revision and command receipt commit together under the
 existing mutation owner. Retirement, Work links/invocation and workspace review
 must consume that owner; a partially inspected review cannot claim no stale work.
 
 Convert a legacy assignment on its first authorized task mutation, atomically,
 preserving its IDs and results. Passive reads need no migration or startup sweep.
-Validate record-key conflicts before replacing the embedded authority. An exact
+The historical 128-item bound still validates accepted embedded maps during
+conversion; it does not limit normalized task records. Validate record-key
+conflicts before replacing the embedded authority. An exact
 retry must return its original result without repeating conversion or effects.
 
 ## Response transition and consumers
@@ -93,8 +97,8 @@ must not strand newly separated task payloads.
    retaining the existing ceiling and response behavior for bounded old boards.
 3. Implemented: indexed pages/detail/wait and coordinated bundled consumers/guidance,
    with the existing 128-item creation ceiling retained.
-4. Pending: remove the lifetime refusal after those paths qualify; ship the coherent
-   lifetime change with focused continuation and recovery evidence.
+4. Implemented: no lifetime creation refusal, with continuation beyond 128 completed
+   or cancelled tasks, exact retries, restart and matching-reader backup recovery.
 
 Extend maintained task, retirement, Work/review and backup tests for interruption,
 restart, exact retry, old-reader refusal and more than 128 sequential completions.

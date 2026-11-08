@@ -16,6 +16,11 @@ from test_assignments import app, start
 from test_assignment_tasks import create, change
 
 
+def task_count(app, value):
+    return app.db.execute("""SELECT count(*) FROM commands WHERE json_extract(receipt,'$.assignmentId')=?
+        AND json_extract(receipt,'$.commandAction')='assignment.task.record'""", (value['id'],)).fetchone()[0]
+
+
 def rows(app):
     return list(app.db.execute('SELECT id,fingerprint,receipt FROM commands ORDER BY id'))
 
@@ -70,9 +75,8 @@ async def test_lazy_conversion_keeps_paged_order_and_legacy_receipts(app, count)
         if identity != current['id']:
             assert after[identity] == (digest, receipt)
     if count == 128:
-        with pytest.raises(AppError, match='128 tasks'):
-            await create(app, owner, identity='over-cap')
-        assert app.assignments.tasks.count(current) == 128
+        await create(app, owner, identity='continue-past-old-cap')
+        assert task_count(app, current) == 129
 
 
 @pytest.mark.parametrize('fault', ['item-insert', 'header-save', 'before-commit', 'after-commit'])
@@ -107,7 +111,7 @@ async def test_conversion_mutation_and_receipt_are_one_recoverable_transaction(a
     result = await change(app, owner, 'claim', task, 'claim-on-conversion')
     assert bool(result.get('duplicate')) is (fault == 'after-commit')
     current = app.assignments.current(owner)
-    assert app.assignments.tasks.count(current) == 2
+    assert task_count(app, current) == 2
     assert app.assignments.tasks.get(current, task['id'])['revision'] == 2
     again = await change(app, owner, 'claim', task, 'claim-on-conversion')
     assert again['duplicate'] and again['result'] == result['result']
@@ -298,8 +302,8 @@ async def test_scoped_queries_ignore_terminal_bodies_and_index_build_cost_is_exp
         return (app.assignments.tasks.get(header, task['id']),
                 app.assignments.tasks.unfinished_claims(header, owner['id']))
     before, small = measure(read_exact)
-    # Same assignment, same one current claim, larger terminal bodies. This
-    # synthetic storage fixture stays within the still-enforced public cap.
+    # Same assignment and one current claim, with 127 larger terminal bodies.
+    # Synthetic records isolate the indexed claim/read boundary.
     for index in range(127):
         terminal = {**task, 'id': 'terminal-' + str(index), 'status': 'completed',
                     'completion': {'report': 'x' * 4000, 'references': ['y' * 2000] * 16}}
@@ -355,6 +359,15 @@ async def test_explicit_conversation_reset_clears_normalized_items_with_commands
     from amplifier_web.recovery import reset
     owner, value = await legacy(app)
     await change(app, owner, 'claim', next(iter(value['tasks'].values())), 'convert')
-    assert app.assignments.tasks.count(app.assignments.current(owner)) == 1
+    assert task_count(app, app.assignments.current(owner)) == 1
     await reset(Management(app), {'parts': ['conversations'], 'apply': True, 'confirmation': 'RESET'})
     assert not app.db.execute('SELECT 1 FROM commands').fetchone()
+
+
+async def test_oversized_legacy_map_remains_unavailable_for_conversion(app):
+    owner, before = await legacy(app, 129)
+    commands = rows(app)
+    with pytest.raises(AppError, match='legacy assignment task map'):
+        await create(app, owner, identity='not-a-supported-legacy-map')
+    assert rows(app) == commands
+    assert app.assignments.current(owner) == before
