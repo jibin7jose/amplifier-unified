@@ -912,7 +912,7 @@ class HistoryDirectory:
         memo = getattr(self, '_root_count_memo', None)
         if reusable and memo is not None and memo[0] == stamp:
             return memo[1]
-        sql, params = self.effective(state)
+        sql, params = self.effective(state, fields={'session_kind'})
         result = self.db.execute(sql + " SELECT count(*) FROM directory_rows WHERE session_kind='root'", params).fetchone()[0]
         if reusable:
             self._root_count_memo = (stamp, result)

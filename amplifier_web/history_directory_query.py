@@ -226,7 +226,7 @@ def root_count(directory, state):
 
 def child_count(directory, state, parent):
     """Count canonical direct children without constructing a hidden page."""
-    sql, params = directory.effective(state, children_of=parent)
+    sql, params = directory.effective(state, children_of=parent, fields={'id'})
     return directory.db.execute(sql+' SELECT COUNT(*) FROM directory_rows',params).fetchone()[0]
 
 
@@ -281,6 +281,6 @@ def archived_count(directory, state):
     identities = list(archived)
     excluded = 0
     for start in range(0, len(identities), PUBLIC_ID_BATCH):
-        sql, params = directory.effective(state, public_ids=identities[start:start+PUBLIC_ID_BATCH])
+        sql, params = directory.effective(state, public_ids=identities[start:start+PUBLIC_ID_BATCH], fields={'session_kind'})
         excluded += directory.db.execute(sql+" SELECT COUNT(*) FROM directory_rows WHERE session_kind!='root'", params).fetchone()[0]
     return len(archived)-excluded
