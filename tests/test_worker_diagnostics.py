@@ -40,9 +40,9 @@ def test_diagnostic_is_bounded_and_optional(tmp_path, monkeypatch):
     assert save_startup_failure({'stderr': []}, 1) is None
     path = save_startup_failure({'stderr': ['x' * 100_000]}, 1)
     assert path.stat().st_size < 61_000
-    def fail(*_):
+    def fail(*_, **kwargs):
         raise OSError('disk unavailable')
-    monkeypatch.setattr('amplifier_web.deployment.write_private', fail)
+    monkeypatch.setattr('amplifier_web.host.config.write_private', fail)
     assert save_startup_failure({'stderr': ['failed']}, 1) is None
 
 
@@ -96,10 +96,17 @@ async def test_handled_module_error_keeps_private_receipt_even_without_stderr(tm
 @pytest.mark.asyncio
 async def test_receipt_write_failure_keeps_original_module_failure(tmp_path, monkeypatch):
     from amplifier_web.module_failures import ConfiguredModuleError
+    from amplifier_web.host.config import write_private
     monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(tmp_path))
-    def fail(*_):
-        raise OSError('synthetic disk error')
-    monkeypatch.setattr('amplifier_web.deployment.write_private', fail)
+    failed_receipts = []
+    def fail(path, *args, **kwargs):
+        # Fail diagnostic publication only. Generation leases must still be
+        # writable so the intended handled worker failure can actually occur.
+        if path.parent == tmp_path / 'logs/workers':
+            failed_receipts.append(path)
+            raise OSError('synthetic disk error')
+        return write_private(path, *args, **kwargs)
+    monkeypatch.setattr('amplifier_web.host.config.write_private', fail)
     manager = RuntimeManager(command=[sys.executable, '-c', handled_worker(stderr='failed check')])
     events = []
     async def emit(kind, data): events.append((kind, data))
@@ -107,6 +114,7 @@ async def test_receipt_write_failure_keeps_original_module_failure(tmp_path, mon
         with pytest.raises(ConfiguredModuleError, match='tool-fixture') as error:
             await manager.start({'id': 'disk-failure'}, emit)
         assert not hasattr(error.value, 'diagnostic_path')
+        assert failed_receipts
         assert 'diagnosticReceipt' not in next(data for kind, data in events if kind == 'runtime.error')
         assert 'synthetic disk error' not in json.dumps(events)
     finally:
@@ -236,3 +244,142 @@ async def test_manager_reuses_private_worker_receipt_instead_of_generic_fallback
         assert 'original private failure' not in json.dumps(events)
     finally:
         await manager.close()
+
+
+@pytest.mark.parametrize('fault', [None, 'outside', 'unsafe', 'publish', 'close'])
+def test_native_diagnostic_writer_models_explicit_home_before_payload(tmp_path, monkeypatch, fault):
+    """Actual writer bodies, fake native boundary; no process or native pass."""
+    from contextlib import contextmanager
+    from pathlib import Path
+    from types import SimpleNamespace
+    from amplifier_web import deployment, worker_diagnostics as diagnostics
+    from amplifier_web.host import config
+    home, explicit = tmp_path / 'app', tmp_path / 'explicit-app'
+    monkeypatch.setattr(config, 'app_home', lambda: home)
+    monkeypatch.setattr(config, 'os', SimpleNamespace(name='nt'))
+    monkeypatch.setattr(deployment, '_WINDOWS', True)
+    writes, opened = [], []
+    @contextmanager
+    def directory(path, *, owned_root, create):
+        opened.append((path, owned_root, create))
+        if not path.is_relative_to(owned_root) or fault == 'unsafe':
+            raise PermissionError('unsafe existing directory; not repaired')
+        def publish(name, raw, *, replace):
+            assert replace is True and path.is_relative_to(owned_root)
+            if fault == 'publish':
+                raise OSError('publication failed')
+            writes.append((path / name, raw, owned_root))
+        yield SimpleNamespace(publish_private=publish)
+        if fault == 'close':
+            raise OSError('close failed after publication')
+    monkeypatch.setattr(deployment.windows_files, 'address', Path)
+    monkeypatch.setattr(deployment.windows_files, 'directory', directory)
+    # Frozen old call shape fails before any native directory/payload operation.
+    with pytest.raises(NotImplementedError, match='explicit owned_root'):
+        deployment.write_private(home / 'logs/workers/before.log', 'private')
+    assert not opened and not writes
+    capture = diagnostics.StartupCapture()
+    original = RuntimeError('original failure')
+    original.__cause__ = TimeoutError('original cause')
+    try:
+        saved = capture.save(original, 'synthetic')
+    finally:
+        capture.close()
+    success = fault in {None, 'outside'}
+    assert (saved is not None) == success
+    assert original.__cause__.args == ('original cause',)
+    if success:
+        header = json.loads(writes[0][1].partition(b'\n\n')[0])
+        assert header['startupFailureFacts'] == {
+            'errors': [{'class': 'RuntimeError'}, {'class': 'TimeoutError'}], 'truncated': False}
+    result = diagnostics.save_startup_failure({'stderr': ['explicit private receipt']}, 1, home=explicit)
+    assert (result is not None) == success
+    if success:
+        assert writes[-1][2] == explicit and result.parent == explicit / 'logs/workers'
+    before = len(writes)
+    target = tmp_path / 'foreign' if fault == 'outside' else home / 'runtime-reports/synthetic'
+    diagnostics.StartupTimings().save(target, 'failed')
+    if fault == 'outside':
+        assert len(writes) == before  # Canonical app root, never destination parent.
+    assert all(root in {home, explicit} and path.is_relative_to(root)
+               for path, _, root in writes)
+    assert not home.exists() and not explicit.exists()  # No real directory/ACL edit.
+
+
+@pytest.mark.parametrize('kind', ['timeout', 'process', 'os', 'cancel', 'unknown', 'subclass', 'clone', 'forged'])
+def test_private_startup_exception_facts_use_exact_classes_not_prose(monkeypatch, kind):
+    import subprocess
+    import types
+    from amplifier_web import worker_diagnostics as diagnostics
+    module = types.ModuleType('amplifier_foundation.modules.activator')
+    activation = type('ModuleActivationError', (RuntimeError,), {})
+    module.ModuleActivationError = activation
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    private = 'private URL token command SID path/runtime/id'
+    choices = {
+        'timeout': subprocess.TimeoutExpired([private], 35, output=private, stderr=private),
+        'process': subprocess.CalledProcessError(128, [private], output=private, stderr=private),
+        'os': PermissionError(13, private),
+        'cancel': asyncio.CancelledError(private),
+        'unknown': type('PrivateSecretClass', (Exception,), {})(private),
+        'subclass': type('InheritedTimeout', (subprocess.TimeoutExpired,), {})([private], 35),
+        'clone': type('ModuleActivationError', (RuntimeError,), {})(private),
+        'forged': RuntimeError('ModuleActivationError: TimeoutExpired: CalledProcessError ' + private),
+    }
+    root = activation(private)
+    root.__cause__ = choices[kind]
+    facts = diagnostics._startup_exception_facts(root)
+    expected = {'timeout': 'TimeoutExpired', 'process': 'CalledProcessError', 'os': 'PermissionError',
+                'cancel': 'CancelledError', 'forged': 'RuntimeError'}.get(kind, 'other')
+    assert facts['errors'][0] == {'class': 'ModuleActivationError'}
+    assert facts['errors'][1]['class'] == expected
+    assert facts['truncated'] is False
+    assert private not in json.dumps(facts)
+    assert facts['errors'][1] == ({'class': expected, 'returncode': 128} if kind == 'process' else
+                                  {'class': expected, 'errno': 13} if kind == 'os' else {'class': expected})
+
+
+def test_private_startup_exception_facts_bound_chain_cycle_context_and_numeric_fields():
+    import subprocess
+    from amplifier_web.worker_diagnostics import _startup_exception_facts
+    chain = [RuntimeError('never export') for _ in range(8)]
+    for left, right in zip(chain, chain[1:]):
+        left.__cause__ = right
+    assert _startup_exception_facts(chain[0]) == {'errors': [{'class': 'RuntimeError'}] * 4, 'truncated': True}
+    chain[0].__cause__ = chain[0]
+    assert _startup_exception_facts(chain[0]) == {'errors': [{'class': 'RuntimeError'}], 'truncated': True}
+    error = ValueError('outer')
+    error.__context__ = TimeoutError('hidden')
+    error.__suppress_context__ = True
+    assert _startup_exception_facts(error)['errors'] == [{'class': 'ValueError'}]
+    error.__suppress_context__ = False
+    assert _startup_exception_facts(error)['errors'] == [{'class': 'ValueError'}, {'class': 'TimeoutError'}]
+    for number in (True, '128', 2**32, -(2**31) - 1):
+        assert _startup_exception_facts(subprocess.CalledProcessError(number, 'private'))['errors'] == [
+            {'class': 'CalledProcessError'}]
+    # Even a hostile metaclass cannot compare equal to a known exception class.
+    class EqualType(type):
+        def __eq__(self, other): return True
+        def __hash__(self): return hash(RuntimeError)
+    class Impostor(Exception, metaclass=EqualType):
+        pass
+    assert _startup_exception_facts(Impostor('private'))['errors'] == [{'class': 'other'}]
+
+
+@pytest.mark.parametrize('fault', [OSError, asyncio.CancelledError])
+def test_private_startup_facts_fault_and_write_fault_never_replace_original(tmp_path, monkeypatch, fault):
+    from amplifier_web import worker_diagnostics as diagnostics
+    from amplifier_web.host import config
+    def failed(*args, **kwargs):
+        raise fault('private diagnostic fault')
+    monkeypatch.setattr(config, 'write_private', failed)
+    capture = diagnostics.StartupCapture()
+    error = asyncio.CancelledError('original cancellation')
+    try:
+        assert capture.save(error, 'synthetic') is None
+        monkeypatch.setattr(diagnostics, '_startup_exception_facts', failed)
+        assert capture.save(RuntimeError('original failure'), 'synthetic') is None
+        assert diagnostics.StartupTimings().save(tmp_path, 'failed') is None
+    finally:
+        capture.close()
+    assert error.args == ('original cancellation',)

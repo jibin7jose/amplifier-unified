@@ -301,6 +301,17 @@ async def ensure(home, generation, session, *, progress=None):
         and key == offered["configuration"]
     ):
         return generation
+    if os.name == "nt":
+        # The baseline/previously offered graph keeps its existing route. Custom
+        # qualification also calls freeze/update subprocess owners and copies
+        # credential snapshots; those are not native-qualified yet. Refuse
+        # BEFORE directories, locks, private snapshots or subprocess effects.
+        # Do not fall back to the shared graph for changed declarations.
+        raise RuntimeError(
+            "Custom runtime preparation is unavailable on Windows. "
+            "This chat's changed dependency declarations were not installed; "
+            "use the existing offered runtime or qualify the custom graph separately."
+        )
     # The profile key contains no prompts, histories or credentials in plaintext.
     identity = hashlib.sha256(
         json.dumps([generation, bundle, key]).encode()

@@ -9,7 +9,7 @@ import re
 import shlex
 
 
-from ..deployment import write_private
+from ..deployment import write_private as _write_private
 from ..shared_settings import read_yaml, read_settings
 from ..session_files import amplifier_home
 
@@ -25,7 +25,23 @@ _KEY_FILE_VALUES = {}
 
 
 def app_home() -> Path:
-    return Path(os.environ.get("AMPLIFIER_WEB_HOME", os.environ.get("AMPLIFIER_WEB_DATA_DIR", Path.home() / ".amplifier-unified"))).expanduser().resolve()
+    value = os.environ.get("AMPLIFIER_WEB_HOME", os.environ.get("AMPLIFIER_WEB_DATA_DIR", Path.home() / ".amplifier-unified"))
+    if os.name == "nt":
+        from ..windows_files import address
+        return address(value)
+    return Path(value).expanduser().resolve()
+
+
+def write_private(path, text, *, owned_root=None):
+    """Runtime writes are owned by the app data identity, never by their parent.
+
+    The Windows boundary validates containment and creates missing private
+    directories before payload. Existing unsafe directories remain refusals.
+    POSIX callers keep their existing writer and permission behavior.
+    """
+    if os.name == "nt":
+        return _write_private(path, text, owned_root=owned_root or app_home())
+    return _write_private(path, text, **({'owned_root': owned_root} if owned_root is not None else {}))
 
 
 def merge(base, overlay):
@@ -50,8 +66,21 @@ def merge(base, overlay):
 
 
 def _load_keys(path):
+    """Load keys.env from the caller's declared shared home, never create it."""
     values = {}
-    if path.exists():
+    if os.name == "nt":
+        from ..windows_files import address, directory
+        path = address(path)
+        if path.name != "keys.env":
+            raise ValueError("Windows shared credentials require keys.env")
+        try:
+            with directory(path.parent, owned_root=path.parent, create=False) as pinned:
+                content = pinned.read_private(path.name, limit=1024 * 1024)
+        except FileNotFoundError:
+            lines = ()
+        else:
+            lines = content.decode("utf-8").splitlines()
+    elif path.exists():
         lines = path.read_text().splitlines()
     else:
         lines = ()
@@ -66,6 +95,8 @@ def _load_keys(path):
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
             parsed = shlex.split(value, comments=True)
             values[name] = " ".join(parsed)
+    if os.name == "nt":
+        validate_key_environment(values)
     # Keep explicitly supplied process environment authoritative, while values
     # this loader previously installed are refreshed (or removed) on remount.
     for name, previous in tuple(_KEY_FILE_VALUES.items()):
@@ -77,6 +108,18 @@ def _load_keys(path):
         if name not in os.environ or (previous is not None and os.environ.get(name) == previous):
             os.environ[name] = value
             _KEY_FILE_VALUES[name] = value
+
+
+def validate_key_environment(values):
+    """Reject an invalid complete Windows batch before file/cache mutation."""
+    for name, value in values.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+                or not isinstance(value, str) or "\x00" in value):
+            raise ValueError("Invalid Windows credential environment value")
+        # Windows environment blocks use UTF-16. Do not publish strings that
+        # cannot reach the worker environment after the private write.
+        name.encode("utf-16-le")
+        value.encode("utf-16-le")
 
 
 def worker_environment():
@@ -221,7 +264,12 @@ def prepare_registry(config):
     constructed per session from those settings, including on older installs
     whose owned directory still contains a former imported registry.
     """
-    config.registry_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "nt":
+        from ..windows_files import directory
+        with directory(config.registry_home, owned_root=config.home, create=True):
+            pass
+    else:
+        config.registry_home.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 
 def configure_skill_cache(bundle, registry_home):
@@ -242,14 +290,25 @@ def configure_skill_cache(bundle, registry_home):
 
 def load_config(workspace, *, home=None, legacy_home=None, session_id=None, global_only=False, owner_session_id=None):
     workspace = Path(workspace).expanduser().resolve(strict=True)
-    shared = Path(legacy_home or amplifier_home()).expanduser().resolve()
+    if os.name == "nt":
+        from ..windows_files import address
+        # amplifier_home() resolves paths. Keep the declared shared-home spelling
+        # for the private reader, so a junction/alias cannot disappear first.
+        shared = address(legacy_home or os.environ.get("AMPLIFIER_HOME") or Path.home() / ".amplifier")
+    else:
+        shared = Path(legacy_home or amplifier_home()).expanduser().resolve()
     _load_keys(shared / "keys.env")
     return read_config(workspace, home=home, shared_home=shared, session_id=session_id, global_only=global_only, owner_session_id=owner_session_id)
 
 
 def read_config(workspace, *, home=None, shared_home=None, session_id=None, global_only=False, settings_cache=None, registry_home=None, owner_session_id=None):
     """Read runtime settings without loading keys, preparing caches or writing."""
-    home = Path(home or app_home()).expanduser().resolve()
+    if os.name == "nt":
+        from ..windows_files import address
+        # Private IO must inspect the original path, not a resolved junction target.
+        home = address(home or app_home())
+    else:
+        home = Path(home or app_home()).expanduser().resolve()
     workspace = Path(workspace).expanduser().resolve(strict=True)
     shared = Path(shared_home or amplifier_home()).expanduser().resolve()
     settings = read_settings(workspace, shared_home=shared, session_id=session_id, global_only=global_only, cache=settings_cache)

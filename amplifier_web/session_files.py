@@ -13,6 +13,19 @@ import re
 
 from filelock import FileLock
 
+_WINDOWS = os.name == 'nt'
+
+
+def source_change_time(info):
+    """Compare the same metadata across Windows descriptor and named stats.
+
+    CPython 3.13 Windows fstat can expose change time as st_ctime_ns while
+    stat exposes creation time there. Birth time is explicit and consistent.
+    POSIX retains its change-time fence; callers still check inode/size/mtime
+    and exact accepted record bytes independently.
+    """
+    return info.st_birthtime_ns if _WINDOWS else info.st_ctime_ns
+
 
 def amplifier_home():
     return Path(os.environ.get('AMPLIFIER_HOME') or Path.home() / '.amplifier').expanduser().resolve()

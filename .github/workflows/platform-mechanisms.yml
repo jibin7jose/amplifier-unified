@@ -1,0 +1,439 @@
+name: Focused platform mechanisms
+on:
+  workflow_dispatch:
+    inputs:
+      bootstrap_only:
+        description: Run only the native offline bootstrap fixtures (no app/runtime preparation)
+        type: boolean
+        required: false
+        default: false
+      foreground_only:
+        description: Run only installed foreground CLI diagnosis; reuses accepted public/cold evidence, does not requalify it
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - .github/workflows/platform-mechanisms.yml
+      - amplifier_web/generation_leases.py
+      - amplifier_web/reset.py
+      - amplifier_web/runtime_worker.py
+      - amplifier_web/runtime.py
+      - amplifier_web/runtime_environment.py
+      - amplifier_web/ownership.py
+      - amplifier_web/host/storage.py
+      - amplifier_web/auth.py
+      - amplifier_web/browser_entry.py
+      - amplifier_web/server.py
+      - amplifier_web/static/browser-entry.js
+      - amplifier_web/static/windows-login.html
+      - frontend/public/browser-entry.js
+      - frontend/public/windows-login.html
+      - pyproject.toml
+      - amplifier_web/runtime_protocol.py
+      - amplifier_web/worker_input.py
+      - amplifier_web/message_delivery.py
+      - amplifier_web/windows_files.py
+      - amplifier_web/windows_jobs.py
+      - amplifier_web/windows_launch_guard.py
+      - amplifier_web/deployment.py
+      - amplifier_web/tls.py
+      - amplifier_web/windows_tls.py
+      - amplifier_web/windows_service.py
+      - amplifier_web/cli.py
+      - amplifier_web/deployment_service.py
+      - amplifier_web/installation_health.py
+      - amplifier_web/host/config.py
+      - amplifier_web/host_dependencies.py
+      - amplifier_web/shared_settings.py
+      - amplifier_web/session_files.py
+      - amplifier_web/runtime_retention.py
+      - amplifier_web/shared_state.py
+      - amplifier_web/windows_read_files.py
+      - amplifier_web/resource_files.py
+      - amplifier_web/outputs.py
+      - amplifier_web/portability.py
+      - amplifier_web/publishing.py
+      - tests/test_generation_leases.py
+      - tests/test_installation_guidance.py
+      - tests/test_repair_lock_platform.py
+      - tests/test_worker_platform_io.py
+      - tests/test_windows_files.py
+      - tests/test_windows_owned_process.py
+      - tests/test_windows_installer.py
+      - tests/test_deployment.py
+      - tests/test_windows_tls.py
+      - tests/test_windows_service.py
+      - tests/test_cli_deployment.py
+      - tests/test_browser_entry.py
+      - tests/test_windows_auth.py
+      - tests/test_windows_user_trial_probe.py
+      - tests/fixtures/windows_user_trial_probe.py
+      - tests/fixtures/windows_default_runtime_probe.py
+      - tests/test_runtime.py
+      - tests/test_runtime_updates.py
+      - tests/test_ownership_notices.py
+      - tests/test_optional_controller_availability.py
+      - tests/test_windows_read_files.py
+      - tests/test_service.py
+      - tests/conftest.py
+      - tests/windows/install.Tests.ps1
+      - README.md
+      - scripts/install.sh
+      - scripts/install.ps1
+      - docs/design/native-windows-installation.md
+permissions:
+  contents: read
+jobs:
+  passive-process-check:
+    if: ${{ !inputs.bootstrap_only && !inputs.foreground_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Require ordinary Windows Python and both PowerShell hosts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -I -S -B -c "import sys,sysconfig,struct; assert sys.platform == 'win32'; assert sys.implementation.name == 'cpython'; assert sys.version_info[:2] == (3,13); assert struct.calcsize('P') == 8; assert not sysconfig.get_config_var('Py_GIL_DISABLED'); assert sys._base_executable; print(sys.version); print(sys.getwindowsversion())"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Python preflight failed.' }
+          foreach ($hostSpec in @(@('powershell.exe', '5.1'), @('pwsh.exe', '7'))) {
+            $hostCommand = Get-Command $hostSpec[0] -CommandType Application -ErrorAction Stop
+            & $hostCommand.Source -NoProfile -NonInteractive -Command "`$version = `$PSVersionTable.PSVersion; if (-not `$version.ToString().StartsWith('$($hostSpec[1])')) { exit 1 }; `$version.ToString()"
+            if ($LASTEXITCODE -ne 0) { throw 'A required PowerShell host is unavailable or has the wrong version.' }
+          }
+      - name: Check standalone platform mechanisms and installer fixtures
+        run: >
+          python -I -S -B -c
+          "import sys, unittest; sys.path.insert(0, '.');
+          suite = unittest.TestSuite(unittest.defaultTestLoader.discover('tests', pattern=pattern)
+          for pattern in ('test_generation_leases.py', 'test_installation_guidance.py',
+          'test_repair_lock_platform.py', 'test_worker_platform_io.py',
+          'test_windows_files.py', 'test_windows_owned_process.py',
+          'test_windows_installer.py'));
+          result = unittest.TextTestRunner(verbosity=2).run(suite);
+          sys.exit(not result.wasSuccessful())"
+  windows-private-config-tls:
+    if: ${{ !inputs.bootstrap_only && !inputs.foreground_only }}
+    runs-on: windows-latest
+    timeout-minutes: 5
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Prepare only the focused test dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -I -S -B -c "import sys,sysconfig,struct; assert sys.platform == 'win32'; assert sys.version_info[:2] == (3,13); assert struct.calcsize('P') == 8; assert not sysconfig.get_config_var('Py_GIL_DISABLED'); print(sys.version); print(sys.getwindowsversion())"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Python preflight failed.' }
+          python -m venv .native-test-venv
+          if ($LASTEXITCODE -ne 0) { throw 'Test environment creation failed.' }
+          .\.native-test-venv\Scripts\python.exe -m pip install --index-url https://pypi.org/simple --only-binary=:all: "pytest>=8,<10" "cryptography>=44,<51" "PyYAML>=6.0.3,<7" "filelock>=3.20,<4" "aiohttp==3.14.4"
+          if ($LASTEXITCODE -ne 0) { throw 'Focused test dependency installation failed.' }
+          .\.native-test-venv\Scripts\python.exe -I -B -c "import importlib.metadata as m; print({name:m.version(name) for name in ('pytest','cryptography','PyYAML','filelock','aiohttp')})"
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency readback failed.' }
+      - name: Check private configuration, TLS and service policy without task registration
+        shell: pwsh
+        run: |
+          .\.native-test-venv\Scripts\python.exe -B -m pytest -q -ra -p no:cacheprovider tests/test_deployment.py tests/test_windows_tls.py tests/test_windows_service.py -k "not native_synthetic_task_create_run_stop_remove"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows configuration, TLS or service policy checks failed.' }
+      - name: Check actual CLI service root binding without tasks or health HTTP
+        shell: pwsh
+        run: |
+          .\.native-test-venv\Scripts\python.exe -B -m pytest -q -ra -p no:cacheprovider tests/test_cli_deployment.py::test_service_cli_binds_every_operation_to_selected_data_root tests/test_cli_deployment.py::test_background_launcher_uses_platform_neutral_owned_service_check tests/test_cli_deployment.py::test_windows_service_cli_real_chain_root_boundary tests/test_cli_deployment.py::test_windows_default_launcher_refuses_before_setup_or_browser
+          if ($LASTEXITCODE -ne 0) { throw 'CLI service root binding checks failed.' }
+  windows-user-trial:
+    if: ${{ !inputs.bootstrap_only && !inputs.foreground_only }}
+    # Candidate-only combined boundary, not a universal suite/release gate.
+    # The existing 5-minute stdlib/PowerShell and private-config lanes are unchanged.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUTF8: '1'
+      UV_NO_BUILD_PACKAGE: amplifier-core
+      UV_PYTHON_DOWNLOADS: never
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Record exact candidate and build a noneditable wheel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path $env:RUNNER_TEMP 'ut'
+          New-Item -ItemType Directory -Path "$base/evidence" -Force | Out-Null
+          "TRIAL_BASE=$base" >> $env:GITHUB_ENV
+          python -I -B tests/fixtures/windows_user_trial_probe.py --candidate . --receipt "$base/evidence/result.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate identity check failed.' }
+          python -I -S -B -c "import sys,sysconfig,struct; assert sys.platform=='win32'; assert sys.implementation.name=='cpython'; assert sys.version_info[:2]==(3,13); assert struct.calcsize('P')==8; assert not sysconfig.get_config_var('Py_GIL_DISABLED')"
+          if ($LASTEXITCODE -ne 0) { throw 'Native Python preflight failed.' }
+          uv build --wheel --out-dir "$base/wheels"
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate wheel build failed.' }
+      - name: Install candidate and maintained real worker modules (CI setup only)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          uv venv --python (Get-Command python).Source "$env:TRIAL_BASE/env"
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate environment creation failed.' }
+          $modules = @(python -I -B tests/fixtures/windows_user_trial_probe.py --requirements pyproject.toml)
+          if ($LASTEXITCODE -ne 0) { throw 'Maintained fixture dependency selection failed.' }
+          $wheel = @(Get-ChildItem "$env:TRIAL_BASE/wheels/*.whl")
+          if ($wheel.Count -ne 1) { throw 'Expected exactly one candidate wheel.' }
+          uv pip install --python "$env:TRIAL_BASE/env/Scripts/python.exe" --only-binary amplifier-core $wheel[0].FullName "pytest>=8,<10" "pytest-asyncio>=1.4,<2" "pytest-aiohttp>=1.1,<2" @modules
+          if ($LASTEXITCODE -ne 0) { throw 'Installed candidate graph preparation failed.' }
+      - name: Require native prerequisite cells then probe private auth, tool, Stop and host resume
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $wheel = @(Get-ChildItem "$env:TRIAL_BASE/wheels/*.whl")
+          $probe = Join-Path $env:GITHUB_WORKSPACE 'tests/fixtures/windows_user_trial_probe.py'
+          # -I removes checkout/PYTHONPATH shadowing; only the fixture is source.
+          # Only the journey TLS listener and the exact wrong-leaf/redirect
+          # fixtures' owned numeric endpoints are admitted; no blanket loopback.
+          & "$env:TRIAL_BASE/env/Scripts/python.exe" -I -B $probe --run $wheel[0].FullName --receipt "$env:TRIAL_BASE/evidence/result.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows candidate journey failed; inspect the safe JSON stage/check facts.' }
+      - name: Upload only allowlisted public facts, never scratch or raw diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-user-trial
+          path: ${{ runner.temp }}/ut/evidence/result.json
+          if-no-files-found: warn
+          retention-days: 7
+  windows-default-runtime:
+    # Public dependency setup is intentional ONLY here. Do not relax the
+    # separate offline qualifier or supply a preinstalled replacement command.
+    needs: windows-user-trial
+    if: ${{ !inputs.bootstrap_only && !cancelled() && (inputs.foreground_only || needs.windows-user-trial.result == 'success') }}
+    runs-on: windows-latest
+    # 8-minute setup + unchanged 21-minute cold check + 4-minute CLI cell + overhead.
+    timeout-minutes: 34
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUTF8: '1'
+      UV_NO_BUILD_PACKAGE: amplifier-core
+      UV_PYTHON_DOWNLOADS: never
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Build and install candidate host for cold default-command setup
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path $env:RUNNER_TEMP 'dr-ci'
+          New-Item -ItemType Directory -Path "$base/evidence" -ErrorAction Stop | Out-Null
+          "DEFAULT_TRIAL_BASE=$base" >> $env:GITHUB_ENV
+          python -I -B tests/fixtures/windows_user_trial_probe.py --candidate . --receipt "$base/candidate.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Default-command candidate identity check failed.' }
+          python -I -S -B -c "import sys,sysconfig,struct; assert sys.platform=='win32'; assert sys.implementation.name=='cpython'; assert sys.version_info[:2]==(3,13); assert struct.calcsize('P')==8; assert not sysconfig.get_config_var('Py_GIL_DISABLED')"
+          if ($LASTEXITCODE -ne 0) { throw 'Default-command Python preflight failed.' }
+          uv build --wheel --out-dir "$base/wheels"
+          if ($LASTEXITCODE -ne 0) { throw 'Default-command candidate wheel build failed.' }
+          uv venv --python (Get-Command python).Source "$base/env"
+          if ($LASTEXITCODE -ne 0) { throw 'Default-command host environment creation failed.' }
+          $modules = @(python -I -B tests/fixtures/windows_user_trial_probe.py --requirements pyproject.toml)
+          if ($LASTEXITCODE -ne 0) { throw 'Default-command host fixture dependency selection failed.' }
+          $wheel = @(Get-ChildItem "$base/wheels/*.whl")
+          if ($wheel.Count -ne 1) { throw 'Expected exactly one default-command candidate wheel.' }
+          uv pip install --python "$base/env/Scripts/python.exe" --only-binary amplifier-core $wheel[0].FullName "pytest>=8,<10" "pytest-asyncio>=1.4,<2" "pytest-aiohttp>=1.1,<2" @modules
+          if ($LASTEXITCODE -ne 0) { throw 'Default-command candidate host installation failed.' }
+      - name: Require one native cold default-command call PASS with no skip
+        if: ${{ !inputs.foreground_only }}
+        # The maintained node has a finite 1200-second subprocess deadline.
+        # Leave one minute for collection, safe evidence and cleanup handling.
+        timeout-minutes: 21
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = $env:DEFAULT_TRIAL_BASE
+          $wheel = @(Get-ChildItem "$base/wheels/*.whl")
+          if ($wheel.Count -ne 1) { throw 'Expected exactly one installed candidate wheel.' }
+          $env:AMPLIFIER_WINDOWS_DEFAULT_RUNTIME_PYTHON = "$base/env/Scripts/python.exe"
+          $env:AMPLIFIER_WINDOWS_DEFAULT_RUNTIME_WHEEL = $wheel[0].FullName
+          $env:AMPLIFIER_WINDOWS_DEFAULT_RUNTIME_REPORT = "$base/probe-result.json"
+          $check = @'
+          import contextlib, hashlib, importlib.util, json, os, pathlib, shutil, sys
+          source, base = map(pathlib.Path, sys.argv[1:])
+          node = "tests/test_runtime.py::test_native_windows_default_runtime_command_cold_prepare_turn_and_stop"
+          def load(name, path):
+              spec = importlib.util.spec_from_file_location(name, path)
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              return module
+          class Results:
+              def __init__(self):
+                  self.collected, self.phases, self.invalid = [], [], False
+              def pytest_collection_finish(self, session):
+                  self.collected = [item.nodeid for item in session.items]
+              def pytest_collectreport(self, report):
+                  self.invalid |= report.failed or report.skipped
+              def pytest_runtest_logreport(self, report):
+                  if report.nodeid != node or hasattr(report, "wasxfail"):
+                      self.invalid = True
+                  self.phases.append((report.when, report.outcome))
+              def passed(self, code):
+                  return code == 0 and not self.invalid and self.collected == [node] and self.phases == [
+                      ("setup", "passed"), ("call", "passed"), ("teardown", "passed")]
+          result = {"schema": 1, "status": "FAIL", "publicAcceptance": False,
+                    "qualification": "cold-default-command-scripted-provider",
+                    "selection": {"collected": 0, "callPassed": False, "noSkips": False}}
+          try:
+              with (base / "private-check.log").open("x", encoding="utf-8") as logs:
+                  with contextlib.redirect_stdout(logs), contextlib.redirect_stderr(logs):
+                      audit = load("installed_candidate_audit", source / "tests/fixtures/windows_user_trial_probe.py")
+                      wheel = pathlib.Path(os.environ["AMPLIFIER_WINDOWS_DEFAULT_RUNTIME_WHEEL"])
+                      assert pathlib.Path(sys.executable).samefile(os.environ["AMPLIFIER_WINDOWS_DEFAULT_RUNTIME_PYTHON"])
+                      before = audit.installed(wheel, result)
+                      candidate = json.loads((base / "candidate.json").read_text(encoding="utf-8"))["candidate"]
+                      assert set(candidate) == {"head", "tree"} and all(
+                          audit.re.fullmatch(r"[0-9a-f]{40,64}", value) for value in candidate.values())
+                      result["candidate"] = candidate
+                      target = base / "selected-tests"
+                      files = ("tests/conftest.py", "tests/test_runtime.py", "tests/fixtures/windows_default_runtime_probe.py")
+                      for name in files:
+                          path = target / name
+                          path.parent.mkdir(parents=True, exist_ok=True)
+                          shutil.copyfile(source / name, path)
+                          assert path.read_bytes() == (source / name).read_bytes()
+                      assert {path.name for path in target.iterdir()} == {"tests"}
+                      import pytest
+                      selected = Results()
+                      code = pytest.main(["-q", "-p", "no:cacheprovider", "-p", "pytest_asyncio.plugin",
+                          "-p", "aiohttp.pytest_plugin", "-o", "asyncio_mode=auto",
+                          "--rootdir", str(target), "--confcutdir", str(target),
+                          "--basetemp", str(base / "pytest-temp"), str(target / node)], plugins=[selected])
+                      result["selection"] = {"collected": len(selected.collected),
+                          "callPassed": selected.phases.count(("call", "passed")) == 1,
+                          "noSkips": not any(outcome == "skipped" for _, outcome in selected.phases)}
+                      assert audit.installed(wheel, result) == before
+                      probe = load("default_command_report", target / "tests/fixtures/windows_default_runtime_probe.py")
+                      report = json.loads(pathlib.Path(os.environ["AMPLIFIER_WINDOWS_DEFAULT_RUNTIME_REPORT"]).read_text(encoding="utf-8"))
+                      probe.validate_report(report)
+                      result["probe"] = report
+                      assert report["wheelSha256"] == hashlib.sha256(wheel.read_bytes()).hexdigest()
+                      assert selected.passed(code) and report["status"] == "PASS"
+                      result["status"] = "PASS"
+          except Exception:
+              pass  # Fixed FAIL facts only. Never publish exception or subprocess prose.
+          (base / "evidence/publicresult.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
+          raise SystemExit(0 if result["status"] == "PASS" else 1)
+          '@
+          & "$base/env/Scripts/python.exe" -I -B -c $check $env:GITHUB_WORKSPACE $base
+          if ($LASTEXITCODE -ne 0) { throw 'Native default-command check failed; inspect bounded publicresult.json.' }
+      - name: Require installed foreground CLI TLS, public open and graceful cleanup
+        # Default success() sequencing: never run this cell after cold failure.
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = $env:DEFAULT_TRIAL_BASE
+          $wheel = @(Get-ChildItem "$base/wheels/*.whl")
+          if ($wheel.Count -ne 1) { throw 'Expected exactly one foreground candidate wheel.' }
+          $probe = Join-Path $env:GITHUB_WORKSPACE 'tests/fixtures/windows_user_trial_probe.py'
+          & "$base/env/Scripts/python.exe" -I -B $probe --cli-run $wheel[0].FullName --candidate-receipt "$base/candidate.json" --receipt "$base/evidence/foreground.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native foreground CLI check failed; inspect bounded foreground.json.' }
+      - name: Upload only the bounded default-runtime result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-default-runtime
+          path: ${{ runner.temp }}/dr-ci/evidence/publicresult.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload only bounded foreground CLI facts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-foreground-cli
+          path: ${{ runner.temp }}/dr-ci/evidence/foreground.json
+          if-no-files-found: warn
+          retention-days: 7
+  windows-bootstrap-offline:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_only }}
+    runs-on: windows-latest
+    timeout-minutes: 12
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Record exact source, policy and native prerequisites without installing app dependencies
+        id: bootstrap-init
+        shell: python -I -S -B {0}
+        run: |
+          import runpy, sys
+          sys.argv = ["tests/fixtures/windows_bootstrap_ci.py", "--initialize"]
+          runpy.run_path(sys.argv[0], run_name="__main__")
+      # Literal custom shells avoid Actions' built-in PowerShell wrapper, which
+      # can inject an execution-policy override. Policy refusal remains failure.
+      - name: Offline fixtures under Windows PowerShell 5.1
+        id: bootstrap-desktop
+        timeout-minutes: 5
+        # Actions recognizes this basename and gives {0} a .ps1 extension.
+        shell: powershell -NoLogo -NoProfile -NonInteractive -File {0}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -I -S -B tests/fixtures/windows_bootstrap_ci.py --run desktop
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop offline bootstrap checks failed; inspect the sanitized result.' }
+      - name: Offline fixtures under PowerShell 7
+        if: ${{ !cancelled() && steps.bootstrap-init.outcome == 'success' && steps.bootstrap-desktop.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: pwsh -NoLogo -NoProfile -NonInteractive -File {0}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -I -S -B tests/fixtures/windows_bootstrap_ci.py --run core
+          if ($LASTEXITCODE -ne 0) { throw 'Core offline bootstrap checks failed; inspect the sanitized result.' }
+      - name: Require both exact offline fixture results, with no skipped readiness
+        if: always()
+        shell: python -I -S -B {0}
+        run: |
+          import runpy, sys
+          sys.argv = ["tests/fixtures/windows_bootstrap_ci.py", "--summarize"]
+          runpy.run_path(sys.argv[0], run_name="__main__")
+      - name: Retain only bounded sanitized offline bootstrap facts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-bootstrap-offline-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/unified-bootstrap-offline/result.json
+          if-no-files-found: error
+          retention-days: 7

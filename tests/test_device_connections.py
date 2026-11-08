@@ -18,7 +18,7 @@ from test_service import Runtime
 @pytest.fixture
 def manager(tmp_path):
     devices = TerminalDevices(tmp_path)
-    return Connections(devices, Pairings(devices), 'test-secret')
+    return Connections(devices, Pairings(devices), 'test-secret', owned_root=tmp_path)
 
 
 def enrollment(manager, access=None, **extra):
@@ -129,7 +129,7 @@ async def test_unknown_outcomes_restart_and_late_receipts(manager):
     manager.refresh()
     assert manager.operations[command['id']]['status'] == 'unknown'
     manager.save()
-    restarted = Connections(manager.devices, Pairings(manager.devices), 'test-secret')
+    restarted = Connections(manager.devices, Pairings(manager.devices), 'test-secret', owned_root=manager.owned_root)
     assert restarted.operations[command['id']]['status'] == 'unknown'
     assert restarted.listing()[0]['connected'] is False
     assert manager.devices.identify(device['token']) == device['deviceID']
@@ -183,20 +183,76 @@ def test_rotation_retry_grace_and_revocation(manager):
     assert manager.devices.identify(rotated['token']) is None
 
 
-def test_failed_durable_admission_is_not_cached_as_accepted(manager, monkeypatch):
+@pytest.mark.parametrize('error', [OSError, PermissionError, ValueError, NotImplementedError])
+def test_failed_durable_admission_is_not_cached_as_accepted(manager, monkeypatch, error):
     device = enrollment(manager, ['browser.observe', 'browser.act'])
     ready(manager, device)
     command = operation(device, action='browser.click', args={'selector': '#save'})
     from amplifier_web import device_connections
     original = device_connections.write_private
     def fail(*args, **kwargs):
-        raise OSError('Synthetic full disk')
+        raise error('Synthetic private storage refusal')
     monkeypatch.setattr(device_connections, 'write_private', fail)
-    with pytest.raises(OSError):
+    with pytest.raises(error):
         manager.submit(command)
     assert command['id'] not in manager.operations
     monkeypatch.setattr(device_connections, 'write_private', original)
     assert manager.submit(command)['status'] == 'queued'
+
+
+def test_durable_connection_writes_keep_the_explicit_host_root(manager, monkeypatch):
+    from amplifier_web import device_connections
+    original, writes = device_connections.write_private, []
+    def private(path, text, *, owned_root):
+        assert owned_root == manager.owned_root
+        writes.append(path)
+        original(path, text, owned_root=owned_root)
+    monkeypatch.setattr(device_connections, 'write_private', private)
+    device = enrollment(manager, ['browser.observe', 'browser.act'])
+    ready(manager, device)
+    command = operation(device, action='browser.click', args={'selector': '#save'})
+    assert manager.submit(command)['status'] == 'queued'
+    restarted = Connections(manager.devices, Pairings(manager.devices), 'test-secret',
+                            owned_root=manager.owned_root)
+    assert restarted.lookup(command['id'])['status'] == 'cancelled'
+    assert writes == [manager.path, manager.path]
+
+
+async def test_ui_stop_fences_all_queued_delivery_when_private_writes_fail(manager, monkeypatch):
+    from types import SimpleNamespace
+    from amplifier_web import device_connections, ui_use
+    device = enrollment(manager, ['browser.observe', 'browser.act'])
+    ready(manager, device)
+    commands = [operation(device, action='browser.click', args={'selector': '#save'}) for _ in range(2)]
+    for command in commands:
+        manager.submit(command)
+    host = ui_use.UIUse(SimpleNamespace(data_dir=manager.owned_root), manager)
+    host.pending['chat'] = {command['id'] for command in commands}
+    failures = []
+    def refuse(path, *args, **kwargs):
+        failures.append(path)
+        raise PermissionError('Synthetic private publication refusal')
+    with monkeypatch.context() as patch:
+        patch.setattr(device_connections, 'write_private', refuse)
+        patch.setattr(ui_use, 'write_private', refuse)
+        with pytest.raises(PermissionError):
+            host.stop('chat', True)
+    assert host.stopped == {'chat'}
+    assert len(failures) == 3  # Both cancellations and the Stop receipt were attempted.
+    assert all(manager.lookup(command['id'])['status'] == 'cancelled' for command in commands)
+    # Even another failed ledger write cannot restore deliverable disk rows.
+    with monkeypatch.context() as patch:
+        patch.setattr(device_connections, 'write_private', refuse)
+        with pytest.raises(PermissionError):
+            manager.save()
+    assert all(manager.lookup(command['id'])['status'] == 'cancelled' for command in commands)
+    poll = asyncio.create_task(manager.poll(device['deviceID']))
+    await asyncio.sleep(0)
+    manager.events[device['deviceID']].set()
+    assert (await asyncio.wait_for(poll, 1))['operation'] is None
+    restarted = Connections(manager.devices, Pairings(manager.devices), 'test-secret',
+                            owned_root=manager.owned_root)
+    assert all(restarted.lookup(command['id'])['status'] == 'cancelled' for command in commands)
 
 
 async def test_public_contract_authentication_and_web_consent(aiohttp_client, tmp_path):
@@ -345,7 +401,7 @@ async def test_transient_global_bound_expiry_restart_and_matching_receipts(manag
     assert manager.lookup(command['id']) is None
     with pytest.raises(web.HTTPNotFound):
         manager.result(device['deviceID'], receipt)
-    restarted = Connections(manager.devices, Pairings(manager.devices), 'test-secret')
+    restarted = Connections(manager.devices, Pairings(manager.devices), 'test-secret', owned_root=manager.owned_root)
     assert not restarted.transient_operations and not restarted.operations
 
 

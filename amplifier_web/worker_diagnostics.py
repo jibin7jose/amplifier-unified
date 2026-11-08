@@ -7,8 +7,11 @@ import logging
 import os
 from pathlib import Path
 import re
+import subprocess
+import sys
 import traceback
 import time
+import types
 import uuid
 
 MAX_DETAIL_BYTES = 60_000
@@ -72,9 +75,10 @@ class StartupTimings:
 
     def save(self, directory, outcome):
         try:
-            from .deployment import write_private
-            write_private(Path(directory) / 'startup-timing.json', json.dumps(self.snapshot(outcome)))
-        except Exception:
+            from .host.config import write_private
+            write_private(Path(directory) / 'startup-timing.json', json.dumps(self.snapshot(outcome)),
+                          owned_root=_home())
+        except BaseException:
             pass  # Diagnostic storage must not change startup or cleanup outcomes.
 
 
@@ -101,7 +105,8 @@ def _bounded(text, limit=MAX_DETAIL_BYTES):
 
 
 def _home():
-    return Path(os.environ.get('AMPLIFIER_WEB_HOME', Path.home() / '.amplifier-unified'))
+    from .host.config import app_home
+    return app_home()
 
 
 def receipt_path(name, *, home=None):
@@ -133,10 +138,48 @@ def setup_failure_detail(error):
         return json.dumps({'message': message})
 
 
-def save_startup_failure(row, exit_code, *, failure=None, home=None):
+def _startup_exception_facts(error):
+    """Closed, payload-free facts while the original exception still exists.
+
+    Exact class identity only. Unknown/subclass names and their properties never
+    become labels; exception messages, arguments, commands and frames stay private.
+    """
+    kinds = tuple((kind, kind.__name__) for kind in (
+        Exception, RuntimeError, AssertionError, ValueError, TypeError, KeyError,
+        AttributeError, ImportError, ModuleNotFoundError, OSError, PermissionError,
+        FileNotFoundError, NotADirectoryError, IsADirectoryError, NotImplementedError,
+        TimeoutError, asyncio.CancelledError, subprocess.TimeoutExpired,
+        subprocess.CalledProcessError, UnicodeError, UnicodeDecodeError, UnicodeEncodeError,
+    ))
+    module = sys.modules.get('amplifier_foundation.modules.activator')
+    activation = vars(module).get('ModuleActivationError') if type(module) is types.ModuleType else None
+    rows, seen = [], set()
+    while isinstance(error, BaseException) and id(error) not in seen and len(rows) < 4:
+        seen.add(id(error))
+        kind = type(error)
+        label = next((label for known, label in kinds if kind is known), 'other')
+        row = {'class': 'ModuleActivationError' if kind is activation else label}
+        if label != 'other' and isinstance(error, OSError):
+            for key in ('errno', 'winerror'):
+                number = BaseException.__getattribute__(error, key) if hasattr(error, key) else None
+                if type(number) is int and -(2**31) <= number < 2**32:
+                    row[key] = number
+        if kind is subprocess.CalledProcessError:
+            number = error.returncode
+            if type(number) is int and -(2**31) <= number < 2**32:
+                row['returncode'] = number
+        rows.append(row)
+        cause = BaseException.__getattribute__(error, '__cause__')
+        error = cause if cause is not None else (
+            None if BaseException.__getattribute__(error, '__suppress_context__')
+            else BaseException.__getattribute__(error, '__context__'))
+    return {'errors': rows, 'truncated': isinstance(error, BaseException)}
+
+
+def save_startup_failure(row, exit_code, *, failure=None, home=None, exception=None):
     """Save stderr, or a metadata-only receipt for a handled startup failure."""
     try:
-        from .deployment import write_private
+        from .host.config import write_private
         stderr = _bounded(redact_diagnostic(''.join(row.get('stderr', []))))
         if not stderr and failure is None:
             return None
@@ -147,13 +190,16 @@ def save_startup_failure(row, exit_code, *, failure=None, home=None):
             record['sessionId'] = identity
         if failure is not None:
             record['failure'] = _bounded(redact_diagnostic(failure), 8_000)
+        if exception is not None:
+            record['startupFailureFacts'] = _startup_exception_facts(exception)
         # Bound the complete file, including JSON escaping of arbitrary errors.
         header = json.dumps(record)
         stderr = _bounded(stderr, max(0, MAX_DETAIL_BYTES - len(header.encode('utf-8')) - 2))
-        path = (Path(home) if home is not None else _home()) / 'logs' / 'workers' / f'startup-{uuid.uuid4().hex}.log'
-        write_private(path, header + '\n\n' + stderr)
+        root = Path(home) if home is not None else _home()
+        path = root / 'logs' / 'workers' / f'startup-{uuid.uuid4().hex}.log'
+        write_private(path, header + '\n\n' + stderr, owned_root=root)
         return path
-    except Exception:
+    except BaseException:
         return None  # Diagnostics must never replace the original startup error.
 
 
@@ -190,8 +236,8 @@ class StartupCapture(logging.Handler):
             detail = json.dumps({'errorType': type(exc).__name__,
                                  'message': redact_diagnostic(exc), 'frames': locations})
             return save_startup_failure({'stderr': self.lines, 'runtime_id': session_id,
-                                         'phase': 'session-mount'}, None, failure=detail)
-        except Exception:
+                                         'phase': 'session-mount'}, None, failure=detail, exception=exc)
+        except BaseException:
             return None
 
     def close(self):

@@ -39,10 +39,13 @@ def _identifier(value, name, limit=200):
 class PublishingTargets:
     """All database access stays on the app event loop; only SSH runs in workers."""
 
-    def __init__(self, app, local_target):
+    def __init__(self, app, local_target, *, read_only=False):
         self.app = app
         self.local_target = local_target
         self.lock = asyncio.Lock()
+        self.read_only = read_only
+        if read_only:
+            return
         app.db.execute('CREATE TABLE IF NOT EXISTS publishing_targets (session TEXT, id TEXT, body TEXT NOT NULL, PRIMARY KEY(session,id))')
         app.db.execute('CREATE TABLE IF NOT EXISTS publishing_target_selection (session TEXT PRIMARY KEY, body TEXT NOT NULL)')
         app.db.execute('CREATE TABLE IF NOT EXISTS publishing_target_requests (session TEXT, request TEXT, signature TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(session,request))')
@@ -53,6 +56,13 @@ class PublishingTargets:
                 record.update(state='unknown', completedAt=_now(), error={'code': 'unknown_outcome', 'message': 'The app ended before recording this remote outcome. The operation was not replayed.'})
                 self._put_request(record, signature, commit=False)
         app.db.commit()
+
+    def rows(self, table, columns, suffix='', params=()):
+        """Read an optional retained table without creating or recovering it."""
+        if self.read_only and not self.app.db.execute(
+                'SELECT 1 FROM sqlite_master WHERE type=? AND name=?', ('table', table)).fetchone():
+            return []
+        return self.app.db.execute(f'SELECT {columns} FROM {table} {suffix}', params).fetchall()
 
     def _local(self):
         return {**self.local_target(), 'id': 'loopback', 'kind': 'loopback', 'label': 'This server (loopback)', 'revision': 0, 'inspection': None, 'removed': False}
@@ -67,17 +77,26 @@ class PublishingTargets:
         return target
 
     def _selection(self, sid):
-        row = self.app.db.execute('SELECT body FROM publishing_target_selection WHERE session=?', (sid,)).fetchone()
+        rows = self.rows('publishing_target_selection', 'body', 'WHERE session=?', (sid,))
+        row = rows[0] if rows else None
         return json.loads(row[0]) if row else {'targetId': 'loopback', 'revision': 0, 'targetRevision': 0, 'serviceId': None}
 
     def list(self, sid):
         _identifier(sid, 'sessionId')
-        targets = [self._local()] + [json.loads(row[0]) for row in self.app.db.execute('SELECT body FROM publishing_targets WHERE session=? ORDER BY id', (sid,)) if not json.loads(row[0]).get('removed')]
+        retained = []
+        for identity, raw in self.rows('publishing_targets', 'id,body', 'WHERE session=? ORDER BY id', (sid,)):
+            row = json.loads(raw)
+            if not isinstance(row, dict) or row.get('id') != identity:
+                raise PublishingError('retained_unreadable', 'Retained target differs from its database identity')
+            retained.append(row)
+        targets = [self._local()] + [row for row in retained if not row.get('removed')]
         selected = self._selection(sid)
         target = next((t for t in targets if t['id'] == selected['targetId']), None)
         if target is None:
             raise PublishingError('target_unavailable', 'Selected publishing target is unavailable; explicitly select loopback or another inspected target')
-        return {'targets': targets, 'selectedTargetId': selected['targetId'], 'selectionRevision': selected['revision'], 'selectedTargetRevision': selected['targetRevision'], 'selectedServiceId': selected['serviceId'], 'target': target}
+        return {'targets': targets, 'selectedTargetId': selected['targetId'], 'selectionRevision': selected['revision'], 'selectedTargetRevision': selected['targetRevision'], 'selectedServiceId': selected['serviceId'], 'target': target,
+                **({'retainedTargets': retained, 'retainedRequests': self._requests(sid),
+                    'historicalOnly': True, 'liveness': 'unconfirmed'} if self.read_only else {})}
 
     @staticmethod
     def _revision(target, expected):
@@ -187,6 +206,10 @@ class PublishingTargets:
         return self.list(sid)
 
     async def dispatch(self, action, args):
+        if self.read_only and action != 'publishing.target.list':
+            from .publishing import UNAVAILABLE_REASON
+            return {'accepted': False, 'effect': 'none', 'code': 'controller_unavailable',
+                    'available': False, 'reason': UNAVAILABLE_REASON}
         fields = {'list': set(), 'save': {'targetId', 'label', 'hostname', 'python', 'socketPath', 'expectedRevision'}, 'inspect': {'targetId', 'expectedRevision'}, 'select': {'targetId', 'expectedRevision'}, 'remove': {'targetId', 'expectedRevision'}}
         operation = action.removeprefix('publishing.target.')
         optional = {'save': {'username', 'expectedBind'}, 'select': {'serviceId'}}.get(operation, set())
@@ -205,7 +228,13 @@ class PublishingTargets:
             return getattr(self, operation)(sid, args)
 
     def _requests(self, sid):
-        return [json.loads(row[0]) for row in self.app.db.execute('SELECT body FROM publishing_target_requests WHERE session=? ORDER BY rowid', (sid,))]
+        records = []
+        for request, raw in self.rows('publishing_target_requests', 'request,body', 'WHERE session=? ORDER BY rowid', (sid,)):
+            row = json.loads(raw)
+            if not isinstance(row, dict) or row.get('sessionId') != sid or row.get('requestId') != request:
+                raise PublishingError('retained_unreadable', 'Retained request differs from its database ownership')
+            records.append(row)
+        return records
 
     def lookup_request(self, sid, request_id):
         row = self.app.db.execute('SELECT body FROM publishing_target_requests WHERE session=? AND request=?', (sid, request_id)).fetchone()
@@ -300,7 +329,8 @@ class PublishingTargets:
         return result
 
     def owns_records(self, sid):
-        return bool(self.app.db.execute('SELECT 1 FROM publishing_targets WHERE session=? LIMIT 1', (sid,)).fetchone() or self.app.db.execute('SELECT 1 FROM publishing_target_requests WHERE session=? LIMIT 1', (sid,)).fetchone())
+        return any(self.rows(table, '1', 'WHERE session=? LIMIT 1', (sid,))
+                   for table in ('publishing_targets', 'publishing_target_requests', 'publishing_target_selection'))
 
     def _validate_cached_result(self, record):
         if record['state'] != 'succeeded':

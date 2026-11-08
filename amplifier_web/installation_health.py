@@ -27,6 +27,7 @@ def doctor(home):
         checks.append({'ok': True, 'message': 'Component download support is available'})
     else:
         guidance = ('Run xcode-select --install, then retry.' if sys.platform == 'darwin'
+                    else 'Install user-local Git for Windows, then retry.' if sys.platform == 'win32'
                     else 'Install Git with your Linux package manager (Ubuntu/Debian: sudo apt-get install git), then retry.')
         checks.append({'ok': False, 'message': 'Component downloads need Git. ' + guidance})
     try:
@@ -34,13 +35,17 @@ def doctor(home):
         checks.append({"ok": True, "message": "Settings are valid"})
     except (OSError, ValueError, yaml.YAMLError) as error:
         return {"ok": False, "checks": [{"ok": False, "message": "Settings need attention. Check config/server.yaml.", "detail": str(error)}]}
-    try:
-        import pam
-        if not callable(pam.authenticate):
-            raise ImportError("Authentication support is unavailable")
-        checks.append({"ok": True, "message": "Sign-in support is available"})
-    except (ImportError, OSError, AttributeError) as error:
-        checks.append({"ok": False, "message": "Sign-in support needs repair. Try amplifier-unified reset.", "detail": str(error)})
+    if sys.platform == 'win32':
+        checks.append({"ok": False, "message": "Windows owner-browser sign-in and task/host identity "
+                       "qualification remain pending. PAM is not used on Windows."})
+    else:
+        try:
+            import pam
+            if not callable(pam.authenticate):
+                raise ImportError("Authentication support is unavailable")
+            checks.append({"ok": True, "message": "Sign-in support is available"})
+        except (ImportError, OSError, AttributeError) as error:
+            checks.append({"ok": False, "message": "Sign-in support needs repair. Try amplifier-unified reset.", "detail": str(error)})
     try:
         ssl_context(home, config)
         checks.append({"ok": True, "message": "Secure connection is configured" if config['tls']['method'] != 'none' else "Local connection is configured"})
@@ -51,6 +56,9 @@ def doctor(home):
 
 def service_state(home):
     from . import deployment_service as service
+    if sys.platform == 'win32':
+        from .windows_service import task_state
+        return task_state(home)['state']
     if sys.platform == 'darwin':
         if not service.managed_launchd(home):
             return 'not configured'
@@ -83,7 +91,7 @@ async def status(home, wait=0):
     deadline = asyncio.get_running_loop().time() + wait
     while True:
         result = await _status_once(home)
-        if result['ok'] or result.get('service') in {'not configured', 'unavailable'}:
+        if result['ok'] or result.get('qualificationPending') or result.get('service') in {'not configured', 'unavailable'}:
             return result
         if asyncio.get_running_loop().time() >= deadline:
             return result
@@ -104,6 +112,14 @@ async def _status_once(home, wait=0):
         from .reset import service_manager_help
         return {'ok': False, 'service': initial_state, 'message': "The background service manager could not be reached.",
                 'nextStep': service_manager_help() if sys.platform == 'linux' else 'Sign in to your desktop account and retry service status.'}
+    if sys.platform == 'win32':
+        # Do not send the control bearer to an unverified loopback listener.
+        # Scheduler Running/EnginePID is not authenticated host-process proof.
+        return {'ok': False, 'service': initial_state, 'responding': None, 'probeAttempted': False,
+                'processVerified': False, 'qualificationPending': True,
+                'message': 'Windows task state: ' + initial_state + '. Authenticated host/process '
+                           'correlation is not yet qualified; task registration is not readiness.',
+                'nextStep': 'Keep native Windows qualification pending; do not treat this task as a healthy host.'}
     try:
         config = load_server_config(home)
         manager = SimpleNamespace(home=home, service=SimpleNamespace(server_config=config, port=config['port']))

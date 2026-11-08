@@ -15,6 +15,32 @@ from amplifier_web.host.config import read_config
 from amplifier_web.runtime_environment import receipt_directory
 
 
+async def test_windows_custom_profile_refuses_before_snapshot_lock_or_process(tmp_path, monkeypatch):
+    from amplifier_web.host import config as host_config
+    from amplifier_web.host import bundle_paths
+    home, generation = tmp_path / 'app', 'd' * 32
+    receipt = receipt_directory(home, generation)
+    receipt.mkdir(parents=True)
+    settings = {}
+    descriptor = {'profiles': ['offered'], 'configuration': runtime_profiles.configuration_key(settings, home, receipt)}
+    (receipt / 'profiles-qualified.json').write_text(json.dumps(descriptor))
+    monkeypatch.setattr(runtime_profiles, 'os', SimpleNamespace(name='nt'))
+    monkeypatch.setattr(host_config, 'read_config', lambda *args, **kwargs:
+                        SimpleNamespace(settings=settings, home=home, workspace=tmp_path))
+    monkeypatch.setattr(bundle_paths, 'canonical_bundle_reference', lambda config, bundle: bundle)
+    monkeypatch.setattr(bundle_paths, 'local_bundle_path', lambda *args: None)
+    monkeypatch.setattr(runtime_profiles, '_local_build_inputs', lambda *args: set())
+    async def forbidden(*args, **kwargs): pytest.fail('uncontained preparation process')
+    monkeypatch.setattr(updates, 'process', forbidden)
+    # Offered and legacy baseline paths remain available without new effects.
+    assert await runtime_profiles.ensure(home, None, {}) is None
+    assert await runtime_profiles.ensure(home, generation, {'id': 'offered', 'workspace': str(tmp_path), 'bundle': 'offered'}) == generation
+    with pytest.raises(RuntimeError, match='Custom runtime preparation is unavailable'):
+        await runtime_profiles.ensure(home, generation, {'id': 'custom', 'workspace': str(tmp_path), 'bundle': 'changed'})
+    assert not (home / 'updates/profiles').exists()
+    assert list((home / 'updates/releases').iterdir()) == [receipt]
+
+
 @pytest.fixture
 def profile_inputs(tmp_path, monkeypatch):
     from amplifier_foundation.modules import preparation

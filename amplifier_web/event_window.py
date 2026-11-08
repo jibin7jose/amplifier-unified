@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 import stat
 
-from .session_files import amplifier_home, project_slug
+from .session_files import amplifier_home, project_slug, source_change_time
 
 MAX_BYTES = 4 * 1024 * 1024
 MAX_EVENTS = 512
@@ -69,7 +69,7 @@ def _source(session):
 
 
 def _stamp(info):
-    return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
+    return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, source_change_time(info)]
 
 
 def _cursor(key, owner, window, stamp, end, aligned=True):

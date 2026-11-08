@@ -389,16 +389,74 @@ def service_commands(home):
 
 @contextmanager
 def repair_lock(home, *, shared=False):
-    import fcntl
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = home / ".reset.lock"
     # Never unlink a lock: waiters must continue to agree on the same inode.
     with path.open("a") as stream:
+        unlock = None
         try:
-            fcntl.flock(stream, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+            if os.name == "nt":
+                unlock = _lock_file_windows(stream, shared=shared)
+            else:
+                import fcntl
+                fcntl.flock(stream, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError("A host or reset is already using this data directory. Stop manually launched hosts before retrying.") from None
-        yield
+        try:
+            yield
+        finally:
+            if unlock is not None:
+                unlock()
+
+
+def _lock_file_windows(stream, *, shared):
+    """Lock byte zero on the open file; return its checked unlock operation.
+
+    Keep Win32 imports local and stdlib-only for standalone emergency repair.
+    Closing the handle (including process death) also releases its kernel lock.
+    """
+    import ctypes
+    import msvcrt
+
+    class OVERLAPPED(ctypes.Structure):
+        # ULONG_PTR and HANDLE are pointer-sized; DWORD stays 32-bit even on
+        # Win64. The two offset DWORDs occupy the OVERLAPPED union's eight bytes.
+        _fields_ = [
+            ("Internal", ctypes.c_size_t),
+            ("InternalHigh", ctypes.c_size_t),
+            ("Offset", ctypes.c_uint32),
+            ("OffsetHigh", ctypes.c_uint32),
+            ("hEvent", ctypes.c_void_p),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.LockFileEx.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(OVERLAPPED),
+    ]
+    kernel32.LockFileEx.restype = ctypes.c_int32
+    kernel32.UnlockFileEx.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.c_uint32, ctypes.POINTER(OVERLAPPED),
+    ]
+    kernel32.UnlockFileEx.restype = ctypes.c_int32
+    # Python opens non-inheritable descriptors; enforce that before locking so
+    # spawned children cannot keep a host's lease alive after the host exits.
+    os.set_inheritable(stream.fileno(), False)
+    handle = msvcrt.get_osfhandle(stream.fileno())
+    overlapped = OVERLAPPED()
+    flags = 0x00000001 | (0 if shared else 0x00000002)  # FAIL_IMMEDIATELY | EXCLUSIVE
+    if not kernel32.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(overlapped)):
+        error = ctypes.get_last_error()
+        if error == 33:  # ERROR_LOCK_VIOLATION: only contention is "already using".
+            raise BlockingIOError(error, "The repair lock is held")
+        raise ctypes.WinError(error)
+
+    def unlock():
+        if not kernel32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(overlapped)):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    return unlock
 
 
 def reset_update_state(home, backup):

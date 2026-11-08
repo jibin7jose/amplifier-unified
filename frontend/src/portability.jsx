@@ -3,9 +3,17 @@ import React,{useState} from 'react';
 export function PortabilityControls({state,session,act}){
  const [inspection,setInspection]=useState(null),[destination,setDestination]=useState(''),[carry,setCarry]=useState(false),[reviewed,setReviewed]=useState(false),[path,setPath]=useState(''),[repository,setRepository]=useState(''),[receiptPath,setReceiptPath]=useState(''),[evidence,setEvidence]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
  const rows=state.portability?.receipts||session?.portability?.receipts||[];
+ const availability=inspection?.availability||state.portability?.availability||session?.portability?.availability;
  const run=async(action,args={})=>{setBusy(true);setError('');try{const result=await act(action,args);if(action==='portability.inspect')setInspection(result?.result);return result;}catch(e){setError(e.message||'Transfer could not finish. Inspect the saved receipt.');}finally{setBusy(false)}};
  const inspect=()=>run('portability.inspect',session?{sessionId:session.id}:{});
  const source=session?.worktreeInspection?.repository;
+ if(availability?.available===false)return <section className="a-settings-section" aria-label="Move task between hosts" data-part="portability">
+  <h3>Move task between hosts</h3><p role="status">{availability.reason}</p>
+  <p>Saved transfer phases are historical evidence, not current jobs. Transfer fences still restrict changes to this task.</p>
+  <button className="a-soft" disabled={busy} data-action="portability.inspect" onClick={inspect}>Read retained transfers</button>
+  <details><summary>Retained transfer evidence</summary><pre className="a-state-view">{JSON.stringify(inspection?.receipts||rows,null,2)}</pre></details>
+  {error&&<p role="alert">{error}</p>}
+ </section>;
  return <section className="a-settings-section" aria-label="Move task between hosts" data-part="portability">
   <h3>Move task between hosts</h3><p>Stage a private transfer, verify the destination, then release this host. Your task keeps its saved history and outputs. Moving never sends a message or retries unfinished work.</p>
   <button className="a-soft" disabled={busy} data-action="portability.inspect" onClick={inspect}>Inspect hosts and transfers</button>

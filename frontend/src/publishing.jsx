@@ -24,6 +24,7 @@ export function PublishingSettings({session,act}){
  const update=fn=>{if(mounted.current)fn()};
  const sites=data?.sites||[],releases=data?.releases||[],selected=sites.find(row=>row.id===siteId),release=releases.find(row=>row.id===releaseId&&row.siteId===siteId);
  const targets=registry?.targets||[],currentTarget=targets.find(row=>row.id===targetId);
+ const availability=data?.availability||registry?.availability,unavailable=availability?.available===false;
  const busy=record.busy||reading,locked=busy||!!record.pending,siteReleases=releases.filter(row=>row.siteId===siteId);
  useCanvasSectionStatus(error?'Needs attention':record.pending?'Outcome pending':busy?'Inspecting…':data?`${sites.length} sites`:'');
  const targetReady=registry?.selectedTargetId===targetId&&(currentTarget?.kind==='loopback'||currentTarget?.inspection?.revision===currentTarget?.revision&&registry.selectedTargetRevision===currentTarget.revision&&registry.selectedServiceId===currentTarget.inspection?.serviceId);
@@ -44,7 +45,8 @@ export function PublishingSettings({session,act}){
    const receipt=value.receipts?.find(row=>row.requestId===record.pending.args.requestId);
    if(['unknown','running'].includes(receipt?.state)){
     record.pending={...record.pending,receipt};notify(record);
-    update(()=>setNotice(receipt.state==='unknown'?'The saved receipt records an unknown outcome. Nothing was replayed.':'The saved receipt is still running. Nothing was replayed.'));
+    const historical=value.historicalOnly===true||value.liveness==='unconfirmed'||value.availability?.available===false;
+    update(()=>setNotice(historical?`Historical saved state: ${receipt.state}; current progress is unconfirmed. Nothing was replayed.`:receipt.state==='unknown'?'The saved receipt records an unknown outcome. Nothing was replayed.':'The saved receipt is still running. Nothing was replayed.'));
    }else if(receipt&&['succeeded','failed'].includes(receipt.state)){
     record.pending=null;notify(record);
     update(()=>receipt.state==='failed'?setError(description(receipt.error)):setNotice('The saved receipt confirms this request succeeded.'));
@@ -60,6 +62,7 @@ export function PublishingSettings({session,act}){
  }
  useEffect(()=>{if(sid)inspect('publishing.list',false)},[sid]);
  async function submit(action,args,retry=false){
+  if(unavailable){setError(availability.reason);return}
   if(record.busy||readFlight.current||(!retry&&record.pending))return;
   const targetAction=action?.startsWith('publishing.target.');
   if(!retry&&!targetAction&&!targetReady){setError('Inspect and select this exact target before starting another publishing action.');return}
@@ -71,6 +74,11 @@ export function PublishingSettings({session,act}){
    const response=await act(command.action,command.args);
    if(!response?.accepted)throw actionError(response,'The connection ended before the outcome was confirmed.');
    const result=response.result;
+   if(result?.effect==='none'&&result?.accepted===false){
+    if(!retry)record.pending=null;
+    update(()=>setError(result.reason||'Publishing is unavailable. No effect was admitted.'));
+    return;
+   }
    if(isTarget){
     if(!Array.isArray(result?.targets))throw Error('The server returned no complete target state.');
     record.pending=null;update(()=>{setRegistry(result);setNotice(command.action==='publishing.target.save'?'Target saved. No connection was made.':command.action==='publishing.target.inspect'?'Target identity and capabilities inspected.':command.action==='publishing.target.remove'?'Target configuration removed. Existing remote sites were not stopped.':'Publishing target selected.')});
@@ -104,6 +112,15 @@ export function PublishingSettings({session,act}){
  function editTarget(row){setTargetDraftRevision(row.revision);setTargetDraft(Object.fromEntries(Object.keys(emptyTarget).map(key=>[key,key==='targetId'?row.id:row[key]||emptyTarget[key]])))}
  function saveTarget(event){event.preventDefault();submit('publishing.target.save',{...targetDraft,...(!targetDraft.username?{username:undefined}:{}),expectedRevision:targetDraftRevision})}
  if(!sid)return <p>Choose a conversation to manage its published sites.</p>;
+ if(unavailable)return <section className="a-publishing" aria-label="Managed publishing">
+  <h3>Publishing</h3><p role="status">{availability.reason}</p>
+  <p>Retained receipts are unchanged historical evidence. Saved URLs and running states do not prove current listeners or progress.</p>
+  <button type="button" className="a-soft" disabled={busy} data-action="publishing.list" onClick={()=>inspect()}>Read retained publishing</button>
+  {targets.map(target=><button type="button" className="a-soft" disabled={busy} key={target.id} onClick={()=>refresh({target:target.id}).catch(e=>setError(e.message))}>Read retained {target.label}</button>)}
+  {record.pending&&<p>Request outcome remains unconfirmed: {record.pending.action} · <code>{record.pending.args.requestId}</code>. Nothing is retried.</p>}
+  {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
+  <details><summary>Retained publishing evidence (liveness unconfirmed)</summary><pre className="a-state-view">{JSON.stringify(data||registry,null,2)}</pre></details>
+ </section>;
  return <section className="a-publishing" aria-label="Managed publishing">
   <h3>Publishing</h3><p>Save a built site as an immutable release, preview it, record your review, and explicitly deploy that version.</p>
   <div className="a-selection-card" aria-label="Publishing target"><strong>{currentTarget?.label||data?.target?.host?.label||'Local server'}</strong><p>Target: <code>{targetId}</code>{registry?.selectedTargetId!==targetId&&registry&&' · task selection: '+registry.selectedTargetId}</p><p>Access: {accessPolicy||(targetId==='loopback'?'loopback-only':'Not inspected')}</p>{registry&&!targetReady&&<p>Inspect and select this exact target before starting another publishing action.</p>}<p>{data?.target?.detail||'URLs belong to the publishing service host.'}</p><p className="a-caption">A loopback URL opens only on the service host. No tunnel, service installation, credentials, or public route is created here.</p></div>

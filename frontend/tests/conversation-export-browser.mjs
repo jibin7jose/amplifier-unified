@@ -1,6 +1,6 @@
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {readFile} from 'node:fs/promises';
+import {readFile,writeFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {createServer} from 'vite';
 import {chromium,expect} from '@playwright/test';
@@ -24,6 +24,10 @@ try{
  // The legacy fixture's conversation-settings route now opens Chat info.
  await page.getByRole('button',{name:'Close panel',exact:true}).click();
  await expect(page.locator('[data-part="overlay"]')).toHaveCount(0);
+ // Modern navigation can initially be Home even with a selected conversation.
+ // Select the fixture's existing chat through the same supported action used
+ // by the sidebar; the actual Share/menu/export controls below remain clicks.
+ await page.evaluate(id=>window.amplifier.dispatch('session.select',{id}),beforeExport.sessionId);
  await page.getByRole('button',{name:'Chat',exact:true}).click();
  await page.getByRole('button',{name:'Share or save',exact:true}).click();
  await expect(page.getByRole('dialog',{name:'Share or save',exact:true})).toBeVisible();
@@ -47,6 +51,29 @@ try{
  // The exact existing UI action is also available through the shared bridge.
  const snapshot=await page.evaluate(async()=>{const state=window.amplifier.getState();return window.amplifier.dispatch('session.export',{id:state.selectedSessionId,format:'markdown',destination:'none'})});
  const stored=await page.request.get(new URL(snapshot.result.url,page.url()).href);assert.equal((await stored.json()).content,copied);
+ // Existing normal Share -> More formats -> Export JSON must deliver the
+ // closed diagnostic without Network/console/storage/header inspection.
+ await page.getByText('More formats',{exact:true}).click();
+ if(process.env.AMPLIFIER_TEST_WORK_DIAGNOSTIC==='1'){
+  const refresh=await page.request.post(new URL('/api/fixture/workDiagnostic',page.url()).href);
+  assert.ok(refresh.ok());
+ }
+ const jsonPending=page.waitForEvent('download');
+ await page.getByRole('button',{name:'Export JSON',exact:true}).click();
+ const jsonDownload=await jsonPending;
+ assert.equal(jsonDownload.suggestedFilename(),'amplifier-export.json');
+ const exported=JSON.parse(await readFile(await jsonDownload.path(),'utf8'));
+ const diagnostic=exported.workDiagnostics;
+ assert.deepEqual(Object.keys(diagnostic).sort(),['version','sessionId','attempt','current','status','stage','reason','exceptionCategory','errno','projectionStatus','projectionCurrent'].sort());
+ assert.equal(diagnostic.sessionId,beforeExport.sessionId);
+ assert.equal(diagnostic.version,1);
+ assert.ok(!JSON.stringify(diagnostic).includes('SECRET-DIAGNOSTIC-CANARY'));
+ if(process.env.AMPLIFIER_TEST_WORK_DIAGNOSTIC==='1'){
+  assert.equal(diagnostic.status,'retrying');assert.equal(diagnostic.stage,'projector');
+  assert.equal(diagnostic.exceptionCategory,'permission');assert.equal(diagnostic.errno,13);
+  assert.equal(diagnostic.current,true);assert.equal(diagnostic.projectionStatus,'retrying');
+  await writeFile('/artifacts/normal-export-diagnostic.json',JSON.stringify(diagnostic,null,2)+'\n');
+ }
  // A selected range is reviewed separately; changing controls revokes the old preview.
  await page.getByLabel('Export scope').selectOption('range');
  await expect(page.getByLabel('Reviewed Markdown')).toHaveCount(0);

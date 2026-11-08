@@ -9,11 +9,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 import shutil
 import tomllib
 from urllib.parse import parse_qs, urlsplit, urlunsplit
+
+_WINDOWS = os.name == 'nt'
 
 
 def manifest_path():
@@ -87,6 +90,29 @@ def project_path(home, generation=None, *, content=None):
 def prepare_project(home, generation=None, *, content=None):
     content = manifest_content(home, generation) if content is None else content
     project = project_path(home, generation, content=content)
+    if _WINDOWS:
+        from .windows_files import directory
+        # Never ordinary-mkdir the owned tree before private creation. Existing
+        # unsafe trees are refused, not repaired or reused after a failed check.
+        with directory(project, owned_root=home, create=True) as pinned:
+            try:
+                existing = pinned.read_private('pyproject.toml', limit=1024 * 1024)
+            except FileNotFoundError:
+                existing = None
+            if existing != content:
+                pinned.publish_private('pyproject.toml', content, replace=True)
+            receipt = receipt_directory(home, generation) / 'runtime.lock'
+            if receipt.exists():
+                with directory(receipt.parent, owned_root=home) as recorded:
+                    lock_bytes = recorded.read_private(receipt.name, limit=1024 * 1024)
+                try:
+                    existing_lock = pinned.read_private('uv.lock', limit=1024 * 1024)
+                except FileNotFoundError:
+                    pinned.publish_private('uv.lock', lock_bytes)
+                else:
+                    if existing_lock != lock_bytes:
+                        raise ValueError('The recorded worker lock changed; its update receipt was preserved.')
+        return project
     project.mkdir(parents=True, exist_ok=True)
     target = project / 'pyproject.toml'
     if not target.exists() or target.read_bytes() != content:

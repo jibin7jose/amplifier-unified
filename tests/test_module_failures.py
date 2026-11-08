@@ -1,12 +1,150 @@
 """Safe diagnostics survive worker IPC and persisted application state."""
+from contextlib import contextmanager
 import json
+import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 from amplifier_web.module_failures import ConfiguredModuleError, REMEDIATION, persist_failures, safe_failures
 from amplifier_web.runtime import RuntimeManager
 from amplifier_web.service import AppService
+
+
+@pytest.fixture
+def windows_report_boundary(tmp_path, monkeypatch):
+    """Actual report/writer functions; only the native directory is modeled."""
+    from amplifier_web import deployment, windows_files
+    from amplifier_web.host import config
+    home = tmp_path / 'app'
+    monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(home))
+    monkeypatch.setattr(config, 'os', SimpleNamespace(name='nt', environ=os.environ))
+    monkeypatch.setattr(deployment, '_WINDOWS', True)
+    events, publications = [], {}
+    state = SimpleNamespace(refusal=None, publish_error=None, close_error=None)
+
+    def publish(name, content, *, replace):
+        assert name == 'module-load-failures.json' and isinstance(content, bytes)
+        assert replace is True
+        events.append('publish')
+        if state.publish_error:
+            raise state.publish_error
+        publications[name] = content
+
+    @contextmanager
+    def directory(path, *, owned_root, create=False):
+        # The app home must be authoritative, never the caller's report parent.
+        assert owned_root == home and create is True
+        events.append(('directory', path, owned_root))
+        if not path.is_relative_to(owned_root):
+            raise ValueError('outside app home')
+        if state.refusal:
+            raise state.refusal
+        events.append('private-create-or-validate')
+        try:
+            yield SimpleNamespace(publish_private=publish)
+        finally:
+            events.append('close')
+            if state.close_error:
+                raise state.close_error
+
+    def no_posix_fallback(*args, **kwargs):
+        pytest.fail('Windows report must not fall back to chmod/path writes')
+
+    monkeypatch.setattr(windows_files, 'directory', directory)
+    monkeypatch.setattr(deployment, 'write_file', no_posix_fallback)
+    return SimpleNamespace(home=home, events=events, publications=publications, state=state)
+
+
+def _write_module_report(operation, directory):
+    from amplifier_web.module_failures import clear_failures
+    if operation == 'clear':
+        return clear_failures(directory)
+    return persist_failures(directory, [{
+        'module': 'tool-fixture', 'type': 'tool', 'reason_code': 'missing_source',
+        'error': 'private-token', 'source': 'https://private-token'}])
+
+
+@pytest.mark.parametrize('operation', ['clear', 'persist'])
+def test_windows_module_report_binds_app_root_before_publication(windows_report_boundary, operation):
+    model = windows_report_boundary
+    directory = model.home / 'runtime-reports' / 'fixture'
+    result = _write_module_report(operation, directory)
+    saved = json.loads(model.publications['module-load-failures.json'])
+    assert model.events == [
+        ('directory', directory, model.home), 'private-create-or-validate', 'publish', 'close']
+    assert saved == ([] if operation == 'clear' else result.failures)
+    assert 'private-token' not in json.dumps(saved)
+    if operation == 'clear':
+        assert result is None
+    else:
+        assert isinstance(result, ConfiguredModuleError)
+    assert not model.home.exists()  # No ordinary mkdir/write or ACL repair.
+
+
+@pytest.mark.parametrize('operation', ['clear', 'persist'])
+@pytest.mark.parametrize('refusal', ['missing-ancestor', 'unsafe-home', 'outside-home'])
+def test_windows_module_report_refusal_is_not_repaired_or_swallowed(
+        windows_report_boundary, operation, refusal):
+    model = windows_report_boundary
+    directory = model.home / 'runtime-reports' / 'fixture'
+    error = (FileNotFoundError('missing traversal ancestor') if refusal == 'missing-ancestor'
+             else PermissionError('unsafe existing app home'))
+    if refusal == 'outside-home':
+        directory = model.home.parent / 'foreign-reports'
+        expected = ValueError
+    else:
+        model.state.refusal = error
+        expected = type(error)
+    with pytest.raises(expected) as caught:
+        _write_module_report(operation, directory)
+    if refusal != 'outside-home':
+        assert caught.value is error
+    assert model.events == [('directory', directory, model.home)]
+    assert not model.publications and not model.home.exists()
+    assert not directory.exists()
+
+
+@pytest.mark.parametrize('operation', ['clear', 'persist'])
+@pytest.mark.parametrize('boundary', ['publish_error', 'close_error'])
+def test_windows_module_report_io_failure_never_becomes_success(
+        windows_report_boundary, operation, boundary):
+    model = windows_report_boundary
+    old = b'[{"module":"old-failure"}]'
+    model.publications['module-load-failures.json'] = old
+    error = OSError('modeled private publication/close failure')
+    setattr(model.state, boundary, error)
+    with pytest.raises(OSError) as caught:
+        _write_module_report(operation, model.home / 'runtime-reports' / 'fixture')
+    assert caught.value is error and model.events[-1] == 'close'
+    if boundary == 'publish_error':
+        assert model.publications['module-load-failures.json'] == old
+    # A post-publication close failure is still failure, never a false rollback
+    # claim. The existing private primitive owns its exact publication semantics.
+    assert not model.home.exists()
+
+
+@pytest.mark.parametrize('operation', ['clear', 'persist'])
+@pytest.mark.skipif(os.name == 'nt', reason='actual POSIX private file permission semantics')
+def test_posix_module_report_keeps_private_writer_behavior(tmp_path, monkeypatch, operation):
+    from amplifier_web import deployment
+    from amplifier_web.host import config
+    original = deployment.write_file
+    calls = []
+
+    def observe(path, text):
+        calls.append((path, text))
+        return original(path, text)
+
+    monkeypatch.setattr(config, 'os', SimpleNamespace(name='posix'))
+    monkeypatch.setattr(deployment, '_WINDOWS', False)
+    monkeypatch.setattr(deployment, 'write_file', observe)
+    path = tmp_path / 'reports' / 'module-load-failures.json'
+    result = _write_module_report(operation, path.parent)
+    assert calls == [(path, path.read_text())]
+    assert json.loads(path.read_text()) == ([] if operation == 'clear' else result.failures)
+    assert path.stat().st_mode & 0o077 == 0
 
 
 @pytest.mark.parametrize('reason',list(REMEDIATION))

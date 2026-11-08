@@ -971,6 +971,10 @@ class Management:
                 result['configurationChanged'] = bool(routing_sessions)
                 routing_sessions.discard(None)
             result['configurationTarget']=args.get('configurationTarget')
+            if action == 'providers.credentials':
+                # A cached same-module result is not the outcome of a later
+                # read. Bundled forms consume only this completed command.
+                result['credentialCheck']['commandId'] = command_id
             if action=='providers.list':
                 result['providersRequestedWorkspace']=args.get('workspace',session['workspace'])
                 result['providersLocation']={'kind':'managed' if managed_draft else 'workspace'}

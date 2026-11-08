@@ -71,6 +71,11 @@ class WorkWindows:
         self.closed = False
         self.projector = None
         self.retry_at = {}
+        # Only in-flight latest reads, not retained reporting history. A newer
+        # read marks the prior token permanently, even after it settles/evicts.
+        self._active_reads = {}
+        from .work_diagnostics import WorkDiagnostics
+        self.diagnostics = WorkDiagnostics()
         from .resident_work_pages import ResidentWorkPages
         self.live_pages = ResidentWorkPages(self)
         from .tool_payload_windows import ToolPayloadWindows
@@ -118,13 +123,19 @@ class WorkWindows:
         if event is not None and notify:
             event._notify_work(identity)
 
-    def _state(self, identity, value, *, notify=True):
+    def _state(self, identity, value, *, notify=True, _attempt=None):
+        if _attempt is not None and _attempt.get('_superseded'):
+            return
+        changed = self.status.get(identity) != value
         self.status.pop(identity, None)
         self.status[identity] = value
+        if _attempt is not None:
+            _attempt['projection'] = value
         while len(self.status) > MAX_PAGES:
             retired, _ = self.status.popitem(last=False)
             self.retry_at.pop(retired, None)
-        self._notify(identity, notify=notify)
+        if changed:
+            self._notify(identity, notify=notify)
 
     def invalidate(self, identities=None, *, notify=True):
         for identity in set(self.current) | set(self.pending) | set(self.epochs):
@@ -149,10 +160,11 @@ class WorkWindows:
             return None
         async def refresh():
             owner = None
+            capture = {}
             try:
                 owner = self._owner(identity)
                 source, fence = source_identity(owner), self._fence(identity)
-                return await self.read(identity, _initial=True)
+                return await self.read(identity, _initial=True, _capture=capture)
             except asyncio.CancelledError:
                 raise
             except _SupersededRead:
@@ -164,9 +176,19 @@ class WorkWindows:
                         self._check_current(identity, owner, source, fence)
                     except _SupersededRead:
                         return None
-                if not self.closed and self.status.get(identity, {}).get('status') != 'retrying':
+                attempt = capture.get('attempt')
+                if attempt is not None and attempt.get('_superseded'):
+                    return None
+                # The inner reader may already have published a more specific
+                # retry and deadline (for example source_changed/one second).
+                published = self.status.get(identity)
+                if (attempt is not None and published is not None and attempt.get('projection') is published
+                        and published.get('status') == 'retrying'):
+                    return None
+                if not self.closed:
                     self.retry_at[identity] = time.monotonic() + 5
-                    self._state(identity, {'status': 'retrying', 'current': False, 'reason': 'worker_failed'})
+                    self._state(identity, {'status': 'retrying', 'current': False, 'reason': 'worker_failed'},
+                                _attempt=capture.get('attempt'))
                 return None
         task = asyncio.create_task(refresh())
         self.pending[identity] = task
@@ -198,7 +220,49 @@ class WorkWindows:
                 if identity not in identities and identity not in self.current and identity not in self.pending:
                     mapping.pop(identity, None)
 
-    async def read(self, identity, before=None, *, _initial=False):
+    def diagnostic(self, session):
+        """Passive, constant-sized export: no read, hydration or worker start."""
+        if self.closed or getattr(self.service, 'closed', False):
+            return self.diagnostics.snapshot(session, {}, None, {})
+        record = self.diagnostics.records.get(session['id'], {})
+        projection = self.status.get(session['id'], {})
+        return self.diagnostics.snapshot(session, source_identity(session),
+            self.epochs.get(session['id']), projection if record.get('projection') is projection else {})
+
+    async def read(self, identity, before=None, *, _initial=False, _capture=None):
+        owner = self._owner(identity)
+        canonical = owner['id']
+        source, fence = source_identity(owner), self._fence(canonical)
+        # Older pages must not replace the current projection's diagnostic.
+        attempt = self.diagnostics.begin(canonical, owner, source, fence) if before is None else {}
+        if before is None:
+            prior = self._active_reads.get(canonical)
+            if prior is not None:
+                prior['_superseded'] = True
+            self._active_reads[canonical] = attempt
+        if _capture is not None:
+            _capture['attempt'] = attempt
+        try:
+            result = await self._read(identity, before, _initial=_initial, _attempt=attempt)
+            attempt.update(status='ready', stage='complete', reason='none',
+                           exceptionCategory='none', errno=None)
+            return result
+        except asyncio.CancelledError:
+            attempt.update(status='unknown', reason='superseded', exceptionCategory='cancelled')
+            raise
+        except _SupersededRead:
+            attempt.update(status='unknown', reason='superseded')
+            raise
+        except Exception as error:
+            if attempt.get('status') == 'loading':
+                from .work_diagnostics import failure
+                attempt.update(status='retrying', reason='worker_failed', **failure(error))
+            raise
+        finally:
+            if self._active_reads.get(canonical) is attempt:
+                self._active_reads.pop(canonical, None)
+
+    async def _read(self, identity, before=None, *, _initial=False, _attempt):
         if self.closed or getattr(self.service, 'closed', False):
             raise ValueError('Work reading is closed.')
         owner = self._owner(identity)
@@ -209,6 +273,7 @@ class WorkWindows:
         # Read only exact source stats before deciding whether this small page
         # needs rereading. No transcript, tree, directory scan or prefix digest.
         from .cold_display import raw
+        _attempt['stage'] = 'source'
         if (_initial and prior is not None and self.pages.get(prior, {}).get('source') == source
                 and self.pages[prior].get('savedExecutionReference') ==
                     raw(owner).get('_coldFields', {}).get('execution')
@@ -218,6 +283,8 @@ class WorkWindows:
             accepted_reference = deepcopy(accepted_page.get('savedExecutionReference'))
             matches = await asyncio.to_thread(self._matches, source, accepted_page.get('revisions'))
             self._check_current(identity, owner, source, fence)
+            if _attempt.get('_superseded'):
+                raise _SupersededRead('The requested conversation changed. Open it again.')
             if (self.pages.get(prior) is not accepted_page
                     or raw(owner).get('_coldFields', {}).get('execution') != accepted_reference):
                 raise _SupersededRead('The requested conversation changed. Open it again.')
@@ -227,27 +294,42 @@ class WorkWindows:
                 current = self.status.get(identity)
                 receipt = self.pages[prior]['receipt']
                 if not current or not current.get('current') or current.get('receipt') != receipt:
-                    self._state(identity, {'status': 'ready', 'current': True, 'receipt': receipt})
+                    self._state(identity, {'status': 'ready', 'current': True, 'receipt': receipt},
+                                _attempt=_attempt)
+                else:
+                    _attempt['projection'] = current
                 return self._groups(self.pages[prior])
         if _initial:
-            self._state(identity, {'status': 'loading', 'current': False})
+            self._state(identity, {'status': 'loading', 'current': False}, _attempt=_attempt)
+        _attempt['stage'] = 'projector'
         result = await self._worker().project({'operation': 'window', 'session': source,
             'windowKey': window_key, 'before': before, 'cursorKey': self.key.hex()},
             key=identity + ':' + str(before or 'latest'))
         self._check_current(identity, owner, source, fence)
+        if _attempt.get('_superseded'):
+            raise _SupersededRead('The requested conversation changed. Open it again.')
         if result.get('status') != 'complete':
+            from .work_diagnostics import closed
+            _attempt.update(closed({**closed(result.get('diagnostic')),
+                'status': 'unavailable' if result.get('status') == 'unavailable' else 'retrying',
+                'stage': 'projector', 'reason': result.get('reason', 'worker_failed')}))
             if _initial:
                 self.retry_at[identity] = time.monotonic() + 5
                 self._state(identity, {'status': 'retrying', 'current': False,
-                                      'reason': result.get('reason', 'worker_failed')})
+                                      'reason': result.get('reason', 'worker_failed')}, _attempt=_attempt)
             raise ValueError('Saved work is unavailable. Try again shortly.')
         page = result['page']
+        _attempt['stage'] = 'source'
         matches = await asyncio.to_thread(self._matches, source, page.get('revisions'))
         self._check_current(identity, owner, source, fence)
+        if _attempt.get('_superseded'):
+            raise _SupersededRead('The requested conversation changed. Open it again.')
         if not matches:
+            _attempt.update(status='retrying', reason='source_changed')
             if _initial:
                 self.retry_at[identity] = time.monotonic() + 1
-                self._state(identity, {'status': 'retrying', 'current': False, 'reason': 'source_changed'})
+                self._state(identity, {'status': 'retrying', 'current': False, 'reason': 'source_changed'},
+                            _attempt=_attempt)
             raise ValueError('Saved work changed while it was read. Refresh this window.')
         # The existing saved view can retire its host placement metadata to a
         # resource. Read that owned resource only on this explicit window read,
@@ -256,6 +338,7 @@ class WorkWindows:
         from .cold_display import raw
         saved_reference = deepcopy(raw(owner).get('_coldFields', {}).get('execution'))
         if saved_reference and 'execution' not in raw(owner):
+            _attempt['stage'] = 'cold_resource'
             from .resource_files import detach, read_detached
             from .session_projection import stored_execution
             import json
@@ -271,16 +354,22 @@ class WorkWindows:
                 return tree
             tree = await asyncio.to_thread(saved_work)
             self._check_current(identity, owner, source, fence)
+            if _attempt.get('_superseded'):
+                raise _SupersededRead('The requested conversation changed. Open it again.')
             if (raw(owner).get('_coldFields', {}).get('execution') != saved_reference
                     or 'execution' in raw(owner)):
                 raise _SupersededRead('The requested conversation changed. Open it again.')
+            _attempt['stage'] = 'source'
             matches = await asyncio.to_thread(self._matches, source, page.get('revisions'))
             self._check_current(identity, owner, source, fence)
+            if _attempt.get('_superseded'):
+                raise _SupersededRead('The requested conversation changed. Open it again.')
             if (not matches or raw(owner).get('_coldFields', {}).get('execution') != saved_reference
                     or 'execution' in raw(owner)):
                 raise _SupersededRead('The requested conversation changed. Open it again.')
             page = {**page, 'savedExecution': tree, 'savedExecutionReference': saved_reference,
                     'savedExecutionFence': fence}
+        _attempt['stage'] = 'group'
         page = {**page, 'sessionId': identity, 'source': source}
         group = 'event-window:' + page['generation']
         page['group'] = group
@@ -309,7 +398,8 @@ class WorkWindows:
                 'historyComplete': False, 'sourceCount': coverage.get('sourceCount', 0),
                 'itemCount': len(page['items']), 'scannedBytes': coverage.get('scannedBytes', 0),
                 'scannedEvents': coverage.get('scannedEvents', 0)}
-            self._state(identity, {'status': 'ready', 'current': True, 'receipt': page['receipt']})
+            self._state(identity, {'status': 'ready', 'current': True, 'receipt': page['receipt']},
+                        _attempt=_attempt)
         return self._groups(page)
 
     @staticmethod
@@ -557,3 +647,5 @@ class WorkWindows:
         self.live_pages.groups.clear()
         self.pages.clear(); self.current.clear(); self.status.clear()
         self.epochs.clear(); self.retry_at.clear()
+        self.diagnostics.records.clear()
+        self._active_reads.clear()

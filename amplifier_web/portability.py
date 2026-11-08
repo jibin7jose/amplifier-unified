@@ -3,8 +3,11 @@ import asyncio
 import copy
 from contextlib import asynccontextmanager
 import json
+import math
 import os
 from pathlib import Path
+import stat
+import sys
 import time
 import uuid
 
@@ -15,6 +18,74 @@ from amplifier_worktrees.git import digest
 from . import portability_data as data
 from .host_identity import local_host_identity
 from .portability_policy import completion_receipt, effective_effort, readiness_policy, validate_policy
+
+
+def controller_available():
+    return sys.platform != 'win32'
+
+
+UNAVAILABLE_REASON = 'Task transfer is unavailable on native Windows. Retained evidence is read-only; ownership and directory durability are not qualified. Nothing is replayed.'
+
+
+class RetainedTransfers:
+    """Read ownership evidence without keys, recovery, locks or directory creation."""
+    identity = None
+
+    def __init__(self, directory):
+        self.directory = Path(directory).absolute()
+
+    def records(self, sid=None):
+        directory = self.directory / 'receipts'
+        for path in reversed([directory, *directory.parents]):
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                return []
+            if (not stat.S_ISDIR(info.st_mode) or
+                    getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                raise ValueError('Retained transfer storage must be a real directory')
+        rows = []
+        for path in sorted(directory.iterdir()):
+            if path.suffix != '.json':
+                continue
+            info = path.lstat()
+            if (not stat.S_ISREG(info.st_mode) or info.st_size > 16 * 1024 * 1024 or
+                    getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                raise ValueError('Retained transfer evidence must be a bounded regular file')
+            if sys.platform == 'win32':
+                # A cancelled/active journal can admit ordinary writes. Read it
+                # through the existing private-file ACL/handle boundary, never
+                # by treating a copied, unprotected Windows file as authority.
+                from .windows_files import directory as private_directory
+                with private_directory(directory, owned_root=self.directory) as pinned:
+                    raw = pinned.read_private(path.name, limit=1024 * 1024)
+                row = json.loads(raw)
+            else:
+                row = json.loads(path.read_text(encoding='utf-8'))
+            if (not isinstance(row, dict) or row.get('id') != path.stem or
+                    str(uuid.UUID(row['id'])) != row['id'] or
+                    not isinstance(row.get('sessionId'), str) or not row['sessionId'] or
+                    type(row.get('generation')) is not int or row['generation'] < 1 or
+                    type(row.get('createdAt')) not in (int, float) or not math.isfinite(row['createdAt']) or
+                    row.get('phase') not in {'preparing', 'prepared', 'releasing', 'released',
+                        'staging', 'ready', 'activating', 'active', 'cancelled', 'discarded', 'unknown'}):
+                raise ValueError('Malformed retained transfer ownership evidence')
+            rows.append(row)
+        return [row for row in rows if sid is None or row['sessionId'] == sid]
+
+    def get(self, identity):
+        row = next((row for row in self.records() if row['id'] == identity), None)
+        if row is None:
+            raise ValueError('Retained transfer is not available')
+        return row
+
+    def fenced(self, sid):
+        rows = self.records(sid)
+        latest = max(rows, key=lambda row: (row['generation'], row['createdAt'])) if rows else None
+        return latest is not None and latest['phase'] not in {'active', 'cancelled'}
+
+    def peers(self):
+        return None  # Pairing trust is not inspected on an unsupported controller.
 
 
 def definitions(schema, string):
@@ -72,10 +143,18 @@ def retained_native_fence(session):
 class Portability:
     def __init__(self, app):
         self.app = app
-        self.node = TransferNode(app.data_dir / 'portability', local_host_identity()['label'])
-        self.node.recover()
+        self.available = controller_available()
+        if self.available:
+            self.node = TransferNode(app.data_dir / 'portability', local_host_identity()['label'])
+            self.node.recover()
+        else:
+            self.node = RetainedTransfers(app.data_dir / 'portability')
         self.jobs = set()
         self.mutations = asyncio.Lock()
+
+    def availability(self):
+        return {'available': self.available, **({} if self.available else {
+            'reason': UNAVAILABLE_REASON, 'historicalOnly': True})}
 
     def fenced(self, sid):
         if self.node.fenced(sid):
@@ -87,13 +166,15 @@ class Portability:
             session = self.app.directory.resolve(sid, include_hidden_workspaces=True)
         if session:
             workspace = session.get('workspace')
-            if session.get('nativeProject') or not workspace or not Path(workspace).expanduser().is_dir():
+            if not self.available or session.get('nativeProject') or not workspace or not Path(workspace).expanduser().is_dir():
                 # Indexed history remains addressable without an existing
                 # workspace, including legacy worker IDs a runtime cannot use.
                 # Marker presence only denies writes; never infer permission
                 # from unreadable or malformed transfer evidence.
                 if retained_native_fence(session):
                     return True
+                if not self.available:
+                    return False
                 if not workspace or not Path(workspace).expanduser().is_dir():
                     return False
             from amplifier_foundation.session import SharedSessionStore
@@ -130,13 +211,15 @@ class Portability:
         by_session = {}
         for row in receipts:
             by_session.setdefault(row['sessionId'], []).append(row)
-        self.app.state['portability'] = {'host': self.node.identity, 'receipts': receipts}
+        self.app.state['portability'] = {'host': self.node.identity, 'receipts': receipts,
+                                         'availability': self.availability()}
         for session in self.app.state['sessions']:
             rows = by_session.get(session['id'])
             if rows:
                 # Share only the read, not mutable projection values or authority.
                 # Fence checks still read current ownership evidence from disk.
-                session['portability'] = {'host': self.node.identity, 'receipts': copy.deepcopy(rows), 'fenced': self.fenced(session['id'])}
+                session['portability'] = {'host': self.node.identity, 'receipts': copy.deepcopy(rows),
+                                          'fenced': self.fenced(session['id']), 'availability': self.availability()}
                 if self.fenced(session['id']):
                     session['configurationBusy'] = True
 
@@ -168,6 +251,11 @@ class Portability:
             yield
 
     async def dispatch(self, action, args, origin, command_id):
+        # Journal inspection is supported; capsule evidence still uses the
+        # protocol's POSIX contained reader and is not ported by this gate.
+        if not self.available and action != 'portability.inspect':
+            return {'accepted': False, 'effect': 'none', 'code': 'controller_unavailable',
+                    **self.availability()}
         if action == 'portability.evidence':
             row = self.read(args['sessionId'], args['id'])
             path = row.get('package') or row['destinationState']['package']
@@ -182,7 +270,10 @@ class Portability:
         if action == 'portability.inspect':
             sid = args.get('sessionId')
             if sid: self.app._session(sid)
-            result = {'host': self.node.identity, 'peers': self.node.peers(), 'receipts': self.node.records(sid)}
+            result = {'host': self.node.identity, 'peers': self.node.peers(), 'receipts': self.node.records(sid),
+                      'availability': self.availability()}
+            if not self.available:
+                return result
             async with self.app.lock:
                 if sid: self.app._session(sid)['portabilityInspection'] = result
                 self.changed()

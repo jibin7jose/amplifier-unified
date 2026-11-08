@@ -1,5 +1,8 @@
 """Exercise direct-script imports in a wheel-like host/runtime layout."""
+import json
+import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -138,8 +141,19 @@ def installed_app(tmp_path_factory):
     wheel_dir = root / "wheels"
     uv = shutil.which("uv")
     assert uv is not None, "Installed-wheel isolation checks require uv"
+    command = [uv, "build", "--wheel", "--out-dir", str(wheel_dir)]
+    contract_path = os.environ.get("AMPLIFIER_TEST_CONTRACT")
+    if contract_path:
+        contract = json.loads(Path(contract_path).read_text())
+        configured = contract.get("pythonBuild", {}).get("command")
+        if configured is not None:
+            # Use the host's prepared backend environment and isolation choice.
+            # Only the output directory belongs to this fixture. A malformed
+            # contract or failed build must fail, never trigger another builder.
+            command = shlex.split(configured)
+            command[command.index("--outdir") + 1] = str(wheel_dir)
     subprocess.run(
-        [uv, "build", "--wheel", "--out-dir", str(wheel_dir)],
+        command,
         cwd=PACKAGE.parent, check=True, capture_output=True, text=True, timeout=60,
     )
     wheels = list(wheel_dir.glob("*.whl"))

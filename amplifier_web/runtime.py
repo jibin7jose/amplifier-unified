@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, contextmanager, nullcontext
+from dataclasses import dataclass
 import json
 import logging
 import os
@@ -23,6 +24,100 @@ from .performance_diagnostics import measure, measured
 
 _CURRENT_GENERATION = object()
 _LOG = logging.getLogger(__name__)
+_WINDOWS = os.name == 'nt'
+_WINDOWS_STOP_SECONDS = 15.0
+
+
+@dataclass
+class _WorkerProcessObservation:
+    """Read-only-to-consumers lifecycle facts, not an asyncio Process facade.
+
+    Existing host readers use only pid/returncode. On Windows pid remains unset
+    until the worker handshake verifies it, never the guard/uv/redirector PID.
+    A non-None returncode means the entire owned job
+    and I/O have settled; 'unknown' explicitly preserves an unreported exit code.
+    Signalling, waiting and streams belong to the separately retained job owner.
+    """
+    pid: int | None = None
+    returncode: int | str | None = None
+
+
+class _WindowsWorkerOwner:
+    def __init__(self, job):
+        self.job = job
+        self.process = _WorkerProcessObservation()
+        self.stdout = _BoundedWorkerLines(job.stdout)
+        self.result = None
+        self.completion = asyncio.create_task(self._observe())
+        self.completion.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+
+    async def _observe(self):
+        self.result = await self.job.wait()
+        self._record(self.result)
+        return self.result
+
+    def _record(self, result):
+        if result.active_processes != 0 or not self.job.tree_empty or not self.job.io_finalized:
+            raise RuntimeError('Windows worker cleanup is unconfirmed; ownership retained')
+        self.result = result
+        self.process.returncode = (result.payload_returncode
+                                   if result.payload_returncode is not None else 'unknown')
+
+    async def wait(self):
+        await asyncio.shield(self.completion)
+        return self.process.returncode
+
+    async def identify(self, timeout):
+        line = await asyncio.wait_for(self.stdout.readline(), timeout)
+        identity = json.loads(line)
+        if (not isinstance(identity, dict)
+                or set(identity) != {'type', 'pid', 'created'}
+                or identity['type'] != 'runtime.identity'):
+            raise RuntimeError('Windows worker identity handshake is missing')
+        if identity['pid'] == self.job.identity.guard_pid:
+            raise RuntimeError('Windows guard cannot identify as the conversation worker')
+        self.job.verify_member(identity['pid'], identity['created'])
+        self.process.pid = identity['pid']
+        self.created = identity['created']
+
+    async def close(self):
+        self._record(await self.job.close())
+        # A forced close can settle before the monitor's next poll.
+        await asyncio.shield(self.completion)
+
+
+class _BoundedWorkerLines:
+    """Protocol lines independent of the job primitive's 64 KiB pipe watermark."""
+    def __init__(self, stream, limit=MAX_MESSAGE_BYTES):
+        self.stream, self.limit, self.buffer = stream, limit, bytearray()
+
+    async def readline(self):
+        start = 0
+        while True:
+            end = self.buffer.find(b'\n', start)
+            if end >= 0:
+                line = bytes(self.buffer[:end + 1])
+                del self.buffer[:end + 1]
+                return line
+            if len(self.buffer) >= self.limit:
+                raise ValueError('Runtime message exceeds the transport limit')
+            start = len(self.buffer)
+            chunk = await self.stream.read(min(64 * 1024, self.limit - len(self.buffer)))
+            if not chunk:
+                line = bytes(self.buffer)
+                self.buffer.clear()
+                return line
+            self.buffer.extend(chunk)
+
+
+def _worker_pipes(row):
+    owner = row.get('windows_owner')
+    return owner.job if owner is not None else row['process']
+
+
+async def _wait_worker(row):
+    owner = row.get('windows_owner')
+    return await (owner.wait() if owner is not None else row['process'].wait())
 
 Emitter = Callable[[str, dict], Awaitable[None]]
 
@@ -49,9 +144,12 @@ class RuntimePreparationCancelled(asyncio.CancelledError):
     """The outer task was cancelled before native input admission."""
 
 
-async def _terminate_unregistered(proc):
+async def _terminate_unregistered(proc, windows_owner=None):
     """Reap a spawned preparation process before releasing its cleanup owner."""
     async def stop():
+        if windows_owner is not None:
+            await windows_owner.close()
+            return
         if proc.returncode is not None:
             return
         try:
@@ -347,6 +445,14 @@ class RuntimeManager:
         except (ValueError, IndexError) as exc:
             raise RuntimeError("The runtime command does not identify a uv project.") from exc
 
+    def _check_preparation_cleanup(self, sid):
+        preparation = self._preparations.get(sid)
+        if preparation and preparation.get('cleanup_error') is not None:
+            raise RuntimeStartupError(
+                'Windows worker cleanup is unconfirmed; generation protection and '
+                'preparation ownership are retained. No new command was sent.'
+            ) from preparation['cleanup_error']
+
     async def start(self, session: dict, emit: Emitter, *, preserve_emit=False, guard=None, preserve_configuration=False):
         sid = session["id"]
         async with self._admission(sid):
@@ -359,6 +465,7 @@ class RuntimeManager:
             async with self._locks.setdefault(sid, asyncio.Lock()):
                 if self._closed:
                     raise RuntimeHostClosingError()
+                self._check_preparation_cleanup(sid)
                 row = self.workers.get(sid)
                 retirement = row.get('retirement_task') if row else None
                 stopping = row.get('stop_task') if row else None
@@ -399,6 +506,7 @@ class RuntimeManager:
         if self._closed:
             raise RuntimeHostClosingError()
         sid = session["id"]
+        self._check_preparation_cleanup(sid)
         self._check_execution(sid, session)
         configuration_revision = self._configuration_revision()
         self._retired.pop(sid, None)
@@ -424,7 +532,8 @@ class RuntimeManager:
         from .generation_leases import acquire
         reservation = None
         source_reservation = None
-        proc = lease = None
+        proc = lease = windows_owner = startup_stderr_task = None
+        startup_stderr = []
         if guard is not None: guard()
         preparation = {"stopped": self._closed, "shutdown": self._closed, "task": None, "started_at": time.monotonic()}
         self._preparations[sid] = preparation
@@ -463,15 +572,43 @@ class RuntimeManager:
                 # readers or a registered cleanup owner.
                 update_pending = generation != active_release(home).get('current')
                 if guard is not None: guard()
-                proc = await asyncio.create_subprocess_exec(*self._command(source_generation, home=home), stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=MAX_MESSAGE_BYTES,
-                    start_new_session=os.name != "nt", env=environment)
+                command = self._command(source_generation, home=home)
+                if _WINDOWS:
+                    from .windows_jobs import CleanupError, WindowsOwnedProcess
+                    try:
+                        job = await WindowsOwnedProcess.start(command, cwd=os.getcwd(), env=environment,
+                            trusted_python=getattr(sys, '_base_executable', None))
+                    except CleanupError as cleanup:
+                        # The primitive can retain a job before returning an
+                        # adapter. Its module list is not durable generation
+                        # protection: keep the host reservations and owner here.
+                        preparation.update(cleanup_error=cleanup, windows_job=cleanup.owner)
+                        raise
+                    windows_owner = _WindowsWorkerOwner(job)
+                    proc = windows_owner.process
+                    # Drain uv/import logs before the real worker handshake.
+                    startup_stderr_task = asyncio.create_task(self._drain_stderr(
+                        {'windows_owner': windows_owner, 'stderr': startup_stderr}))
+                    preparation["task"] = asyncio.create_task(windows_owner.identify(self.startup_timeout))
+                    try:
+                        await preparation["task"]
+                    except asyncio.CancelledError:
+                        if not preparation["stopped"]:
+                            raise
+                        raise RuntimeStartupError("Runtime preparation was stopped before worker identity verification.") from None
+                    finally:
+                        preparation["task"] = None
+                else:
+                    proc = await asyncio.create_subprocess_exec(*command, stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=MAX_MESSAGE_BYTES,
+                        start_new_session=True, env=environment)
                 if preparation["stopped"]:
                     raise RuntimeStartupError("Runtime preparation was stopped before input admission.")
                 lease = acquire(home, source_generation, proc.pid)
-                for candidate in (reservation, source_reservation):
-                    if candidate:
-                        candidate.unlink(missing_ok=True)
+                if windows_owner is None:
+                    for candidate in (reservation, source_reservation):
+                        if candidate:
+                            candidate.unlink(missing_ok=True)
             finally:
                 # This await still precedes registration. Cancellation here
                 # must enter the same cleanup path as qualification/spawn errors.
@@ -484,7 +621,15 @@ class RuntimeManager:
         except BaseException as exc:
             try:
                 if proc is not None and proc.returncode is None:
-                    await _terminate_unregistered(proc)
+                    if windows_owner is not None:
+                        await _terminate_unregistered(proc, windows_owner)
+                    else:
+                        await _terminate_unregistered(proc)
+            except BaseException as cleanup:
+                if windows_owner is None or proc.returncode is not None:
+                    raise
+                preparation.update(cleanup_error=cleanup, windows_job=windows_owner.job,
+                                   windows_owner=windows_owner)
             finally:
                 # Reaping can propagate a second cancellation after exit. Do
                 # not strand its lease, or release it before exit is confirmed.
@@ -493,6 +638,15 @@ class RuntimeManager:
                         lease.unlink(missing_ok=True)
                     except OSError:
                         pass  # An orphan lease is retained evidence, not an owner.
+                if startup_stderr_task is not None:
+                    startup_stderr_task.cancel()
+                    await asyncio.gather(startup_stderr_task, return_exceptions=True)
+            if preparation.get('cleanup_error') is not None:
+                await emit('runtime.error', {
+                    'sessionId': sid, 'errorType': 'WorkerCleanupError', 'phase': 'worker_startup',
+                    'error': 'Windows worker cleanup is unconfirmed; generation protection and preparation ownership are retained. No input was sent.',
+                })
+                raise preparation['cleanup_error']
             if preparation.get('shutdown'):
                 await emit('runtime.ended', {'sessionId': sid, 'status': 'interrupted', 'reason': 'shutdown'})
                 if isinstance(exc, asyncio.CancelledError) and asyncio.current_task().cancelling():
@@ -531,23 +685,33 @@ class RuntimeManager:
                 **diagnostic_reference(failure)})
             raise failure from exc
         finally:
-            self._preparations.pop(sid, None)
-            for candidate in (reservation, source_reservation):
-                if candidate:
-                    try:
-                        candidate.unlink(missing_ok=True)
-                    except OSError:
-                        pass  # Preserve the original failed setup diagnosis.
+            if preparation.get('cleanup_error') is not None:
+                # These host-PID leases protect both source generations even
+                # when the unverified worker PID cannot safely own a lease.
+                # No automatic retry/release: retained native cleanup failures
+                # require separate confirmed zero-process/I/O reconciliation.
+                preparation['generation_reservations'] = tuple(
+                    candidate for candidate in (reservation, source_reservation) if candidate)
+            else:
+                self._preparations.pop(sid, None)
+                for candidate in (reservation, source_reservation):
+                    if candidate:
+                        try:
+                            candidate.unlink(missing_ok=True)
+                        except OSError:
+                            pass  # Preserve the original failed setup diagnosis.
         row = {"process": proc, "emit": emit, "runtimeOwnerId": str(uuid.uuid4()), "configurationRevision": configuration_revision, "generation": generation, "source_generation": source_generation, "update_pending": update_pending, "ready": asyncio.get_running_loop().create_future(),
-               "pending": {}, "inflight": set(), "inputId": None, "closing": False, "stderr": [], "bridge_tasks": set(),
+               "pending": {}, "inflight": set(), "inputId": None, "closing": False, "stderr": startup_stderr, "bridge_tasks": set(),
                "started_at": time.monotonic(), "phase": "runtime-setup",
                "detail": "Preparing the pinned Amplifier runtime. First use may install dependencies."}
         self.workers[sid] = row
+        if windows_owner is not None:
+            row['windows_owner'] = windows_owner
         if session.get('bundleReplacement', {}).get('deferred'):
             row['configuration_guard'] = guard
         row['generation_lease'] = lease
         row["reader"] = asyncio.create_task(self._read(sid, row))
-        row["stderr_task"] = asyncio.create_task(self._drain_stderr(row))
+        row["stderr_task"] = startup_stderr_task or asyncio.create_task(self._drain_stderr(row))
         row["heartbeat"] = asyncio.create_task(self._progress(sid, row))
         # The worker restores normal history from its checkpoint. Sending the
         # browser's execution logs, catalogs and attachment history is redundant.
@@ -616,16 +780,22 @@ class RuntimeManager:
             "preparationProgress": True})
 
     async def _drain_stderr(self, row):
-        while line := await row["process"].stderr.readline():
+        stream = _worker_pipes(row).stderr
+        # Logs need no protocol-line semantics. Chunked reads also drain an
+        # unbroken/saturated stderr line without the StreamReader 64 KiB limit.
+        async def read():
+            return await (stream.read(4096) if row.get('windows_owner') else stream.readline())
+        while line := await read():
             # Keep diagnostics local and bounded; never stream arbitrary SDK logs
             # (which can contain prompts/credentials) into browser state.
             from .worker_diagnostics import redact_diagnostic
             row["stderr"].append(redact_diagnostic(line.decode(errors="replace"))[-2000:])
-            row["stderr"] = row["stderr"][-30:]
+            del row["stderr"][:-30]
 
     async def _write(self, row, data):
-        row["process"].stdin.write(encode_message(data))
-        await row["process"].stdin.drain()
+        stream = _worker_pipes(row).stdin
+        stream.write(encode_message(data))
+        await stream.drain()
 
     async def _bridge(self, sid, row, data, *, dequeued_ns=None):
         from .performance_diagnostics import PhaseTiming, BRIDGE_TIMING, timing_metadata, TIMING_ENABLED
@@ -704,7 +874,8 @@ class RuntimeManager:
         from .runtime_event_batches import (BufferedLines, EventSink, MAX_BYTES, ObservationTurns,
                                            finish_owned, observation, starting_observation, terminal)
         from . import performance_diagnostics
-        lines = BufferedLines(row['process'].stdout)
+        stdout = _worker_pipes(row).stdout
+        lines = BufferedLines(row['windows_owner'].stdout if row.get('windows_owner') else stdout)
         turns = ObservationTurns()
 
         def terminal_event(data):
@@ -876,6 +1047,14 @@ class RuntimeManager:
                         # worker. Bind configuration effects to the identity on
                         # this worker's own pipe, scoped to the started session.
                         identity = data.get("workerIdentity")
+                        owner = row.get('windows_owner')
+                        if owner is not None:
+                            if (not isinstance(identity, dict)
+                                    or identity.get('sessionId') != row.get('runtime_id')
+                                    or type(identity.get('pid')) is not int
+                                    or identity['pid'] != owner.process.pid):
+                                raise RuntimeError('Windows ready identity differs from its verified worker')
+                            owner.job.verify_member(owner.process.pid, owner.created)
                         if (isinstance(identity, dict)
                                 and identity.get("sessionId") == row.get("runtime_id")
                                 and type(identity.get("pid")) is int and identity["pid"] > 0):
@@ -984,7 +1163,7 @@ class RuntimeManager:
                             # chats cannot acquire that execution ownership.
                             normalized[1]['runtimeOwnerId'] = row['runtimeOwnerId']
                         await row["emit"](*normalized)
-            code = await row["process"].wait()
+            code = await _wait_worker(row)
             if not row["closing"] and not reported_error:
                 diagnostic = None
                 error = f"Amplifier worker exited (code {code}). Work was not replayed."
@@ -1010,16 +1189,31 @@ class RuntimeManager:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            cleanup_error = None
+            if row.get('windows_owner'):
+                # A malformed/oversized protocol cannot strand a live job after
+                # its sole stdout reader has stopped. Failure retains the owner.
+                try:
+                    await row['windows_owner'].close()
+                except Exception as cleanup:
+                    cleanup_error = cleanup
             error = f'Amplifier worker communication failed ({type(exc).__name__}). Work was not replayed.'
+            if cleanup_error is not None:
+                error += ' Windows worker cleanup is unconfirmed; ownership is retained.'
             if not row['closing']:
                 await row['emit']('runtime.error', {'sessionId':sid,'error':error,'errorType':'WorkerCommunicationError' if row['ready'].done() else 'RuntimeStartupError',
                     **({'phase': 'worker_startup'} if not row['ready'].done() else {})})
             if not row["ready"].done():
                 row["ready"].set_exception(RuntimeError(error))
+            if cleanup_error is not None:
+                raise cleanup_error
             # A reader/publication failure can skip the normal EOF path even
             # after the exact process has exited. Settle its routing authority
             # through the same owner-bound event; an exception alone is not
             # process-death evidence and must never terminate surviving work.
+            # The Windows observation publishes a returncode only after its
+            # owner proves zero processes AND finalized I/O; failed cleanup
+            # above must never reach this boundary.
             if row['process'].returncode is not None:
                 await self._execution_ended(sid, row, 'stopped' if row['closing'] else 'interrupted')
         finally:
@@ -1342,6 +1536,8 @@ class RuntimeManager:
 
     async def takeover(self, session, emit, expected_owner=None, timeout=30):
         """One deliberate request; a competing successor is never asked to yield."""
+        if _WINDOWS:
+            raise RuntimeError('Session handoff is unavailable on Windows. Stop the current owner before opening here.')
         from amplifier_foundation.session import SharedSessionStore, request_release
         row = self.workers.get(session['id'])
         if row and row.get('yielding'):
@@ -1419,6 +1615,8 @@ class RuntimeManager:
 
     async def quiesce_for_handoff(self, session, request_id, *, transfer_destination=None):
         """Save and release a known local writer before moving execution cwd."""
+        if _WINDOWS:
+            raise RuntimeError('Session handoff and transfer fencing are unavailable on Windows; no ownership was changed.')
         from amplifier_foundation.session import SharedSessionStore, SessionBusyError, request_release
         sid = session['id']
         store = SharedSessionStore(session['workspace'], session.get('runtimeSessionId') or session.get('nativeIdentity') or sid)
@@ -1572,6 +1770,8 @@ class RuntimeManager:
             raise ValueError("Shared-state request must be an object.")
         command = self._command()
         command[-1] = str(Path(__file__).with_name("shared_state_probe.py"))
+        if _WINDOWS:
+            return await self._windows_shared_state_probe(command, request)
         proc = await asyncio.create_subprocess_exec(
             *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=MAX_MESSAGE_BYTES,
@@ -1595,6 +1795,44 @@ class RuntimeManager:
                 proc.kill()
                 await proc.wait()
 
+    async def _windows_shared_state_probe(self, command, request):
+        """Finite read-only probe uses the same containment, never a PID kill."""
+        from .windows_jobs import WindowsOwnedProcess
+        from .host.config import worker_environment
+        job = await WindowsOwnedProcess.start(command, cwd=os.getcwd(),
+            env=worker_environment(), trusted_python=getattr(sys, '_base_executable', None))
+
+        async def discard_logs():
+            # Drain without accumulating SDK logs or requiring newline framing.
+            while await job.stderr.read(4096):
+                pass
+
+        logs = asyncio.create_task(discard_logs())
+        try:
+            async with asyncio.timeout(30):
+                job.stdin.write(encode_message(request))
+                await job.stdin.drain()
+                job.stdin.close()
+                line = await _BoundedWorkerLines(job.stdout).readline()
+                result = await job.wait()
+                await logs
+            if result.payload_returncode != 0:
+                raise RuntimeError('Shared-state probe did not exit successfully.')
+            response = json.loads(line) if line else None
+            if not isinstance(response, dict) or not isinstance(response.get("ok"), bool):
+                raise RuntimeError("Shared-state probe returned an invalid response.")
+            if not response["ok"]:
+                raise RuntimeError(response.get("error", {}).get("message") or "Shared-state probe failed.")
+            return response["result"]
+        except TimeoutError as exc:
+            raise RuntimeError("The shared-state probe timed out without changing session ownership.") from exc
+        finally:
+            try:
+                await job.close()
+            finally:
+                logs.cancel()
+                await asyncio.gather(logs, return_exceptions=True)
+
     async def message_worker(self, session_id, worker_id, text, input_id=None):
         return await self._request(session_id, "worker.message", worker_id=worker_id, text=text, input_id=input_id)
 
@@ -1605,6 +1843,7 @@ class RuntimeManager:
         return await self._request(session_id, "worker.stop", worker_id=worker_id)
 
     async def stop(self, session_id, *, reason="stopped"):
+        self._check_preparation_cleanup(session_id)
         self._retired.pop(session_id, None)
         preparation = self._preparations.get(session_id)
         if preparation:
@@ -1660,7 +1899,21 @@ class RuntimeManager:
         if not row["ready"].done():
             row["ready"].cancel()
         proc = row["process"]
-        if proc.returncode is None:
+        windows_owner = row.get('windows_owner')
+        if windows_owner is not None:
+            if proc.returncode is None:
+                try:
+                    # Bound the write as well as the wait: a full stdin pipe
+                    # must not prevent job cleanup after a real user Stop.
+                    async with asyncio.timeout(_WINDOWS_STOP_SECONDS):
+                        await self._write(row, {"op": "stop"})
+                        await windows_owner.wait()
+                except (TimeoutError, BrokenPipeError, ConnectionResetError):
+                    await windows_owner.close()
+            # Successful root exit alone is insufficient: require the retained
+            # owner's zero-process/I/O proof before freeing leases and rows.
+            await windows_owner.wait()
+        elif proc.returncode is None:
             try:
                 await self._write(row, {"op": "stop"})
                 await asyncio.wait_for(proc.wait(), 15)

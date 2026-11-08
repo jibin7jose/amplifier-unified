@@ -1,7 +1,7 @@
 """Provider and routing editors for shared Amplifier configuration."""
 from __future__ import annotations
 import copy
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import asyncio
 import json
 import signal
@@ -21,6 +21,8 @@ from .preferences import SettingsStore
 from .shared_settings import atomic_write, routing_dirs, overlay
 from .host.config import credential_environment_source, expand_environment, load_config, write_private
 from .bundles import SECRET_KEYS, validate_uri
+
+_WINDOWS = os.name == 'nt'
 
 KNOWN_PROVIDER_SOURCES=json.loads(Path(__file__).with_name('provider_sources.json').read_text())
 _SERVICE_NAMES = {row['module']: row['name'] for row in
@@ -474,14 +476,37 @@ class SetupManager:
     def _keys(self,updates):
         from .configuration_authority import check_current
         check_current()
+        if _WINDOWS:
+            from .host.config import validate_key_environment
+            validate_key_environment(updates)
         path=self.store.shared_home/'keys.env'
-        path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-        with FileLock(str(path)+'.lock',timeout=10):
-            lines=path.read_text().splitlines() if path.exists() else []
+        with ExitStack() as stack:
+            if _WINDOWS:
+                from .windows_files import directory
+                pinned=stack.enter_context(directory(path.parent,owned_root=self.store.shared_home,create=True))
+                # FileLock must not create an unvalidated public lock first.
+                # No replacement: another process may be using this lock.
+                # publish_private validates existing objects before collision.
+                try:pinned.publish_private(path.name+'.lock',b'',replace=False)
+                except FileExistsError:pass
+            else:
+                path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+            # Keep the directory pinned until after FileLock releases; serialize
+            # the complete read/merge/publication, not just the final rename.
+            stack.enter_context(FileLock(str(path)+'.lock',timeout=10))
+            if _WINDOWS:
+                try:lines=pinned.read_private(path.name,limit=1024*1024).decode('utf-8').splitlines()
+                except FileNotFoundError:lines=[]
+            else:
+                lines=path.read_text().splitlines() if path.exists() else []
             names=set(updates)
             lines=[line for line in lines if line.removeprefix('export ').split('=',1)[0].strip() not in names]
             lines.extend(name+'='+shlex.quote(value) for name,value in updates.items())
-            atomic_write(path,'\n'.join(lines)+'\n',private=True)
+            text='\n'.join(lines)+'\n'
+            if _WINDOWS:
+                pinned.publish_private(path.name,text.encode('utf-8'),replace=True)
+            else:
+                atomic_write(path,text,private=True)
         from .host.config import _KEY_FILE_VALUES
         _KEY_FILE_VALUES.update(updates)
         # A long-running backend must see edited keys immediately. Child host

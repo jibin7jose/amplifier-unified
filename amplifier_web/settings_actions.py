@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+import time
 import uuid
 
 from .settings_navigation import GLOBAL_PAGES, open_canvas, settings_state
@@ -121,6 +122,13 @@ def command(service, action, args, pending, command_id):
                   'editor': {key: draft[key] for key in ('id', 'module') if key in draft}, 'saved': False}
         if selected and selected['auth'] != 'signin':
             operation_id = (command_id or str(uuid.uuid4())) + ':credentials'
+            from .configuration_target import operation_key
+            key = operation_key(target_args, 'providers.credentials:' + selected['module'])
+            # Publish admission with the new editor, before its background read
+            # starts. An older same-module result must not appear as this choice.
+            state.setdefault('setup', {}).setdefault('operations', {})[key] = {
+                'phase': 'queued', 'error': None, 'commandId': operation_id,
+                'envVar': '', 'updatedAt': time.time(), 'configurationTarget': target}
             pending.append((service.management.command, ('providers.credentials',
                 {**target_args, 'module': selected['module']}, operation_id, None)))
             result['credentialCheck'] = {'action': 'providers.credentials', 'operationId': operation_id, 'status': 'pending'}

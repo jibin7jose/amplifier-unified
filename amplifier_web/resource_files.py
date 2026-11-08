@@ -154,12 +154,11 @@ def read_detached(source, *, max_bytes=None):
         if value['$blob'] != source.identity or source.directory is None:
             raise ValueError('Invalid artifact index')
         path = source.directory / (source.identity + '.json')
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        with os.fdopen(fd, 'rb') as stream:
+        with _open_blob(path) as stream:
             before = os.fstat(stream.fileno())
             if not stat.S_ISREG(before.st_mode) or (max_bytes is not None and before.st_size > max_bytes):
                 raise ValueError('Invalid or oversized artifact file.')
-            encoded = stream.read() if max_bytes is None else stream.read(max_bytes + 1)
+            encoded = stream.read(before.st_size + 1 if max_bytes is None else max_bytes + 1)
             after = os.fstat(stream.fileno())
             fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
             if len(encoded) != before.st_size or any(getattr(before, key) != getattr(after, key) for key in fields):
@@ -173,6 +172,23 @@ def read_detached(source, *, max_bytes=None):
 
 
 _EVIDENCE = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+
+
+def _open_blob(path):
+    if os.name == 'nt':
+        from .windows_read_files import open_file
+        return open_file(path)
+    return os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb')
+
+
+def _stream_signature(stream):
+    if os.name == 'nt':
+        from .windows_read_files import stream_signature
+        return stream_signature(stream)
+    info = os.fstat(stream.fileno())
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError('Artifact backing file is not regular.')
+    return tuple(getattr(info, key) for key in _EVIDENCE)
 
 
 def _blob_index(source):
@@ -201,6 +217,9 @@ def detached_signature(source):
     """Worker-only evidence for a previously validated exact Detached read."""
     if not _blob_index(source):
         return ('inline', source.identity)
+    if os.name == 'nt':
+        with _open_blob(source.directory / (source.identity + '.json')) as stream:
+            return _stream_signature(stream)
     info = (source.directory / (source.identity + '.json')).lstat()
     if not stat.S_ISREG(info.st_mode):
         raise ValueError('Artifact backing file is not regular.')
@@ -264,13 +283,10 @@ def project_detached(source, projector):
     blob = _blob_index(source)
     path = source.directory / (source.identity + '.json') if blob else None
     signature = detached_signature(source)
-    stream = (os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb')
-              if blob else _InlineStream(source.indexed))
-    with stream:
+    stream = _open_blob(path) if blob else _InlineStream(source.indexed)
+    with stream as stream:
         if blob:
-            before = os.fstat(stream.fileno())
-            if not stat.S_ISREG(before.st_mode) or signature != tuple(
-                    getattr(before, key) for key in _EVIDENCE):
+            if signature != _stream_signature(stream):
                 raise ValueError('Artifact changed before projection.')
         projection = projector(stream)
         stream.seek(0)
@@ -281,9 +297,7 @@ def project_detached(source, projector):
         if digest.hexdigest() != source.identity:
             raise ValueError('Artifact content conflicts with its identity.')
         if blob:
-            after = os.fstat(stream.fileno())
-            if (size != before.st_size or signature != tuple(
-                    getattr(after, key) for key in _EVIDENCE)
+            if (size != signature[2] or signature != _stream_signature(stream)
                     or detached_signature(source) != signature):
                 raise ValueError('Artifact changed during projection.')
     return projection, signature
@@ -356,6 +370,8 @@ def resolve(db, identity, value):
     if isinstance(value, dict) and set(value) == {'$blob'}:
         if value['$blob'] != identity:
             raise ValueError('Invalid artifact index')
+        if os.name == 'nt':
+            return read_detached(Detached(root(db), identity, json.dumps(value)))
         return json.loads((root(db) / (identity + '.json')).read_text())
     return value
 

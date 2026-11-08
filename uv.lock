@@ -219,7 +219,7 @@ source = { git = "https://github.com/microsoft/amplifier-lib-decisions?rev=main#
 [[package]]
 name = "amplifier-memory"
 version = "0.1.0"
-source = { git = "https://github.com/microsoft/amplifier-bundle-memory?rev=main#b011380b2edd2e7038051ab8ba7d665f752d8cc7" }
+source = { git = "https://github.com/microsoft/amplifier-bundle-memory?rev=main#5ac75ac85b9972e06936630e347023af107fd364" }
 dependencies = [
     { name = "amplifier-core" },
     { name = "amplifier-foundation" },
@@ -260,7 +260,7 @@ source = { git = "https://github.com/microsoft/amplifier-foundation?subdirectory
 [[package]]
 name = "amplifier-module-loop-live"
 version = "0.2.0"
-source = { git = "https://github.com/microsoft/amplifier-module-loop-live?rev=670f405f711658c3c38e81dbd50a35d3d8c2ac3c#670f405f711658c3c38e81dbd50a35d3d8c2ac3c" }
+source = { git = "https://github.com/microsoft/amplifier-module-loop-live?rev=d4b1e69e3222780ccebdfdb7c07915fdcd5d161f#d4b1e69e3222780ccebdfdb7c07915fdcd5d161f" }
 dependencies = [
     { name = "amplifier-module-loop-streaming" },
     { name = "jsonschema" },
@@ -330,6 +330,15 @@ dependencies = [
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
     { name = "python-xlib", marker = "sys_platform == 'linux'" },
     { name = "pyyaml" },
+]
+
+[[package]]
+name = "amplifier-module-tool-exec"
+version = "0.1.1"
+source = { git = "https://github.com/microsoft/amplifier-module-tool-exec?rev=f267548ccd1b38a236a46afb96252bb6dd474dcd#f267548ccd1b38a236a46afb96252bb6dd474dcd" }
+dependencies = [
+    { name = "amplifier-core" },
+    { name = "quickjs-ng" },
 ]
 
 [[package]]
@@ -409,6 +418,7 @@ dev = [
     { name = "amplifier-module-hook-context-intelligence" },
     { name = "amplifier-module-loop-live" },
     { name = "amplifier-module-provider-openai", extra = ["native"] },
+    { name = "amplifier-module-tool-exec" },
     { name = "amplifier-module-tool-filesystem" },
     { name = "amplifier-module-tool-skills" },
     { name = "hatchling" },
@@ -461,8 +471,9 @@ dev = [
     { name = "amplifier-module-context-managed", git = "https://github.com/microsoft/amplifier-bundle-context-managed?subdirectory=modules%2Fcontext-managed&rev=12166f8effb5e26737bb5f9f7885cbb9bd4cdf43" },
     { name = "amplifier-module-context-simple", git = "https://github.com/microsoft/amplifier-module-context-simple?rev=main" },
     { name = "amplifier-module-hook-context-intelligence", git = "https://github.com/microsoft/amplifier-bundle-context-intelligence?subdirectory=modules%2Fhook-context-intelligence&rev=a80ce69d0e96e9a343501f238dcd867350dd9aa2" },
-    { name = "amplifier-module-loop-live", git = "https://github.com/microsoft/amplifier-module-loop-live?rev=670f405f711658c3c38e81dbd50a35d3d8c2ac3c" },
+    { name = "amplifier-module-loop-live", git = "https://github.com/microsoft/amplifier-module-loop-live?rev=d4b1e69e3222780ccebdfdb7c07915fdcd5d161f" },
     { name = "amplifier-module-provider-openai", extras = ["native"], git = "https://github.com/microsoft/amplifier-module-provider-openai?rev=main" },
+    { name = "amplifier-module-tool-exec", git = "https://github.com/microsoft/amplifier-module-tool-exec?rev=f267548ccd1b38a236a46afb96252bb6dd474dcd" },
     { name = "amplifier-module-tool-filesystem", git = "https://github.com/microsoft/amplifier-module-tool-filesystem?rev=663f26a878ae71e136f439fa73ded52b2eb24174" },
     { name = "amplifier-module-tool-skills", git = "https://github.com/microsoft/amplifier-bundle-skills?subdirectory=modules%2Ftool-skills&rev=2f58408a879535df36da5c92d2b073f49271ade4" },
     { name = "hatchling", specifier = ">=1.27" },
@@ -2022,6 +2033,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8f/b2/7fc2931bfae0af02d5f53b174e9cf701adbb35f39d69c2af63d4a39f81a9/qrcode-8.2.tar.gz", hash = "sha256:35c3f2a4172b33136ab9f6b3ef1c00260dd2f66f858f24d88418a015f446506c", size = 43317, upload-time = "2025-05-01T15:44:24.726Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dd/b8/d2d6d731733f51684bbf76bf34dab3b70a9148e8f2cef2bb544fccec681a/qrcode-8.2-py3-none-any.whl", hash = "sha256:16e64e0716c14960108e85d853062c9e8bba5ca8252c0b4d0231b9df4060ff4f", size = 45986, upload-time = "2025-05-01T15:44:22.781Z" },
+]
+
+[[package]]
+name = "quickjs-ng"
+version = "0.18.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/38/96/bc69a8f0196b19b59a65bd5379e7526d4306ecda26bcc46f9173e89eceaa/quickjs_ng-0.18.0.1.tar.gz", hash = "sha256:b634f4c7b778a9986c2d4bbfee4a55adab873f5a20bf7ee067659d9037f4898a", size = 552901, upload-time = "2026-11-05T01:08:07.061Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/9f/2e9f70464bcb4dd6cbad4189b76104d90f40f9a2565e593410df5edbd571/quickjs_ng-0.18.0.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:58cd67634eabea316521430334be6b5719793c5ef7ccf901e07c676c3a77bfb2", size = 530365, upload-time = "2026-11-05T01:07:32.996Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/7d/b43684bbd264ddd86c0446e30c2584ef2986a901890fafc23b65a8301d4b/quickjs_ng-0.18.0.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3a821d014f4e115ee98caf96632deb17de4f0aa4811c224733afee44f5c51630", size = 2473211, upload-time = "2026-11-05T01:07:35.142Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/8e/dcb261024e37481466f6873431995082a9e119879fc0f8d86c0b3ce31f91/quickjs_ng-0.18.0.1-cp310-abi3-manylinux2014_i686.manylinux_2_17_i686.manylinux_2_28_i686.whl", hash = "sha256:b6711af4a97050338e3f0ebebe1a580444d1b0bd3f2ded5bb2bd9e43938a5bfe", size = 2417672, upload-time = "2026-11-05T01:07:37.043Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/d4/8a65e2e8778aebb9ede9ae32406f54a45f74b0300b5640cf468bf65659ae/quickjs_ng-0.18.0.1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:73aacdc5d46a7336caf59c929d7b7ec199a3d05163ac83eb7ef9b59cc80963ee", size = 2531426, upload-time = "2026-11-05T01:07:39.145Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/a7/b797b74fcfee2d6695c804f524f4b1fc78b37e1d937c6647aa32d587fe42/quickjs_ng-0.18.0.1-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:0b6e6b1c010d4886c3ebc899f8c80622cb07df00310b2b84104c3c17428ead79", size = 2457664, upload-time = "2026-11-05T01:07:40.992Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/4f/f0747d310dc9a0984d80914f347e41b1a718b6bcddefb870397c7e2f8776/quickjs_ng-0.18.0.1-cp310-abi3-musllinux_1_2_i686.whl", hash = "sha256:d62c8908f3e1d450d2630aabe25f4d39175df9aa23d674863a1f0daa90d2ca7b", size = 2446966, upload-time = "2026-11-05T01:07:43.046Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/72/84a0930603c261a9c8796a2fb07c8aababccaee95f083adddcb102c0a7b6/quickjs_ng-0.18.0.1-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:337ff6f4c7c9107a41101c56cdf75fcbf8e35d2697c0eb78ccf11aa850ff7e47", size = 2519399, upload-time = "2026-11-05T01:07:44.985Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/3f/73a0db3f2936f58103b243392132937dd7d9c0ef9039cb160a5b4565aeba/quickjs_ng-0.18.0.1-cp310-abi3-win32.whl", hash = "sha256:c5c17c496a4f395770d076e7e060c9e62a616341353dedd27b85ef3f453f75fb", size = 322962, upload-time = "2026-11-05T01:07:46.891Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/9a/5c0a200771d8ffdd7cef010e80d18897cd5b78355c0f059c7ad3fd4a75d2/quickjs_ng-0.18.0.1-cp310-abi3-win_amd64.whl", hash = "sha256:3e34d04041a19d1629c5d03745a778da1b83a3a0fc16a5051fba34271ed171a2", size = 396401, upload-time = "2026-11-05T01:07:48.5Z" },
 ]
 
 [[package]]

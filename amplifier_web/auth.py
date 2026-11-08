@@ -18,12 +18,30 @@ from aiohttp import web
 from filelock import FileLock
 
 from .deployment import validate_origin, write_private
+from . import browser_entry
 
 SESSION_COOKIE = "amplifier_unified_session"
 CSRF_COOKIE = "amplifier_unified_csrf"
+_WINDOWS = os.name == "nt"
+
+
+def validated_data_dir(data_dir: Path, *, create: bool = False) -> Path:
+    """Keep the original Windows spelling until the native boundary checks it."""
+    if not _WINDOWS:
+        return Path(data_dir).expanduser().resolve()
+    from . import windows_files
+    root = windows_files.address(data_dir)
+    with windows_files.directory(root, owned_root=root, create=create):
+        return root
 
 
 def auth_dir(data_dir: Path) -> Path:
+    if _WINDOWS:
+        from . import windows_files
+        root = windows_files.address(data_dir)
+        path = root / "config" / "auth"
+        with windows_files.directory(path, owned_root=root, create=True):
+            return path
     path = Path(data_dir).expanduser().resolve() / "config" / "auth"
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(path, 0o700)
@@ -53,17 +71,47 @@ def _read_or_create(path: Path) -> str:
         raise ValueError(f"Private credential is empty: {path}")
 
 
+def _windows_credential_value(content: bytes) -> str:
+    # The existing token_urlsafe(48) format, with one optional final LF.
+    if not re.fullmatch(rb"[A-Za-z0-9_-]{64}\n?", content):
+        raise ValueError("Existing Windows private credential is empty or malformed.")
+    return content.removesuffix(b"\n").decode("ascii")
+
+
+def _windows_credential(data_dir: Path, name: str) -> str:
+    from . import windows_files
+    root = windows_files.address(data_dir)
+    with windows_files.directory(root / "config" / "auth", owned_root=root, create=True) as pinned:
+        try:
+            return _windows_credential_value(pinned.read_private(name, limit=65))
+        except FileNotFoundError:
+            value = secrets.token_urlsafe(48)
+            try:
+                pinned.publish_private(name, (value + "\n").encode("ascii"), replace=False)
+            except FileExistsError:
+                # Only a clean no-replace collision converges. An uncertain
+                # publication/cleanup failure must propagate, not be replayed.
+                pass
+            return _windows_credential_value(pinned.read_private(name, limit=65))
+
+
 def session_secret(data_dir: Path) -> str:
+    if _WINDOWS:
+        return _windows_credential(data_dir, "session-secret")
     return _read_or_create(_secret_path(data_dir))
 
 
 def control_token(data_dir: Path) -> str:
     """Return the process-owner's local control token without displaying it."""
+    if _WINDOWS:
+        return _windows_credential(data_dir, "control-token")
     return _read_or_create(control_token_path(data_dir))
 
 
 def data_identity(data_dir: Path) -> str:
     """Return the stable, private-data-directory identity used by local clients."""
+    if _WINDOWS:
+        return hashlib.sha256(str(validated_data_dir(data_dir)).encode()).hexdigest()
     return hashlib.sha256(str(Path(data_dir).expanduser().resolve()).encode()).hexdigest()
 
 
@@ -74,7 +122,8 @@ def history_scope(secret: str, credential: str, data_dir: Path) -> str:
     a new sign-in, process owner, data root or secret gets a different one.
     Domain separation prevents this value from authenticating as a session.
     """
-    owner = os.geteuid() if hasattr(os, "geteuid") else getpass.getuser()
+    owner = (browser_entry.current_owner_sid() if _WINDOWS else
+             os.geteuid() if hasattr(os, "geteuid") else getpass.getuser())
     payload = json.dumps(["navigation-history-v1", owner,
                           data_identity(data_dir), credential], separators=(",", ":"))
     return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -208,6 +257,16 @@ async def auth_required(request: web.Request, handler):
     cross_site = request.headers.get("Sec-Fetch-Site") == "cross-site"
     if not extension and ((cross_site and not is_entry_navigation(request)) or not allowed_origin(request)):
         return web.json_response({"error": "Cross-origin requests are not permitted."}, status=403)
+    if request.path == browser_entry.ISSUE_PATH:
+        authorization = request.headers.get("Authorization", "")
+        if (request.method != "POST" or not authorization.startswith("Bearer ")
+                or not hmac.compare_digest(authorization[7:].encode(), request.app["control_token"].encode())):
+            return web.json_response({"error": "The owner control credential is required."}, status=403)
+        return await handler(request)
+    if request.path == browser_entry.REDEEM_PATH and request.method == "POST":
+        # Only this exact public mutation. The handler requires HTTPS, Origin
+        # and signed form CSRF before atomically consuming the one-use ticket.
+        return await handler(request)
     if extension and request.method == 'OPTIONS':
         return await handler(request)
     if ((request.path in {PREFIX, PREFIX + '/qr'} and request.method in {'GET', 'HEAD'})
@@ -218,7 +277,7 @@ async def auth_required(request: web.Request, handler):
     # Public, immutable UI resources only. Authentication still gates the SPA,
     # every API, and all user-authored files/canvas documents.
     public = {"/oauth/mcp/callback", "/oauth/mcp/complete", "/login", "/setup", "/api/ca", "/ca.crt", "/api/health",
-              "/manifest.webmanifest", "/sw.js", "/pwa.js", "/offline.html", "/app-pages.css", "/favicon.ico",
+              "/manifest.webmanifest", "/sw.js", "/pwa.js", "/offline.html", "/app-pages.css", "/favicon.ico", "/browser-entry.js",
               "/branding/favicons/favicon.ico", "/branding/favicons/favicon-32.png",
               "/branding/favicons/apple-touch-icon.png", "/branding/icons/amplifier-icon-128.png",
               "/branding/pwa/pwa-192.png", "/branding/pwa/pwa-512.png"}
@@ -280,7 +339,8 @@ async def login_page(request: web.Request) -> web.Response:
     # Preserve valid issuance for favicon redirects and concurrent login forms.
     if not _verified(secret, csrf, 900, "csrf"):
         csrf = new_csrf(secret)
-    page = (Path(__file__).parent / "static" / "login.html").read_text()
+    filename = "windows-login.html" if browser_entry.is_windows() else "login.html"
+    page = (Path(__file__).parent / "static" / filename).read_text(encoding="utf-8")
     next_path = html.escape(validate_next_path(request.query.get("next")), quote=True)
     error = "Could not sign in. Check your host username and password and try again." if request.query.get("error") else ""
     response = web.Response(text=page.replace("__CSRF__", csrf).replace("__NEXT__", next_path).replace("__ERROR__", error), content_type="text/html")
@@ -289,6 +349,8 @@ async def login_page(request: web.Request) -> web.Response:
 
 
 async def post_login(request: web.Request) -> web.Response:
+    if browser_entry.is_windows():
+        return web.Response(text=browser_entry.REOPEN, status=403)
     form = await request.post()
     if not authenticate_pam(str(form.get("username", "")), str(form.get("password", ""))):
         url = login_url(request.query.get("next"))

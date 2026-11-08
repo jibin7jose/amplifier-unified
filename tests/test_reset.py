@@ -208,6 +208,7 @@ def test_real_uv_repairs_modified_packages_and_missing_dependencies(tmp_path):
         "amplifier_web/host_dependencies.py": package.joinpath("host_dependencies.py").read_bytes(),
         "amplifier_web/__main__.py": "from .cli import main; main()\n",
         "amplifier_web/application_generations.py": "def delegate(): pass\n",
+        "amplifier_web/browser_entry.py": "def is_windows(): return False\n",
         "amplifier_web/deployment.py": "def load_server_config(*a, **kw): return {}\n",
         "amplifier_web/deployment_service.py": "# synthetic service module\n",
         "amplifier_web/host/__init__.py": "",

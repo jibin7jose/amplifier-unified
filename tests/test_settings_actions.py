@@ -12,6 +12,15 @@ from test_agent_canvas_scope import app, caller, command
 
 
 @pytest.fixture
+async def managed_app(app, monkeypatch):
+    from amplifier_web.management import Management
+
+    monkeypatch.setattr(Management, 'warm_providers', AsyncMock())
+    app.management = Management(app)
+    return app
+
+
+@pytest.fixture
 async def settings_app(app):
     previous = app.management
     checks, arrived = [], asyncio.Event()
@@ -75,6 +84,10 @@ async def test_select_queues_exact_read_only_owner_and_replays_once(settings_app
     assert result['result']['saved'] is False
     assert result['result']['credentialCheck'] == {
         'action': 'providers.credentials', 'operationId': 'select-openai:credentials', 'status': 'pending'}
+    from amplifier_web.configuration_target import operation_key
+    queued = app.state['setup']['operations'][operation_key(
+        {'configurationTarget': target}, 'providers.credentials:provider-openai')]
+    assert queued['phase'] == 'queued' and queued['commandId'] == 'select-openai:credentials'
     assert not any(key in json.dumps(result) for key in ('api_key', 'apiKey', 'privateKey'))
     view = caller_view(app)
     draft = view['aiConnectionEditor'] if owner == 'global' else view['configurationDrafts']['workspace:' + workspace_id]['aiConnectionEditor']
@@ -88,6 +101,125 @@ async def test_select_queues_exact_read_only_owner_and_replays_once(settings_app
     assert again['duplicate'] and again['result'] == result['result']
     assert len(app.settings_test_checks) == 1 and app.state['revision'] == revision
     assert draft['id'] == identity
+
+
+@pytest.mark.parametrize('available', [False, True])
+@pytest.mark.parametrize('route', ['browser', 'agent'])
+async def test_select_completes_real_credential_read_for_global_owner(managed_app, monkeypatch, available, route):
+    """Exercise the real management/SetupManager path, not just queue admission."""
+    from amplifier_web.setup import SetupManager
+
+    app = managed_app
+    sentinel = 'synthetic-onboarding-credential-never-a-real-key'
+    if available:
+        monkeypatch.setenv('OPENAI_API_KEY', sentinel)
+    else:
+        monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    original = app.management.command
+    completed = asyncio.Event()
+
+    async def observe(action, *args, **kwargs):
+        try:
+            return await original(action, *args, **kwargs)
+        finally:
+            if action == 'providers.credentials':
+                completed.set()
+
+    monkeypatch.setattr(app.management, 'command', observe)
+    probe = AsyncMock(side_effect=AssertionError('Credential discovery must not call a provider'))
+    monkeypatch.setattr(SetupManager, 'probe', probe)
+    with app.clients.bind('caller'):
+        queue = app.subscribe()
+    try:
+        if route == 'agent':
+            receipt = await agent(app, 'settings.connection.select',
+                                  {'module': 'provider-openai'}, 'normal-selection')
+        else:
+            with app.clients.bind('caller'):
+                receipt = await app.dispatch('settings.connection.select',
+                    {'module': 'provider-openai', 'configurationTarget': {'kind': 'global'}},
+                    command_id='normal-selection')
+        check_id = receipt['result']['credentialCheck']['operationId']
+        await asyncio.wait_for(completed.wait(), 2)
+        setup = app.state['setup']
+        check = setup['credentialCheck']
+        assert setup['configurationTarget'] == {'kind': 'global'}
+        assert check['module'] == 'provider-openai' and check['checkedAt'] > 0
+        assert check['available'] is available
+        assert check['commandId'] == check_id
+        operation = setup['operations']['global\nproviders.credentials:provider-openai']
+        assert operation['phase'] == 'ready' and operation['commandId'] == check_id
+        assert operation['configurationTarget'] == {'kind': 'global'}
+        before = copy.deepcopy(setup)
+        # Ordinary state reads cannot silently reset a completed configuration owner.
+        with app.clients.bind('caller'):
+            app.browser_state()
+        await app.app_bridge('get_state', {'path': '/setup', 'clientId': 'caller'}, caller(app))
+        assert app.state['setup'] == before
+        assert sentinel not in json.dumps(app.state)
+        assert caller_view(app)['aiConnectionEditor']['saved'] is False
+        probe.assert_not_called()
+    finally:
+        app.unsubscribe(queue)
+
+
+async def test_select_credential_failure_is_an_error_not_a_negative_check(managed_app, monkeypatch):
+    from amplifier_web.setup import SetupManager
+
+    app = managed_app
+    def refused(*args, **kwargs):
+        raise ValueError('Synthetic private-store refusal')
+
+    monkeypatch.setattr(SetupManager, 'config', refused)
+    # UI admission is separate from the completed management command.
+    with app.clients.bind('caller'):
+        receipt = await app.dispatch('settings.connection.select',
+            {'module': 'provider-openai', 'configurationTarget': {'kind': 'global'}})
+    identity = receipt['result']['credentialCheck']['operationId']
+    for _ in range(100):
+        operation = app.state.get('setup', {}).get('operations', {}).get(
+            'global\nproviders.credentials:provider-openai', {})
+        if operation.get('phase') == 'error':
+            break
+        await asyncio.sleep(.01)
+    assert operation['commandId'] == identity
+    assert operation['phase'] == 'error'
+    assert operation['error'] == 'Synthetic private-store refusal'
+    assert 'credentialCheck' not in app.state['setup']
+
+
+async def test_credential_read_keeps_its_owner_across_other_setup_publications(managed_app, monkeypatch):
+    from amplifier_web.configuration_target import state_for
+    from amplifier_web.setup import SetupManager
+
+    app = managed_app
+    original = SetupManager.perform
+    entered, finish = asyncio.Event(), asyncio.Event()
+
+    async def delayed(self, action, args):
+        if action == 'providers.credentials':
+            entered.set()
+            await finish.wait()
+        return await original(self, action, args)
+
+    monkeypatch.setattr(SetupManager, 'perform', delayed)
+    monkeypatch.setenv('OPENAI_API_KEY', 'synthetic-owner-isolation-key')
+    args = {'module': 'provider-openai', 'configurationTarget': {'kind': 'global'}}
+    task = asyncio.create_task(app.management.command('providers.credentials', args, 'owned-check'))
+    await asyncio.wait_for(entered.wait(), 2)
+    # A composer read with no explicit owner can publish while Settings waits.
+    state_for(app, 'setup', {})['credentialCheck'] = {
+        'module': 'provider-openai', 'available': False, 'checkedAt': 1}
+    finish.set()
+    await asyncio.wait_for(task, 2)
+    setup = app.state['setup']
+    assert setup['configurationTarget'] == {'kind': 'global'}
+    assert setup['credentialCheck']['available'] is True
+    assert setup['operations']['global\nproviders.credentials:provider-openai']['phase'] == 'ready'
+    # Unscoped composer results are not cached as a Settings owner.
+    assert 'credentialCheck' not in state_for(app, 'setup', {})
+    restored = state_for(app, 'setup', args)
+    assert restored['credentialCheck']['available'] is True
 
 
 async def test_installed_decision_service_uses_scoped_editor_without_chat_routing(settings_app, monkeypatch):

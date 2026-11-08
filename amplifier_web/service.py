@@ -3326,7 +3326,12 @@ class AppService:
                     mime = 'application/zip' if zipped else 'text/css'
                     filename = diagnostic_result['filename'] if zipped or args.get('id') else 'amplifier-skin.css'
                 else:
-                    content = json.dumps(self.state if action == 'state.export' else self._session(args['id']), indent=2)
+                    if action == 'session.export':
+                        from .work_diagnostics import export_session
+                        source = self._session(args['id'], hydrate=False)
+                        content = json.dumps(export_session(self, source), indent=2)
+                    else:
+                        content = json.dumps(self.state, indent=2)
                     mime, filename = 'application/json', 'amplifier-export.json'
                 effects.append({"type": "download", "filename": filename, "mime": mime, "mimeType": mime, "content": content})
             elif action == "attachment.add":

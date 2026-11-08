@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 from .event_log_view import EventIndex, EventLogView, event_path
 from .performance_diagnostics import PerformanceDiagnostics
-from .session_files import project_slug
+from .session_files import project_slug, source_change_time
 
 SCHEMA = 1
 MAX_MODELS = 6
@@ -58,7 +58,7 @@ def source_stamp(path):
         info = Path(path).stat()
     except FileNotFoundError:
         return None
-    return ((info.st_dev, info.st_ino), info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    return ((info.st_dev, info.st_ino), info.st_size, info.st_mtime_ns, source_change_time(info))
 
 
 def stable_sources(revisions):

@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import re
 
-from .deployment import write_private
+from .host.config import write_private
 
 REMEDIATION = {
     'invalid_package_layout': 'Check the module package layout and Python package files.',

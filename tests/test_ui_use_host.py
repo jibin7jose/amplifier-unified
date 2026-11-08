@@ -52,6 +52,40 @@ async def test_stop_survives_service_restart_and_blocks_before_browser_start(hos
     assert not UIUse(host.service,host.connections).stopped
 
 
+def test_private_preferences_and_stop_use_the_service_owned_root(host, monkeypatch):
+    from amplifier_web import ui_use
+    original, writes = ui_use.write_private, []
+    def private(path, text, *, owned_root):
+        assert owned_root == host.service.data_dir
+        writes.append(path)
+        original(path, text, owned_root=owned_root)
+    monkeypatch.setattr(ui_use, 'write_private', private)
+    host.configure('a1', {'selection': 'standard'})
+    host.stop('a1', True)
+    rebuilt = UIUse(host.service, host.connections)
+    assert rebuilt.effective('a1')['selection'] == 'standard'
+    assert rebuilt.stopped == {'a1'}
+    assert writes == [host.path, host.stop_path]
+
+
+async def test_private_stop_refusal_still_blocks_live_input_and_cancels_pending(host, monkeypatch):
+    from amplifier_web import ui_use
+    cancelled = []
+    host.connections.cancel = cancelled.append
+    host.pending['a1'] = {'first', 'second'}
+    def refuse(*args, **kwargs):
+        raise PermissionError('Synthetic unsafe private root')
+    monkeypatch.setattr(ui_use, 'write_private', refuse)
+    with pytest.raises(PermissionError):
+        host.stop('a1', True)
+    assert set(cancelled) == {'first', 'second'}
+    assert (await host.call('a1', 'browser', {'action': 'open', 'url': 'https://example.test'}))['status'] == 'denied'
+    with pytest.raises(PermissionError):
+        host.stop('a1', False)
+    assert host.stopped == {'a1'}
+    assert not host.browsers
+
+
 async def test_live_preference_only_overrides_ordinary_selection_not_mounted_bindings(host):
     assert await host.call('a1','configuration',{'surface':'browser'})=={'stopped':False}
     host.configure('a1',{'scope':'chat','selection':'standard'})

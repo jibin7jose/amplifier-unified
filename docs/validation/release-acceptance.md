@@ -62,6 +62,43 @@ they expect, any help requested, and whether they can find their result again.
 Self-testing by someone familiar with the app is valuable platform evidence;
 label it separately from an uncoached first-use observation.
 
+## Native Windows candidate checks
+
+Status: **pending implementation and native execution**. This section is the
+qualification rubric for the [native setup design](../design/native-windows-installation.md),
+not instructions to install a currently supported Windows backend.
+Keep native Windows results separate from WSL and from a Windows browser
+connected to a Linux backend.
+
+1. On a fresh, non-administrator Windows 11 x64 account without WSL, Python,
+   uv, Git or compilers, run the candidate's PowerShell setup. Record every extra
+   action and time to authenticated entry and first response. Repeat with Python
+   3.15 already installed; verify the candidate selects its qualified Python
+   without changing the system installation. Check both PowerShell 5.1 and 7.
+2. Test owner sign-in for local, Microsoft/Hello and Entra account classes.
+   Reject anonymous, other-user, expired, replayed and cross-origin grants.
+   A second ordinary account must not read credentials or private temporary
+   files. Record untested account classes rather than inferring coverage.
+3. Create a workspace under spaces/Unicode, attach a synthetic document, run a
+   real default file/tool task, save and reopen an output. Check Unicode worker
+   messages, large bounded messages, EOF and Stop. Race independent writers;
+   exactly one may own the conversation. Test junction/reparse replacement.
+4. Close the browser and terminal; verify work continues while signed in.
+   Check logon startup, explicit stop/restart, host crash and owned grandchildren.
+   Passive status/retention inspection must leave a sentinel process alive.
+   After cleanup is confirmed, no owned descendants remain; unrelated processes
+   survive. Sign-out behavior must match the accepted deployment lifetime.
+5. Re-run setup, upgrade and force a candidate failure/rollback. Preserve exact
+   data identity, chats, credentials, drafts and unknown-effect receipts without
+   replay. Verify reset and uninstall affect only owned program/startup entries.
+   Run affected Linux, WSL and macOS startup/health/runtime regression checks.
+
+Record pass/fail/not tried against exact artifacts and resolved dependency graphs.
+No compiler invocation, disabled ownership lock, broad ACL, unauthenticated
+loopback shortcut, or missing optional controller may be hidden behind a successful
+package install. Mocked tests and an existing developer Windows account do not
+establish the clean-machine result.
+
 ## Result record
 
 Use GitHub aliases or anonymous tester labels. Include platform/OS version,

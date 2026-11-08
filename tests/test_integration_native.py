@@ -21,8 +21,9 @@ def test_integration_project_preserves_declared_runtime_and_host_test_inputs():
     assert set(runtime["project"]["dependencies"]) <= set(prepared["project"]["dependencies"])
     dev = host["dependency-groups"]["dev"]
     fixture = [item for item in dev if canonicalize_name(Requirement(item).name)
-               in {"amplifier-module-tool-filesystem", "amplifier-module-context-managed"}]
-    assert len(fixture) == 2
+               in {"amplifier-module-tool-filesystem", "amplifier-module-context-managed",
+                   "amplifier-module-tool-exec"}]
+    assert len(fixture) == 3
     assert any("@663f26a878ae71e136f439fa73ded52b2eb24174" in item for item in fixture)
     assert set(dev) - set(fixture) <= set(prepared["project"]["dependencies"])
     filesystem = [item for item in prepared["project"]["dependencies"]
@@ -33,6 +34,10 @@ def test_integration_project_preserves_declared_runtime_and_host_test_inputs():
                if canonicalize_name(Requirement(item).name) == "amplifier-module-context-managed"]
     assert context == [
         "amplifier-module-context-managed @ git+https://github.com/microsoft/amplifier-bundle-context-managed@main#subdirectory=modules/context-managed"]
+    executor = [item for item in prepared["project"]["dependencies"]
+                if canonicalize_name(Requirement(item).name) == "amplifier-module-tool-exec"]
+    assert executor == [
+        "amplifier-module-tool-exec @ git+https://github.com/microsoft/amplifier-module-tool-exec@main"]
     assert not set(fixture) & set(prepared["project"]["dependencies"])
     for name, source in runtime["tool"]["uv"]["sources"].items():
         assert prepared["tool"]["uv"]["sources"][name] == source
@@ -91,6 +96,29 @@ def test_native_context_projection_retains_current_lane_without_mutating_fixture
 ])
 def test_native_context_projection_refuses_unexpected_fixture_policy(requirement):
     with pytest.raises(ValueError, match="Review the host context-managed fixture source"):
+        integration_dev_dependencies([requirement])
+
+
+@pytest.mark.parametrize("revision", ["main", "f267548ccd1b38a236a46afb96252bb6dd474dcd"])
+@pytest.mark.parametrize("name", ["amplifier-module-tool-exec", "Amplifier_Module_Tool_Exec"])
+def test_native_exec_projection_keeps_current_lane_and_preserves_host_pin(revision, name):
+    dependencies = ["pytest>=8", name + " @ git+https://github.com/microsoft/"
+                    "amplifier-module-tool-exec@" + revision, "unrelated>=1"]
+    original = dependencies.copy()
+    assert integration_dev_dependencies(dependencies) == [dependencies[0], dependencies[2]]
+    assert dependencies == original
+
+
+@pytest.mark.parametrize("requirement", [
+    "amplifier-module-tool-exec @ git+https://example.invalid/other-owner@main",
+    "amplifier-module-tool-exec>=1",
+    "amplifier-module-tool-exec @ file:///unreviewed",
+    "amplifier-module-tool-exec[extra] @ git+https://github.com/microsoft/amplifier-module-tool-exec@main",
+    "amplifier-module-tool-exec @ git+https://github.com/microsoft/amplifier-module-tool-exec@main ; python_version >= '3.13'",
+    "amplifier-module-tool-exec @ git+https://github.com/microsoft/amplifier-module-tool-exec@unreviewed-branch",
+])
+def test_native_exec_projection_refuses_unexpected_fixture_policy(requirement):
+    with pytest.raises(ValueError, match="Review the host exec fixture source"):
         integration_dev_dependencies([requirement])
 
 

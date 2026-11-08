@@ -38,13 +38,14 @@ REQUIRED_MODULES = (
 def integration_dev_dependencies(dependencies: list[str]) -> list[str]:
     """Keep the native lane's current module sources, not host fixture pins.
 
-    Host skills and recovery tests deliberately pin filesystem/context-managed.
+    Host skills and recovery tests deliberately pin filesystem/context-managed/exec.
     That separate graph remains unchanged; this owner tests current sources.
     Refuse an unexpected source rather than silently discard its policy.
     """
     fixture_sources = {
         "amplifier-module-tool-filesystem": ("filesystem", r"amplifier-module-tool-filesystem@(?:main|[0-9a-f]{40})"),
         "amplifier-module-context-managed": ("context-managed", r"amplifier-bundle-context-managed@(?:main|[0-9a-f]{40})#subdirectory=modules/context-managed"),
+        "amplifier-module-tool-exec": ("exec", r"amplifier-module-tool-exec@(?:main|[0-9a-f]{40})"),
     }
     result = []
     for value in dependencies:

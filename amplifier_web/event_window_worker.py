@@ -23,6 +23,12 @@ class WindowModel:
             raise ValueError('Unknown Work window operation')
         except StaleWindow:
             return {'status': 'retry', 'reason': 'source_changed'}
+        except (MemoryError, InterruptedError):
+            raise
+        except (OSError, ValueError, ImportError) as error:
+            from .work_diagnostics import failure
+            return {'status': 'retry', 'reason': 'worker_failed',
+                    'diagnostic': failure(error)}
 
 
 if __name__ == '__main__':

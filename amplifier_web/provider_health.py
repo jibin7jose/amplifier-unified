@@ -24,7 +24,8 @@ def path(home, identity):
 
 
 def record(home, identity, fingerprint, *, authentication_required):
-    write_private(path(home, identity), json.dumps({'generation':fingerprint, 'authenticationRequired':authentication_required}))
+    write_private(path(home, identity), json.dumps({'generation':fingerprint, 'authenticationRequired':authentication_required}),
+                  owned_root=Path(home))
 
 
 def issue(home, identity, module, config):

@@ -416,7 +416,15 @@ class UpdateManager:
         self.service = service
         self.home = service.data_dir
         self.directory = self.home / 'updates'
-        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name == 'nt':
+            # Worker generation leases share this parent. A mode-only mkdir
+            # does not bind its owner to TokenUser; create privately BEFORE
+            # any update or lease payload, and refuse unsafe existing trees.
+            from .windows_files import directory
+            with directory(self.directory, owned_root=self.home, create=True):
+                pass
+        else:
+            self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.lock = asyncio.Lock()
         self.inventory = []
         from .update_checks import CheckCache

@@ -46,6 +46,12 @@ def definitions(schema,string):
 
 @contextmanager
 def workspace_file(root,value):
+    if os.name == 'nt':
+        from .windows_read_files import open_file, workspace_path
+        path=workspace_path(root,value)
+        with open_file(path) as stream:
+            yield stream,str(path),path.name
+        return
     root=Path(root).resolve()
     path=Path(value).expanduser()
     path=(path if path.is_absolute() else root/path).resolve()

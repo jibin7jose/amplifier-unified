@@ -1,6 +1,4 @@
 """Read positive delivery evidence without treating missing history as non-delivery."""
-from amplifier_foundation.session.history import SessionHistoryStore
-from amplifier_foundation.session.jsonl import TranscriptIndex
 
 
 def find_message(session, input_id):
@@ -20,6 +18,8 @@ def contains_input(messages, input_id):
 
 
 def saved_delivery(session, input_id):
+    from amplifier_foundation.session.history import SessionHistoryStore
+    from amplifier_foundation.session.jsonl import TranscriptIndex
     from .session_files import sessions_dir, validate_id
     identity = session.get('runtimeSessionId') or session.get('nativeIdentity') or session['id']
     validate_id(identity)

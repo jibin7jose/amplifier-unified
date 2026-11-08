@@ -22,6 +22,260 @@ SCHEMA = {"fields": [
 ]}
 
 
+@pytest.fixture
+def windows_loaded_keys(monkeypatch):
+    """Model the private reader with module-local os/env views, never Win32."""
+    from contextlib import contextmanager
+    from pathlib import PureWindowsPath
+    from amplifier_web import windows_files
+    from amplifier_web.host import config
+
+    state = SimpleNamespace(
+        path=PureWindowsPath(r"C:\Users\Fixture\.amplifier\keys.env"),
+        content=b"FILE_MANAGED=refreshed\nNEW_KEY=synthetic-new\n",
+        failure=None, events=[], pinned=False,
+        environment={
+            "FILE_MANAGED": "previous", "REMOVED": "old-removed",
+            "OVERRIDDEN": "explicit-override", "EXTERNAL": "explicit-external",
+        },
+        cache={"FILE_MANAGED": "previous", "REMOVED": "old-removed", "OVERRIDDEN": "old-file"},
+    )
+    state.config = config
+    split = config.shlex.split
+
+    def unchanged():
+        assert state.environment == state.before_environment
+        assert state.cache == state.before_cache
+
+    def address(value):
+        unchanged()
+        state.events.append(("address", str(value)))
+        if state.failure == "address-alias":
+            raise ValueError("unsafe Windows private-file component")
+        return PureWindowsPath(value)
+
+    class Pinned:
+        def read_private(self, name, *, limit):
+            unchanged()
+            assert state.pinned and name == "keys.env" and limit == 1024 * 1024
+            state.events.append(("read", name, limit))
+            if state.failure == "missing-file":
+                raise FileNotFoundError(name)
+            if state.failure in {"file-acl", "file-alias"}:
+                raise PermissionError("unsafe existing private file")
+            if len(state.content) > limit:
+                raise ValueError("Windows private file exceeds read limit")
+            return state.content
+
+    @contextmanager
+    def directory(path, *, owned_root, create=False):
+        unchanged()
+        assert path == owned_root == state.path.parent and create is False
+        state.events.append("directory-open")
+        if state.failure == "missing-directory":
+            raise FileNotFoundError(str(path))
+        if state.failure == "directory-acl":
+            raise PermissionError("unsafe existing private directory")
+        state.pinned = True
+        try:
+            yield Pinned()
+        finally:
+            unchanged()
+            state.pinned = False
+            state.events.append("directory-close")
+            if state.failure == "close":
+                raise OSError("injected pin close failure")
+
+    def parse(value, **kwargs):
+        # Each line, including a late malformed one, must parse before mutation.
+        unchanged()
+        assert not state.pinned
+        state.events.append("parse")
+        return split(value, **kwargs)
+
+    def load():
+        state.before_environment = dict(state.environment)
+        state.before_cache = dict(state.cache)
+        config._load_keys(state.path)
+
+    def no_native_api():
+        pytest.fail("model must never call a native Windows API")
+
+    # Do not patch the process-wide os.name/environ (Path and pytest use them).
+    monkeypatch.setattr(config, "os", SimpleNamespace(name="nt", environ=state.environment))
+    monkeypatch.setattr(config, "shlex", SimpleNamespace(split=parse))
+    monkeypatch.setattr(config, "_KEY_FILE_VALUES", state.cache)
+    monkeypatch.setattr(windows_files, "address", address)
+    monkeypatch.setattr(windows_files, "directory", directory)
+    monkeypatch.setattr(windows_files, "_API", no_native_api)
+    state.load = load
+    return state
+
+
+def test_windows_load_keys_private_utf8_read_refreshes_only_after_whole_parse(windows_loaded_keys):
+    state = windows_loaded_keys
+    state.content = (
+        "# synthetic credentials only\nexport FILE_MANAGED='fixture clé 東京'\n"
+        "NEW_KEY='fixture with spaces' # ignored comment\n"
+        "EXTERNAL=file-shadow\nOVERRIDDEN=file-shadow\n"
+    ).encode("utf-8")
+    state.load()
+    assert state.environment == {
+        "FILE_MANAGED": "fixture clé 東京", "NEW_KEY": "fixture with spaces",
+        "EXTERNAL": "explicit-external", "OVERRIDDEN": "explicit-override",
+    }
+    assert state.cache == {
+        "FILE_MANAGED": "fixture clé 東京", "NEW_KEY": "fixture with spaces",
+        "OVERRIDDEN": "old-file",
+    }
+    assert state.events == [
+        ("address", str(state.path)), "directory-open",
+        ("read", "keys.env", 1024 * 1024), "directory-close",
+        "parse", "parse", "parse", "parse",
+    ]
+    assert not state.pinned
+
+    # A second validated snapshot refreshes file-managed values, not external ones.
+    state.content = b"FILE_MANAGED=second\nEXTERNAL=second-shadow\nOVERRIDDEN=second-shadow\n"
+    state.load()
+    assert state.environment == {
+        "FILE_MANAGED": "second", "EXTERNAL": "explicit-external",
+        "OVERRIDDEN": "explicit-override",
+    }
+    assert state.cache == {"FILE_MANAGED": "second", "OVERRIDDEN": "old-file"}
+
+
+@pytest.mark.parametrize("missing", ["missing-directory", "missing-file"])
+def test_windows_load_keys_missing_storage_is_empty_without_creation(windows_loaded_keys, missing):
+    state = windows_loaded_keys
+    state.failure = missing
+    state.load()
+    assert state.environment == {
+        "EXTERNAL": "explicit-external", "OVERRIDDEN": "explicit-override",
+    }
+    assert state.cache == {"OVERRIDDEN": "old-file"}
+    assert "parse" not in state.events
+    if missing == "missing-directory":
+        assert not any(event[0] == "read" for event in state.events if isinstance(event, tuple))
+    assert not state.pinned
+
+
+@pytest.mark.parametrize("failure", [
+    "address-alias", "directory-acl", "file-acl", "file-alias",
+    "utf8", "parse", "read-limit", "close",
+])
+def test_windows_load_keys_refusal_preserves_environment_and_cache(windows_loaded_keys, failure):
+    state = windows_loaded_keys
+    if failure == "utf8":
+        state.content += b"# invalid UTF-8: \xff\n"
+    elif failure == "parse":
+        state.content += b"BROKEN='unterminated\n"
+    elif failure == "read-limit":
+        state.content += b"#" * (1024 * 1024)
+    state.failure = failure
+    expected_error = {
+        "address-alias": ValueError, "directory-acl": PermissionError,
+        "file-acl": PermissionError, "file-alias": PermissionError,
+        "utf8": UnicodeDecodeError, "parse": ValueError,
+        "read-limit": ValueError, "close": OSError,
+    }[failure]
+
+    with pytest.raises(expected_error):
+        state.load()
+
+    assert state.environment == state.before_environment
+    assert state.cache == state.before_cache
+    if failure == "parse":
+        assert state.events.count("parse") == 3  # No early refresh/add/remove.
+    else:
+        assert "parse" not in state.events
+    assert not state.pinned
+
+
+def test_windows_load_keys_refuses_other_shared_filenames(windows_loaded_keys):
+    state = windows_loaded_keys
+    state.path = state.path.with_name("settings.yaml")
+    with pytest.raises(ValueError, match="require keys.env"):
+        state.load()
+    assert state.events == [("address", str(state.path))]
+    assert state.environment == state.before_environment
+    assert state.cache == state.before_cache
+
+
+def test_windows_load_keys_invalid_environment_keeps_previous_batch(windows_loaded_keys):
+    state = windows_loaded_keys
+    class Environment(dict):
+        def __setitem__(self, name, value):
+            if '\x00' in value:
+                raise ValueError('embedded null character')
+            super().__setitem__(name, value)
+    state.environment = Environment(state.environment)
+    state.config.os.environ = state.environment
+    state.content = b"ADDED=valid-first\nFILE_MANAGED='invalid\x00value'\n"
+    with pytest.raises(ValueError, match='Invalid Windows'):
+        state.load()
+    assert state.environment == state.before_environment
+    assert state.cache == state.before_cache
+
+
+@pytest.mark.parametrize("legacy_home", [None, r"C:\LegacyOwner\Shared"])
+def test_windows_load_keys_load_config_preserves_declared_shared_address(
+        windows_loaded_keys, tmp_path, monkeypatch, legacy_home):
+    state = windows_loaded_keys
+    from pathlib import PureWindowsPath
+    declared = str(state.path.parent)
+    state.environment["AMPLIFIER_HOME"] = declared
+    if legacy_home is not None:
+        state.path = PureWindowsPath(legacy_home) / "keys.env"
+    state.before_environment = dict(state.environment)
+    state.before_cache = dict(state.cache)
+
+    def no_resolved_home():
+        pytest.fail("resolving amplifier_home must not precede the private reader")
+
+    def read_config(workspace, **kwargs):
+        assert workspace == tmp_path.resolve()
+        assert kwargs["shared_home"] == state.path.parent
+        assert state.environment["FILE_MANAGED"] == "refreshed"
+        return kwargs
+
+    monkeypatch.setattr(state.config, "amplifier_home", no_resolved_home)
+    monkeypatch.setattr(state.config, "read_config", read_config)
+    result = state.config.load_config(tmp_path, home=tmp_path / "app", legacy_home=legacy_home)
+    assert result["shared_home"] == state.path.parent
+    assert state.events[:2] == [
+        ("address", legacy_home or declared), ("address", str(state.path)),
+    ]
+    assert not state.pinned
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_load_keys_posix_retains_existing_path_reader(monkeypatch, exists):
+    from amplifier_web import windows_files
+    from amplifier_web.host import config
+    environment, cache, calls = {}, {}, []
+
+    class Source:
+        def exists(self):
+            calls.append("exists")
+            return exists
+
+        def read_text(self):
+            calls.append("read_text")
+            return "POSIX_KEY=synthetic-fixture\n"
+
+    def no_windows(*args, **kwargs):
+        pytest.fail("POSIX keys must retain the existing path reader")
+
+    monkeypatch.setattr(config, "os", SimpleNamespace(name="posix", environ=environment))
+    monkeypatch.setattr(config, "_KEY_FILE_VALUES", cache)
+    monkeypatch.setattr(windows_files, "address", no_windows)
+    monkeypatch.setattr(windows_files, "directory", no_windows)
+    config._load_keys(Source())
+    assert calls == (["exists", "read_text"] if exists else ["exists"])
+    assert environment == cache == ({"POSIX_KEY": "synthetic-fixture"} if exists else {})
+
+
 def test_optional_exact_reference_blanks_only_declared_nonsecret_and_never_mutates_input():
     source = {
         "api_key": "${PROVIDER_KEY}",

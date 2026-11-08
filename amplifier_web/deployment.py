@@ -9,7 +9,11 @@ import tempfile
 from urllib.parse import urlsplit
 
 import yaml
+from . import windows_files
 from .runtime_retention import DEFAULT_RETENTION, validate_retention
+
+_WINDOWS = os.name == "nt"
+_SERVER_LIMIT = 1024 * 1024
 
 DEFAULT_SERVER = {
     "schema_version": 1,
@@ -24,11 +28,14 @@ DEFAULT_SERVER = {
 
 
 def config_path(data_dir: Path) -> Path:
-    return Path(data_dir).expanduser().resolve() / "config" / "server.yaml"
+    root = windows_files.address(data_dir) if _WINDOWS else Path(data_dir).expanduser().resolve()
+    return root / "config" / "server.yaml"
 
 
 def write_file(path: Path, contents: str | bytes, *, mode: int = 0o600) -> None:
     """Atomically write an app-owned file with its intended permissions."""
+    if _WINDOWS and mode != 0o644:
+        raise NotImplementedError("Windows private writes require write_private with an explicit owned_root")
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
@@ -47,8 +54,16 @@ def write_file(path: Path, contents: str | bytes, *, mode: int = 0o600) -> None:
             pass
 
 
-def write_private(path: Path, text: str | bytes) -> None:
+def write_private(path: Path, text: str | bytes, *, owned_root: Path | None = None) -> None:
     """Atomically write private configuration, never briefly exposing it."""
+    if _WINDOWS:
+        if owned_root is None:
+            raise NotImplementedError("Windows private writes require an explicit owned_root")
+        path = windows_files.address(path)
+        with windows_files.directory(path.parent, owned_root=owned_root, create=True) as pinned:
+            pinned.publish_private(path.name, text.encode("utf-8") if isinstance(text, str) else text,
+                                   replace=True)
+        return
     write_file(path, text)
 
 
@@ -155,12 +170,21 @@ def validate_server(value: dict) -> dict:
 
 def load_server_config(data_dir: Path, *, overrides: dict | None = None) -> dict:
     path = config_path(data_dir)
-    if path.exists():
-        loaded = yaml.safe_load(path.read_text()) or {}
-        if not isinstance(loaded, dict):
-            raise ValueError("Server configuration must be a mapping.")
+    requested_overrides = overrides
+    if _WINDOWS:
+        try:
+            with windows_files.directory(path.parent, owned_root=data_dir) as pinned:
+                text = pinned.read_private(path.name, limit=_SERVER_LIMIT).decode("utf-8")
+        except FileNotFoundError:
+            text, missing = "", True
+        else:
+            missing = False
+        loaded = yaml.safe_load(text) or {}
     else:
-        loaded = {}
+        missing = not path.exists()
+        loaded = (yaml.safe_load(path.read_text()) or {}) if not missing else {}
+    if not isinstance(loaded, dict):
+        raise ValueError("Server configuration must be a mapping.")
     if overrides:
         overrides = {key: value for key, value in overrides.items() if value is not None}
         if "tls" in overrides:
@@ -173,14 +197,27 @@ def load_server_config(data_dir: Path, *, overrides: dict | None = None) -> dict
                 loaded = {**loaded, "tls": override_tls}
         loaded = {**loaded, **overrides}
     config = validate_server(loaded)
-    if not path.exists():
-        save_server_config(data_dir, config)
+    if missing:
+        if _WINDOWS:
+            try:
+                with windows_files.directory(path.parent, owned_root=data_dir, create=True) as pinned:
+                    pinned.publish_private(path.name, yaml.safe_dump(config, sort_keys=False).encode("utf-8"))
+            except FileExistsError:
+                # Another creator won. Read/validate that complete winner;
+                # never replace their settings with our defaults or overrides.
+                return load_server_config(data_dir, overrides=requested_overrides)
+        else:
+            save_server_config(data_dir, config)
     return config
 
 
 def save_server_config(data_dir: Path, config: dict) -> dict:
     config = validate_server(config)
-    write_private(config_path(data_dir), yaml.safe_dump(config, sort_keys=False))
+    text = yaml.safe_dump(config, sort_keys=False)
+    if _WINDOWS:
+        write_private(config_path(data_dir), text, owned_root=data_dir)
+    else:
+        write_private(config_path(data_dir), text)
     return config
 
 

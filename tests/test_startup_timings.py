@@ -24,8 +24,14 @@ def test_fixed_labels_bounded_rows_private_receipt_and_optional_disk(tmp_path, m
     assert all(row['phase'] == 'manager.plan' and row['status'] == 'succeeded' for row in result['phases'])
     assert 'untrusted' not in path.read_text()
     assert path.stat().st_mode & 0o777 == 0o600
-    monkeypatch.setattr('amplifier_web.deployment.write_private', lambda *_: 1 / 0)
+    fault_calls = []
+    def fail_write(*args, **kwargs):
+        fault_calls.append((args, kwargs))
+        raise OSError('synthetic disk failure')
+    monkeypatch.setattr('amplifier_web.host.config.write_private', fail_write)
     timing.save(tmp_path, 'failed')
+    assert len(fault_calls) == 1 and fault_calls[0][0][0] == path
+    assert json.loads(path.read_text()) == result
 
 
 @pytest.mark.parametrize('failure', [RuntimeError('private configuration'), asyncio.CancelledError('private cancellation')])
@@ -91,8 +97,12 @@ async def test_worker_failure_receipt_does_not_publish_timings(tmp_path, monkeyp
     monkeypatch.setattr('amplifier_web.history_revision.recover_pending', lambda *args: None)
     monkeypatch.setitem(sys.modules, 'amplifier_module_loop_live.runtime',
                         SimpleNamespace(Runtime=lambda **kwargs: SimpleNamespace(session_id='fixture')))
+    fault_calls = []
     if disk_fails:
-        monkeypatch.setattr('amplifier_web.deployment.write_private', lambda *_: 1 / 0)
+        def fail_write(*args, **kwargs):
+            fault_calls.append((args, kwargs))
+            raise OSError('synthetic disk failure')
+        monkeypatch.setattr('amplifier_web.host.config.write_private', fail_write)
     failure = asyncio.CancelledError('secret') if cancel else ValueError('secret')
     async def failed(*args, **kwargs):
         raise failure
@@ -107,7 +117,11 @@ async def test_worker_failure_receipt_does_not_publish_timings(tmp_path, monkeyp
     assert caught.value is failure
     path = tmp_path / 'runtime-reports/fixture/startup-timing.json'
     if disk_fails:
+        assert len(fault_calls) == (1 if cancel else 2)
+        assert sum(args[0] == path for args, _ in fault_calls) == 1
+        assert all(kwargs == {'owned_root': tmp_path} for _, kwargs in fault_calls)
         assert not path.exists()
+        assert 'startup-timing' not in json.dumps(events)
         return
     receipt = json.loads(path.read_text())
     assert receipt['outcome'] == ('cancelled' if cancel else 'failed')

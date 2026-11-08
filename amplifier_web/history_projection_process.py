@@ -321,7 +321,12 @@ class ProcessProjector:
         if result['status'] == 'retry':
             if result.get('reason') == 'output_limit':
                 return source_receipt(result) or retry('output_limit')
-            return retry(result.get('reason'))
+            value = retry(result.get('reason'))
+            if 'diagnostic' in result:
+                from .work_diagnostics import closed
+                facts = closed(result['diagnostic'])
+                value['diagnostic'] = {key: facts[key] for key in ('exceptionCategory', 'errno')}
+            return value
         return result
 
     async def _retire(self):

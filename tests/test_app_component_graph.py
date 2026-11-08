@@ -37,6 +37,19 @@ async def test_isolated_graph_probe_captures_transitive_and_optional_sources():
     assert 'amplifier-unified' not in locked
 
 
+def test_current_ui_use_graph_round_trip_keeps_exact_source_and_refuses_tampering():
+    component = {'name': 'amplifier-bundle-ui-use', 'version': '0.1.0.dev0',
+                 'url': 'https://github.com/microsoft/amplifier-bundle-ui-use',
+                 'revision': '5e3b08b8e06a6095314200476d387508ddb32f67'}
+    current = graph.normalized(raw_rows([CORE, component]))
+    assert graph.validate_graph(current) == current
+    assert component['url'] + '@' + component['revision'] in graph.requirements(current)
+    for patch in ({'url': 'file:///private/local'},
+                  {'revision': 'main'}, {'subdirectory': '../private'}):
+        with pytest.raises(ValueError):
+            graph.validate_graph(graph.normalized(raw_rows([CORE, {**component, **patch}])))
+
+
 @pytest.mark.parametrize('change', ['credentials','local','unknown-vcs','missing-commit','traversal','duplicate','bad-version'])
 def test_bad_provenance_is_rejected_before_creating_resolver_input(change):
     rows=raw_rows(COMPONENTS)
@@ -79,6 +92,12 @@ async def test_same_release_can_offer_host_component_update(monkeypatch):
 
 async def staged(tmp_path,monkeypatch):
     service,manager,_=await prepared_activation(tmp_path,monkeypatch)
+    # Exercise legacy reinstall, not promotion of the runner's installed app.
+    previous_target = app_updates.installed_target
+    async def legacy_target():
+        uv, launcher, python, previous = await previous_target()
+        return uv, launcher, python, {**previous, 'installation': str(tmp_path / 'legacy-bootstrap')}
+    monkeypatch.setattr(app_updates, 'installed_target', legacy_target)
     service.state['updates']['application']=dict(service.state['updates']['pendingApp'])
     service.state['updates']['pendingApp']=None
     calls=[]

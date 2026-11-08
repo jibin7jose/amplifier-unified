@@ -11,10 +11,14 @@ import threading
 import webbrowser
 
 from . import __version__
+from . import browser_entry
 
 
 def _data_dir(value: str | None) -> Path:
     from .host.config import app_home
+    if value and browser_entry.is_windows():
+        from .windows_files import address
+        return address(value)
     return Path(value).expanduser().resolve() if value else app_home()
 
 
@@ -38,6 +42,7 @@ def _parse() -> argparse.Namespace:
     parser.add_argument("--version", action="version", version="amplifier-unified " + __version__)
     subcommands = parser.add_subparsers(dest="command")
     subcommands.add_parser("serve", help="Run the authenticated web host")
+    subcommands.add_parser("open", help="Open an already running owned web host")
     for name in ("run", "continue"):
         command = subcommands.add_parser(name, help="Run one task using the shared Amplifier host")
         command.add_argument("prompt", nargs="?", default="")
@@ -132,13 +137,13 @@ def _server_overrides(args: argparse.Namespace) -> dict:
 
 
 def _print_completion(shell: str) -> None:
-    words = "serve tui run continue tool access doctor reset config service setup-tls completion --port --workspace --data-dir --no-open --bind --host --public-origin --tls-cert --tls-key --session-ttl --version"
+    words = "serve open tui run continue tool access doctor reset config service setup-tls completion --port --workspace --data-dir --no-open --bind --host --public-origin --tls-cert --tls-key --session-ttl --version"
     if shell == "bash":
         print('complete -W "' + words + '" amplifier-unified')
     elif shell == "zsh":
-        print('#compdef amplifier-unified\n_arguments "1:command:(serve tui run continue tool access doctor reset config service setup-tls)"')
+        print('#compdef amplifier-unified\n_arguments "1:command:(serve open tui run continue tool access doctor reset config service setup-tls)"')
     else:
-        print('complete -c amplifier-unified -f -a "serve tui run continue tool access doctor reset config service setup-tls"')
+        print('complete -c amplifier-unified -f -a "serve open tui run continue tool access doctor reset config service setup-tls"')
 
 
 def _config(args, data_dir: Path) -> None:
@@ -252,7 +257,8 @@ def _serve_unlocked(args, data_dir: Path) -> None:
         else:
             print(f"Open: {url}")
         if not args.no_open:
-            timer = threading.Timer(1.5, lambda: webbrowser.open(url))
+            timer = threading.Timer(1.5, lambda: _open_browser_safely(args, data_dir, config)
+                                    if browser_entry.is_windows() else webbrowser.open(url))
             timer.daemon = True
             timer.start()
 
@@ -289,6 +295,34 @@ def _serve_unlocked(args, data_dir: Path) -> None:
     finally:
         if timer is not None:
             timer.cancel()
+
+
+def _open_browser(args, data_dir, config):
+    if args.no_open:
+        print("Browser opening disabled; no browser grant was issued.")
+        return
+    if browser_entry.is_windows():
+        url = asyncio.run(browser_entry.owner_browser_url(data_dir, config))
+    else:
+        from types import SimpleNamespace
+        from .update_readiness import probe_targets
+        urls, _ = probe_targets(SimpleNamespace(home=data_dir, service=SimpleNamespace(
+            server_config=config, port=config["port"])))
+        url = (config["public_origins"] or [urls[0].removesuffix("/api/health")])[0]
+    try:
+        opened = webbrowser.open(url)
+    except Exception:
+        # Some browser backends include the URL (and grant) in exceptions.
+        raise browser_entry.BrowserEntryUnavailable("Could not open the browser. " + browser_entry.REOPEN) from None
+    if not opened:
+        raise browser_entry.BrowserEntryUnavailable("The browser did not accept the open request. " + browser_entry.REOPEN)
+
+
+def _open_browser_safely(args, data_dir, config):
+    try:
+        _open_browser(args, data_dir, config)
+    except (OSError, ValueError, RuntimeError):
+        print("Owner browser entry is unavailable. Verify private storage and the owned local host, then run amplifier-unified open.", file=sys.stderr)
 
 
 def _tui(args, data_dir):
@@ -359,10 +393,9 @@ def _open_background_service(args, data_dir):
     from .installation_health import status, display
     import subprocess
     try:
-        managed = service.managed_launchd if sys.platform == 'darwin' else service.managed_unit
         print('Starting Amplifier Unified in the background…', flush=True)
-        if managed(data_dir):
-            service.command('start')
+        if service.managed(data_dir):
+            service.command('start', data_dir)
         else:
             service.install(data_dir, args.workspace)
         result = asyncio.run(status(data_dir, wait=60))
@@ -441,13 +474,13 @@ def main():
                 result = asyncio.run(status(data_dir, wait=args.wait))
                 display(result, as_json=args.json, verbose=args.verbose)
                 if args.verbose and not args.json:
-                    deployment_service.command("status")
+                    deployment_service.command("status", data_dir)
                 if not result['ok']:
                     raise SystemExit(1)
             elif args.service_command == "uninstall":
-                deployment_service.uninstall()
+                deployment_service.uninstall(data_dir)
             else:
-                deployment_service.command(args.service_command)
+                deployment_service.command(args.service_command, data_dir)
                 if args.service_command in {'start', 'restart'}:
                     from .installation_health import status, display
                     result = asyncio.run(status(data_dir, wait=60))
@@ -458,8 +491,21 @@ def main():
             raise SystemExit(f"Service {args.service_command} did not complete: {exc}") from None
         return
     background_launch = args.command is None and not _server_overrides(args)
+    if background_launch and sys.platform == 'win32':
+        raise SystemExit(
+            "Windows default launcher remains unavailable pending native owner-browser and "
+            "task/host qualification. No service was installed or started.")
     config = load_server_config(data_dir, overrides=_server_overrides(args))
     args.port, args.data_dir = config["port"], str(data_dir)
+    if args.command == "open":
+        # Explicit foreground-owner entry only. Default Windows launch and
+        # Scheduler/installer activation remain independently gated above.
+        try:
+            return _open_browser(args, data_dir, config)
+        except (OSError, ValueError):
+            raise SystemExit("Cannot open the owned host. " + browser_entry.REOPEN) from None
+        except browser_entry.BrowserEntryUnavailable as exc:
+            raise SystemExit(str(exc)) from None
     if args.command in {"run", "continue", "tool", "access"}:
         os.environ["AMPLIFIER_WEB_HOME"] = str(data_dir)
         from .settings_migration import migrate_settings

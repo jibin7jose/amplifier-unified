@@ -14,6 +14,45 @@ LEGACY = ('This conversation is in use (app: amplifier-cli, pid: 123). '
           'Finish and exit that interface, then retry. Your draft has been kept.')
 
 
+async def test_windows_release_registration_reports_unavailable_keeps_exclusive_handle(monkeypatch):
+    from types import SimpleNamespace
+    from amplifier_web import ownership
+    import amplifier_foundation.session as foundation
+    held = SimpleNamespace(active=True, release=AsyncMock())
+    worker = SimpleNamespace(shared_handle=held)
+    events = []
+    registration = AsyncMock(side_effect=AssertionError('POSIX registration called'))
+    monkeypatch.setattr(ownership, '_WINDOWS', True)
+    monkeypatch.setattr(foundation, 'register_release_handler', registration)
+    owner = ownership.WorkerOwnership(worker, events.append)
+    await owner.register()
+    registration.assert_not_called()
+    held.release.assert_not_called()
+    assert worker.shared_handle is held and held.active
+    assert owner.registration is None and not owner.yielding
+    assert events == [{
+        'type': 'runtime.capability', 'capability': 'session.handoff',
+        'status': 'unavailable', 'platform': 'windows',
+        'detail': 'Stop the current owner before opening this conversation elsewhere.',
+    }]
+
+
+async def test_windows_takeover_and_transfer_refuse_before_acquisition(monkeypatch):
+    from amplifier_web import runtime
+    monkeypatch.setattr(runtime, '_WINDOWS', True)
+    manager = RuntimeManager(command=['unused'])
+    manager.start = AsyncMock(side_effect=AssertionError('acquisition attempted'))
+    try:
+        with pytest.raises(RuntimeError, match='unavailable on Windows'):
+            await manager.takeover({'id': 'windows-owner'}, AsyncMock())
+        with pytest.raises(RuntimeError, match='unavailable on Windows'):
+            await manager.quiesce_for_handoff({'id': 'windows-owner'}, 'request')
+        manager.start.assert_not_called()
+        assert not manager.workers
+    finally:
+        await manager.close()
+
+
 async def test_busy_startup_is_ownership_not_a_runtime_error(tmp_path):
     script = tmp_path / 'busy.py'
     script.write_text('import json,sys\njson.loads(sys.stdin.readline())\n'

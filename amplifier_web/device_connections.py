@@ -88,12 +88,14 @@ def label(value, limit=160):
 
 
 class Connections:
-    def __init__(self, devices, pairings, secret):
+    def __init__(self, devices, pairings, secret, *, owned_root):
         self.devices, self.pairings, self.secret = devices, pairings, secret
+        self.owned_root = owned_root
         self.presence = {}
         self.setups = {}
         self.events = {}
         self.transient_operations = {}
+        self.cancelled = set()
         self.path = devices.path.parent / 'device-operations.json'
         self.operations = json.loads(self.path.read_text()) if self.path.exists() else {}
         for row in self.operations.values():
@@ -106,11 +108,19 @@ class Connections:
 
     def save(self):
         try:
-            write_private(self.path, json.dumps(self.operations, separators=(',', ':')))
-        except OSError:
+            write_private(self.path, json.dumps(self.operations, separators=(',', ':')), owned_root=self.owned_root)
+        except (OSError, ValueError, RuntimeError):
             # A failed durable write cannot leave an uncommitted acceptance
             # available to subsequent requests in this process.
             self.operations = json.loads(self.path.read_text()) if self.path.exists() else {}
+            # Stop intent remains a live delivery fence even if persistence
+            # failed. Restart already cancels queued rows and marks delivered
+            # rows unknown before routes are exposed.
+            for identity in self.cancelled:
+                row = self.operations.get(identity)
+                if row and row['status'] in {'queued', 'delivered'}:
+                    row.update(status='cancelled' if row['status'] == 'queued' else 'unknown',
+                               detail='Cancelled; durable cancellation could not be confirmed.')
             raise
 
     def rows(self):
@@ -163,6 +173,7 @@ class Connections:
         self.setups = {k: v for k, v in self.setups.items() if v['expires'] > now}
         self.transient_operations = {key: row for key, row in self.transient_operations.items()
             if row['status'] in {'queued', 'delivered'} or now - row['createdAt'] < TRANSIENT_TTL}
+        self.cancelled.intersection_update(self.operations.keys() | self.transient_operations.keys())
 
     def listing(self):
         self.refresh()
@@ -384,6 +395,7 @@ class Connections:
         if not row:
             raise web.HTTPNotFound()
         if row['status'] in {'queued', 'delivered'}:
+            self.cancelled.add(identity)
             row.update(status='cancelled' if row['status'] == 'queued' else 'unknown',
                        detail='Cancelled; an already delivered effect may have happened.')
             self.save_row(row)
@@ -434,7 +446,8 @@ def owner(request, *, mutation=False):
 
 
 def setup_routes(app):
-    manager = Connections(app['terminal_setup'].devices, app['device_pairing'], app['session_secret'])
+    manager = Connections(app['terminal_setup'].devices, app['device_pairing'], app['session_secret'],
+                          owned_root=app['service'].data_dir)
     app['device_connections'] = manager
 
     async def discover(request):

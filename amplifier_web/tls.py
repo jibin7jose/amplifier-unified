@@ -11,8 +11,13 @@ from urllib.parse import urlsplit
 
 from .deployment import canonical_host, resolve_path, save_server_config, write_file
 
+_WINDOWS = os.name == "nt"
+
 
 def tls_dir(data_dir: Path) -> Path:
+    if _WINDOWS:
+        from .windows_files import address
+        return address(data_dir) / "config" / "tls"
     return Path(data_dir).expanduser().resolve() / "config" / "tls"
 
 
@@ -40,6 +45,9 @@ def _names(config: dict) -> tuple[list[str], list[str]]:
 
 def setup_local_ca(data_dir: Path, config: dict, *, force: bool = False) -> dict:
     """Create a persistent CA and a renewable leaf certificate for this app."""
+    if _WINDOWS:
+        from .windows_tls import setup
+        return setup(data_dir, config, force=force)
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -102,6 +110,9 @@ def ssl_context(data_dir: Path, config: dict) -> ssl.SSLContext | None:
         return None
     if not tls["cert"] or not tls["key"]:
         raise ValueError("HTTPS requires both tls.cert and tls.key. Configure both paths before starting the server.")
+    if _WINDOWS:
+        from .windows_tls import context
+        return context(data_dir, config)
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain(resolve_path(data_dir, tls["cert"]), resolve_path(data_dir, tls["key"]))
     return context
@@ -119,6 +130,9 @@ def exported_ca_bytes(data_dir: Path) -> bytes:
     """Return the existing public CA, rejecting missing, malformed, and leaf PEMs."""
     from cryptography import x509
 
+    if _WINDOWS:
+        from .windows_tls import exported_ca
+        return exported_ca(data_dir)
     path = tls_dir(data_dir) / "ca.crt"
     try:
         certificate = path.read_bytes()
@@ -158,6 +172,6 @@ def tls_ready(data_dir: Path, config: dict) -> bool:
         return False
     try:
         ssl_context(data_dir, config)
-    except (FileNotFoundError, OSError, ssl.SSLError, ValueError):
+    except (FileNotFoundError, OSError, ssl.SSLError, ValueError, NotImplementedError):
         return False
     return True

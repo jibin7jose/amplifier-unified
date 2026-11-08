@@ -2,6 +2,76 @@
 import asyncio
 import os
 import signal
+import sys
+
+
+class _WindowsProbe:
+    """Subprocess-shaped view of the existing Job owner, not a second launcher."""
+
+    def __init__(self, owner, *, discard_stderr):
+        self._owner = owner
+        self.stdin, self.stdout = owner.stdin, owner.stdout
+        self.stderr = None if discard_stderr else owner.stderr
+        self.returncode = None
+        self._discard_task = None
+        if discard_stderr:
+            self._discard_task = asyncio.create_task(self._discard_stderr())
+            self._discard_task.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception())
+
+    async def _discard_stderr(self):
+        while await self._owner.stderr.read(8192):
+            pass
+
+    async def wait(self):
+        result = await self._owner.wait()
+        # The guard's exit code is NOT the provider/validator exit code.
+        # Owner.wait proves empty Job + finalized I/O, not just root exit.
+        if result.output_discarded or type(result.payload_returncode) is not int:
+            raise RuntimeError('Native probe ended without a complete payload result.')
+        self.returncode = result.payload_returncode
+        if self._discard_task is not None:
+            await self._discard_task
+        return self.returncode
+
+    async def communicate(self, input=None):
+        from .probe_diagnostics import _exchange
+
+        return await _exchange(self, input, capture_stderr=True)
+
+    async def close(self):
+        try:
+            result = await self._owner.close()
+            self.returncode = result.payload_returncode
+        finally:
+            if self._discard_task is not None:
+                self._discard_task.cancel()
+                await asyncio.gather(self._discard_task, return_exceptions=True)
+
+
+async def _spawn_windows(command, kwargs):
+    # These are the binary-pipe shapes used by Settings, defaults and validation.
+    # Do not silently ignore subprocess flags or inherit the host's stdin.
+    options = dict(kwargs)
+    stdin = options.pop('stdin', None)
+    stdout = options.pop('stdout', None)
+    stderr = options.pop('stderr', None)
+    cwd = options.pop('cwd', None)
+    env = options.pop('env', None)
+    if (options or stdin != asyncio.subprocess.PIPE or stdout != asyncio.subprocess.PIPE
+            or stderr not in (asyncio.subprocess.PIPE, asyncio.subprocess.DEVNULL)):
+        raise ValueError('Native probes require binary stdin/stdout pipes and piped or discarded stderr.')
+    from .windows_jobs import WindowsOwnedProcess
+
+    # start owns creation-cancellation, including failed-cleanup custody. Never
+    # wrap it in a detached spawn or fall back to a root-only subprocess.
+    owner = await WindowsOwnedProcess.start(
+        [os.fspath(arg) for arg in command],
+        cwd=os.getcwd() if cwd is None else os.fspath(cwd),
+        env=dict(os.environ if env is None else env),
+        trusted_python=getattr(sys, '_base_executable', None),
+    )
+    return _WindowsProbe(owner, discard_stderr=stderr == asyncio.subprocess.DEVNULL)
 
 
 async def _settle(task):
@@ -21,6 +91,25 @@ async def _settle(task):
 
 
 async def _stop(process, readers=(), grace=0):
+    if isinstance(process, _WindowsProbe):
+        readers = tuple(asyncio.ensure_future(reader) for reader in readers)
+        try:
+            # The public owner offers finite force-close, not graceful signals.
+            # Close even after payload exit: only the owner proves tree/I/O exit.
+            await process.close()
+        except BaseException:
+            # Failed cleanup may not produce EOF. Settle our readers without
+            # hiding CleanupError or dropping the owner's retained lifelines.
+            for reader in readers:
+                reader.cancel()
+            if readers:
+                await asyncio.gather(*readers, return_exceptions=True)
+            raise
+        if readers:
+            await asyncio.gather(*readers, return_exceptions=True)
+        return
+    if os.name == 'nt':
+        raise RuntimeError('Native probe cleanup requires its Windows Job owner.')
     if process.returncode is None:
         def send(force):
             try:
@@ -50,6 +139,8 @@ async def stop(process, *readers, grace=0):
 
 
 async def spawn(*command, **kwargs):
+    if os.name == 'nt':
+        return await _spawn_windows(command, kwargs)
     # asyncio otherwise kills only the initial child if creation is cancelled
     # while pipe transports connect. Its already-started descendants survive.
     start = asyncio.create_task(asyncio.create_subprocess_exec(

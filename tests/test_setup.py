@@ -36,6 +36,234 @@ async def test_keys_are_private_and_redacted_across_scopes(manager,tmp_path,monk
     await manager.perform('providers.save',{'workspace':str(tmp_path),'module':'provider-openai','id':'first','config':{'model':'edited','api_key':'[REDACTED]'},'scope':'project'})
     assert manager.store.read(tmp_path,'project')['config']['providers'][0]['config']['api_key']=='${AMPLIFIER_FIRST_API_KEY}'
 
+
+@pytest.fixture
+def windows_key_storage(tmp_path, monkeypatch):
+    """Model only the native boundary; no Win32 calls, disk secrets or real env."""
+    from contextlib import contextmanager
+    from amplifier_web import configuration_authority, setup, windows_files
+    from amplifier_web.host import config as host_config
+
+    shared = tmp_path / 'shared'
+    state = SimpleNamespace(
+        files={}, events=[], pinned=False, locked=False, unsafe=set(),
+        fail_publish=False, fail_after_publish=False, fail_lock=False,
+        concurrent_content=None, cache={}, environment={},
+    )
+    manager = object.__new__(SetupManager)
+    manager.store = SimpleNamespace(shared_home=shared)
+    state.manager = manager
+
+    class Pinned:
+        def read_private(self, name, *, limit):
+            assert state.pinned and state.locked and name == 'keys.env'
+            state.events.append(('read', name, limit))
+            if name in state.unsafe:
+                raise PermissionError('unsafe existing private object')
+            if name not in state.files:
+                raise FileNotFoundError(name)
+            content = state.files[name]
+            if len(content) > limit:
+                raise ValueError('private-file read limit')
+            return content
+
+        def publish_private(self, name, content, *, replace=False):
+            assert state.pinned
+            assert name in {'keys.env', 'keys.env.lock'}
+            assert state.locked is (name == 'keys.env')
+            state.events.append(('publish', name, replace))
+            if name in state.unsafe:
+                raise PermissionError('unsafe existing private object')
+            if name in state.files and not replace:
+                raise FileExistsError(name)
+            assert isinstance(content, bytes)
+            if len(content) > 1024 * 1024:
+                raise ValueError('private-file publication limit')
+            if name == 'keys.env' and state.fail_publish:
+                raise OSError('injected pre-publication failure')
+            state.files[name] = content
+            if name == 'keys.env' and state.fail_after_publish:
+                raise OSError('private file was published; post-publication verification failed')
+
+    @contextmanager
+    def directory(path, *, owned_root, create=False):
+        assert path == owned_root == shared and create is True
+        state.events.append('directory-open')
+        if 'directory' in state.unsafe:
+            raise PermissionError('unsafe existing private directory')
+        state.pinned = True
+        try:
+            yield Pinned()
+        finally:
+            assert not state.locked, 'directory unpinned before FileLock release'
+            state.pinned = False
+            state.events.append('directory-close')
+
+    class Lock:
+        def __init__(self, path, *, timeout):
+            assert state.pinned and not state.locked
+            assert path == str(shared / 'keys.env') + '.lock' and timeout == 10
+            assert 'keys.env.lock' in state.files, 'FileLock created the lock first'
+            state.events.append('lock-open')
+
+        def __enter__(self):
+            state.events.append('lock-enter')
+            if state.fail_lock:
+                raise TimeoutError('injected FileLock timeout')
+            state.locked = True
+            # Another writer can finish between preparation and acquisition.
+            if state.concurrent_content is not None:
+                state.files['keys.env'] = state.concurrent_content
+            return self
+
+        def __exit__(self, *exc):
+            assert state.pinned and state.locked
+            state.locked = False
+            state.events.append('lock-exit')
+
+    def no_atomic_write(*args, **kwargs):
+        pytest.fail('Windows keys must not use the chmod-only atomic writer')
+
+    # Deny ordinary path access only within this model's storage root.
+    def guarded(original):
+        def check(path, *args, **kwargs):
+            if path == shared or shared in path.parents:
+                pytest.fail('ordinary path access bypassed the Windows private boundary')
+            return original(path, *args, **kwargs)
+        return check
+
+    for method in ('mkdir', 'exists', 'read_text', 'read_bytes', 'open', 'chmod', 'resolve', 'unlink'):
+        monkeypatch.setattr(Path, method, guarded(getattr(Path, method)))
+    monkeypatch.setattr(configuration_authority, 'check_current', lambda: state.events.append('authority'))
+    monkeypatch.setattr(setup, '_WINDOWS', True)
+    monkeypatch.setattr(setup, 'os', SimpleNamespace(environ=state.environment))
+    monkeypatch.setattr(setup, 'FileLock', Lock)
+    monkeypatch.setattr(setup, 'atomic_write', no_atomic_write)
+    monkeypatch.setattr(windows_files, 'directory', directory)
+    monkeypatch.setattr(host_config, '_KEY_FILE_VALUES', state.cache)
+    return state
+
+
+@pytest.mark.parametrize('existing_keys', [False, True])
+@pytest.mark.parametrize('existing_lock', [False, True])
+def test_windows_keys_private_create_read_utf8_and_lock_order(windows_key_storage, existing_keys, existing_lock):
+    import shlex
+    state = windows_key_storage
+    prefix = "# kept comment\nOTHER='kept café'\n" if existing_keys else ''
+    if existing_keys:
+        state.files['keys.env'] = (prefix + "TARGET=old\nexport TARGET=duplicate\n").encode('utf-8')
+    if existing_lock:
+        state.files['keys.env.lock'] = b'previous lock'
+    updates = {'TARGET': "fixture clé 'quote' 東京", 'ADDED': 'other fixture'}
+
+    state.manager._keys(updates)
+
+    expected = prefix + ''.join(name + '=' + shlex.quote(value) + '\n' for name, value in updates.items())
+    assert state.files['keys.env'] == expected.encode('utf-8')
+    assert state.files['keys.env.lock'] == (b'previous lock' if existing_lock else b'')
+    assert state.cache == state.environment == updates
+    assert state.events == [
+        'authority', 'directory-open', ('publish', 'keys.env.lock', False),
+        'lock-open', 'lock-enter', ('read', 'keys.env', 1024 * 1024),
+        ('publish', 'keys.env', True), 'lock-exit', 'directory-close',
+    ]
+    assert not state.pinned and not state.locked
+
+
+def test_windows_keys_merge_reads_after_lock_acquisition(windows_key_storage):
+    state = windows_key_storage
+    state.files['keys.env'] = b'OTHER=stale\nTARGET=old\n'
+    state.concurrent_content = b'OTHER=concurrent-writer\nTARGET=old\n'
+    state.manager._keys({'TARGET': 'replacement'})
+    assert state.files['keys.env'] == b'OTHER=concurrent-writer\nTARGET=replacement\n'
+
+
+def test_windows_keys_invalid_environment_batch_cannot_publish_or_partially_apply(windows_key_storage):
+    state = windows_key_storage
+    state.files['keys.env'] = b'TARGET=previous\n'
+    class Environment(dict):
+        def __setitem__(self, name, value):
+            if '\x00' in value:
+                raise ValueError('embedded null character')
+            super().__setitem__(name, value)
+        def update(self, values):
+            for name, value in values.items():
+                self[name] = value
+    state.environment = Environment(TARGET='previous')
+    from amplifier_web import setup
+    setup.os.environ = state.environment
+    state.cache['TARGET'] = 'previous'
+    with pytest.raises(ValueError, match='Invalid Windows'):
+        state.manager._keys({'ADDED': 'valid-first', 'TARGET': 'invalid\x00value'})
+    assert state.files == {'keys.env': b'TARGET=previous\n'}
+    assert state.environment == state.cache == {'TARGET': 'previous'}
+    assert state.events == ['authority']
+
+
+@pytest.mark.parametrize('unsafe', ['directory', 'keys.env.lock', 'keys.env'])
+def test_windows_keys_refuse_unsafe_existing_without_repair_or_cache_update(windows_key_storage, unsafe):
+    state = windows_key_storage
+    state.files.update({'keys.env': b'TARGET=previous\n', 'keys.env.lock': b'previous lock'})
+    state.cache['TARGET'] = state.environment['TARGET'] = 'previous'
+    before = dict(state.files)
+    state.unsafe.add(unsafe)
+
+    with pytest.raises(PermissionError, match='unsafe existing'):
+        state.manager._keys({'TARGET': 'replacement'})
+
+    assert state.files == before
+    assert state.cache == state.environment == {'TARGET': 'previous'}
+    assert ('publish', 'keys.env', True) not in state.events
+    if unsafe != 'keys.env':
+        assert 'lock-open' not in state.events
+    assert not state.pinned and not state.locked
+
+
+@pytest.mark.parametrize('failure', ['publish', 'decode', 'read-limit', 'write-limit', 'lock'])
+def test_windows_keys_failure_preserves_previous_secret_and_cache(windows_key_storage, failure):
+    state = windows_key_storage
+    previous = b'TARGET=previous\n'
+    if failure == 'decode':
+        previous += b'# invalid UTF-8: \xff\n'
+    elif failure == 'read-limit':
+        previous += b'#' * (1024 * 1024)
+    state.files.update({'keys.env': previous, 'keys.env.lock': b'previous lock'})
+    state.cache['TARGET'] = state.environment['TARGET'] = 'previous'
+    state.fail_publish = failure == 'publish'
+    state.fail_lock = failure == 'lock'
+    replacement = 'x' * (1024 * 1024) if failure == 'write-limit' else 'replacement'
+    error = {
+        'publish': OSError, 'decode': UnicodeDecodeError, 'read-limit': ValueError,
+        'write-limit': ValueError, 'lock': TimeoutError,
+    }[failure]
+
+    with pytest.raises(error):
+        state.manager._keys({'TARGET': replacement, 'ADDED': 'must-not-appear'})
+
+    assert state.files == {'keys.env': previous, 'keys.env.lock': b'previous lock'}
+    assert state.cache == state.environment == {'TARGET': 'previous'}
+    if failure in {'decode', 'read-limit', 'lock'}:
+        assert ('publish', 'keys.env', True) not in state.events
+    assert not state.pinned and not state.locked
+
+
+def test_windows_keys_report_post_publication_failure_without_retry_or_cache_update(windows_key_storage):
+    state = windows_key_storage
+    state.files['keys.env'] = b'TARGET=previous\n'
+    state.cache['TARGET'] = state.environment['TARGET'] = 'previous'
+    state.fail_after_publish = True
+
+    with pytest.raises(OSError, match='was published'):
+        state.manager._keys({'TARGET': 'replacement'})
+
+    # The existing helper can report a failure after rename. Do not roll back,
+    # retry, or claim the prior file survived that distinct outcome.
+    assert state.files['keys.env'] == b'TARGET=replacement\n'
+    assert state.cache == state.environment == {'TARGET': 'previous'}
+    assert state.events.count(('publish', 'keys.env', True)) == 1
+    assert not state.pinned and not state.locked
+
+
 @pytest.mark.asyncio
 async def test_nested_image_configuration_roundtrips_without_replacing_chat_instance(manager,tmp_path,monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

@@ -85,7 +85,8 @@ default = true
 dev = [
     "pytest>=8", "pytest-asyncio>=0.25", "pytest-aiohttp>=1.1", "hatchling>=1.27",
     # Offline native-input fixtures use the real loop/context, not a fake mount.
-    "amplifier-module-loop-live @ git+https://github.com/microsoft/amplifier-module-loop-live@670f405f711658c3c38e81dbd50a35d3d8c2ac3c",
+    # Accepted descendant adds independent EOF stdin for job subprocesses.
+    "amplifier-module-loop-live @ git+https://github.com/microsoft/amplifier-module-loop-live@d4b1e69e3222780ccebdfdb7c07915fdcd5d161f",
     # Match context-managed's authored source; uv.lock records the exact test
     # revision without imposing a resolver-global runtime source override.
     "amplifier-module-context-simple @ git+https://github.com/microsoft/amplifier-module-context-simple@main",
@@ -93,6 +94,8 @@ dev = [
     # source shared with the optional decisions extra.
     "amplifier-module-context-managed @ git+https://github.com/microsoft/amplifier-bundle-context-managed@12166f8effb5e26737bb5f9f7885cbb9bd4cdf43#subdirectory=modules/context-managed",
     "amplifier-module-provider-openai[native] @ git+https://github.com/microsoft/amplifier-module-provider-openai@main",
+    # Same real QuickJS dispatcher used by the maintained native-check workflow.
+    "amplifier-module-tool-exec @ git+https://github.com/microsoft/amplifier-module-tool-exec@f267548ccd1b38a236a46afb96252bb6dd474dcd",
     # Ordinary-root switch fixtures retain the real local capture hook offline.
     "amplifier-module-hook-context-intelligence @ git+https://github.com/microsoft/amplifier-bundle-context-intelligence@a80ce69d0e96e9a343501f238dcd867350dd9aa2#subdirectory=modules/hook-context-intelligence",
     # Installed skills checks exercise the real loader and companion-file tool.

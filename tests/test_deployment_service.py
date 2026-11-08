@@ -427,3 +427,23 @@ def test_anonymous_download_mode_survives_service_replacement(tmp_path, monkeypa
     monkeypatch.setenv('AMPLIFIER_GITHUB_ACCESS', 'auto')
     deployment_service.install(tmp_path / 'data', tmp_path, replace=True)
     assert not enabled()
+
+
+def test_windows_dispatch_never_falls_through_to_systemd_or_launchd(tmp_path, monkeypatch):
+    from amplifier_web import windows_service
+    monkeypatch.setattr(sys, "platform", "win32")
+    calls = []
+    monkeypatch.setattr(windows_service, "install", lambda *a, **kw: calls.append(("install", a, kw)) or {"status": "installed"})
+    monkeypatch.setattr(windows_service, "command", lambda *a: calls.append(("command", a)))
+    monkeypatch.setattr(windows_service, "uninstall", lambda *a: calls.append(("uninstall", a)))
+    monkeypatch.setattr(windows_service, "managed", lambda root: root == tmp_path)
+    monkeypatch.setattr(windows_service, "current_process_is_managed", lambda root: False)
+    monkeypatch.setattr(windows_service, "managed_restart_command", lambda: ("owned-restart",))
+    assert deployment_service.install(tmp_path, tmp_path, replace=True)["status"] == "installed"
+    deployment_service.command("stop", tmp_path)
+    deployment_service.uninstall(tmp_path)
+    assert deployment_service.managed(tmp_path)
+    assert not deployment_service.current_process_is_unit_managed(tmp_path)
+    assert deployment_service.managed_restart_command() == ("owned-restart",)
+    assert calls == [("install", (tmp_path, tmp_path), {"replace": True}),
+                     ("command", ("stop", tmp_path)), ("uninstall", (tmp_path,))]

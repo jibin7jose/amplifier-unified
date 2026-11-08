@@ -1,4 +1,4 @@
-"""Per-user systemd and launchd integration for Amplifier Unified."""
+"""Per-user service integration for Amplifier Unified."""
 from __future__ import annotations
 
 import os
@@ -262,6 +262,9 @@ def _install_launchd(data_dir: Path, workspace: str | Path | None, *, replace: b
 
 
 def install(data_dir: Path, workspace: str | Path | None = None, *, replace: bool = False) -> dict:
+    if sys.platform == "win32":
+        from . import windows_service
+        return windows_service.install(data_dir, workspace, replace=replace)
     if sys.platform == "darwin":
         return _install_launchd(data_dir, workspace, replace=replace)
     return _install_systemd(data_dir, workspace, replace=replace)
@@ -288,8 +291,11 @@ def _uninstall_launchd() -> None:
     path.unlink(missing_ok=True)
 
 
-def uninstall() -> None:
-    if sys.platform == "darwin":
+def uninstall(data_dir: Path | None = None) -> None:
+    if sys.platform == "win32":
+        from . import windows_service
+        windows_service.uninstall(data_dir)
+    elif sys.platform == "darwin":
         _uninstall_launchd()
     else:
         _uninstall_systemd()
@@ -297,6 +303,9 @@ def uninstall() -> None:
 
 def current_process_is_unit_managed(data_dir: Path) -> bool:
     """Prove this process, rather than merely the installation, belongs to our unit."""
+    if sys.platform == "win32":
+        from . import windows_service
+        return windows_service.current_process_is_managed(data_dir)
     if sys.platform == "darwin":
         return (os.environ.get("AMPLIFIER_UNIFIED_LAUNCHD_LABEL") == LAUNCHD_LABEL
                 and managed_launchd(data_dir))
@@ -310,12 +319,18 @@ def current_process_is_unit_managed(data_dir: Path) -> bool:
 
 
 def managed_restart_command() -> tuple[str, ...]:
+    if sys.platform == "win32":
+        from . import windows_service
+        return windows_service.managed_restart_command()
     if sys.platform == "darwin":
         return ("launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{LAUNCHD_LABEL}")
     return ("systemctl", "--user", "--no-block", "restart", UNIT_NAME)
 
 
-def command(name: str) -> None:
+def command(name: str, data_dir: Path | None = None) -> None:
+    if sys.platform == "win32":
+        from . import windows_service
+        return windows_service.command(name, data_dir)
     if sys.platform == "darwin":
         if not managed_launchd():
             raise RuntimeError("Amplifier Unified's generated launch agent is not installed.")
@@ -358,3 +373,11 @@ def command(name: str) -> None:
         subprocess.run(["journalctl", "--user", "-u", UNIT_NAME, "--no-pager"], check=False)
     else:
         raise ValueError(f"Unknown service command: {name}")
+
+
+def managed(data_dir: Path | None = None) -> bool:
+    """Platform-neutral caller seam; inspection never registers or starts."""
+    if sys.platform == "win32":
+        from . import windows_service
+        return windows_service.managed(data_dir)
+    return managed_launchd(data_dir) if sys.platform == "darwin" else managed_unit(data_dir)

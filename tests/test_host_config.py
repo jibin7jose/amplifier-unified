@@ -3,6 +3,7 @@ import copy
 import json
 import os
 from pathlib import Path
+from contextlib import contextmanager
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -16,7 +17,45 @@ from amplifier_web.host.session import live_plan, repair_interrupted_receipts, r
 from amplifier_web.shared_state import configuration_paths
 
 
+@contextmanager
+def isolated_read_config_collaborators(workspace, shared):
+    """Keep the chain under test away from release files, SQLite and settings."""
+    with patch("amplifier_web.host.config.read_settings", return_value={}) as settings, \
+            patch("amplifier_web.updates.foundation_home",
+                  side_effect=AssertionError("explicit registry_home must avoid release reads")), \
+            patch("amplifier_web.access_mode.read_mode", return_value="ask") as access:
+        yield settings, access
+        settings.assert_called_once_with(
+            workspace.resolve(), shared_home=shared.resolve(), session_id=None,
+            global_only=False, cache=None)
+
+
 class HostSettingsTests(unittest.TestCase):
+    def test_windows_runtime_writer_binds_app_home_not_destination_parent(self):
+        from amplifier_web.host import config
+        root, path = Path('app'), Path('outside/report.json')
+        with patch.object(config, 'os', SimpleNamespace(name='nt')), \
+                patch.object(config, 'app_home', return_value=root), \
+                patch.object(config, '_write_private') as write:
+            config.write_private(path, 'private')
+            write.assert_called_once_with(path, 'private', owned_root=root)
+
+    def test_windows_registry_creation_uses_private_boundary_before_mkdir(self):
+        from amplifier_web.host import config
+        from amplifier_web import windows_files
+        root = Path('app')
+        target = root / 'foundation'
+        seen = []
+        @contextmanager
+        def directory(path, **kwargs):
+            seen.append((path, kwargs))
+            yield
+        with patch.object(config, 'os', SimpleNamespace(name='nt')), \
+                patch.object(windows_files, 'directory', directory), \
+                patch.object(Path, 'mkdir', side_effect=AssertionError('ordinary mkdir')):
+            config.prepare_registry(SimpleNamespace(home=root, registry_home=target))
+        self.assertEqual(seen, [(target, {'owned_root': root, 'create': True})])
+
     def test_work_is_available_without_changing_default_or_overriding_user_sources(self):
         config = HostConfig(Path('/app'), Path('/workspace'), {}, Path('/registry'))
         self.assertEqual(config.active_bundle, 'work')
@@ -44,6 +83,69 @@ class HostSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
                 os.environ, {"AMPLIFIER_WEB_DATA_DIR": directory}, clear=True):
             self.assertEqual(app_home(), Path(directory).resolve())
+
+    @unittest.skipIf(os.name == "nt", "portable symlink/injected-Windows path; native junction case below")
+    def test_windows_read_config_retains_original_home_for_private_io(self):
+        from amplifier_web import deployment, windows_files
+        from amplifier_web.host import config as host_config
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            unrelated = root / "unrelated"
+            (unrelated / "config").mkdir(parents=True)
+            sentinel = unrelated / "config/server.yaml"
+            original = b"port: 9321\nextension: unrelated\n"
+            sentinel.write_bytes(original)
+            alias = root / "app-home"
+            alias.symlink_to(unrelated, target_is_directory=True)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            shared = root / "shared"
+            shared.mkdir()
+
+            # Injection models the native pinned boundary's link refusal. The
+            # native test below uses the real NTFS helper and a real junction.
+            @contextmanager
+            def pinned(path, *, owned_root, create=False):
+                if owned_root.is_symlink():
+                    raise PermissionError("original home is a reparse point")
+
+                class Pinned:
+                    def publish_private(self, name, content, *, replace=False):
+                        (path / name).write_bytes(content)
+                yield Pinned()
+
+            with patch.object(host_config, "os", SimpleNamespace(
+                    name="nt", environ={"AMPLIFIER_WEB_HOME": str(alias)})), \
+                    patch.object(deployment, "_WINDOWS", True), \
+                    patch.object(windows_files, "directory", pinned):
+                for explicit_home in (None, alias):
+                    with self.subTest(explicit_home=explicit_home), \
+                            isolated_read_config_collaborators(workspace, shared) as (_, access):
+                        config = host_config.read_config(
+                            workspace, home=explicit_home, shared_home=shared,
+                            registry_home=root / "registry")
+                        with self.assertRaisesRegex(PermissionError, "reparse"):
+                            deployment.write_private(
+                                config.home / "config/server.yaml", b"must-not-replace",
+                                owned_root=config.home)
+                        self.assertEqual(config.home, alias)
+                        self.assertEqual(access.call_args.args[0], alias)
+                        self.assertEqual(sentinel.read_bytes(), original)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX home canonicalization")
+    def test_posix_read_config_still_resolves_home(self):
+        from amplifier_web.host import config as host_config
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            target = root / "target"
+            target.mkdir()
+            alias = root / "alias"
+            alias.symlink_to(target, target_is_directory=True)
+            with isolated_read_config_collaborators(root, root) as (_, access):
+                config = host_config.read_config(
+                    root, home=alias, shared_home=root, registry_home=root / "registry")
+                self.assertEqual(config.home, target)
+                self.assertEqual(access.call_args.args[0], target)
 
     def test_configuration_invalidation_tracks_shared_inputs_without_snapshots(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -222,6 +324,48 @@ class HostSettingsTests(unittest.TestCase):
         value=redact({'providers':[{'config':{'api_key':'private','default_model':'model'}}]})
         self.assertNotIn('private',json.dumps(value))
         self.assertEqual(value['providers'][0]['config']['default_model'],'model')
+
+
+@unittest.skipUnless(os.name == "nt", "requires native Windows junctions, local NTFS and profile ACLs")
+class NativeHomeBoundaryTests(unittest.TestCase):
+    def test_app_home_through_read_config_rejects_junction_without_changing_target(self):
+        import shutil
+        import subprocess
+        import uuid
+        from amplifier_web import deployment, windows_files
+        from amplifier_web.host import config as host_config
+        allocation = windows_files.address(Path.home() / (".unified-home-test-" + uuid.uuid4().hex))
+        unrelated = allocation / "unrelated"
+        alias = allocation / "app-home"
+        with windows_files.directory(unrelated / "config", owned_root=allocation, create=True) as pinned:
+            original = b"port: 9321\nextension: unrelated\n"
+            pinned.publish_private("server.yaml", original)
+        self.addCleanup(shutil.rmtree, allocation)
+        result = subprocess.run(
+            ["cmd.exe", "/d", "/c", f'mklink /J "{alias}" "{unrelated}"'],
+            capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        self.addCleanup(alias.rmdir)  # remove the junction itself before fixture cleanup
+        sentinel = unrelated / "config/server.yaml"
+        before = sentinel.stat()
+        with patch.dict(os.environ, {"AMPLIFIER_WEB_HOME": str(alias)}):
+            for explicit_home in (None, alias):
+                with self.subTest(explicit_home=explicit_home), \
+                        isolated_read_config_collaborators(allocation, allocation):
+                    config = host_config.read_config(
+                        allocation, home=explicit_home, shared_home=allocation,
+                        registry_home=allocation / "registry")
+                    with self.assertRaises(PermissionError):
+                        deployment.write_private(
+                            config.home / "config/server.yaml", b"must-not-replace",
+                            owned_root=config.home)
+                    self.assertEqual(config.home, alias)
+                    self.assertEqual(sentinel.read_bytes(), original)
+                    after = sentinel.stat()
+                    self.assertEqual(
+                        (after.st_ino, after.st_size, after.st_mtime_ns, after.st_mode),
+                        (before.st_ino, before.st_size, before.st_mtime_ns, before.st_mode))
+                    self.assertEqual([path.name for path in (unrelated / "config").iterdir()], ["server.yaml"])
 
 
 if __name__=='__main__':unittest.main()

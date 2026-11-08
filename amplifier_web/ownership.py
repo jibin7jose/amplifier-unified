@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+
+_WINDOWS = os.name == "nt"
 
 
 class WorkerOwnership:
@@ -13,6 +16,14 @@ class WorkerOwnership:
         self.yielding = False
 
     async def register(self):
+        if _WINDOWS:
+            # Exclusive acquisition/release belongs to SharedSessionStore and
+            # remains held. No POSIX socket registration, checkpoint/fence
+            # mutation or claimed handoff support on the Windows first slice.
+            self.publish({"type": "runtime.capability", "capability": "session.handoff",
+                          "status": "unavailable", "platform": "windows",
+                          "detail": "Stop the current owner before opening this conversation elsewhere."})
+            return
         from amplifier_foundation.session import register_release_handler
 
         self.registration = await register_release_handler(

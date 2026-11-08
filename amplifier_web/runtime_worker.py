@@ -25,13 +25,30 @@ _PROTOCOL = None
 
 def configure_protocol():
     global _PROTOCOL
-    _PROTOCOL = os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
+    _PROTOCOL = os.fdopen(os.dup(sys.stdout.fileno()), "wb")
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     sys.stdout = sys.stderr
 
 
 def publish(data):
-    _PROTOCOL.write(encode_message(data).decode("utf-8"))
+    _PROTOCOL.write(encode_message(data))
+    _PROTOCOL.flush()
+
+
+def publish_process_identity():
+    """Identify this interpreter, not uv/the guard/a venv redirector."""
+    if os.name != "nt":
+        return
+    import ctypes
+    if __package__:
+        from .windows_launch_guard import creation_time
+    else:
+        from windows_launch_guard import creation_time
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.argtypes = []
+    kernel.GetCurrentProcess.restype = ctypes.c_void_p
+    publish({"type": "runtime.identity", "pid": os.getpid(),
+             "created": creation_time(kernel, kernel.GetCurrentProcess())})
 
 
 class Worker:
@@ -993,6 +1010,10 @@ class Worker:
             # gets a compact capability report, not credentials or config blobs.
             public = {key: report.get(key) for key in ("bundle", "root_bundle", "workspace", "session_id", "resumed", "providers",
                 "tools", "agents", "provider_choices", "selection", "effective_selection", "delegationRouting", "steering", "capabilities", "fork_context_messages", "standalone", "settings_file")}
+            if os.name == "nt":
+                public["capabilities"] = {**(public.get("capabilities") or {}),
+                    "session.handoff": False, "session.transfer_fence": False,
+                    "session.authoritative_checkpoint": False}
             if replacement:
                 await self.commit_replacement(replacement,
                     deferred=config.get('bundleReplacement', {}).get('deferred'), stop_revision=stop_revision)
@@ -1755,11 +1776,24 @@ class Worker:
             publish({"op": "reply", "id": identity, "error": f"{type(exc).__name__}: {exc}"})
 
     async def read(self):
-        reader = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
-        protocol = asyncio.StreamReaderProtocol(reader)
-        transport, _ = await asyncio.get_running_loop().connect_read_pipe(lambda: protocol, sys.stdin)
+        transport = None
+        threaded_reader = None
         try:
+            if sys.platform == "win32":
+                # Child stdin is an ordinary synchronous pipe, not an overlapped
+                # handle that the Windows Proactor loop can connect_read_pipe.
+                if __package__:
+                    from .worker_input import ThreadedPipeReader
+                else:
+                    from worker_input import ThreadedPipeReader
+                reader = threaded_reader = ThreadedPipeReader.for_worker(sys.stdin, MAX_MESSAGE_BYTES)
+            else:
+                reader = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
+                protocol = asyncio.StreamReaderProtocol(reader)
+                transport, _ = await asyncio.get_running_loop().connect_read_pipe(lambda: protocol, sys.stdin)
             while line := await reader.readline():
+                if len(line) > MAX_MESSAGE_BYTES:
+                    raise ValueError("Runtime message exceeds the transport limit.")
                 try:
                     data = json.loads(line)
                     if not isinstance(data, dict):
@@ -1774,10 +1808,16 @@ class Worker:
         except Exception as exc:
             publish({'type':'runtime.error','error':f'Amplifier worker communication failed ({type(exc).__name__}). A message could not be read; work was not replayed.'})
         finally:
-            transport.close()
+            if threaded_reader is not None:
+                threaded_reader.close()
+            if transport is not None:
+                transport.close()
             self.shutdown.set()
 
     async def run(self):
+        # The host verifies membership/creation time before sending even start.
+        # This carries no readiness or permission claim.
+        publish_process_identity()
         read = asyncio.create_task(self.read())
         try:
             await self.shutdown.wait()

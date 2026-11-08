@@ -11,6 +11,55 @@ from amplifier_web import event_window as windows
 KEY = b'k' * 32
 
 
+@pytest.mark.parametrize('native', [False, True])
+def test_descriptor_named_stat_time_semantics_remain_platform_specific(monkeypatch, native):
+    from types import SimpleNamespace
+    from amplifier_web import session_files, history_read_model
+    monkeypatch.setattr(session_files, '_WINDOWS', native)
+    fields = dict(st_dev=7, st_ino=11, st_size=150, st_mtime_ns=300, st_birthtime_ns=100)
+    descriptor = SimpleNamespace(**fields, st_ctime_ns=200)
+    named = SimpleNamespace(**fields, st_ctime_ns=100)
+    assert (windows._stamp(descriptor) == windows._stamp(named)) is native
+    # The host's cache validator must interpret the same timestamp as its
+    # disposable reader; otherwise valid pages fail immediately after reading.
+    monkeypatch.setattr(Path, 'stat', lambda _self: named)
+    expected = windows._stamp(named)
+    assert history_read_model.source_stamp('synthetic') == (
+        tuple(expected[:2]), *expected[2:])
+
+
+def test_windows_metadata_normalization_keeps_field_mutation_and_replacement_fences(owner, monkeypatch):
+    from types import SimpleNamespace
+    from amplifier_web import session_files
+    session, path = owner
+    write(path, [event(1)])
+    monkeypatch.setattr(session_files, '_WINDOWS', True)
+    original_fstat, original_stat, original_lstat = os.fstat, Path.stat, Path.lstat
+    def modeled(info, descriptor=False):
+        return SimpleNamespace(**{key: getattr(info, key) for key in
+            ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_mode')},
+            st_birthtime_ns=100, st_ctime_ns=200 if descriptor else 100)
+    monkeypatch.setattr(os, 'fstat', lambda fd: modeled(original_fstat(fd), True))
+    monkeypatch.setattr(Path, 'stat', lambda self, **kwargs: modeled(original_stat(self, **kwargs)))
+    monkeypatch.setattr(Path, 'lstat', lambda self, **kwargs: modeled(original_lstat(self, **kwargs)))
+    page = read(session)
+    reference = page['items'][0]['_eventFields']['output']
+    assert windows.read_field(session, reference)['text'] == 'result-1'
+    cursor = windows._cursor(KEY, windows._source(session)[2],
+        'messages-latest', windows._stamp(modeled(original_stat(path))), 0)
+    # Same-length content changes cannot borrow the original accepted digest.
+    raw = path.read_bytes()
+    path.write_bytes(raw.replace(b'result-1', b'changed1'))
+    with pytest.raises(windows.StaleWindow, match='source changed'):
+        windows.read_field(session, reference)
+    path.write_bytes(raw)
+    replacement = path.with_suffix('.replacement')
+    replacement.write_bytes(raw)
+    replacement.replace(path)
+    with pytest.raises(windows.StaleWindow):
+        read(session, before=cursor)
+
+
 @pytest.fixture
 def owner(tmp_path, monkeypatch):
     monkeypatch.setenv('AMPLIFIER_HOME', str(tmp_path / 'shared'))

@@ -10,7 +10,7 @@ from aiohttp import web
 
 from . import __version__
 from .attachments import MAX_REQUEST_BYTES
-from .auth import auth_required, control_token, data_identity, login_page, post_login, session_secret, with_history_scope
+from .auth import auth_required, control_token, data_identity, login_page, post_login, session_secret, validated_data_dir, with_history_scope
 from .deployment import canonical_host, load_server_config, validate_origin, validate_server
 from .service import AppError, AppService
 from .runtime import RuntimeOperationPending
@@ -19,6 +19,7 @@ from .setup_page import detect_platform, render_setup_page
 from .tls import ca_bytes
 from .request_timing import request_timing
 from .static_files import BundledFileResponse, BundledStaticResource
+from . import browser_entry
 
 
 # These exact actions only observe revisions; they never admit the work being
@@ -45,6 +46,11 @@ def _set_response_headers(response: web.StreamResponse, request: web.Request) ->
     response.headers["Referrer-Policy"] = "same-origin" if path in {"/login", "/devices", "/devices/pair"} or path.startswith('/connect') else "no-referrer"
     response.headers["Cache-Control"] = "no-store" if path.startswith(("/api/", "/share/", "/devices", "/connect")) or path in {"/login", "/oauth/mcp/callback", "/oauth/mcp/complete"} else "no-cache"
     response.headers.setdefault("Content-Security-Policy", f"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; frame-src 'self' http: https:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' {sockets} https://api.openai.com wss://api.openai.com; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'")
+    if path == "/login" and browser_entry.is_windows():
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; script-src 'self'; style-src 'self'; "
+            "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        )
     from .device_connections import response_headers
     return response_headers(request, response)
 
@@ -85,7 +91,9 @@ async def boundaries(request, handler):
 
 async def create_app(data_dir, workspace=None, runtime=None, voice=True, background_updates=True,
                      preload_providers=True, server_config=None, background_work=True):
-    data_dir = Path(data_dir).expanduser().resolve()
+    # Validate even with a supplied config. Resolving a Windows address first
+    # could erase a junction/alias before the native boundary can reject it.
+    data_dir = validated_data_dir(data_dir, create=True)
     config = validate_server(server_config) if server_config is not None else load_server_config(data_dir)
     app = web.Application(middlewares=[request_timing, boundaries, auth_required, client_context], client_max_size=MAX_REQUEST_BYTES)
     app["server_config"] = config
@@ -112,6 +120,7 @@ async def create_app(data_dir, workspace=None, runtime=None, voice=True, backgro
     if hasattr(runtime, 'retention'):
         service.state['runtime']['retention'] = dict(runtime.retention.settings)
     app["service"] = service
+    browser_entry.initialize(app)
 
     async def mcp_oauth_callback(request):
         await service.smart_tools.oauth.callback(request.query, validate_origin(f"{request.scheme}://{request.host}"))
@@ -685,6 +694,8 @@ async def create_app(data_dir, workspace=None, runtime=None, voice=True, backgro
     app.router.add_get('/share/{token}', shared_conversation)
     app.router.add_get("/login", login_page)
     app.router.add_post("/login", post_login)
+    app.router.add_post(browser_entry.ISSUE_PATH, browser_entry.issue)
+    app.router.add_post(browser_entry.REDEEM_PATH, browser_entry.redeem)
     app.router.add_get("/setup", setup)
     app.router.add_get("/api/ca", certificate)
     app.router.add_get("/ca.crt", certificate)

@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 
@@ -30,6 +31,24 @@ async def main(home):
     service.state['canvasArtifacts'].append({'id': 'saved-diagram', 'title': 'Export diagram', 'sessionId': source['id'], 'kind': 'markdown', 'messageId': 'voice'})
     service.state['view'].update(panel='settings', settingsSection='setup', settingsExpanded=['conversation'])
     service._publish()
+    if os.environ.get('AMPLIFIER_TEST_WORK_DIAGNOSTIC') == '1':
+        from amplifier_web.work_windows import _ThreadedWindowProjector
+        windows = service.event_log_view.windows
+        windows.projector = _ThreadedWindowProjector(service.data_dir)
+        def synthetic_failure(*args, **kwargs):
+            raise PermissionError(13, 'SECRET-DIAGNOSTIC-CANARY', r'C:\SECRET-DIAGNOSTIC-CANARY')
+        windows.projector.model.project = synthetic_failure
+        await windows.request(source['id'])
+        async def refresh_diagnostic(request):
+            # Rebind after normal navigation/publication invalidates the prior
+            # attempt. Exercise the actual reader, not a seeded JSON result.
+            windows.retry_at[source['id']] = 0
+            if source['id'] in windows.pending:
+                await windows.pending[source['id']]
+                await asyncio.sleep(0)
+            await windows.request(source['id'])
+            return web.json_response({'ok': True})
+        app.router.add_post('/api/fixture/workDiagnostic', refresh_diagnostic)
     async def append_after_preview(request):
         source['messages'].append({'id': 'after-preview', 'role': 'assistant', 'text': 'Appended after review'})
         service._publish()

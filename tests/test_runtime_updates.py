@@ -12,6 +12,86 @@ from amplifier_web.runtime import RuntimeManager
 from amplifier_web.updates import active_release
 
 
+@pytest.mark.parametrize('unsafe', [False, True])
+def test_windows_prepare_project_routes_creation_and_payload_through_pins(tmp_path, monkeypatch, unsafe):
+    from contextlib import contextmanager
+    from amplifier_web import windows_files
+    home = tmp_path / 'app'
+    project = home / 'runtime' / 'candidate'
+    receipt = tmp_path / 'recorded.lock'
+    receipt.write_bytes(b'version = 1\n')
+    writes, objects = [], {}
+    @contextmanager
+    def directory(path, *, owned_root, create=False):
+        assert owned_root == home
+        if unsafe:
+            raise PermissionError('unsafe existing directory')
+        class Pinned:
+            def read_private(self, name, *, limit):
+                assert limit == 1024 * 1024
+                if (path, name) not in objects:
+                    raise FileNotFoundError(name)
+                return objects[path, name]
+            def publish_private(self, name, value, *, replace=False):
+                writes.append((path, name, value, replace))
+                objects[path, name] = value
+        yield Pinned()
+    monkeypatch.setattr(environments, '_WINDOWS', True)
+    monkeypatch.setattr(environments, 'project_path', lambda *args, **kwargs: project)
+    monkeypatch.setattr(environments, 'receipt_directory', lambda *args: receipt.parent)
+    # Its explicit recorded path is runtime.lock.
+    (receipt.parent / 'runtime.lock').write_bytes(receipt.read_bytes())
+    objects[receipt.parent, 'runtime.lock'] = receipt.read_bytes()
+    monkeypatch.setattr(windows_files, 'directory', directory)
+    monkeypatch.setattr(Path, 'mkdir', lambda *args, **kwargs: pytest.fail('ordinary mkdir before private creation'))
+    if unsafe:
+        with pytest.raises(PermissionError):
+            environments.prepare_project(home, content=b'[project]\n')
+        assert not writes
+    else:
+        assert environments.prepare_project(home, content=b'[project]\n') == project
+        assert writes == [(project, 'pyproject.toml', b'[project]\n', True),
+                          (project, 'uv.lock', b'version = 1\n', False)]
+        assert environments.prepare_project(home, content=b'[project]\n') == project
+        assert len(writes) == 2
+        objects[project, 'uv.lock'] = b'changed'
+        with pytest.raises(ValueError, match='recorded worker lock changed'):
+            environments.prepare_project(home, content=b'[project]\n')
+        assert objects[project, 'uv.lock'] == b'changed'
+
+
+@pytest.mark.skipif(__import__('os').name != 'nt', reason='native Windows runtime private files')
+def test_native_windows_prepare_project_private_before_payload_and_refuse_unsafe(tmp_path):
+    from amplifier_web import windows_files
+    import uuid
+    home = tmp_path.resolve() / ('runtime-app-' + uuid.uuid4().hex)
+    project = environments.prepare_project(home, content=b'[project]\nname="native-fixture"\n')
+    with windows_files.directory(project, owned_root=home) as pinned:
+        assert pinned.read_private('pyproject.toml', limit=1024) == b'[project]\nname="native-fixture"\n'
+    # Ordinary existing creation is not promoted to private or repaired.
+    unsafe = tmp_path.resolve() / ('ordinary-' + uuid.uuid4().hex)
+    unsafe.mkdir()
+    # Set an explicitly readable ACL (not an ownership-dependent mkdir guess).
+    from amplifier_web.windows_files import _API
+    import ctypes
+    api = _API()
+    descriptor = ctypes.c_void_p()
+    api.ok(api.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        f'O:{api.sid}D:P(A;;FA;;;{api.sid})(A;;FR;;;WD)', 1,
+        ctypes.byref(descriptor), None))
+    try:
+        # This is synthetic fixture setup, never repair of an application root.
+        set_security = ctypes.WinDLL('advapi32', use_last_error=True).SetFileSecurityW
+        set_security.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_void_p]
+        set_security.restype = ctypes.c_int32
+        api.ok(set_security(str(unsafe), 4 | 0x80000000, descriptor))
+    finally:
+        api.LocalFree(descriptor)
+    with pytest.raises(PermissionError):
+        environments.prepare_project(unsafe, content=b'must-not-publish')
+    assert not (unsafe / 'runtime').exists()
+
+
 def git(path, *args):
     return subprocess.check_output(['git', *args], cwd=path, text=True, stderr=subprocess.DEVNULL).strip()
 
@@ -24,17 +104,87 @@ class Diagnostics:
         return await function(*args, **kwargs)
 
 
+_FIXTURE_BUILD_BACKEND = r'''
+"""Build the metadata-only fixture distributions without external build tools."""
+import base64
+import csv
+import hashlib
+import io
+from pathlib import Path
+import re
+import tomllib
+import zipfile
+
+
+def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
+    project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+    name, version = project["name"], project["version"]
+    normalized = re.sub(r"[-_.]+", "_", name)
+    dist_info = f"{normalized}-{version}.dist-info"
+    metadata = [
+        "Metadata-Version: 2.3", f"Name: {name}", f"Version: {version}",
+    ]
+    if "requires-python" in project:
+        metadata.append("Requires-Python: " + project["requires-python"])
+    metadata.extend("Requires-Dist: " + value for value in project.get("dependencies", []))
+    files = {
+        dist_info + "/METADATA": ("\n".join(metadata) + "\n\n").encode("utf-8"),
+        dist_info + "/WHEEL": (
+            "Wheel-Version: 1.0\nGenerator: runtime-test-fixture\n"
+            "Root-Is-Purelib: true\nTag: py3-none-any\n\n"
+        ).encode("utf-8"),
+    }
+    record = io.StringIO(newline="")
+    writer = csv.writer(record)
+    for path, payload in files.items():
+        digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=").decode("ascii")
+        writer.writerow((path, "sha256=" + digest, str(len(payload))))
+    record_path = dist_info + "/RECORD"
+    writer.writerow((record_path, "", ""))
+    files[record_path] = record.getvalue().encode("utf-8")
+    filename = f"{normalized}-{version}-py3-none-any.whl"
+    destination = Path(wheel_directory)
+    destination.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(destination / filename, "w", compression=zipfile.ZIP_DEFLATED) as wheel:
+        for path, payload in files.items():
+            wheel.writestr(path, payload)
+    return filename
+
+
+def build_editable(wheel_directory, config_settings=None, metadata_directory=None):
+    # These fixtures have no importable code: the metadata-only wheel is also
+    # their complete editable payload. uv owns the real direct_url.json.
+    return build_wheel(wheel_directory, config_settings, metadata_directory)
+'''
+
+
+def write_fixture_project(path, name, dependencies=()):
+    """Keep real PEP 517/660 builds and dependency metadata entirely offline."""
+    (path / '_fixture_backend.py').write_text(_FIXTURE_BUILD_BACKEND, encoding='utf-8')
+    (path / 'pyproject.toml').write_text(
+        '[project]\nname=' + json.dumps(name) + '\nversion="0.1.0"\n'
+        'dependencies=' + json.dumps(list(dependencies)) + '\n'
+        '[build-system]\nrequires=[]\nbuild-backend="_fixture_backend"\nbackend-path=["."]\n',
+        encoding='utf-8',
+    )
+
+
 @pytest.fixture
 def environment(tmp_path, monkeypatch):
     # This fixture exercises one synthetic Git dependency, independently of the
     # real support packs installed in the interpreter running the test suite.
+    # uv forbids --refresh-package together with UV_OFFLINE even for file://
+    # repositories. Permit local Git refresh, but keep registry access disabled;
+    # the fixture backend has no build requirements or network dependencies.
+    monkeypatch.setenv('UV_OFFLINE', 'false')
+    monkeypatch.setenv('UV_NO_INDEX', 'true')
     monkeypatch.setattr('amplifier_web.app_updates.installed_extras', lambda: [])
     repo = tmp_path / 'remote'
     repo.mkdir()
     git(repo, 'init', '-b', 'main')
     git(repo, 'config', 'user.name', 'Fixture')
     git(repo, 'config', 'user.email', 'fixture@example.invalid')
-    (repo / 'pyproject.toml').write_text('[project]\nname="fixture-runtime"\nversion="0.1.0"\n')
+    write_fixture_project(repo, 'fixture-runtime')
     (repo / 'marker.txt').write_text('first')
     git(repo, 'add', '.')
     git(repo, 'commit', '-m', 'first')
@@ -244,8 +394,7 @@ def installed_transitive(environment, request):
     git(remote, 'config', 'user.email', 'fixture@example.invalid')
     child = remote / 'child'
     child.mkdir()
-    build = '\n[build-system]\nrequires=["setuptools"]\nbuild-backend="setuptools.build_meta"\n[tool.setuptools]\npackages=[]\n'
-    (child / 'pyproject.toml').write_text('[project]\nname=' + json.dumps(child_name) + '\nversion="0.1.0"\n' + build)
+    write_fixture_project(child, child_name)
     git(remote, 'add', '.')
     git(remote, 'commit', '-m', 'child')
     parent = manager.home.parent / 'parent'
@@ -253,7 +402,8 @@ def installed_transitive(environment, request):
     git(parent, 'init', '-b', 'main')
     git(parent, 'config', 'user.name', 'Fixture')
     git(parent, 'config', 'user.email', 'fixture@example.invalid')
-    (parent / 'pyproject.toml').write_text('[project]\nname="amplifier-fixture-parent"\nversion="0.1.0"\ndependencies=[' + json.dumps(child_name + ' @ git+' + remote.as_uri() + '@main#subdirectory=child') + ']\n' + build)
+    write_fixture_project(parent, 'amplifier-fixture-parent', [
+        child_name + ' @ git+' + remote.as_uri() + '@main#subdirectory=child'])
     git(parent, 'add', '.')
     git(parent, 'commit', '-m', 'parent')
     uv = shutil.which('uv')
@@ -404,7 +554,8 @@ async def test_lazy_install_cannot_replace_a_qualified_editable_dependency(insta
     before = next(row for row in installed_graph(final) if row['name'] == 'amplifier-fixture-child')
     lazy = manager.home.parent / 'lazy'
     lazy.mkdir()
-    (lazy / 'pyproject.toml').write_text('[project]\nname="amplifier-fixture-lazy"\nversion="0.1.0"\ndependencies=[' + json.dumps('amplifier-fixture-child @ git+' + repo.as_uri() + '@main#subdirectory=child') + ']\n[build-system]\nrequires=["setuptools"]\nbuild-backend="setuptools.build_meta"\n[tool.setuptools]\npackages=[]\n')
+    write_fixture_project(lazy, 'amplifier-fixture-lazy', [
+        'amplifier-fixture-child @ git+' + repo.as_uri() + '@main#subdirectory=child'])
     subprocess.run([uv, 'pip', 'install', '--python', str(final / '.venv/bin/python'), '--overrides', str(overrides), '--editable', str(lazy)], check=True, capture_output=True)
     after = next(row for row in installed_graph(final) if row['name'] == 'amplifier-fixture-child')
     assert before == after
