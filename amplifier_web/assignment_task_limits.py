@@ -121,7 +121,7 @@ def receipt_for(state, identity, source, target):
 
 async def dispatch(owner, action, args, origin, command_id, caller):
     from .management import Management
-    from .task_continuity import dispatch as task_dispatch
+    from .task_continuity import dispatch as task_dispatch, publish_task_observation
     app = owner.service
     async with app.lock:
         source, target, value = scope(owner, args, origin, caller)
@@ -143,8 +143,10 @@ async def dispatch(owner, action, args, origin, command_id, caller):
             proof = receipt.get('managerLimit') or receipt.get('managerCompletion') or {}
             if proof.get('requestFingerprint') != request_digest:
                 app.collaboration.error('This command ID was already used with different contents.', 409)
+            publication, _ = publish_task_observation(app, target['id'], {
+                'task': state['task'], 'history': state.get('taskHistory', []), 'goal': state.get('goal')})
             return {'accepted': True, 'duplicate': True,
-                    'result': readback(source, target, value, state, receipt)}
+                    'result': {**readback(source, target, value, state, receipt), 'publication': publication}}
         task = state.get('task') or {}
         if (value['revision'] != args['expectedAssignmentRevision']
                 or task.get('id') != args['taskId'] or task.get('revision') != args['expectedRevision']):

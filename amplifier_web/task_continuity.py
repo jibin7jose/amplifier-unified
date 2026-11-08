@@ -743,6 +743,43 @@ def _public_unavailable(reason):
             "authority": "Missing saved state is not an empty task or permission to continue."}
 
 
+def observe_task(service, session, observation):
+    """Apply an observed native task under the service lock, without publishing.
+
+    A cold current-only read omits history and live capabilities. Keep those
+    observations intact; never replace newer task projections with older data.
+    The effect owner publishes this projection with its own existing commit.
+    """
+    controls = service.state.setdefault("runtimeControl", {}).setdefault(session["id"], {})
+    previous = controls.get("task.get", {})
+    current_revision = max((previous.get("task") or {}).get("revision", 0),
+                           (session.get("task") or {}).get("revision", 0))
+    returned = observation["task"] or {}
+    revision = returned.get("revision", 0)
+    if revision < current_revision:
+        return False, current_revision
+    controls["task.get"] = {**previous, **{key: observation[key] for key in
+        ("task", "history", "goal", "continuity", "continuationSupported") if key in observation}}
+    session["task"] = observation["task"]
+    if "continuity" in observation:
+        session["continuity"] = observation["continuity"]
+    return True, revision
+
+
+def publish_task_observation(service, sid, observation):
+    """Recover host publication without hiding an already committed receipt."""
+    try:
+        session = service._session(sid)
+        changed, revision = observe_task(service, session, observation)
+        if changed:
+            service._publish_changes(sessions={session["id"]})
+        return {"status": "published" if changed else "superseded"}, revision
+    except Exception:
+        logging.getLogger(__name__).warning("Committed task publication unavailable", exc_info=True)
+        return {"status": "unavailable",
+                "reason": "The worker committed; host publication could not be confirmed."}, None
+
+
 async def dispatch(service, operation, args, origin, command_id, include_state, *, guard=None):
     """Shared UI/agent path. Worker owns CAS and persists before acknowledging."""
     from .errors import AppError
@@ -793,26 +830,8 @@ async def dispatch(service, operation, args, origin, command_id, include_state, 
         raise AppError(str(exc), 409) from None
     receipt = copy.deepcopy(result["receipt"])
     async with service.lock:
-        # Keep existing full-record authority projections, never summary nulls.
-        # A later command may have returned while this RPC was suspended: don't
-        # replace a newer current record with an earlier committed observation.
-        controls = service.state.setdefault("runtimeControl", {}).setdefault(sid, {})
-        current = controls.get("task.get", {}).get("task") or {}
         returned = result.get("task") or {}
-        publication = {"status": "superseded"}
-        try:
-            if returned.get("revision", 0) >= current.get("revision", 0):
-                canonical = {key: result.get(key) for key in
-                             ("task", "history", "goal", "continuity", "continuationSupported")}
-                controls["task.get"] = canonical
-                service._session(sid)["task"] = result.get("task")
-                service._session(sid)["continuity"] = result.get("continuity")
-                service._publish_changes(sessions={sid})
-                publication = {"status": "published"}
-        except Exception:
-            logging.getLogger(__name__).warning("Committed task publication unavailable", exc_info=True)
-            publication = {"status": "unavailable",
-                           "reason": "The worker committed; host publication could not be confirmed."}
+        publication, current_revision = publish_task_observation(service, sid, result)
         # Serialization trouble AFTER a commit cannot be a false failed write.
         # Return its exact receipt and an explicit missing current projection.
         try:
@@ -825,8 +844,7 @@ async def dispatch(service, operation, args, origin, command_id, include_state, 
             projected = _public_unavailable("The committed task's current projection is unavailable.")
         projected["receipt"] = receipt
         projected["publication"] = publication
-        projected["currentRevision"] = (None if publication["status"] == "unavailable"
-                                        else max(returned.get("revision", 0), current.get("revision", 0)))
+        projected["currentRevision"] = current_revision
         projected["snapshotIsCurrent"] = (None if projected["currentRevision"] is None
                                          else returned.get("revision", 0) == projected["currentRevision"])
         projected["currentRef"] = _ref("task.get", sid)

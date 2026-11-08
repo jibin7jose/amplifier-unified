@@ -33,12 +33,11 @@ class Member(ScriptedProvider):
 
 
 class Manager(ScriptedProvider):
-    def __init__(self, app, host, source, target, member, *, followup=True):
+    def __init__(self, app, host, source, target, member):
         super().__init__()
         self.app, self.host = app, host
         self.source, self.target, self.member = source, target, member
         self.retirement_result = None
-        self.followup = followup
 
     async def complete(self, request, **kwargs):
         self.calls += 1
@@ -66,8 +65,6 @@ class Manager(ScriptedProvider):
             assert result['readmissionAuthority']['origin'] == 'agent'
             assert self.member.calls == 1
             assert self.host.roots[self.target['id']].controls.tasks.record() == self.before
-            if not self.followup:
-                return self.final('Retirement and standing readmission completed without input.')
             return self.dispatch('native-fresh-followup', 'coordination.send', {
                 'sessionId': self.target['id'], 'mode': 'queue',
                 'text': 'One new deliberate follow-up', 'returnNotification': False})
@@ -105,11 +102,8 @@ async def test_peer_only_full_native_readmission_preserves_task_and_fences_old_i
              for name in ('loop-live', 'context-simple')}
     host.pump = asyncio.create_task(host.route_events())
     member_provider = Member()
-    # Lost-ack coverage ends at readmission: reconciliation of the stale host
-    # task before a later input is a separate task-publication boundary.
-    manager_provider = Manager(app, host, source, target, member_provider,
-                               followup=not lost_completion_reply)
-    record_property('acceptance_scope', 'retirement-readmission' if lost_completion_reply else 'fresh-followup')
+    manager_provider = Manager(app, host, source, target, member_provider)
+    record_property('acceptance_scope', 'fresh-followup')
     try:
         async with asyncio.timeout(40):
             manager = await host.mount(source, manager_provider, paths)
@@ -168,10 +162,7 @@ async def test_peer_only_full_native_readmission_preserves_task_and_fences_old_i
                 pytest.fail(str({'trigger': app.collaboration.receipt('native-peer-trigger'),
                     'managerCalls': manager_provider.calls, 'errors': host.errors,
                     'status': source['status'], 'task': source.get('task')}))
-            if lost_completion_reply:
-                assert member.controls.tasks.record() == task and member_provider.calls == 1
-                assert not app.db.execute("SELECT 1 FROM commands WHERE id='native-fresh-followup'").fetchone()
-            elif used == 8:
+            if used == 8:
                 await until(lambda: app.collaboration.receipt('native-fresh-followup')['delivery'] == 'suppressed')
                 assert 'exhausted' in app.collaboration.receipt('native-fresh-followup')['admission']['reason']
                 assert member.controls.tasks.record() == task
@@ -193,9 +184,9 @@ async def test_peer_only_full_native_readmission_preserves_task_and_fences_old_i
             assert app.collaboration.receipt('native-retire')['reuseBinding']
             assert [row['inputId'] for row in host.admissions
                     if row['sessionId'] == target['id'] and row['accepted']] == (
-                ['native-old-input'] if lost_completion_reply or used == 8
+                ['native-old-input'] if used == 8
                 else ['native-old-input', 'native-fresh-followup'])
-            assert manager_provider.calls == (4 if lost_completion_reply else 5)
+            assert manager_provider.calls == 5
             assert not host.approvals and not host.errors
     finally:
         record_property('retirement_tool_result', json.dumps(manager_provider.retirement_result))

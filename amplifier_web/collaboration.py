@@ -2082,6 +2082,19 @@ class Collaboration:
                     if (previous.get("commandAction") != "coordination.send" or previous["target"]["sessionId"] != source["id"]
                             or previous["senderSessionId"] != target["id"] or previous.get("protocol") != PROTOCOL):
                         self.error("Reply linkage must identify the exact incoming request.")
+                if mode in {'queue', 'auto', 'steer'} and not creation_owned:
+                    # Only a NEW deliberate input captures current native task
+                    # state. Old queued/accepted inputs retain their bindings.
+                    from .task_continuity import _load_control, observe_task
+                    try:
+                        observation = _load_control(self.service, target, current_only=True)
+                    except ValueError:
+                        # Never-mounted/alternate adapters may have no local
+                        # record. Keep the prior observation and native checks;
+                        # unavailable is not a fabricated empty task.
+                        pass
+                    else:
+                        observe_task(self.service, target, observation)
                 task = target.get("task") or self.service.coordination.task(target["id"])
                 from .completed_followup import prepare as prepare_completed
                 completed_followup = prepare_completed(self.service, source, target, task, mode, args, creation=creation_owned)

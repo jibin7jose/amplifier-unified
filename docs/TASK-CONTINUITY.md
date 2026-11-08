@@ -100,6 +100,20 @@ shared-task-list completion or closure of other objectives. Those existing contr
 and responsibilities remain separate. Duplicate/readback and unknown responses
 use the same existing command receipt, with no repeated model work.
 
+An exact manager mutation retry also republishes the current saved task to the
+host view, retaining the original receipt even when a newer objective now exists.
+A failed host publication reports that uncertainty without hiding the committed
+receipt. Passive task reads do not refresh the host view.
+
+A new deliberate peer request using `queue`, `auto` or `steer` observes the
+recipient's current saved task before capturing its input binding. This includes
+a completed task whose acknowledgement was lost. The observation uses one bounded
+read of that recipient's control file and the input's existing publication; it does
+not read other chats or validate historical tasks. Unavailable optional observation
+keeps the prior view and existing native admission checks. Already captured inputs
+keep their original binding, and a native task change after capture still prevents
+admission. This does not replay input, reopen completed work or reset used turns.
+
 Cold preparation restores all saved controls before persisting them. It does not
 write mounted defaults over still-unrestored budgets or modes while loading a
 task. If saved-control restoration fails or is cancelled before its final

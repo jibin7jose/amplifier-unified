@@ -70,7 +70,7 @@ async def retire_ui(app, source, target):
 
 @pytest.mark.parametrize('restart', [False, True])
 @pytest.mark.parametrize('retry', [False, True])
-async def test_lost_completion_can_retire_without_replaying_or_hydrating(member, retry, restart):
+async def test_lost_completion_retry_publishes_but_retirement_does_not_hydrate(member, retry, restart):
     ctx = member
     request = arguments(ctx)
     stale = copy.deepcopy(ctx.target['task'])
@@ -79,7 +79,8 @@ async def test_lost_completion_can_retire_without_replaying_or_hydrating(member,
         await complete(ctx, request)
     if retry:
         assert (await complete(ctx, request))['duplicate']
-    assert len(ctx.calls) == 1 and ctx.target['task'] == stale
+    expected_projection = ctx.native.tasks.record() if retry else stale
+    assert len(ctx.calls) == 1 and ctx.target['task'] == expected_projection
     ctx.app._save()
     saved = ctx.native.state_path().read_bytes()
     task = json.loads(saved)['task']
@@ -90,7 +91,7 @@ async def test_lost_completion_can_retire_without_replaying_or_hydrating(member,
         assert receipt['reuseBinding']['targetTask'] == fingerprint(task)
         assert receipt['result']['inputSent'] is False
         assert app.assignments.current(source)['members'][target['id']]['status'] == 'retired'
-        assert target['task'] == stale
+        assert target['task'] == expected_projection
         for key in ('messages', 'lastInterruption', 'interruptionRevision'):
             assert target.get(key) == before.get(key)
         assert not app.runtime.inputs

@@ -262,7 +262,7 @@ async def test_failed_durable_write_does_not_acknowledge_or_change_task(tmp_path
     await worker.close()
 
 
-@pytest.mark.parametrize('fault', ['continuity', 'publication'])
+@pytest.mark.parametrize('fault', ['continuity', 'publication', 'session-lookup'])
 @pytest.mark.parametrize('via', ['ui', 'agent'])
 async def test_postcommit_observation_failure_preserves_exact_saved_receipt(tmp_path, monkeypatch, fault, via):
     monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(tmp_path / 'app'))
@@ -277,10 +277,17 @@ async def test_postcommit_observation_failure_preserves_exact_saved_receipt(tmp_
             raise OSError('Synthetic observation failure after commit')
         if fault == 'continuity':
             worker.coordinator.register_capability('web.continuity.status', fail)
-        else:
+        elif fault == 'publication':
             monkeypatch.setattr(app, '_publish_changes', fail)
         async def control(target, operation, args):
-            return await worker.perform(operation, args)
+            result = await worker.perform(operation, args)
+            if fault == 'session-lookup':
+                original = app._session
+                def unavailable_once(*args, **kwargs):
+                    monkeypatch.setattr(app, '_session', original)
+                    fail()
+                monkeypatch.setattr(app, '_session', unavailable_once)
+            return result
         app.runtime = SimpleNamespace(control=control, close=AsyncMock())
         app.management = SimpleNamespace(ensure_runtime=AsyncMock(), close=AsyncMock())
         async def pause():
@@ -295,7 +302,7 @@ async def test_postcommit_observation_failure_preserves_exact_saved_receipt(tmp_
         assert reply['receipt']['revision'] == saved['task']['revision'] == 2
         assert saved['task']['status'] == 'paused'
         assert not await worker.tasks.continuation_allowed()
-        if fault == 'publication':
+        if fault in {'publication', 'session-lookup'}:
             assert reply['publication']['status'] == 'unavailable'
             assert reply['status'] == 'unavailable'
             assert reply['snapshotIsCurrent'] is None
