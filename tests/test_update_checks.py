@@ -5,6 +5,41 @@ import pytest
 from amplifier_web.update_checks import CheckCache, checking, cached, git_revision
 
 
+async def test_cache_writes_use_the_same_explicit_owned_root_on_success_and_failure(tmp_path,monkeypatch):
+    from amplifier_web import deployment
+    original=deployment.write_private
+    calls=[]
+    directory=tmp_path/'updates'
+    def private(path,text,*,owned_root=None):
+        calls.append(owned_root)
+        assert owned_root==directory, 'Windows private writes require an explicit owned_root'
+        original(path,text,owned_root=owned_root)
+    monkeypatch.setattr(deployment,'write_private',private)
+    cache=CheckCache(directory)
+    async def success():return 'public value'
+    async def failed():raise ValueError('original lookup failure')
+    try:
+        assert await cache.get(['release'],success,fresh=True,ttl=60,scope='offline')=='public value'
+        with pytest.raises(ValueError,match='original lookup failure'):
+            await cache.get(['release'],failed,fresh=True,ttl=60,scope='offline')
+        assert calls==[directory,directory]
+        assert json.loads(cache.path.read_text())['entries']=={}
+        assert cache.tasks=={}
+    finally:await cache.close()
+
+
+async def test_update_manager_cache_uses_its_data_identity_not_ambient_home(tmp_path,monkeypatch):
+    from amplifier_web.service import AppService
+    from amplifier_web.updates import UpdateManager
+    from test_service import Runtime
+    monkeypatch.setenv('AMPLIFIER_WEB_HOME',str(tmp_path/'unrelated'))
+    service=AppService(tmp_path/'actual',Runtime(),workspace=tmp_path/'workspace')
+    try:
+        manager=service.update_manager=UpdateManager(service)
+        assert manager.check_cache.owned_root==service.data_dir
+    finally:await service.close()
+
+
 async def test_fresh_checks_join_refs_and_warm_checks_reuse_across_restart(tmp_path):
     calls = []
     async def process(*args, **kwargs):

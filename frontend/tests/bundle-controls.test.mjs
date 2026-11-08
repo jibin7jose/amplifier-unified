@@ -97,7 +97,7 @@ for(const first of ['save','preview'])test(`a slow preview permits a new bundle 
   await renderAct(async()=>{releases['bundle.preview']?.({accepted:true});releases['conversation.configure']?.({accepted:true,result:{revision:5}});await Promise.all([previewOperation,saveOperation]);root?.unmount()});
  }
 });
-test('a host-reported preview allows editing but keeps active, configuration and unsaved-choice guards',async()=>{
+test('a host-reported preview allows editing but keeps configuration and unsaved-choice guards',async()=>{
  const calls=[],act=record(calls),base={id:'chat',bundle:'anchors',bundleChange:{phase:'working',action:'bundle.preview'}};
  let session=base,state={view:{composerBundle:{open:true,sessionId:'chat',bundle:'work'}},registeredBundles:[{value:'anchors'},{value:'work'}]},root;
  const render=()=>React.createElement(BundleControl,{state,session,act,working:false});
@@ -109,7 +109,7 @@ test('a host-reported preview allows editing but keeps active, configuration and
   assert.equal(button('bundle.preview').props.disabled,true);assert.equal(button('bundle.fork').props.disabled,true);
   await renderAct(async()=>{await button('bundle.preview').props.onClick();await button('bundle.fork').props.onClick()});
   assert.equal(calls.some(c=>c.name==='bundle.preview'||c.name==='bundle.fork'),false);
-  for(const guard of [{configurationBusy:true},{pendingConfiguration:{phase:'queued'}},{status:'working'},{ownership:{status:'yielded'}}]){
+  for(const guard of [{configurationBusy:true},{pendingConfiguration:{phase:'queued'}},{ownership:{status:'yielded'}}]){
    session={...base,...guard};await renderAct(async()=>root.update(render()));
    assert.equal(picker().props.disabled,true);assert.equal(button('conversation.configure').props.disabled,true);
    await renderAct(async()=>button('conversation.configure').props.onClick());
@@ -285,9 +285,14 @@ test('catalog retry transport rejection stays actionable without changing a choi
  }finally{await renderAct(async()=>root?.unmount())}
 });
 
-for(const compact of [true,false])test('starting permits Next message bundle save but not eager switch: '+compact,async()=>{
+for(const compact of [true,false])for(const activity of [
+ {status:'starting'},
+ {status:'working',collaborationGeneration:{id:'live',terminal:false}},
+ {status:'starting',messages:[{delivery:{status:'sending'}}]},
+ {status:'working',workers:[{status:'starting'}]},
+])test('active work permits Next message bundle save but not eager switch: '+compact+JSON.stringify(activity),async()=>{
  const calls=[],state={view:{composerBundle:{open:true,sessionId:'chat',bundle:'work'}},registeredBundles:[{value:'work'},{value:'anchors'}]};
- let session={id:'chat',status:'starting',bundle:'anchors',nextMessageRevision:7},root;
+ let session={id:'chat',bundle:'anchors',nextMessageRevision:7,...activity},root;
  const render=()=>React.createElement(BundleControl,{compact,state,session,working:true,act:record(calls)});
  try{
   await renderAct(async()=>root=create(render()));
@@ -307,9 +312,6 @@ for(const compact of [true,false])test('starting permits Next message bundle sav
  }finally{await renderAct(async()=>root?.unmount())}
 });
 for(const guard of [
- {collaborationGeneration:{id:'live',terminal:false}},
- {messages:[{delivery:{status:'sending'}}]},
- {workers:[{status:'starting'}]},
  {pendingConfiguration:{phase:'queued'}},
  {pendingConfiguration:{phase:'error'}},
  {ownership:{status:'yielded'}},

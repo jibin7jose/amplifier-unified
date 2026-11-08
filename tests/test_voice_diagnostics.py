@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 
 import pytest
@@ -147,3 +148,72 @@ async def test_realtime_local_close_retains_facts_and_uses_same_hangup(tmp_path)
     row = records(tmp_path)[0]
     assert row['provider'] == 'realtime' and row['type'] == 'local.closed'
     assert row['closed'] is True and row['finalized'] is True
+
+
+async def test_windows_diagnostics_use_private_publication_without_posix_flags(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from amplifier_web import voice_diagnostics, windows_files
+
+    # Windows has neither O_NOFOLLOW nor fchmod. Do not patch the process-wide
+    # os.name: pathlib and pytest must retain their real platform semantics.
+    monkeypatch.setattr(voice_diagnostics, 'os', SimpleNamespace(
+        name='nt', open=os.open, O_WRONLY=os.O_WRONLY, O_CREAT=os.O_CREAT, O_APPEND=os.O_APPEND))
+    monkeypatch.setattr(voice_diagnostics, 'MAX_BYTES', 1800)
+    files, publications = {}, []
+
+    @contextmanager
+    def private_directory(path, *, owned_root, create):
+        assert path == tmp_path / 'voice-diagnostics'
+        assert owned_root == tmp_path and create is True
+
+        class Pinned:
+            def read_private(self, name, *, limit):
+                assert limit == 1800
+                if name not in files:
+                    raise FileNotFoundError(name)
+                assert len(files[name]) <= limit
+                return files[name]
+
+            def publish_private(self, name, content, *, replace):
+                assert replace is True and len(content) <= 1800
+                publications.append(name)
+                files[name] = content
+
+        yield Pinned()
+
+    monkeypatch.setattr(windows_files, 'directory', private_directory)
+    call = make_call(tmp_path)
+    for index in range(20):
+        await call.handle({'type': 'error', 'event_id': f'error_{index}',
+                           'error': {'code': 'server_error', 'message': 'private context'}})
+    call.final.set()
+    await call.close()
+    assert call.closed and not call.manager.protocol_diagnostics.storage_error
+    assert set(files) == {'events.jsonl', 'events.previous.jsonl'}
+    assert publications[-1] == 'events.jsonl'
+    assert any(name == 'events.previous.jsonl' for name in publications)
+    rows = [json.loads(line) for line in files['events.jsonl'].splitlines()]
+    assert rows[-1]['type'] == 'local.closed'
+    assert all(b'private context' not in data and b'sk-private' not in data for data in files.values())
+
+
+async def test_windows_private_storage_refusal_does_not_interrupt_close(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from amplifier_web import voice_diagnostics, windows_files
+
+    monkeypatch.setattr(voice_diagnostics, 'os', SimpleNamespace(
+        name='nt', open=os.open, O_WRONLY=os.O_WRONLY, O_CREAT=os.O_CREAT, O_APPEND=os.O_APPEND))
+
+    @contextmanager
+    def refused(*args, **kwargs):
+        raise PermissionError('Untrusted diagnostic directory')
+        yield
+
+    monkeypatch.setattr(windows_files, 'directory', refused)
+    call = make_call(tmp_path)
+    call.final.set()
+    result = await call.close()
+    assert result == {'closed': True, 'finalized': True, 'workContinues': True}
+    assert call.manager.protocol_diagnostics.storage_error is True

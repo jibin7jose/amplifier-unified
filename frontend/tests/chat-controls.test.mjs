@@ -459,6 +459,23 @@ const savedModelState=()=>({
   'configuration.catalog':{configurationRevision:0,providers:[{id:'one',sharedCatalogKey:'account-one',info:{defaults:{model:'first'}}}],effective:{instance:'one',model:'first'}}
  }}
 });
+test('a connection conflict explains withheld choices instead of claiming the model is undiscovered',async()=>{
+ const calls=[],state=savedModelState(),session={id:'chat',status:'working'};
+ state.runtimeControl.chat['configuration.catalog'].connectionBindings={
+  one:{eligible:false,reason:'This conversation has different saved connection settings.'}
+ };
+ let root;
+ try{
+  await renderAct(async()=>root=create(React.createElement(ModelControl,{state,session,working:true,act:record(calls)})));
+  assert.equal(field(root,'chat-provider').props.disabled,false,'Another connection remains selectable');
+  assert.equal(field(root,'chat-model').props.disabled,true);
+  assert.equal(field(root,'chat-model').props.value,'first');
+  const text=renderedText(root.toJSON());
+  assert.match(text,/does not mean the model is unavailable/);
+  assert.doesNotMatch(text,/not in the discovered list|Manual ID/);
+  assert.equal(calls.some(c=>c.name==='conversation.configure'),false);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
 test('one compact dialog bridges model, bundle and effort saves but not another client revision',async()=>{
  const calls=[],state={...savedModelState(),registeredBundles:[{value:'anchors'},{value:'work'}]};
  let session={id:'chat',bundle:'anchors',nextMessageRevision:0},actualRevision=0,root;
@@ -521,22 +538,41 @@ test('starting without accepted input keeps saved choices usable without runtime
  }finally{await renderAct(async()=>root?.unmount())}
 });
 for(const guard of [
- {collaborationGeneration:{id:'live',terminal:false}},
- {messages:[{role:'user',delivery:{status:'sending'}}]},
- {workers:[{status:'running'}]},
  {configurationBusy:true},
  {pendingConfiguration:{phase:'error'}},
  {ownership:{status:'blocked'}},
- {status:'working'},
- {status:'stopping'},
- {workers:[{status:'stopping'}]}
-])test('Next message choices retain active-work/configuration/ownership guard '+JSON.stringify(guard),async()=>{
+])test('Next message choices retain configuration/ownership guard '+JSON.stringify(guard),async()=>{
  const calls=[],session={id:'chat',status:'starting',...guard};let root;
  try{
   await renderAct(async()=>root=create(React.createElement(ModelControl,{state:savedModelState(),session,working:true,act:record(calls)})));
   for(const id of ['chat-provider','chat-model','chat-effort'])assert.equal(field(root,id).props.disabled,true);
   await renderAct(async()=>field(root,'chat-model').props.onChange({target:{value:'second'}}));
   assert.ok(!calls.some(c=>c.name==='conversation.configure'));
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+for(const active of [
+ {status:'working',collaborationGeneration:{id:'live',terminal:false}},
+ {status:'starting',messages:[{role:'user',delivery:{status:'sending'}}]},
+ {status:'running',workers:[{status:'running'}]},
+ {status:'stopping',workers:[{status:'stopping'}]}
+])test('active chat can save model effort and bundle for its next message '+JSON.stringify(active),async()=>{
+ const calls=[],selection={instance:'one',model:'first',effort:'low'};
+ const session={id:'chat',bundle:'anchors',nextMessageRevision:3,
+  runtimeReport:{effective_selection:selection},...active};
+ const before=structuredClone(session);
+ const state={...savedModelState(),registeredBundles:[{value:'anchors'},{value:'work'}]};
+ let root;
+ try{
+  await renderAct(async()=>root=create(React.createElement(ComposerOptions,{state,session,working:true,act:record(calls)})));
+  for(const id of ['chat-provider','chat-model','chat-effort','composer-options-bundle'])assert.equal(field(root,id).props.disabled,false,id);
+  await renderAct(async()=>field(root,'chat-model').props.onChange({target:{value:'second'}}));
+  await renderAct(async()=>field(root,'chat-effort').props.onChange({currentTarget:{value:'1'}}));
+  await renderAct(async()=>field(root,'chat-effort').props.onKeyUp());
+  await renderAct(async()=>field(root,'composer-options-bundle').props.onChange({target:{value:'work'}}));
+  assert.deepEqual(calls.filter(c=>c.name==='conversation.configure').map(c=>c.args.expectedRevision),[3,4,5]);
+  assert.deepEqual(session,before,'Saving must not change running session props');
+  assert.ok(!calls.some(c=>['conversation.send','bundle.switch','configuration.apply'].includes(c.name)||['provider.select','provider.queueSelection'].includes(c.args?.operation)));
+  assert.match(renderedText(root.toJSON()),/current turn.*unchanged/i);
  }finally{await renderAct(async()=>root?.unmount())}
 });
 test('saving locks only the choice controls and rejected receipts remain visible',async()=>{

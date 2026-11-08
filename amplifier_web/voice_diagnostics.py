@@ -70,6 +70,9 @@ class VoiceDiagnostics:
         try:
             if len(line) > MAX_BYTES:
                 raise ValueError('Voice diagnostic exceeds retention bound')
+            if os.name == 'nt':
+                self._record_windows(line)
+                return
             self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             if self.directory.is_symlink():
                 raise ValueError('Voice diagnostic directory is a symlink')
@@ -91,3 +94,18 @@ class VoiceDiagnostics:
         except (OSError, ValueError):
             # Never mask the provider error or prevent ordinary call cleanup.
             self.storage_error = True
+
+    def _record_windows(self, line):
+        # chmod/POSIX open flags do not establish Windows privacy. Reuse the
+        # owner/SID/ACL/reparse-point boundary used for other private app files.
+        # These rare error/close records have a fixed bound, not a growing read.
+        from .windows_files import directory
+        with directory(self.directory, owned_root=self.directory.parent, create=True) as pinned:
+            try:
+                current = pinned.read_private('events.jsonl', limit=MAX_BYTES)
+            except FileNotFoundError:
+                current = b''
+            if len(current) + len(line) > MAX_BYTES:
+                pinned.publish_private('events.previous.jsonl', current, replace=True)
+                current = b''
+            pinned.publish_private('events.jsonl', current + line, replace=True)

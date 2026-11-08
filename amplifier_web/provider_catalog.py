@@ -246,7 +246,7 @@ def conversation_bindings(home, workspace, session_id, providers, *, global_only
     No bundle preparation, provider import, transcript or worker is needed.
     The actual mount repeats the exact-identity check before input admission.
     """
-    from .host.config import load_config
+    from .host.config import load_config, provider_mount_sources
     config = load_config(workspace, home=home, session_id=session_id, global_only=global_only)
     rows = config.configured_connections
     path = Path(home)/'sessions'/session_id/'configuration.json'
@@ -254,6 +254,10 @@ def conversation_bindings(home, workspace, session_id, providers, *, global_only
         saved = json.loads(path.read_text())
         if 'providers' in saved:
             rows = saved['providers']
+    # Disabled connections cannot donate an implementation to an enabled one.
+    # Match configured_binding/SetupManager's intended-mount roster, while
+    # retaining all rows below so disabled selections are still refused.
+    sources = provider_mount_sources([row for row in rows if row.get('enabled', True)], config.settings)
     by_id = {row.get('instance_id') or row.get('id') or row['module'].removeprefix('provider-'):row for row in rows}
     result = {}
     for provider in providers:
@@ -262,10 +266,10 @@ def conversation_bindings(home, workspace, session_id, providers, *, global_only
             result[provider['id']] = {'eligible':False,'reason':'This conversation does not include this configured connection.'}
             continue
         key = connection_key(workspace,row['module'],row.get('config',{}),
-            row.get('source') or config.module_sources.get(row['module']),home=home)
+            sources.get(provider['id']),home=home)
         if key != provider.get('connectionKey'):
             result[provider['id']] = {'eligible':False,
-                'reason':'This conversation overrides this connection. Its saved account or endpoint differs from the configured connection.'}
+                'reason':'This conversation has different saved connection settings (account, endpoint, or provider implementation).'}
     return result
 
 

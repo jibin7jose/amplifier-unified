@@ -6,7 +6,7 @@ import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
 
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
-const {FeedbackPanel,FeedbackDiagnostics}=await server.ssrLoadModule('/src/feedback.jsx');
+const {FeedbackPanel,FeedbackDiagnostics,LocalFeedbackReport}=await server.ssrLoadModule('/src/feedback.jsx');
 test.after(()=>server.close());
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const draft={title:'Canvas bug',body:'A preview stopped responding.',category:'bug',includeDiagnostics:false};
@@ -18,6 +18,56 @@ test('feedback defaults to reviewed text without diagnostics or private-state at
  assert.match(html,/type="checkbox"/);assert.doesNotMatch(html,/checked=""/);
  assert.match(html,/credentials are not attached/);assert.doesNotMatch(html,/Included: app/);
  assert.match(html,/microsoft\/amplifier-unified/);
+});
+
+test('a new feedback form requires explicit diagnostic opt-in',()=>{
+ const html=renderToStaticMarkup(React.createElement(FeedbackPanel,{state:{view:{},feedback:{}},act:()=>{}}));
+ assert.doesNotMatch(html,/checked=""/);
+ assert.match(html,/Prepare local report/);
+});
+
+test('local report prepares only exact supplied text and does not submit or overwrite a draft',async()=>{
+ const calls=[];let root;
+ try{
+  await renderAct(async()=>root=create(React.createElement(LocalFeedbackReport,{draft,state:{},act:async(name,args)=>{
+   calls.push({name,args});return {accepted:true,result:{submitted:false,content:'# Exact report',filename:'amplifier-feedback.md'}};
+  }})));
+  await renderAct(async()=>root.root.findByProps({'data-action':'feedback.report'}).props.onClick());
+  assert.deepEqual(calls,[{name:'feedback.report',args:{title:draft.title,body:draft.body,category:'bug',includeDiagnostics:false,destination:'none'}}]);
+  assert.equal(root.root.findByProps({'aria-label':'Local feedback report preview'}).props.value,'# Exact report');
+  const link=root.root.findByProps({href:'https://github.com/microsoft/amplifier-unified/issues/new'});
+  assert.equal(link.props.href.includes('?'),false,'Report text must not leak into a browser URL');
+  assert.match(JSON.stringify(root.toJSON()),/Nothing is posted|not.*submitted/);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('late local report cannot overwrite newly edited feedback',async()=>{
+ let release,root,pending,current=draft;const calls=[];
+ const render=()=>React.createElement(LocalFeedbackReport,{draft:current,state:{},act:async(name,args)=>{
+  calls.push({name,args});return new Promise(resolve=>{release=resolve});
+ }});
+ try{
+  await renderAct(async()=>root=create(render()));
+  await renderAct(async()=>{pending=root.root.findByProps({'data-action':'feedback.report'}).props.onClick()});
+  current={...draft,body:'New text'};
+  await renderAct(async()=>root.update(render()));
+  await renderAct(async()=>{release({accepted:true,result:{submitted:false,content:'# Stale report'}});await pending});
+  assert.equal(root.root.findAllByProps({'aria-label':'Local feedback report preview'}).length,0);
+  assert.equal(calls.length,1);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('local diagnostics from a previous chat visit cannot revive after switching away and back',async()=>{
+ let release,root,pending,selectedSessionId='A';
+ const render=()=>React.createElement(LocalFeedbackReport,{draft:{...draft,includeDiagnostics:true},state:{selectedSessionId},act:()=>new Promise(resolve=>release=resolve)});
+ try{
+  await renderAct(async()=>root=create(render()));
+  await renderAct(async()=>{pending=root.root.findByProps({'data-action':'feedback.report'}).props.onClick()});
+  selectedSessionId='B';await renderAct(async()=>root.update(render()));
+  selectedSessionId='A';await renderAct(async()=>root.update(render()));
+  await renderAct(async()=>{release({accepted:true,result:{submitted:false,content:'Previous visit'}});await pending});
+  assert.equal(root.root.findAllByProps({'aria-label':'Local feedback report preview'}).length,0);
+ }finally{await renderAct(async()=>root?.unmount())}
 });
 
 test('a lost acknowledgement keeps the exact request and frozen text for explicit retry',async()=>{
@@ -140,8 +190,8 @@ test('an untrusted shared preview URL is never used as an image source',()=>{
  assert.match(html,/Review file destination/);assert.match(html,/visibility you explicitly review/);assert.match(html,/24 MB total/);
 });
 
- test('new feedback includes allowlisted diagnostics by default',()=>{
-  const html=renderToStaticMarkup(React.createElement(FeedbackPanel,{state:{view:{},feedback:{requests:[]}},act:()=>{}}));
+ test('an explicit saved diagnostic opt-in remains checked',()=>{
+  const html=renderToStaticMarkup(React.createElement(FeedbackPanel,{state:{view:{feedbackDraft:{includeDiagnostics:true}},feedback:{requests:[]}},act:()=>{}}));
   assert.match(html,/checked=""/);assert.match(html,/Include reproduction diagnostics/);
  });
  test('slow acknowledgements do not overwrite newer typing or queue every keystroke',async()=>{

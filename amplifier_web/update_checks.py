@@ -87,8 +87,11 @@ def git_access_scope(scope, environment):
 
 
 class CheckCache:
-    def __init__(self, directory, *, clock=time.time):
+    def __init__(self, directory, *, clock=time.time, owned_root=None):
         self.path = Path(directory) / "check-cache.json"
+        # The updater supplies its canonical data identity. Standalone caches
+        # own only the directory explicitly supplied by their caller.
+        self.owned_root = Path(owned_root) if owned_root is not None else Path(directory)
         self.clock = clock
         self.tasks = {}
         self.entries = {}
@@ -146,7 +149,8 @@ class CheckCache:
                 from .deployment import write_private
 
                 write_private(
-                    self.path, json.dumps({"version": 1, "entries": self.entries})
+                    self.path, json.dumps({"version": 1, "entries": self.entries}),
+                    owned_root=self.owned_root,
                 )
                 return value
             except BaseException:
@@ -156,7 +160,8 @@ class CheckCache:
                     from .deployment import write_private
 
                     write_private(
-                        self.path, json.dumps({"version": 1, "entries": self.entries})
+                        self.path, json.dumps({"version": 1, "entries": self.entries}),
+                        owned_root=self.owned_root,
                     )
                 except OSError:
                     pass

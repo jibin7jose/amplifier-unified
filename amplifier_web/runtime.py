@@ -1469,7 +1469,7 @@ class RuntimeManager:
     async def _start_for_input(self, session, emit, *, admission_check=None):
         try:
             guard = None
-            original = session
+            captured_revision = session.get('nextMessageRevision', 0)
             if self._input_configuration and session.get('nextMessageRevision'):
                 session, guard = await self._input_configuration(session)
             configuration_guard = guard
@@ -1501,7 +1501,7 @@ class RuntimeManager:
             if configuration_guard:
                 guard()
                 await emit('runtime.nextMessageApplied', {'sessionId': session['id'],
-                    'revision': original['nextMessageRevision'], 'bundle': session.get('bundle'), 'selection': requested})
+                    'revision': captured_revision, 'bundle': session.get('bundle'), 'selection': requested})
             elif requested:
                 await emit('runtime.modelSelectionApplied',{'sessionId':session['id'],'selection':requested})
             return guard

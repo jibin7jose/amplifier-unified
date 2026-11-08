@@ -134,12 +134,22 @@ conversation's `nextMessageRevision`, not the global app revision. The receipt
 returns the new revision and `mounted:false`. A stale edit conflicts; the client
 must not silently retry it over another browser's choice.
 
+These future choices remain editable while this host is running or stopping a
+turn, including active child work and pending delivery. Saving never changes
+that turn's captured model, effort, bundle, ownership, or execution status.
+Steering remains part of the current run and keeps that run's settings; it is
+not a fresh-turn configuration boundary.
+Unresolved configuration mutations, read-only history, and ownership on another
+host still block a save and must be explained at the controls.
+
 `pendingBundleSelection` and `pendingModelSelection` are desired configuration.
 `bundle` and runtime reports describe applied or last-observed configuration.
 `appliedConfigurationRevision` is updated only after matching runtime readback.
 The bundled composer includes `expectedConfigurationRevision` on a genuine send.
-Revision, Stop, execution placement and original bundle authority are checked
-again after preparation waits. Reading or choosing settings never resumes a goal.
+The send captures its selected revision. Later edits wait for a later input;
+an older mount acknowledgment cannot erase them. Stop, execution placement,
+connection settings and original bundle authority are checked again after
+preparation waits. Reading or choosing settings never resumes a goal.
 
 Bundle previews compose declared settings without mounting either root. An
 unavailable source remains an explicit preview failure. Actual native conversion

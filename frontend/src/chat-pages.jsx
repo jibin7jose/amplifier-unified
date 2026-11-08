@@ -11,7 +11,7 @@ import {ConversationSharing} from './conversation-library';
 import {CopyDetail} from './navigation-details';
 import {sessionIdentity} from './navigation-presentation';
 import {Questions} from './questions';
-import {FeedbackDiagnostics} from './feedback';
+import {FeedbackDiagnostics,FeedbackPanel} from './feedback';
 import {settingsPatch} from './settings-navigation';
 import {RuntimeSettings} from './runtime-settings';
 import {ScheduleVisibilityContext} from './schedules';
@@ -68,6 +68,10 @@ function Help({state,act,open}){
   <div className="a-dialog-actions"><button type="button" className="a-soft" onClick={()=>open('feedback')}>Report a problem</button><button type="button" className="a-soft" onClick={()=>act('view.update',{patch:settingsPatch('diagnostics')})}>Diagnostic recording settings</button></div>
  </>;
 }
+function ErrorFeedback({state,act}){
+ const [opened,setOpened]=useState(false);
+ return <details onToggle={event=>setOpened(event.currentTarget.open)}><summary>Report this problem</summary><p>Describe what happened here. Diagnostics are optional; nothing is submitted until you choose a delivery action.</p>{opened&&<FeedbackPanel state={state} act={act}/>}</details>;
+}
 // Keep already opened forms mounted while navigating within Chat. This preserves
 // unsaved local edits without opening or loading controls the user has not visited.
 export function ChatPages({page,state,session,act,dispatch=act,open,working,computerControls,questionReviewState}){
@@ -79,7 +83,7 @@ export function ChatPages({page,state,session,act,dispatch=act,open,working,comp
  const back=<button type="button" className="a-link a-chat-back" onClick={()=>open('chat-advanced')}><ArrowLeft/>Back to Advanced</button>;
  if(!session)return <p>Select a chat to see its information and options.</p>;
  return <div className="a-chat-pages">
-  {show('chat-error')&&<div hidden={page!=='chat-error'}><ConversationDetails key={session.id} session={session} act={dispatch} focused open={open}/></div>}
+  {show('chat-error')&&<div hidden={page!=='chat-error'}><ConversationDetails key={session.id} session={session} act={dispatch} focused open={open}/>{page==='chat-error'&&<ErrorFeedback state={state} act={dispatch}/>}</div>}
   {show('session-details')&&<div hidden={page!=='session-details'}><Info key={session.id} session={session} state={state} act={dispatch} open={open} questionReviewState={questionReviewState}/></div>}
   {show('chat-rename')&&<div hidden={page!=='chat-rename'}><ConversationName session={session} act={dispatch} details={false}/></div>}
   {show('chat-share')&&<div hidden={page!=='chat-share'}><details open><summary>Save to a file</summary><ConversationExport session={session} state={state} act={act}/></details><details><summary>Share a copy</summary><ConversationSharing session={session} act={act}/></details></div>}

@@ -96,7 +96,7 @@ function DetailedBundleControl({state,session,act,working}){
      <button type="button" className="a-soft" disabled={disabled||previewPending} data-action="bundle.preview" onClick={()=>run('bundle.preview')}>Preview changes</button>
      <button type="button" className="a-soft" disabled={disabled||previewPending||working||needsModel} data-action="bundle.fork" onClick={()=>run('bundle.fork')}>Fork with this bundle</button>
     </div>
-    {blocked&&<p>Finish active work and resolve held configuration or ownership before saving Next message settings.</p>}
+    {blocked&&<p>Resolve held configuration or ownership before saving Next message settings. Active work alone does not block these choices.</p>}
     {(pending||previewPending||error||session?.nextMessageError||session?.pendingBundleSelection||operation)&&<ResultNotice phase={pending||previewPending?'working':error||session?.nextMessageError?'error':session?.pendingBundleSelection?'ready':operation?.phase} message={pending||previewPending?progress:error||session?.nextMessageError||(session?.pendingBundleSelection?'Next message settings saved; not applied yet.':operation?.error||(operation?.phase==='ready'?operation.action==='bundle.preview'?'Preview ready':operation.action==='bundle.fork'?'Fork created':'Bundle applied':''))}/>}
    </>:<div className="a-dialog-actions"><button type="button" className="a-primary" disabled={disabled} data-action="view.update" onClick={()=>run('view.update')}>Use bundle</button><button type="button" className="a-soft" disabled={pending||!setup.bundle} data-action="view.update" onClick={()=>act('view.update',{patch:{newSessionDraft:{...setup,bundle:''},composerBundle:{}}})}>Use workspace default</button></div>}
   </section>}

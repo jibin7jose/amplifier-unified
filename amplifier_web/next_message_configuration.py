@@ -60,18 +60,9 @@ def save(service, args, authority=None):
     if (session.get('configurationBusy') or manager.unresolved_configuration(session)
             or pending.get('phase') in {'queued', 'applying'}):
         raise AppError('Resolve the existing configuration operation before changing Next message settings.', 409)
-    # Preparing without accepted input is not a live turn. Never relabel actual
-    # work or clear its ownership/fences merely to make a setting editable.
-    if pending_input(service, session):
-        raise AppError('Finish active work before changing Next message settings.', 409)
-    # A ColdRecord copy/deepcopy intentionally materializes every cold field.
-    # configuration_idle needs only these hot fields plus its peer-input claim.
-    presentation = {key: session[key] for key in
-        ('id', 'status', 'configurationBusy', 'pendingConfiguration', 'workers') if key in session}
-    if presentation['status'] == 'starting':
-        presentation['status'] = 'idle'
-    if not manager.configuration_idle(presentation):
-        raise AppError('Finish active work before changing Next message settings.', 409)
+    # This is durable future intent, not a worker mutation. Live manager/child
+    # work and pending delivery must retain their own captured settings, status,
+    # ownership and Stop fences while a user edits the NEXT message.
     if session.get('ownership', {}).get('status') in {'blocked', 'yielding', 'yielded', 'yield-failed', 'taking-over'}:
         raise AppError('This conversation is owned elsewhere. Continue here before changing its settings.', 409)
     if session.get('historyReadOnlyReason'):
@@ -85,7 +76,9 @@ def save(service, args, authority=None):
     if 'bundle' in args and not bundle:
         raise AppError('Choose a bundle.', 400)
     if 'bundle' in args:
-        if bundle == session.get('bundle') and not args.get('resetModel'):
+        if (bundle == session.get('bundle') and not args.get('resetModel')
+                and not pending_input(service, session)
+                and session.get('status') not in {'starting', 'working', 'running', 'busy', 'stopping'}):
             session.pop('pendingBundleSelection', None)
         else:
             session['pendingBundleSelection'] = {'bundle': bundle, 'resetModel': args.get('resetModel', False),
@@ -116,10 +109,10 @@ def save(service, args, authority=None):
 def bind(service, runtime):
     """Only host code supplies this callback. It never crosses the worker wire."""
     if callable(getattr(runtime, 'bind_input_configuration', None)):
-        runtime.bind_input_configuration(lambda session: prepare(service, session))
+        runtime.bind_input_configuration(lambda session: prepare(service, session, frozen=True))
 
 
-def guard_for(service, captured):
+def guard_for(service, captured, *, frozen=False):
     from .runtime import RuntimeStartupError
     sid = captured['id']
     revision = captured.get('nextMessageRevision', 0)
@@ -131,7 +124,7 @@ def guard_for(service, captured):
         current = service._session(sid, hydrate=False)
         if current.get('interruptionRevision', 0) != interruption or current.get('status') in {'stopping', 'stopped'}:
             raise RuntimeStartupError('This preparation was stopped. No input was sent.')
-        if target(current) != placement or current.get('nextMessageRevision', 0) != revision:
+        if target(current) != placement or (not frozen and current.get('nextMessageRevision', 0) != revision):
             raise RuntimeStartupError('Next message settings or execution placement changed. No input was sent.')
         if service.state.get('configurationRevision', 0) != configuration_revision:
             raise RuntimeStartupError('Connection settings changed during input preparation. No input was sent.')
@@ -151,7 +144,7 @@ def guard_for(service, captured):
     return check
 
 
-async def prepare(service, captured):
+async def prepare(service, captured, *, frozen=False):
     """Resolve on genuine input, without mounting the old bundle for validation.
 
     Return a startup snapshot and a synchronous guard checked by RuntimeManager
@@ -160,7 +153,10 @@ async def prepare(service, captured):
     from .draft_defaults import resolve_defaults
     from .runtime import RuntimeStartupError
     session = copy.deepcopy(captured)
-    check = guard_for(service, captured)
+    # Runtime input already captured its choice before awaiting preparation.
+    # Later edits are for a later message; Stop, placement, account/configuration
+    # authority changes still invalidate this attempt.
+    check = guard_for(service, captured, frozen=frozen)
     pending = session.get('pendingBundleSelection')
     selection = session.get('pendingModelSelection')
     failure = None
@@ -269,10 +265,20 @@ def validate_selection(selected, catalog):
 
 def applied(session, payload):
     """Exact revision acknowledgment cannot clear a newer A→B→A choice."""
-    if payload.get('revision') != session.get('nextMessageRevision', 0):
+    revision = payload.get('revision')
+    if (type(revision) is not int or revision > session.get('nextMessageRevision', 0)
+            or revision <= session.get('appliedConfigurationRevision', -1)):
         return
     pending = session.get('pendingBundleSelection')
-    if pending and pending['bundle'] != payload.get('bundle'):
+    if (revision == session.get('nextMessageRevision', 0)
+            and pending and pending['bundle'] != payload.get('bundle')):
+        return
+    # A slow earlier mount may finish after the user saves a future choice.
+    # Record its actual root, without clearing or relabelling that newer intent.
+    if payload.get('bundle'):
+        session['bundle'] = payload['bundle']
+    session['appliedConfigurationRevision'] = revision
+    if revision != session.get('nextMessageRevision', 0):
         return
     if pending:
         session['bundle'] = pending['bundle']
@@ -280,6 +286,5 @@ def applied(session, payload):
         session.pop('bundlePreview', None)
     session.pop('pendingModelSelection', None)
     session['nextMessageStatus'] = 'applied'
-    session['appliedConfigurationRevision'] = payload['revision']
     session.pop('nextMessageError', None)
     session.pop('nextMessageFailure', None)

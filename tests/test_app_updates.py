@@ -131,6 +131,61 @@ async def test_release_check_requires_real_tag_revision(monkeypatch):
     result=await app_updates.check()
     assert result['status']=='check_failed' and 'credential' not in result['detail']
 
+@pytest.mark.parametrize('stage,error,reason', [
+    ('release_metadata', RuntimeError('SECRET endpoint credential'), 'unavailable'),
+    ('release_metadata', TimeoutError('SECRET proxy'), 'timeout'),
+    ('release_revision', FileNotFoundError('SECRET executable path'), 'git_missing'),
+    ('release_revision', TimeoutError('SECRET account'), 'timeout'),
+    ('release_revision', RuntimeError('SECRET Git stderr'), 'unavailable'),
+    ('components', RuntimeError('SECRET component source'), 'unavailable'),
+])
+async def test_release_check_keeps_closed_failure_boundary_and_recovery(stage,error,reason,monkeypatch):
+    monkeypatch.setattr(app_updates,'__version__','1.2.3')
+    monkeypatch.setattr(app_updates,'application_state',lambda:{'current':'1.2.3','status':'not_checked'})
+    calls=[]
+    failing=True
+    async def metadata(*args,**kwargs):
+        calls.append('release_metadata')
+        if failing and stage=='release_metadata':raise error
+        return json.dumps({'tag_name':'v1.2.3'})
+    async def process(*args,**kwargs):
+        calls.append('release_revision')
+        if failing and stage=='release_revision':raise error
+        return 'a'*40+'\trefs/tags/v1.2.3'
+    async def components(*args,**kwargs):
+        calls.append('components')
+        if failing and stage=='components':raise error
+        return []
+    monkeypatch.setattr(app_updates,'github_read',metadata)
+    monkeypatch.setattr(app_updates,'process',process)
+    monkeypatch.setattr(app_updates.components,'updates',components)
+    result=await app_updates.check()
+    assert result['status']=='check_failed'
+    assert result['checkStage']==stage and result['checkReason']==reason
+    assert 'No update was installed by this check.' in result['detail']
+    assert 'SECRET' not in json.dumps(result)
+    assert calls==['release_metadata','release_revision','components'][:['release_metadata','release_revision','components'].index(stage)+1]
+    failing=False
+    result=await app_updates.check()
+    assert result['status']=='current' and result['revision']=='a'*40
+    assert 'checkStage' not in result and 'checkReason' not in result
+
+@pytest.mark.parametrize('metadata,output,stage',[
+    ('[]','', 'release_metadata'),
+    ('{"tag_name":null}','', 'release_metadata'),
+    ('{"tag_name":"v1.2.3"}','bad-row', 'release_revision'),
+])
+async def test_release_check_rejects_malformed_response_without_losing_failure_stage(metadata,output,stage,monkeypatch):
+    monkeypatch.setattr(app_updates,'github_read',AsyncMock(return_value=metadata))
+    monkeypatch.setattr(app_updates,'process',AsyncMock(return_value=output))
+    result=await app_updates.check()
+    assert result['status']=='check_failed' and result['checkStage']==stage
+    assert result['checkReason']=='invalid_response'
+
+async def test_release_check_preserves_cancellation(monkeypatch):
+    monkeypatch.setattr(app_updates,'github_read',AsyncMock(side_effect=asyncio.CancelledError))
+    with pytest.raises(asyncio.CancelledError):await app_updates.check()
+
 async def test_candidate_isolated_validated_and_busy_host_not_replaced(tmp_path,monkeypatch):
     service=AppService(tmp_path,Runtime(),workspace=tmp_path)
     await service.dispatch('session.create',{})

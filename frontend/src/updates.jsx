@@ -48,6 +48,26 @@ export function UpdateSettings({state,act}){
  const AppIcon=appStatus.state==='current'?Check:appStatus.state==='update'?ArrowUpCircle:appStatus.state==='failed'?AlertCircle:Clock3;
  const statusRef=React.useRef(null);useReadVisible(unread.filter(item=>item.id==='updates:pending'||item.id==='source:application'),act,statusRef);
  const expanded=!!state.view?.maintenanceDraft?.updatesExpanded;
+  const advancedRef=React.useRef(null),advancedId=React.useId();
+  const diagnosticsExpanded=!!state.view?.maintenanceDraft?.updateDiagnosticsExpanded;
+  const [detailsOpen,setDetailsOpen]=React.useState(()=>overview.tone==='error'||expanded||diagnosticsExpanded);
+  const [detailsNotice,setDetailsNotice]=React.useState('');
+  React.useEffect(()=>{if(overview.tone==='error')setDetailsOpen(true)},[overview.tone]);
+  React.useEffect(()=>{if(expanded||diagnosticsExpanded)setDetailsOpen(true)},[expanded,diagnosticsExpanded]);
+  function revealDetails(action){
+   const sources=action==='sources';
+   setDetailsOpen(true);
+   setDetailsNotice(sources?'Source details opened below.':'Update diagnostics opened below.');
+   // Explicit navigation only: routine background status refresh never scrolls.
+   const heading=advancedRef.current?.querySelector?.('summary');
+   heading?.focus?.({preventScroll:true});
+   heading?.scrollIntoView?.({block:'center'});
+   try{
+    Promise.resolve(act('view.update',{patch:{maintenanceDraft:{...state.view?.maintenanceDraft,updatesExpanded:sources,updateDiagnosticsExpanded:!sources}}}))
+     .then(receipt=>{if(receipt?.accepted===false)setDetailsNotice('Details are open, but the view preference could not be saved.')})
+     .catch(()=>setDetailsNotice('Details are open, but the view preference could not be saved.'));
+   }catch{setDetailsNotice('Details are open, but the view preference could not be saved.')}
+  }
  const controlsBusy=busy||overview.busy,disabledReason=controlsBusy?overview.detail:pending?overview.detail:overview.blocked?'App updates for this development preview are managed by its owner.':'';
  const canRefreshQueued=!!updates.pendingApp&&!updates.pendingApp.featureSelection&&!updates.pendingRelease&&overview.toolResultsIndependent&&!updates.pendingRestart&&!replacement&&!busy;
  const canRefreshRunner=overview.runnerOnlyPending&&!replacement&&!busy;
@@ -63,7 +83,8 @@ export function UpdateSettings({state,act}){
    {overview.waiting&&!overview.runnerOnlyPending&&!!updates.blockers?.length&&<details className="a-update-work" data-part="update-blockers"><summary>View active work ({updates.blockers.length})</summary><ul>{updates.blockers.map((item,index)=><li key={index}>{item.label}{item.sessionId&&<> — <button type="button" className="a-link" data-action="session.select" onClick={async()=>{const result=await act('session.select',{id:item.sessionId});if(result&&result.accepted!==false)await act('view.update',{patch:{panel:null,workSurface:'chat'}})}}>{item.title||'Open conversation'}</button></>}</li>)}</ul><p className="a-caption">Idle chats alone don’t hold up the update. Background workers, calls, and tools may still need to finish.</p><UpdateRestart updates={updates} act={act}/></details>}
   {overview.current?.actionRequired&&<div className="a-update-current-action">
    {overview.current.component&&<p className="a-caption">Component: {overview.current.component}</p>}
-   <button className="a-soft" onClick={()=>overview.current.action==='check'?act('updates.check'):act('view.update',{patch:{maintenanceDraft:{...state.view?.maintenanceDraft,updatesExpanded:overview.current.action==='sources',updateDiagnosticsExpanded:overview.current.action!=='sources'}}})}>{overview.current.action==='check'?'Check current components':overview.current.action==='sources'?'Review source details':'View update diagnostics'}</button>
+   <button className="a-soft" data-action={overview.current.action==='check'?'updates.check':'view.update'} aria-controls={overview.current.action==='check'?undefined:advancedId} aria-expanded={overview.current.action==='check'?undefined:detailsOpen} onClick={()=>overview.current.action==='check'?act('updates.check'):revealDetails(overview.current.action)}>{overview.current.action==='check'?'Check current components':overview.current.action==='sources'?'Review source details':'View update diagnostics'}</button>
+   {detailsNotice&&<p className="a-caption" role="status">{detailsNotice}</p>}
    <p className="a-caption">The current installation is kept. Review the supported next step before retrying.</p>
   </div>}
   <FailureDispositions state={state}/>
@@ -80,7 +101,7 @@ export function UpdateSettings({state,act}){
   </div>
   <details className="a-update-disclosure" data-part="important-release-changes"><summary>Important changes</summary><div className="a-update-disclosure-body"><AttentionReview state={state} act={act} page="updates" items={releaseUnread}/><ReleaseNotices application={application} state={state} act={act}/>{!state.attention?.items?.some(item=>item.id.startsWith('release-notice:'))&&<p className="a-caption">No high-impact notices to review. Earlier guidance remains in Changelog.</p>}</div></details>
   <ReleaseHistory application={application} state={state} act={act}/>
-  <details className="a-update-disclosure" data-part="ecosystem-update-details" open={overview.tone==='error'||undefined}><summary>{overview.tone==='error'?'Advanced details · review issue':'Advanced details'}</summary><div className="a-update-disclosure-body">
+  <details ref={advancedRef} className="a-update-disclosure" data-part="ecosystem-update-details" open={detailsOpen} id={advancedId} onToggle={event=>setDetailsOpen(event.currentTarget.open)}><summary>{overview.tone==='error'?'Advanced details · review issue':'Advanced details'}</summary><div className="a-update-disclosure-body">
    <AttentionReview state={state} act={act} page="updates" items={componentUnread} showItems/>
    {(overview.tone==='working'||overview.tone==='available')&&<div className="a-update-progress" aria-label="Update order">{[['application','App'],['included','Included components'],['other','Other components']].map(([id,label],i)=><span key={id} data-active={overview.stage===id}>{i>0&&'→ '}{label}</span>)}</div>}
    {overview.currentProgress&&<p className="a-caption">{overview.currentProgress.phase==='prepare'?'Preparing':'Checking'} configurations: {overview.currentProgress.completed} of {overview.currentProgress.total} completed.</p>}

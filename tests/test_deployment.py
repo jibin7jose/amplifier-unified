@@ -42,6 +42,37 @@ def test_server_config_is_private_atomic_and_defaults_to_loopback(tmp_path):
     assert config["bind"] == ["127.0.0.1"]
     assert_private_config(config_path(tmp_path), tmp_path)
 
+@pytest.mark.skipif(os.name != "nt", reason="requires real Windows private cache publication")
+def test_native_update_cache_persists_and_invalidates_inside_its_owned_root(tmp_path):
+    import asyncio
+    import json
+    from amplifier_web.update_checks import CheckCache
+    async def exercise():
+        cache=CheckCache(tmp_path/"updates",owned_root=tmp_path)
+        calls=[]
+        async def loader():calls.append("lookup");return "public metadata"
+        async def fail():raise ValueError("original lookup failure")
+        try:
+            assert await cache.get(["release"],loader,fresh=True,ttl=60,scope="offline")=="public metadata"
+            assert_private_config(cache.path,tmp_path)
+            restored=CheckCache(tmp_path/"updates",owned_root=tmp_path)
+            try:
+                assert await restored.get(["release"],loader,fresh=False,ttl=60,scope="offline")=="public metadata"
+                assert calls==["lookup"]
+                with pytest.raises(ValueError,match="original lookup failure"):
+                    await restored.get(["release"],fail,fresh=True,ttl=60,scope="offline")
+                assert json.loads(cache.path.read_text())["entries"]=={}
+            finally:await restored.close()
+            escaped=CheckCache(tmp_path/"outside",owned_root=tmp_path/"different-owner")
+            try:
+                with pytest.raises((ValueError,PermissionError)):
+                    await escaped.get(["release"],loader,fresh=True,ttl=60,scope="offline")
+                assert not escaped.path.exists()
+            finally:await escaped.close()
+        finally:await cache.close()
+        assert cache.tasks=={}
+    asyncio.run(exercise())
+
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows FileRenameInfoEx and local NTFS")
 def test_native_config_save_with_open_private_reader_retains_old_bytes(tmp_path):

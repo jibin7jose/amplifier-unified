@@ -151,6 +151,51 @@ test('pin and unpin use shared actions without selecting chats or rewriting acti
  await renderAct(async()=>root.unmount());
 });
 
+for(const pinned of [false,true])test('pin changes close their flyout only after one confirmed action: '+pinned,async()=>{
+ const state=initial(),chat={...state.sessions[1],pinned},calls=[],closed=[],drafts=[];
+ let release,root,first,second;
+ const act=async(name,args)=>{calls.push({name,args});return new Promise(resolve=>{release=resolve})};
+ try{
+  await renderAct(async()=>root=create(React.createElement(ChatDetails,{chat,model:{state,act,draft:{},choose:()=>{},setDraft:d=>drafts.push(d)},now:100,close:focus=>closed.push(focus)})));
+  const pin=()=>root.root.findByProps({'aria-label':`${pinned?'Unpin':'Pin'} Another plan`});
+  await renderAct(async()=>{const click=pin().props.onClick;first=click();second=click()});
+  assert.equal(pin().props.disabled,true);
+  assert.deepEqual(closed,[]);
+  assert.deepEqual(calls,[{name:'session.pin',args:{id:chat.id,pinned:!pinned}}]);
+  await renderAct(async()=>{release({accepted:true});await Promise.all([first,second])});
+  assert.deepEqual(closed,[true],'Return keyboard focus when the flyout closes');
+  await renderAct(async()=>root.root.findByProps({'aria-label':'Rename Another plan'}).props.onClick());
+  assert.equal(drafts.at(-1).mode,'chat-rename');
+  assert.deepEqual(closed,[true],'Rename keeps its editing surface open');
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+for(const response of [{accepted:false,error:'Pin change denied'},undefined])test('unconfirmed pin change stays inspectable without retry: '+JSON.stringify(response),async()=>{
+ const state=initial(),chat={...state.sessions[1],pinned:false},calls=[],closed=[];
+ let root;
+ try{
+  await renderAct(async()=>root=create(React.createElement(ChatDetails,{chat,model:{state,act:async(name,args)=>{calls.push({name,args});return response},draft:{},choose:()=>{},setDraft:()=>{}},now:100,close:()=>closed.push(true)})));
+  await renderAct(async()=>root.root.findByProps({'aria-label':'Pin Another plan'}).props.onClick());
+  assert.equal(calls.length,1);assert.deepEqual(closed,[]);
+  assert.match(JSON.stringify(root.toJSON()),/Pin change denied|could not be confirmed/);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('a late pin receipt cannot close or refocus a different conversation',async()=>{
+ const state=initial(),closed=[],calls=[];
+ let chat={...state.sessions[1],pinned:false},release,root,request;
+ const model={state,act:async(name,args)=>{calls.push({name,args});return new Promise(resolve=>{release=resolve})},draft:{},choose:()=>{},setDraft:()=>{}};
+ const render=()=>React.createElement(ChatDetails,{chat,model,now:100,close:()=>closed.push(true)});
+ try{
+  await renderAct(async()=>root=create(render()));
+  await renderAct(async()=>{request=root.root.findByProps({'aria-label':'Pin Another plan'}).props.onClick()});
+  chat={...state.sessions[2],pinned:false};
+  await renderAct(async()=>root.update(render()));
+  await renderAct(async()=>{release({accepted:true});await request});
+  assert.equal(calls.length,1);assert.deepEqual(closed,[]);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
 test('chat details review only the displayed failure through the shared action',async()=>{
  const state=initial(),chat={...state.sessions[0],status:'error',error:'Saved failure'},calls=[];
  const item={id:'session:a',sessionId:'a',fingerprint:'failure-one',read:false};

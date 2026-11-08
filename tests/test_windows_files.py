@@ -519,6 +519,43 @@ class NativeTests(unittest.TestCase):
         import shutil
         shutil.rmtree(self.root)
 
+    def test_voice_diagnostics_use_native_private_storage_and_refuse_acl_changes(self):
+        import json
+        import threading
+        import types
+        package = types.ModuleType('fixture_voice')
+        package.__path__ = [str(SOURCE.parent)]
+        spec = importlib.util.spec_from_file_location(
+            'fixture_voice.voice_diagnostics', SOURCE.with_name('voice_diagnostics.py'))
+        voice = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {'fixture_voice': package, 'fixture_voice.windows_files': wf}):
+            spec.loader.exec_module(voice)
+            diagnostics = voice.VoiceDiagnostics(self.root)
+            event = threading.Event()
+            event.set()
+            call = types.SimpleNamespace(manager=types.SimpleNamespace(api_key='fixture-private-key'),
+                provider='live', id='fixture-call', session_id='fixture-session',
+                closing=True, closed=True, final=event, protocol_trace=voice.VoiceTrace())
+            with patch.object(voice, 'MAX_BYTES', 1800):
+                for index in range(20):
+                    diagnostics.record(call, {'type': 'local.closed', 'event_id': f'closed_{index}'})
+            self.assertFalse(diagnostics.storage_error)
+            with wf.directory(diagnostics.directory, owned_root=self.root) as pinned:
+                for name in ('events.jsonl', 'events.previous.jsonl'):
+                    data = pinned.read_private(name, limit=1800)
+                    self.assertTrue(data)
+                    self.assertNotIn(b'fixture-private-key', data)
+                    self.assertTrue(all(json.loads(line)['closed'] for line in data.splitlines()))
+            path = diagnostics.directory / 'events.jsonl'
+            before = path.read_bytes()
+            self.set_dacl(path, '(A;;FR;;;WD)')
+            try:
+                diagnostics.record(call, {'type': 'local.closed'})
+                self.assertTrue(diagnostics.storage_error)
+                self.assertEqual(path.read_bytes(), before)
+            finally:
+                self.set_dacl(path)
+
     def set_dacl(self, path, grant=""):
         """Fixture-only ACL changes, restricted to newly allocated test paths."""
         self.assertTrue(path.is_relative_to(self.root))

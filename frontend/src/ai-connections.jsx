@@ -11,9 +11,9 @@ import {SettingsActions,SettingsLayoutContext} from './settings-layout';
 import {useSettingsDraft,useGuardedSettingsDraft} from './settings-drafts';
 import {ResultNotice} from './settings-ui';
 import {ModelSelect,ModelOriginNotice} from './model-select';
-import {modelOptions} from './setup-data';
+import {modelOptions,providerFields} from './setup-data';
 import {ConfigurationDiagnostics} from './registry';
-import {AIConnectionDetail} from './ai-connection-detail';
+import {AIConnectionDetail,ConnectionPreference} from './ai-connection-detail';
 import {providerOptions} from './provider-options';
 import {aiServices,aiService,matchingSetupOperation,setupPending} from './ai-connections-data';
 import {request as apiRequest} from './api';
@@ -120,6 +120,8 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,readCom
    else if(next==='decisions'){edit({step:'decisions',saved:true});setNotice('Connection saved.');}
   }else if(action==='providers.remove'){
    setCompleted(false);setKey('');edit({step:'list',id:'',saved:false});setNotice('Connection removed. Chats that used it will need a replacement connection when resumed.');
+  }else if(action==='providers.reorder'){setNotice('Preferred chat connection saved. Existing chats and model rules are unchanged.');
+  }else if(action==='providers.finishSetup'&&next==='effort'){setNotice('Default reasoning effort saved for new conversations. Existing chats keep their choices.');
   }else if(action==='providers.finishSetup'){
    setCompleted(true);edit({step:'list',saved:false});setNotice(setup.setupCompletion?.routingSelected?'Connection saved. Balanced model rules are ready for new conversations.':'Model saved. Existing model rules are unchanged.');
   }else if(action==='providers.models'){setNotice('Model list checked. No chat request was sent.');}
@@ -131,6 +133,19 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,readCom
   }
  },[step,d.saved,login?.status,login?.loginId,busy,layout.active]);
  const connectionCatalog=setup.providerCatalogs?.[d.id],catalog=state.modelCatalogs?.[connectionCatalog?.sharedCatalogKey]||connectionCatalog,models=modelOptions(catalog?.models||[]);
+ const effortField=providerFields(catalog?.metadata||selected,{model:d.model,default_model:d.model}).find(field=>field.id==='reasoning_effort');
+ const effortChoices=(effortField?.choices||[]).map(value=>typeof value==='object'?value.value:value);
+ const defaultEffort=selected?.config?.reasoning_effort??'';
+ const saveDefaultEffort=effort=>{
+  const model=d.model?.trim()||'',savedModel=selected?.config?.default_model||selected?.config?.model||'';
+  if(model!==savedModel){
+   setError('The default model changed. Reopen this connection before saving reasoning effort. Your model draft is kept.');
+   return;
+  }
+  // Bind the precondition to the model this draft edits, not a later provider
+  // snapshot. The host still rejects a change made after this render.
+  run('providers.finishSetup',{id:d.id,model,expectedModel:model,effort,scope,initializeRouting:false},'effort');
+ };
  const modelBusy=setupPending(setup.operations?.['providers.models:'+d.id])||catalog?.phase==='working';
  const credential=credentialOperation?.phase==='ready'&&credentialOperation.commandId
   &&setup.credentialCheck?.commandId===credentialOperation.commandId
@@ -165,9 +180,9 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,readCom
  return <section data-part="ai-connections" className="a-ai-form">
   {step==='list'?<>
    <p className="a-everyday-intro">Connect the AI services Amplifier can use for your work.</p>
-   {completed&&onReturnToChat&&<div className="a-ai-welcome"><h4>Your connection is saved</h4><p>Return to chat to write a message or attach a file. Your unfinished message is kept.</p><button type="button" className="a-primary" disabled={busy} onClick={onReturnToChat}>Return to chat</button></div>}
+   <ConnectionPreference id={configId('preferred-chat-connection')} providers={providers} labels={labels} busy={busy} onChange={order=>run('providers.reorder',{...order,scope})}/>
+   {completed&&onReturnToChat&&<div className="a-ai-welcome"><h4>Your connection is saved</h4><p>Return to chat to write a message or attach a file. Your unfinished message is kept.</p><button type="button" className="a-primary" disabled={busy} onClick={()=>{setCompleted(false);onReturnToChat()}}>Return to chat</button></div>}
    {!providersLoaded&&!providers.length?<div role="status">{listOperation?.phase==='error'?<><p>Could not load AI connections. {loadError}</p><button type="button" className="a-soft" onClick={()=>act('providers.list',{})}>Retry loading connections</button></>:'Loading AI connections…'}</div>:!providers.length?<div className="a-ai-welcome"><Sparkles aria-hidden="true"/><h4>Start with one connection</h4><p>Choose a service, connect your account, and choose a model. You can add more later.</p><button className="a-primary" data-action="settings.connection.start" disabled={busy} onClick={()=>changeConnection('settings.connection.start')}><Plus/>Connect AI</button></div>:<><div className="a-everyday-list">{providers.map(p=><SettingsLink key={p.id} disabled={busy} title={<>{labels.get(p.id)}{p.authenticationRequired&&<AttentionBadge count={1}/>}</>} description={(serviceFor(p.module,p.config||{}).decisionOnly?'Decision models':p.config?.default_model||p.config?.model||'Choose a model')+' · '+(p.authenticationRequired?'Sign-in needed':p.accountConnected?'Account connected':p.credentialsConfigured?'Credentials available':p.keySource==='provider-managed'?'Account sign-in':'Connection needs setup')+(p.credential?.preview?.masked?' · Key '+p.credential.preview.masked:'')} onClick={()=>{setError('');setNotice('');edit({step:'detail',id:p.id,module:p.module,authMode:chatGPTMode(p.config?.auth_mode),model:p.config?.default_model||p.config?.model||'',scope,baseUrl:p.config?.[serviceFor(p.module,p.config||{}).endpoint_config_key||'base_url']||'',previousLoginId:setup.login?.loginId,saved:true,initializeRouting:false})}}/>)}</div><button className="a-soft" data-action="settings.connection.start" disabled={busy} onClick={()=>changeConnection('settings.connection.start')}><Plus/>Connect another service</button></>}
-   {setup.active&&providers.length>0&&<div className="a-ai-hint">Your model rules are saved. <button className="a-link" data-action="view.update" onClick={()=>navigate('routing')}>Advanced model rules</button></div>}
    <details className="a-everyday-disclosure" onToggle={event=>{if(event.currentTarget.open)setDecisionSettingsOpened(true)}}><summary>Decision models (optional)</summary>{decisionSettingsOpened&&<DecisionModelSettings state={state} act={act} navigate={navigate} onConnect={connectDecision} labels={labels}/>}</details>
    <ConfigurationDiagnostics state={state} act={act} scope={scope} navigate={navigate}/>
    <div className="a-everyday-footer"><p className="a-caption">Connections are stored on the Amplifier host. Existing conversations keep their settings.</p><button className="a-link" data-action="view.update" onClick={advanced}>Advanced connection settings<ExternalLink/></button></div>
@@ -202,6 +217,11 @@ export function AIConnections({state,session,act,navigate,onReturnToChat,readCom
      {models.length>0?<><label htmlFor={configId('ai-model')}>Model</label><ModelSelect id={configId('ai-model')} label="Model" value={d.model||''} catalogKey={d.id} entry={{...catalog,models}} state={state} act={act} disabled={busy} onChange={model=>{edit({model});if(d.settingDefault&&model.trim())run('providers.finishSetup',{id:d.id,model,scope,initializeRouting:false})}}/></>:<><ModelOriginNotice entry={catalog}/><p role="status">{modelBusy?'Loading models…':catalog?.phase==='ready'&&catalog?.supported!==false?'This connection returned no models. Enter an exact model ID under More options.':'No model list is available yet. Retry or enter a model ID under More options.'}</p></>}
      {catalog?.phase==='error'&&<ResultNotice phase="error" message={catalog.error||'Could not refresh the model list. Saved choices are kept.'}/>}
      <button className="a-link" data-action="providers.models" disabled={busy||modelBusy} onClick={()=>run('providers.models',{id:d.id,refresh:true})}><RefreshCw/>Refresh models</button>
+     {effortChoices.length>0&&<><label htmlFor={configId('ai-default-effort')}>Default reasoning effort</label><select id={configId('ai-default-effort')} disabled={busy||!d.model?.trim()} value={defaultEffort} data-action="providers.finishSetup" onChange={event=>saveDefaultEffort(event.target.value||null)}>
+      <option value="">Use provider default{effortField.default!=null?` (${effortField.default})`:''}</option>
+      {defaultEffort&&!effortChoices.includes(defaultEffort)&&<option value={defaultEffort}>{defaultEffort} (saved)</option>}
+      {effortChoices.map(value=><option key={value} value={value}>{value==='none'?'none — explicit effort choice':value}</option>)}
+     </select><p className="a-caption">New conversations inherit this setting. “Use provider default” is not the explicit effort “none”; a chat can choose its own effort.</p></>}
      <div className="a-ai-hint">{d.initializeRouting?'Balanced model rules choose suitable models for each task. This connection’s default is used when no rule applies.':'This changes the connection’s default model. Existing model rules may choose a different model.'}</div>
      {(!d.settingDefault||!!error||!models.some(row=>(row.value||row.id)===d.model))&&<SettingsActions><button className="a-primary" disabled={busy||!d.model?.trim()} data-action="providers.finishSetup" onClick={()=>run('providers.finishSetup',{id:d.id,model:d.model,scope:scope,initializeRouting:!!d.initializeRouting})}>{busy?'Saving…':d.settingDefault?(error?'Retry model change':'Save model'):'Finish setup'}</button></SettingsActions>}
     </>:null}

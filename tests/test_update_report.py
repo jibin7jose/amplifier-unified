@@ -58,6 +58,30 @@ async def test_diagnostics_action_reads_without_changing_state(tmp_path):
     assert not service.update_manager.lock.locked()
     await service.close()
 
+@pytest.mark.parametrize('stage,reason',[
+    ('release_revision','git_missing'),('release_metadata','timeout'),
+    ('SECRET','timeout'),('release_metadata','SECRET'),([],{}),
+])
+async def test_release_check_report_has_only_closed_boundary_facts(stage,reason,tmp_path,monkeypatch):
+    from amplifier_web.service import AppService
+    from amplifier_web.updates import UpdateManager
+    from test_service import Runtime
+    service=AppService(tmp_path,Runtime(),workspace=tmp_path)
+    manager=service.update_manager=UpdateManager(service)
+    service.state['updates']['application']={'status':'check_failed','checkStage':stage,'checkReason':reason,
+        'detail':'SECRET stderr credential /private/path'}
+    monkeypatch.setattr(update_report,'runtime_report',lambda home:{})
+    try:
+        before=json.dumps(service.state['updates'],sort_keys=True)
+        result=await service.dispatch('updates.diagnostics',{},include_state=False)
+        report=result['result']
+        assert json.dumps(service.state['updates'],sort_keys=True)==before
+        assert 'SECRET' not in json.dumps(report) and '/private/path' not in json.dumps(report)
+        if isinstance(stage,str) and stage.startswith('release_') and reason in ('git_missing','timeout'):
+            assert report['releaseCheck']=={'checkStage':stage,'checkReason':reason}
+        else:assert 'releaseCheck' not in report
+    finally:await service.close()
+
 
 def test_source_redaction_handles_credential_urls_and_custom_hosts():
     source = update_report.source({'name': 'amplifier-fixture', 'version': '1.0', 'directUrl': {

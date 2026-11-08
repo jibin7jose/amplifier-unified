@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -22,6 +23,33 @@ PRECONFIGURED_BUNDLES = {
     "work-amp-dev": "git+https://github.com/microsoft/amplifier-bundle-work@main#subdirectory=bundles/work-amp-dev.md",
 }
 _KEY_FILE_VALUES = {}
+_KNOWN_PROVIDER_SOURCES = json.loads((Path(__file__).parents[1] / 'provider_sources.json').read_text())
+
+
+def provider_mount_sources(rows, settings):
+    """Resolve intended mount sources, not proof of an implicit probe import.
+
+    Both saved connection admission and ordinary host composition use this
+    policy. Discovery cache identity still requires actual installed provenance.
+    Ambiguous declarations remain unresolved; never borrow another account's
+    configuration or choose arbitrarily between implementations.
+    """
+    sources = {}
+    for row in rows:
+        if row.get('source'):
+            sources.setdefault(row['module'], set()).add(expand_environment(row['source']))
+    result = {}
+    for row in rows:
+        module = row['module']
+        identity = row.get('id') or row.get('instance_id') or module.removeprefix('provider-')
+        explicit = (row.get('source') or
+                    settings.get('overrides', {}).get(module, {}).get('source') or
+                    settings.get('sources', {}).get('modules', {}).get(module))
+        candidates = sources.get(module, set())
+        source = explicit or (next(iter(candidates)) if len(candidates) == 1 else
+                              _KNOWN_PROVIDER_SOURCES.get(module) if not candidates else None)
+        result[identity] = expand_environment(source) if source else None
+    return result
 
 
 def app_home() -> Path:

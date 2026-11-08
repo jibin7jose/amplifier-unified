@@ -1,13 +1,17 @@
 // Real source UI against an isolated host. GitHub and providers are mocked;
 // this test must never create a real issue or read existing app data.
+import './composer-test-helpers.mjs';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {once} from 'node:events';
+import {readFile} from 'node:fs/promises';
 import {createServer} from 'vite';
-import {chromium} from '@playwright/test';
+import {chromium,expect} from '@playwright/test';
 import assert from 'node:assert/strict';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
+const localOnly=process.argv.includes('--local-report');
+const pyLocal=localOnly?'True':'False';
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||fileURLToPath(new URL('../../.venv/bin/python',import.meta.url)),['-u','-c',`
 import asyncio, json, sys, tempfile
 from pathlib import Path
@@ -18,13 +22,15 @@ from amplifier_web import feedback
 calls=[]
 uploads=[]
 async def github_api(endpoint, payload):
+ if ${pyLocal}:raise AssertionError('Local report must not call GitHub')
  uploads.append({'endpoint':endpoint,'payload':payload})
  if payload is None:return {'id':101,'full_name':feedback.REPOSITORY,'private':False}
  if endpoint.endswith('/git/refs'):return {'object':{'sha':'c'*40}}
  return {'sha':'c'*40 if endpoint.endswith('/git/commits') else 'a'*40}
 feedback.github_api=github_api
-feedback.shutil.which=lambda name:'/fixture/gh'
+feedback.shutil.which=lambda name:None if ${pyLocal} else '/fixture/gh'
 async def create_issue(title, body):
+ if ${pyLocal}:raise AssertionError('Local report must not submit')
  calls.append({'title':title,'body':body})
  await asyncio.sleep(1.5)
  return feedback.ISSUES_URL+'/42'
@@ -53,19 +59,65 @@ try{
  vite=await createServer({configFile:false,root,server:{host:'127.0.0.1',port:0,hmr:false,proxy:{'/api':{target,changeOrigin:true,ws:true,configure(proxy){for(const event of ['proxyReq','proxyReqWs'])proxy.on(event,request=>request.setHeader('Origin',target))}},'/branding':target}},optimizeDeps:{include:['react','react-dom/client','react/jsx-dev-runtime']}});await vite.listen();
  browser=await chromium.launch({headless:true,args:process.env.UNIFIED_BROWSER_SINGLE_PROCESS?['--no-zygote','--single-process','--disable-gpu']:[]});
  const page=await browser.newPage({viewport:{width:1280,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}}),errors=[];
- const diagnosticReads=[];
- page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/actions'&&request.postDataJSON()?.action==='feedback.diagnostics')diagnosticReads.push(request.postDataJSON())});
+ const diagnosticReads=[],actions=[];
+ page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/actions'){
+  const command=request.postDataJSON();actions.push(command.action);
+  if(command.action==='feedback.diagnostics')diagnosticReads.push(command);
+ }});
  page.on('pageerror',error=>errors.push(error.message));
  await page.goto(vite.resolvedUrls.local[0]);await page.waitForSelector('#amp-one');
  await page.waitForFunction(()=>window.amplifier?.getState());
+ if(localOnly){
+  const id=await page.evaluate(()=>window.amplifier.getState().sessions.find(row=>row.title==='Settings test').id);
+  await page.evaluate(id=>window.amplifier.dispatch('session.select',{id}),id);
+  await page.getByRole('textbox',{name:'Message Amplifier'}).fill('Preserve this unsent synthetic draft');
+  await page.getByRole('button',{name:'View error details',exact:true}).click();
+  await page.getByText('Report this problem',{exact:true}).click();
+  await page.getByLabel('Title',{exact:true}).fill('Local report without GitHub CLI');
+  await page.getByLabel('Details',{exact:true}).fill('Only this deliberately entered text.');
+  assert.equal(await page.getByRole('checkbox',{name:'Include reproduction diagnostics'}).isChecked(),false);
+  await page.getByRole('button',{name:'Prepare local report',exact:true}).click();
+  const preview=page.getByRole('textbox',{name:'Local feedback report preview',exact:true});
+  await preview.waitFor();
+  const text=await preview.inputValue();
+  assert.match(text,/Local report without GitHub CLI|Only this deliberately entered text/);
+  assert.doesNotMatch(text,/PRIVATE|synthetic\/workspace|Preserve this unsent|Reproduction diagnostics/);
+  const downloadEvent=page.waitForEvent('download');
+  await page.getByRole('button',{name:'Save local report',exact:true}).click();
+  const download=await downloadEvent;
+  assert.equal(download.suggestedFilename(),'amplifier-feedback.md');
+  assert.equal(await readFile(await download.path(),'utf8'),text);
+  assert.equal(await page.getByRole('link',{name:'Open GitHub issue form',exact:true}).getAttribute('href'),'https://github.com/microsoft/amplifier-unified/issues/new');
+  assert.deepEqual(await page.evaluate(()=>fetch('/api/fixture/feedback').then(response=>response.json())),{calls:[],uploads:[]});
+  assert.equal(diagnosticReads.length,0);
+  // Deliberate opt-in is previewed, not posted, and never imports raw failure text.
+  await page.getByRole('checkbox',{name:'Include reproduction diagnostics'}).check();
+  await page.getByRole('button',{name:'Prepare local report',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('[aria-label="Local feedback report preview"]')?.value.includes('### Reproduction diagnostics'));
+  assert.doesNotMatch(await preview.inputValue(),/PRIVATE|synthetic\/workspace|Preserve this unsent/);
+  await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('Synthetic clipboard unavailable')}}}));
+  await page.getByRole('button',{name:'Copy local report',exact:true}).click();
+  await page.getByText('Clipboard unavailable. Select and copy the report preview.',{exact:true}).waitFor();
+  assert.equal(actions.filter(action=>action==='feedback.report').length,2);
+  assert.equal(actions.some(action=>['feedback.submit','conversation.send','runtime.control','feedback.attachment.add'].includes(action)),false);
+  assert.deepEqual(await page.evaluate(()=>fetch('/api/fixture/feedback').then(response=>response.json())),{calls:[],uploads:[]});
+  await page.keyboard.press('Escape');
+  const composer=page.getByRole('textbox',{name:'Message Amplifier'});
+  await expect(composer).toBeVisible();
+  await expect(composer).toContainText('Preserve this unsent synthetic draft');
+  await expect(composer).toHaveDraft('Preserve this unsent synthetic draft');
+  assert.deepEqual(errors,[]);
+  console.log('PASS: in-place error report, explicit diagnostic opt-in, exact local Markdown download, clipboard refusal recovery, draft preserved; no GitHub CLI, upload, submission or conversation.send.');
+ }else{
  if(!await page.getByRole('button',{name:/^App options/}).isVisible())await page.getByRole('button',{name:'Open navigation',exact:true}).click();
  await page.getByRole('button',{name:/^App options/}).click();
  await page.getByRole('button',{name:'Send feedback',exact:true}).click();
  await page.getByLabel('Title',{exact:true}).fill('Canvas feedback fixture');
  await page.getByLabel('Details',{exact:true}).fill('This is a mocked browser test.');
  const diagnostics=page.getByRole('checkbox',{name:'Include reproduction diagnostics'});
- assert.equal(await diagnostics.isChecked(),true);
+ assert.equal(await diagnostics.isChecked(),false);
  assert.equal(diagnosticReads.length,0,'opening feedback must not automatically collect diagnostics');
+ await diagnostics.check();
  const preview=page.locator('[data-part="feedback-diagnostics"]');
  await preview.locator('summary').click();
  await preview.locator('pre').waitFor();
@@ -147,6 +199,7 @@ try{
  assert.equal(diagnosticReads.at(-1).args.requestId,saved.requestId);
  assert.deepEqual(errors,[]);
  console.log('Feedback browser passed: on-demand complete preview, preserved worker failure classification without raw detail, actual SSE status, no automatic collection on typing/state updates, opt-out saved receipt, picker, image paste, file drop, actual image preview, agent add/UI remove, local-only staging, exact selected uploads, header entry, mocked submit, green receipt/link, reopen/reload, exact shared-action retry, narrow layout. No live uploads or issue created.');
+ }
 }finally{
  await browser?.close();await vite?.close();if(fixture.exitCode===null){fixture.kill('SIGTERM');await once(fixture,'exit').catch(()=>{})}
 }

@@ -338,7 +338,17 @@ class SetupManager:
         module=args.get('module') or (row or {}).get('module')
         raw=(row or {}).get('config',{})
         identity = connection_key if binding else configuration_key
-        return identity(workspace,module,raw,(row or {}).get('source') or getattr(config,'module_sources',{}).get(module),home=self.home)
+        source = (row or {}).get('source') or getattr(config,'module_sources',{}).get(module)
+        if binding and row:
+            from .host.config import provider_mount_sources
+            # Admission concerns the implementation we intend to mount. A
+            # source-less saved UI connection gains that source during ordinary
+            # host composition, even before any runtime receipt exists.
+            # Do NOT apply this fallback to discovery reuse: an implicit probe
+            # must still prove its installed implementation independently.
+            rows = [value for value in config.configured_connections if value.get('enabled', True)]
+            source = provider_mount_sources(rows, config.settings).get(args.get('id'))
+        return identity(workspace,module,raw,source,home=self.home)
 
     async def cached_probe(self,action,args,workspace,*,_rotation_retry=True):
         from .provider_catalog import model_key, CatalogInvalidated, public_failure
@@ -784,13 +794,31 @@ class SetupManager:
             effective=self.config(workspace)
             row=next((value for value in effective.providers if (value.get('id') or value.get('instance_id') or value['module'].removeprefix('provider-'))==identity),None)
             if not row:raise ValueError('The connection changed. Refresh your connections and try again.')
-            # A guided edit changes only the model. Preserve opaque provider fields,
+            if ('expectedModel' in args
+                    and args['expectedModel'] != (row.get('config',{}).get('default_model') or row.get('config',{}).get('model') or '')):
+                raise ValueError('The default model changed. Refresh this connection before saving reasoning effort.')
+            defaults={**row.get('config',{}),'default_model':model}
+            if 'effort' in args:
+                effort=args['effort']
+                if effort is not None and (not isinstance(effort,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',effort)):
+                    raise ValueError('Choose a reasoning effort or the provider default.')
+                # Null suppresses a broader scope's explicit effort. Omitting
+                # the key here would silently re-inherit it after merging.
+                defaults['reasoning_effort']=effort
+                if effort is not None:
+                    from .provider_catalog import model_key
+                    from .next_message_configuration import validate_selection
+                    entry=self.catalog.peek(model_key(self.catalog_key({'id':identity},workspace))) or {}
+                    validate_selection({'instance':identity,'model':model,'effort':effort},{
+                        'providers':[{'id':identity,'sharedCatalogKey':'selected'}],
+                        'catalogs':{'selected':{'metadata':entry.get('providerMetadata')}}})
+            # A guided edit changes only defaults. Preserve opaque provider fields,
             # credential references and custom routing, including a custom balanced file.
             routing=self.routing(workspace)
             initialize=bool(args.get('initializeRouting') and not effective.settings.get('routing',{}).get('matrix')
                 and len([p for p in self.provider_rows(workspace) if p.get('enabled',True)])==1
                 and not any(p['name']==routing['active'] and p['source']=='custom' for p in routing['matrices']))
-            result=self._provider_mutation({**args,'module':row['module'],'config':{**row.get('config',{}),'default_model':model}},workspace,scope)
+            result=self._provider_mutation({**args,'module':row['module'],'config':defaults},workspace,scope)
             if initialize:
                 # The routing bundle owns role definitions and candidate policy.
                 self.store.update(workspace,scope,lambda settings:settings.setdefault('routing',{}).update(matrix='balanced'))

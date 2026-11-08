@@ -39,7 +39,7 @@ import asyncio, json, os, sys
 from pathlib import Path
 from types import SimpleNamespace
 from amplifier_web.host.config import load_config, expand_environment
-from amplifier_web.host.session import apply_provider_environment
+from amplifier_web.host.session import apply_provider_environment, _apply_settings
 from amplifier_web.provider_catalog import configured_binding, mounted_catalog_keys
 from amplifier_web.runtime_controls import RuntimeControls
 from amplifier_web.setup import SetupManager
@@ -57,7 +57,13 @@ if request['mode'] == 'host':
                       'catalog':manager.catalog_key({'id':'one'}, workspace),
                       'probeCredentialMatches':not expected_token or probe_config.get('github_token')==expected_token}))
 else:
-    rows = load_config(workspace, home=home).configured_connections
+    config = load_config(workspace, home=home)
+    if request['mode'] == 'composed_worker':
+        bundle = SimpleNamespace(providers=[], tools=[], hooks=[], agents={}, session={})
+        _apply_settings(bundle, config)
+        rows = bundle.providers
+    else:
+        rows = config.configured_connections
     rows = expand_environment(rows)
     row = rows[0]
     row['config'].update(request.get('change', {}))
@@ -204,3 +210,82 @@ async def test_implicit_chatgpt_credential_rotation_invalidates_positive_and_neg
         assert len(calls)==len(keys)  # Cache reuse until the exact credential changes.
         await manager.catalog.close()
     assert calls[-1]=='missing'
+
+
+@pytest.mark.parametrize('module,raw', [
+    ('provider-openai', {'api_key': 'synthetic-account-a'}),
+    ('provider-openai-chatgpt', {'auth_mode': 'chatgpt_codex', 'login_on_mount': False}),
+])
+def test_source_less_saved_connection_matches_actual_host_composition(tmp_path, monkeypatch, module, raw):
+    """Settings created by the normal UI need no qualified runtime receipt."""
+    monkeypatch.setenv('AMPLIFIER_HOME', str(tmp_path / 'shared'))
+    SettingsStore(tmp_path / 'app').update(tmp_path, 'global', lambda values: values.update(config={
+        'providers': [{'id': 'one', 'module': module, 'config': raw}]}))
+    host = process_identity(tmp_path, 'host')
+    worker = process_identity(tmp_path, 'composed_worker', expected=host['binding'])
+    assert worker['verified'], worker
+    assert worker['binding'] == host['binding']
+    # Source provenance for discovery is NOT inferred from intended mounting.
+    assert worker['catalog'] != host['catalog']
+    from amplifier_web.host.config import load_config
+    from amplifier_web.host.session import _apply_settings
+    from amplifier_web.provider_catalog import conversation_bindings
+    from types import SimpleNamespace
+    config = load_config(tmp_path, home=tmp_path / 'app')
+    bundle = SimpleNamespace(providers=[], tools=[], hooks=[], agents={}, session={})
+    _apply_settings(bundle, config)
+    saved = tmp_path / 'app' / 'sessions' / 'fixture' / 'configuration.json'
+    saved.parent.mkdir(parents=True)
+    saved.write_text(json.dumps({'providers': bundle.providers}))
+    providers = [{'id': 'one', 'connectionKey': host['binding']}]
+    assert conversation_bindings(tmp_path / 'app', tmp_path, 'fixture', providers) == {}
+    bundle.providers[0]['config']['base_url'] = 'https://override.invalid'
+    saved.write_text(json.dumps({'providers': bundle.providers}))
+    assert conversation_bindings(tmp_path / 'app', tmp_path, 'fixture', providers)['one']['eligible'] is False
+    for change in (
+        {'change': {'base_url': 'https://different.invalid'}},
+        {'source': 'git+https://fixture.invalid/different@' + 'b' * 40},
+    ):
+        other = process_identity(tmp_path, 'composed_worker', expected=host['binding'], **change)
+        assert not other['verified']
+
+
+@pytest.mark.parametrize('module', ['provider-openai', 'provider-openai-chatgpt'])
+def test_disabled_source_does_not_override_enabled_connection_without_snapshot(tmp_path, monkeypatch, module):
+    from amplifier_web.provider_catalog import configured_binding, conversation_bindings
+    monkeypatch.setenv('AMPLIFIER_HOME', str(tmp_path / 'shared'))
+    home = tmp_path / 'app'
+    store = SettingsStore(home)
+    store.update(tmp_path, 'global', lambda values: values.update(
+        config={'providers': [
+            {'id': 'one', 'module': module, 'config': {}},
+            {'id': 'disabled', 'module': module,
+             'source': 'git+https://fixture.invalid/other-implementation@' + 'b' * 40,
+             'config': {}},
+        ]},
+        configurator={'disabled': {'providers': ['disabled']}},
+    ))
+    path = home / 'sessions' / 'no-snapshot' / 'configuration.json'
+    assert not path.exists()
+    expected = configured_binding(home, tmp_path, 'one')
+    assert expected and configured_binding(home, tmp_path, 'disabled') is None
+    assert conversation_bindings(home, tmp_path, 'no-snapshot',
+                                 [{'id': 'one', 'connectionKey': expected}]) == {}
+    # A disabled selected connection remains refused, not silently re-enabled.
+    disabled = conversation_bindings(home, tmp_path, 'no-snapshot',
+                                     [{'id': 'disabled', 'connectionKey': expected}])
+    assert disabled['disabled']['eligible'] is False
+    # An actual saved snapshot is authoritative: a different saved source,
+    # endpoint or account is still a real override, not this absent-snapshot bug.
+    path.parent.mkdir(parents=True)
+    for patch in [
+        {'source': 'git+https://fixture.invalid/saved-implementation@' + 'c' * 40},
+        {'config': {'base_url': 'https://different.invalid'}},
+        {'config': {'api_key': 'synthetic-other-account'}},
+        {'enabled': False},
+    ]:
+        path.write_text(json.dumps({'providers': [{'id': 'one', 'module': module,
+                                                 'config': {}, **patch}]}))
+        result = conversation_bindings(home, tmp_path, 'no-snapshot',
+                                       [{'id': 'one', 'connectionKey': expected}])
+        assert result['one']['eligible'] is False, patch

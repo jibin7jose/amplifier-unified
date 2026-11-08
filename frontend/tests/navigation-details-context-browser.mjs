@@ -33,6 +33,19 @@ try{
  await row.hover();await expect(details).toBeVisible();
  assert.equal((await shell()).selectedSessionId,selected);
  const title=await details.locator('h3').textContent();
+ // Pin/unpin are completed actions, not an implicit request to keep a hover
+ // flyout locked. Restore the fixture's original pin state after both actions.
+ const pin=()=>details.getByRole('button',{name:/^(Unpin|Pin) /});
+ const wasPinned=(await pin().getAttribute('aria-label')).startsWith('Unpin ');
+ await pin().click();
+ await expect(details).toHaveCount(0);
+ await page.mouse.move(1200,20);await expect(more).toBeFocused();
+ await more.press('Enter');await expect(details).toBeVisible();
+ assert.equal((await pin().getAttribute('aria-label')).startsWith('Unpin '),!wasPinned);
+ await pin().click();await expect(details).toHaveCount(0);
+ await page.mouse.move(1200,20);await more.press('Enter');await expect(details).toBeVisible();
+ assert.equal((await pin().getAttribute('aria-label')).startsWith('Unpin '),wasPinned);
+ assert.equal((await shell()).selectedSessionId,selected);
  await page.keyboard.press('Escape');await expect(details).toHaveCount(0);
  await more.focus();await page.keyboard.press('Enter');await expect(details).toBeVisible();
  await page.mouse.move(1200,20);
@@ -63,8 +76,8 @@ try{
  const info=await page.evaluate(async()=>{const response=await fetch('/api/fixture/info');return response.json()});
  assert.deepEqual(info.runtimeStarts,[]);assert.deepEqual(info.runtimeSends,[]);assert.deepEqual(errors,[]);
  await page.screenshot({path:out+'/details-context.png'});
- await writeFile(out+'/result.json',JSON.stringify({passed:true,selected,inspected,next,workspace,requests:requests.length},null,2)+'\n');
- console.log('Navigation details preserve passive peeking and current labels, close on keyboard chat/workspace navigation without stealing focus, and never start runtime work.');
+ await writeFile(out+'/result.json',JSON.stringify({passed:true,selected,inspected,next,workspace,pinActionsDismissed:true,requests:requests.length},null,2)+'\n');
+ console.log('Navigation details close after confirmed pin actions, preserve passive peeking and current labels, close on keyboard chat/workspace navigation without stealing focus, and never start runtime work.');
 }catch(error){primary=error;if(page)await page.screenshot({path:out+'/failure.png'}).catch(()=>{});throw error}
 finally{
  let failure;

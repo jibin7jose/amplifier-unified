@@ -12,7 +12,14 @@ async def probe(self,action,args,workspace):
     await asyncio.sleep(2 if action=='providers.models' else .1)
     if action=='providers.testMessage':
         return {'messageTest': {'providerId':args['id'], 'model':'fixture-model', 'method':'provider.complete', 'reachable':args['id']!='two', 'response':'OK', 'error':'insufficient_quota', 'statusCode':429 if args['id']=='two' else None, 'elapsedMs':100}}
-    return {'models':[{'id':'fixture-model'},{'id':'fixture-alternative'}],'modelsProviderId':args.get('id'),'providerMetadata':{'module':'provider-openai','info':{'config_fields':[{'id':'reasoning_effort','display_name':'Reasoning effort','choices':['low','high'],'field_type':'choice'}]}}}
+    row=next((row for row in self.config(workspace).providers if row.get('id')==args.get('id')), {})
+    fields=[{'id':'reasoning_effort','display_name':'Reasoning effort',
+             'choices':['none','low','medium','high'],'field_type':'choice'}]
+    return {'models':[{'id':'fixture-model'},{'id':'fixture-alternative'}],
+            'modelsProviderId':args.get('id'),'modelsSupported':True,'modelsProvenance':'simulated',
+            'providerMetadata':{'module':row.get('module',args.get('module','provider-openai')),
+                'modelListInfo':{'version':1,'source':'simulated'},
+                'info':{'config_fields':fields},'configSchema':{'fields':fields}}}
 base.SetupManager.probe=probe
 async def catalog(self):
     rows=[{'id':f'tool-{i}','name':f'Tool {i:02d}','repository':f'https://example.com/tool-{i}','ref':'main','path':'.','description':('Research' if i<32 else 'Creation')+' specialist tool','version':'1.0'} for i in range(51)]

@@ -2,6 +2,33 @@
 
 Status: implementation design and trial preparation; **not a native Windows support claim**.
 
+## Process-local Proactor cleanup backport
+
+`windows_proactor.py` carries CPython gh-160429's socket-shutdown correction
+from commit `7b06d6f80df2729a68f78d2a346c043d10f82fd6`. The Windows app factory
+installs it before creating application state or accepting sockets. This is an
+explicit compatibility backport, not an exception-log filter or a Python-file
+edit. It overrides only the current process's Proactor **socket** transport
+cleanup; pipe transports, loop policy and exception handlers are unchanged.
+TCP and TLS use that socket transport.
+
+The adapter compares the normalized source AST against the reviewed vulnerable
+and fixed implementations. Wrapped callables are rejected before source
+inspection, which otherwise follows `__wrapped__` rather than the installed
+callable. Unknown runtime code or an independent override refuses startup rather
+than replacing it blindly. A recognized upstream-fixed runtime needs no override.
+Only `ConnectionError` raised by the shutdown call is
+handled; protocol callback errors and unexpected socket errors remain visible.
+The shipped `CPYTHON-LICENSE.txt` retains upstream licensing.
+
+Remove the adapter when the qualified Windows interpreter includes the fix.
+The initially inspected stable 3.13.18, 3.14.10 and 3.15.2 tags did not contain
+it. Selecting one of those versions alone is not a repair. This compatibility
+change requires its own native TCP/TLS, teardown and installed-entry evidence.
+It does not authorize modifying a running user's interpreter or restarting a
+host. Deploy a separate qualified candidate with a normal rollback path; retain
+the prior application's evidence and unsent drafts.
+
 ## Zero-prerequisite bootstrap prototype
 
 The requested direction is a single PowerShell paste for an ordinary Windows

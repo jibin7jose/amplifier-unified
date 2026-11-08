@@ -48,6 +48,13 @@ def definitions(schema, string):
             "Preview complete allowlisted reproduction facts on demand, without posting feedback, reading logs or running a conversation. With requestId, read only the immutable diagnostics saved with that local feedback receipt (null when opted out). Host active component generation does not verify a running worker. No raw logs, message text, paths or credentials.",
             schema({"requestId": request_id, "deviceDiagnostics": feedback_diagnostics.DEVICE_SCHEMA}, []),
         ),
+        "feedback.report": (
+            "Prepare the supplied feedback text as a local Markdown report, optionally downloading it. No GitHub CLI, account, network, issue submission, conversation execution or attachment upload. Diagnostics require includeDiagnostics:true; only allowlisted facts are added. Attachments/excerpts are not included. A download effect means started, not proof the file was saved.",
+            schema({"title": {**string(200), "minLength": 1}, "body": {**string(16000), "minLength": 1},
+                    "category": {"enum": list(CATEGORIES)}, "includeDiagnostics": {"type": "boolean"},
+                    "deviceDiagnostics": feedback_diagnostics.DEVICE_SCHEMA,
+                    "destination": {"enum": ["none", "download"]}}, ["title", "body", "category"]),
+        ),
         "feedback.submit": (
             "Create feedback in microsoft/amplifier-unified with exact title/body and explicit attachmentIds. Under saved Full, a current agent, assigned native child or trusted system with an explicit calling conversation can select its own staged initial files/excerpts without a browser or human confirmation. Staging returns immutable IDs/hashes; the host verifies bytes and records the actual repository identity/visibility before file uploads; plain-text sends need no upload metadata lookup. Optional uploadDestination and confirmedFiles/confirmedExcerpts remain exact preconditions, not human-review claims. Outside this Full path, use reviewed title/body; public ordinary files require uploadDestination plus confirmedFiles after explicit review, and excerpts require feedback.excerpt.review/stage followed by confirmExcerpts:true and the complete confirmedExcerpts set after user review. Files remain in repository history. Allowlisted diagnostics are included by default; includeDiagnostics:false opts out. Never include raw logs, paths or credentials. Reuse requestId and identical payload after a lost response; read /feedback/requests for durable results. Unknown outcomes are not reposted. Later-file additions keep their separate workflow.",
             schema({"requestId": request_id,
@@ -268,6 +275,20 @@ class Feedback:
         return {'snapshot': 'current', 'capturedAt': time.time(),
                 'diagnostics': feedback_diagnostics.snapshot(self.service.state_context(), args.get('deviceDiagnostics'))}
 
+    def report(self, args):
+        """Caller-supplied text only; no saved draft or transcript is read."""
+        if not args['title'].strip() or not args['body'].strip():
+            raise ValueError('Enter a title and feedback before preparing a report.')
+        content = '# ' + args['title'].strip() + '\n\n' + args['body']
+        content += '\n\n---\nCategory: ' + CATEGORIES[args['category']]
+        if args.get('includeDiagnostics') is True:
+            facts = feedback_diagnostics.snapshot(self.service.state_context(), args.get('deviceDiagnostics'))
+            content += feedback_diagnostics.markdown(facts)
+        content += '\n\nLocal report only. No feedback was submitted and no attachments were uploaded.\n'
+        return {'filename': 'amplifier-feedback.md', 'mime': 'text/markdown',
+                'content': content, 'diagnosticsIncluded': args.get('includeDiagnostics') is True,
+                'submitted': False}
+
     def accept(self, args, origin=None, caller=None):
         """Called under service.lock, committed with the shared action receipt."""
         from .errors import AppError
@@ -328,7 +349,7 @@ class Feedback:
         if receipt["status"] != "queued":
             return
         if not shutil.which("gh"):
-            await self.update(identity, status="failed", message="Install GitHub CLI and sign in with access to this private repository, then start a new submission. Nothing was sent.")
+            await self.update(identity, status="failed", message="Direct submission is unavailable without the host’s GitHub CLI sign-in. Nothing was sent. Copy or save the report and use the issue form in your browser instead.")
             return
         await self.update(identity, status="sending")
         try:

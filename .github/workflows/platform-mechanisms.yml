@@ -33,6 +33,10 @@ on:
       - amplifier_web/worker_input.py
       - amplifier_web/message_delivery.py
       - amplifier_web/windows_files.py
+      - amplifier_web/windows_proactor.py
+      - amplifier_web/CPYTHON-LICENSE.txt
+      - amplifier_web/voice_diagnostics.py
+      - amplifier_web/update_checks.py
       - amplifier_web/windows_jobs.py
       - amplifier_web/windows_launch_guard.py
       - amplifier_web/deployment.py
@@ -58,9 +62,11 @@ on:
       - tests/test_repair_lock_platform.py
       - tests/test_worker_platform_io.py
       - tests/test_windows_files.py
+      - tests/test_windows_proactor.py
       - tests/test_windows_owned_process.py
       - tests/test_windows_installer.py
       - tests/test_deployment.py
+      - tests/test_update_checks.py
       - tests/test_windows_tls.py
       - tests/test_windows_service.py
       - tests/test_cli_deployment.py
@@ -154,6 +160,11 @@ jobs:
         run: |
           .\.native-test-venv\Scripts\python.exe -B -m pytest -q -ra -p no:cacheprovider tests/test_deployment.py tests/test_windows_tls.py tests/test_windows_service.py -k "not native_synthetic_task_create_run_stop_remove"
           if ($LASTEXITCODE -ne 0) { throw 'Windows configuration, TLS or service policy checks failed.' }
+      - name: Check native Proactor socket cleanup backport without app state
+        shell: pwsh
+        run: |
+          .\.native-test-venv\Scripts\python.exe -B -m pytest -q -ra -p no:cacheprovider tests/test_windows_proactor.py -k "not app_factory"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Proactor cleanup checks failed.' }
       - name: Check actual CLI service root binding without tasks or health HTTP
         shell: pwsh
         run: |

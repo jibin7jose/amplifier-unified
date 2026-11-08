@@ -7,6 +7,10 @@
 #amp-one .a-sidebar-section-heading svg.is-open{transform:rotate(90deg)}
 #amp-one .a-sidebar-section-heading>.a-icon{width:28px;height:28px;flex-shrink:0}
 #amp-one .a-sidebar-section [hidden]{display:none!important}
+/* Recent's fallback focus target needs the same visible keyboard cue as a row.
+   Pointer recovery should not leave the browser's native dark rectangle. */
+#amp-one .a-recent-shortcuts:focus{outline:none}
+#amp-one .a-recent-shortcuts:focus-visible{outline:2px solid var(--a-accent);outline-offset:-2px}
 #amp-one .a-sidebar-filters{margin:4px 0 10px}
 #amp-one .a-sidebar-filters>summary{padding:6px;color:var(--a-muted);cursor:pointer;font-size:var(--a-text-sm,13px)}
 #amp-one .a-sidebar-filters[open]>summary{margin-bottom:10px}

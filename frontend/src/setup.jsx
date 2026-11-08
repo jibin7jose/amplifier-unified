@@ -4,6 +4,10 @@ import {ProviderKeyPreview} from './provider-key-preview';
 import {DeviceSignIn} from './device-sign-in';
 import {ChatGPTSignInChoice,ChatGPTAccount,chatGPTMode} from './chatgpt-sign-in';
 import {knownProviders} from './ai-connections-data';
+import {ConnectionPreference} from './ai-connection-detail';
+import {nextMessageBlocked,useNextMessageConfiguration} from './chat-controls';
+import {conversationHistoryPending} from './history-window.js';
+import {providerOptions} from './provider-options';
 import {SettingsActions} from './settings-layout';
 import {useSettingsDraft} from './settings-drafts';
 import {Collection,CollectionRow,OrderEditor} from './settings-collections';
@@ -25,6 +29,9 @@ function useDraft(state,key,defaults,act){
 export function ProviderSettings({state,session,act,navigate=()=>{}}){
  const[draft,editDraft]=useDraft(state,'providerEditor',{id:'',module:'',source:'',config:'{}',scope:'global',model:'',effort:'',advanced:false,credentialMode:state.view?.providerEditor?.id?'private':'environment',envVar:''},act);
  const configId=useConfigurationId();
+ const nextMessage=useNextMessageConfiguration(session,act);
+ const[selectionNotice,setSelectionNotice]=useState(null);
+ useEffect(()=>setSelectionNotice(null),[session?.id]);
  const scope=useConfigurationScope(draft.scope);
  const edit=patch=>editDraft({dirty:true,...patch});
  const privateDrafts=useRef({}),choosing=useRef(false);
@@ -57,7 +64,7 @@ export function ProviderSettings({state,session,act,navigate=()=>{}}){
  const models=modelOptions(catalog?.models||[]);const login=setup.login?.providerId===draft.id?setup.login:null,loginPhase=login?.status||login?.phase,loginUrl=safeLoginUrl(login?.url);let config,error='';try{config=providerConfig(configText)}catch(caught){error=caught.message}
  const [shownProviders,providerFilter]=useListFilter(state,act,'providers',providers,row=>[row.id,row.module,row.config?.default_model,row.config?.model],'Filter providers');
  const authMode=chatGPTMode(draft.authMode||selected?.config?.auth_mode);
- const active=session&&['working','starting','running','stopping','busy'].includes(session.status);
+ const selectionBlocked=nextMessage.pending||nextMessageBlocked(session)||state.navigationPending||session?.workspaceAvailable===false||session?.historyReadOnlyReason||conversationHistoryPending(session);
  const choose=provider=>{
   choosing.current=true;
   const oldKey=draft.selectionKey??draft.id??'';
@@ -99,7 +106,7 @@ export function ProviderSettings({state,session,act,navigate=()=>{}}){
  const perform=(action,args={})=>run(action,{id:draft.id,...args});
  // ChatGPT mode changes are login intent until the new account is verified.
  const fields=providerFields(metadata,{...config,default_model:draft.model,model:draft.model}).filter(field=>draft.module!=='provider-openai-chatgpt'||field.id!=='auth_mode');
- const updateConfig=(field,value)=>{const next={...config};if(value==='')delete next[field];else next[field]=value;setConfigText(pretty(next));edit({config:pretty(next),dirty:true,...(field==='reasoning_effort'?{effort:value}: {})})};
+ const updateConfig=(field,value)=>{const next={...config};if(value===''&&field==='reasoning_effort')next[field]=null;else if(value==='')delete next[field];else next[field]=value;setConfigText(pretty(next));edit({config:pretty(next),dirty:true,...(field==='reasoning_effort'?{effort:value}: {})})};
  const save=async()=>{const result=await run('providers.save',{...(draft.id?{id:draft.id}:{}),module:draft.module.trim(),...(draft.source.trim()?{source:draft.source.trim()}:{}),config:{...config,...(draft.model?{default_model:draft.model}:{})},scope,...(usesKey&&keyMode==='environment'&&envVar?{apiKeyEnv:envVar}:apiKey&&keyMode==='private'?{apiKey}:{})});if(!result)return};
  const unsaved=!!draft.dirty||hasPrivateDraft||Object.values(draft.connections||{}).some(item=>item?.dirty);
  useSettingsDraft('providers',{label:'Provider configuration',dirty:unsaved,
@@ -109,6 +116,8 @@ export function ProviderSettings({state,session,act,navigate=()=>{}}){
  {draft.order&&draft.orderOpen!==false?<OrderEditor title="Provider preference order" description={"Provider priority breaks ties after routing matches a model. Saving for "+({global:"all workspaces",project:"this project",local:"this workspace"}[draft.order.scope]||draft.order.scope)+". Routing profile choices stay separate."} items={providers.map(p=>({id:p.id,label:p.id,description:p.module}))} ids={draft.order.ids} onChange={ids=>editDraft({order:{...draft.order,ids}})} onCancel={()=>editDraft({order:null})} busy={busy(operation('providers.reorder',''))} error={operation('providers.reorder','')?.error} action="providers.reorder" onSave={()=>run('providers.reorder',{...draft.order})}/>:<Collection label="providers" detailOpen={!!draft.detailOpen} onBack={()=>editDraft({detailOpen:false})} list={<>{providerFilter}<ActivityRegion name="provider-list" busy={busy(listOp)}>{shownProviders.map(provider=><CollectionRow key={provider.id} id={provider.id} label={provider.id} description={(provider.config?.default_model||provider.config?.model||provider.module)+' · '+(provider.credentialsConfigured?'credentials ready':provider.keySource||'credentials not configured')} selected={provider.id===(draft.selectionKey??draft.id)} onSelect={()=>choose(provider)}/>)}</ActivityRegion></>}>
  <div className="a-settings-provider-detail"><div className="a-form-grid"><div><label htmlFor={configId('provider-id')}>Provider instance name</label><input id={configId('provider-id')} value={draft.id} data-action="view.update" onChange={e=>edit({id:e.target.value})} placeholder="openai"/></div><div><ConfigurationScopeSelect id={configId('provider-scope')} value={scope} disabled={false} onChange={scope=>edit({scope})}/></div></div>
  <ActivityRegion name="provider-models" busy={busy(modelOp)}><label htmlFor={configId('provider-model')}>Default model</label><ModelSelect editable catalogKey={draft.id} id={configId('provider-model')} label="Default model" value={draft.model} entry={catalog} state={state} act={act} onChange={model=>edit({model})}/></ActivityRegion>
+ <ConnectionPreference id={configId('advanced-preferred-chat-connection')} providers={providers} labels={new Map(providerOptions(providers).map(row=>[row.id,row.label]))} busy={pending||busy(operation('providers.reorder',''))} onChange={order=>run('providers.reorder',{...order,scope})}/>
+ <ResultNotice phase={operation('providers.reorder','')?.phase} message={operation('providers.reorder','')?.error||(busy(operation('providers.reorder',''))?'Saving preferred chat connection…':operation('providers.reorder','')?.phase==='ready'?'Preferred chat connection saved. Existing chats and model rules are unchanged.':'')}/>
 
  <div className="a-dialog-actions"><button className="a-soft" disabled={!selected||busy(modelOp)} data-operation-pending={busy(modelOp)||undefined} aria-busy={busy(modelOp)||undefined} data-action="providers.models" onClick={()=>perform('providers.models',{refresh:true})}><RefreshCw/>{busy(modelOp)?'Discovering models…':'Refresh models'}</button><button className="a-soft" disabled={!selected||selected.enabled===false||busy(testOp)||!connectionCheck.supported} data-operation-pending={busy(testOp)||undefined} aria-busy={busy(testOp)||undefined} data-action="providers.test" onClick={()=>perform('providers.test')}><Check/>{busy(testOp)?'Testing provider…':'Test connection'}</button><button className="a-soft" disabled={!selected||pending} data-action="providers.login" onClick={()=>perform('providers.login',{authMode,scope})}><LogIn/>{selected?.accountConnected?'Reconnect account':'Provider sign-in'}</button></div>
  {!connectionCheck.supported&&<p className="a-caption">{connectionCheck.reason}</p>}
@@ -121,7 +130,11 @@ export function ProviderSettings({state,session,act,navigate=()=>{}}){
 
  </details>
  <button className="a-link" aria-expanded={draft.advanced} data-action="view.update" onClick={()=>editDraft({advanced:!draft.advanced})}>{draft.advanced?'Hide':'Show'} advanced configuration</button>{draft.advanced&&<><label htmlFor={configId('provider-source')}>Module source (optional)</label><PathField id={configId('provider-source')} value={draft.source} onChange={source=>edit({source})} state={state} act={act} placeholder="git+https://… or a local module folder"/><label htmlFor={configId('provider-config')}>Provider configuration (JSON)</label><textarea id={configId('provider-config')} className="a-json-editor" value={configText} spellCheck={false} data-private="true" data-action="providers.save" onChange={e=>{const text=e.target.value;setConfigText(text);try{providerConfig(text);edit({config:text})}catch{}}}/></>}{error&&<p className="a-danger">{error}</p>}{['providers.save','providers.remove'].map(action=>{const op=operation(action);return op&&<p className={op.error?'a-danger':'a-caption'} role="status" key={action}>{op.error||(busy(op)?'Saving provider settings…':action==='providers.save'?'Provider saved. New conversations will use these settings.':'Provider removed.')}</p>})}<SettingsActions active={!!draft.detailOpen}><button className="a-primary" disabled={!draft.module.trim()||!!error||pending||(usesKey&&keyMode==='environment'&&!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar))} data-operation-pending={busy(saveOp)||undefined} aria-busy={busy(saveOp)||undefined} data-action="providers.save" onClick={save}><Check/>Save provider</button><button className="a-soft a-danger" disabled={!selected||pending} data-operation-pending={busy(operation('providers.remove'))||undefined} aria-busy={busy(operation('providers.remove'))||undefined} data-action="providers.remove" onClick={()=>run('providers.remove',{id:draft.id,scope})}><Trash2/>Remove</button></SettingsActions>
- {session&&selected&&<div className="a-provider-session"><button className="a-soft" disabled={!draft.model||active||pending} data-action="runtime.control" onClick={()=>act('runtime.control',{sessionId:session.id,operation:'provider.select',args:{instance:draft.id,model:draft.model,...(config?.reasoning_effort?{effort:config.reasoning_effort}:{})}})}>Use model in this conversation</button><p className="a-caption">Current-session selection requires the provider to be mounted by its bundle.</p></div>}
+ {session&&selected&&<div className="a-provider-session"><button className="a-soft" disabled={!draft.model||selectionBlocked||pending} data-action="conversation.configure" onClick={async()=>{
+  setSelectionNotice(null);
+  try{if(await nextMessage.configure({selection:{instance:draft.id,model:draft.model,...(config?.reasoning_effort?{effort:config.reasoning_effort}:{})}}))setSelectionNotice({phase:'ready',message:'Saved for your next message. Work already running keeps its current model.'})}
+  catch(error){setSelectionNotice({phase:'error',message:error.message})}
+ }}>Use model for Next message</button><p className="a-caption">Uses the same next-message settings as the conversation model picker. Work already running is unchanged.</p><ResultNotice {...selectionNotice}/></div>}
  </div>
  </Collection>}
  </section>;

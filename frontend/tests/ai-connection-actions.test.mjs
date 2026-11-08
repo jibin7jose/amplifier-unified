@@ -12,6 +12,140 @@ const {aiServices}=await vite.ssrLoadModule('/src/ai-connections-data.js');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;test.after(()=>vite.close());
 const state=editor=>({view:{aiConnectionEditor:editor},setup:{providers:[],providersLoadedAt:1}});
 
+test('preferred connection is directly editable with exact order and no credential payload',async()=>{
+ const {ConnectionPreference}=await vite.ssrLoadModule('/src/ai-connection-detail.jsx');
+ const orders=[],providers=[
+  {id:'decision',config:{chat_enabled:false}},
+  {id:'one',displayName:'Work account',config:{}},
+  {id:'two',displayName:'Personal account',config:{}},
+  {id:'disabled',enabled:false,config:{}}
+ ];
+ let root;
+ try{
+  await act(async()=>root=create(React.createElement(ConnectionPreference,{id:'preference',providers,onChange:value=>orders.push(value)})));
+  const select=root.root.findByType('select');
+  assert.equal(select.props.value,'one');
+  assert.deepEqual(select.findAllByType('option').map(row=>row.props.value),['one','two']);
+  await act(async()=>select.props.onChange({target:{value:'two'}}));
+  assert.deepEqual(orders,[{ids:['two','decision','one'],expectedIds:['decision','one','two']}]);
+  assert.match(JSON.stringify(root.toJSON()),/Existing chats keep their choices/);
+ }finally{await act(async()=>root?.unmount())}
+});
+
+test('preferred connection saves are single-flight before the pending render',async()=>{
+ const {ConnectionPreference}=await vite.ssrLoadModule('/src/ai-connection-detail.jsx');
+ const orders=[];let resolve,root;
+ try{
+  await act(async()=>root=create(React.createElement(ConnectionPreference,{id:'preference',providers:[{id:'one'},{id:'two'}],onChange:value=>{orders.push(value);return new Promise(done=>resolve=done)}})));
+  const choose=root.root.findByType('select').props.onChange;
+  let first;
+  await act(async()=>{first=choose({target:{value:'two'}});await choose({target:{value:'two'}})});
+  assert.equal(orders.length,1);
+  assert.equal(root.root.findByType('select').props.disabled,true);
+  await act(async()=>{resolve();await first});
+  assert.equal(root.root.findByType('select').props.disabled,false);
+ }finally{await act(async()=>root?.unmount())}
+});
+
+test('advanced provider editor also saves active-chat intent for the next message',async()=>{
+ const {ProviderSettings}=await vite.ssrLoadModule('/src/setup.jsx');
+ const calls=[],session={id:'active-chat',status:'working',nextMessageRevision:7};
+ const current={view:{providerEditor:{id:'one',module:'provider-openai',config:'{"reasoning_effort":"none"}',model:'chosen-model',detailOpen:true}},
+  setup:{providers:[{id:'one',module:'provider-openai',credentialsConfigured:true,config:{default_model:'chosen-model'}}],
+   providerCatalogs:{one:{metadata:{configSchema:{fields:[]}}}}}};
+ let root;
+ try{
+  await act(async()=>root=create(React.createElement(ProviderSettings,{state:current,session,act:async(action,args)=>{calls.push([action,args]);return {accepted:true,result:{revision:8}}}})));
+  const button=root.root.findByProps({'data-action':'conversation.configure'});
+  assert.equal(Boolean(button.props.disabled),false);
+  await act(async()=>button.props.onClick());
+  assert.deepEqual(calls.find(([action])=>action==='conversation.configure'),['conversation.configure',{sessionId:'active-chat',expectedRevision:7,selection:{instance:'one',model:'chosen-model',effort:'none'}}]);
+  assert.equal(calls.some(([action])=>action==='runtime.control'),false);
+  assert.match(JSON.stringify(root.toJSON()),/Work already running keeps its current model/);
+ }finally{await act(async()=>root?.unmount())}
+});
+
+for(const choice of ['medium','none',''])test('basic default effort sends narrow intent, including distinct provider default: '+choice,async()=>{
+ const current={...state({step:'model',id:'one',module:'provider-openai',model:'chosen-model',settingDefault:true}),
+  setup:{providersLoadedAt:1,providers:[{id:'one',module:'provider-openai',config:{default_model:'chosen-model',reasoning_effort:'high',api_key:'[REDACTED]'}}],
+   providerCatalogs:{one:{sharedCatalogKey:'key'}}},
+  modelCatalogs:{key:{phase:'ready',models:['chosen-model'],metadata:{configSchema:{fields:[{id:'reasoning_effort',choices:['none','medium','high']}]}}}}};
+ const calls=[];let root;
+ try{
+  await act(async()=>root=create(React.createElement(AIConnections,{state:current,act:async(...args)=>{calls.push(args);return {accepted:true,operationId:'effort-save'}},navigate:()=>{}})));
+  const field=root.root.findByProps({id:'ai-default-effort'});
+  assert.deepEqual(field.findAllByType('option').map(row=>row.props.value),['','none','medium','high']);
+  await act(async()=>field.props.onChange({target:{value:choice}}));
+  const saved=calls.find(([action])=>action==='providers.finishSetup');
+  assert.deepEqual(saved[1],{id:'one',model:'chosen-model',expectedModel:'chosen-model',effort:choice||null,scope:'global',initializeRouting:false});
+  assert.ok(!JSON.stringify(saved).includes('REDACTED'));
+  assert.equal(calls.some(([action])=>['providers.save','providers.login','conversation.configure'].includes(action)),false);
+ }finally{await act(async()=>root?.unmount())}
+});
+
+test('effort-only edit cannot overwrite a refreshed model with the retained editor draft',async()=>{
+ let current={...state({step:'model',id:'one',module:'provider-openai',model:'model-a',settingDefault:true}),
+  setup:{providersLoadedAt:1,providers:[{id:'one',module:'provider-openai',config:{default_model:'model-a',reasoning_effort:'medium'}}],
+   providerCatalogs:{one:{sharedCatalogKey:'key'}}},
+  modelCatalogs:{key:{phase:'ready',models:['model-a','model-b'],metadata:{configSchema:{fields:[{id:'reasoning_effort',choices:['none','medium','high']}]}}}}};
+ let saved={default_model:'model-a',reasoning_effort:'medium'},root;const calls=[];
+ const dispatch=async(action,args)=>{
+  calls.push([action,args]);
+  if(action==='providers.finishSetup'){
+   if(args.expectedModel!==saved.default_model)return {accepted:false,error:'The default model changed. Refresh this connection before saving reasoning effort.'};
+   saved={default_model:args.model,reasoning_effort:args.effort};
+  }
+  return {accepted:true,operationId:'effort-save'};
+ };
+ const render=()=>React.createElement(AIConnections,{state:current,act:dispatch,navigate:()=>{}});
+ try{
+  await act(async()=>root=create(render()));
+  assert.equal(root.root.findByProps({id:'ai-default-effort'}).props.value,'medium');
+  // Another client saves B. The provider snapshot updates, but this editor's
+  // model-A draft remains intentionally retained.
+  saved={default_model:'model-b',reasoning_effort:'none'};
+  current={...current,setup:{...current.setup,providers:[{...current.setup.providers[0],config:{...saved}}]}};
+  await act(async()=>root.update(render()));
+  assert.equal(current.view.aiConnectionEditor.model,'model-a');
+  await act(async()=>root.root.findByProps({id:'ai-default-effort'}).props.onChange({target:{value:'high'}}));
+  assert.deepEqual(saved,{default_model:'model-b',reasoning_effort:'none'});
+  assert.match(JSON.stringify(root.toJSON()),/default model changed/i);
+  assert.equal(calls.filter(([action])=>action==='providers.finishSetup').length,0,'known stale editor must not submit a model mutation');
+  // Explicitly reopening the editor supplies the new saved model rather than
+  // silently rebasing the retained draft on a provider-row refresh.
+  current={...current,view:{aiConnectionEditor:{...current.view.aiConnectionEditor,model:'model-b'}}};
+  await act(async()=>root.update(render()));
+  await act(async()=>root.root.findByProps({id:'ai-default-effort'}).props.onChange({target:{value:'high'}}));
+  assert.deepEqual(saved,{default_model:'model-b',reasoning_effort:'high'});
+  assert.deepEqual(calls.find(([action])=>action==='providers.finishSetup')[1],
+   {id:'one',model:'model-b',expectedModel:'model-b',effort:'high',scope:'global',initializeRouting:false});
+ }finally{await act(async()=>root?.unmount())}
+});
+
+test('effort precondition stays bound to the draft if the host changes before the response',async()=>{
+ const current={...state({step:'model',id:'one',module:'provider-openai',model:'model-a',settingDefault:true}),
+  setup:{providersLoadedAt:1,providers:[{id:'one',module:'provider-openai',config:{default_model:'model-a',reasoning_effort:'medium'}}],
+   providerCatalogs:{one:{sharedCatalogKey:'key'}}},
+  modelCatalogs:{key:{phase:'ready',models:['model-a','model-b'],metadata:{configSchema:{fields:[{id:'reasoning_effort',choices:['none','medium','high']}]}}}}};
+ const saved={default_model:'model-b',reasoning_effort:'none'},calls=[];let root;
+ try{
+  await act(async()=>root=create(React.createElement(AIConnections,{state:current,act:async(action,args)=>{
+   calls.push([action,args]);
+   if(action==='providers.finishSetup'){
+    assert.equal(args.model,'model-a');
+    assert.equal(args.expectedModel,'model-a');
+    assert.notEqual(args.expectedModel,saved.default_model);
+    return {accepted:false,error:'The default model changed. Refresh this connection before saving reasoning effort.'};
+   }
+   return {accepted:true,operationId:'other'};
+  },navigate:()=>{}})));
+  await act(async()=>root.root.findByProps({id:'ai-default-effort'}).props.onChange({target:{value:'high'}}));
+  assert.deepEqual(saved,{default_model:'model-b',reasoning_effort:'none'});
+  assert.equal(calls.filter(([action])=>action==='providers.finishSetup').length,1);
+  assert.match(JSON.stringify(root.toJSON()),/default model changed/i);
+ }finally{await act(async()=>root?.unmount())}
+});
+
 test('connection detail respects per-connection local catalog testability',async()=>{
  const {AIConnectionDetail}=await vite.ssrLoadModule('/src/ai-connection-detail.jsx');
  let root;const calls=[];

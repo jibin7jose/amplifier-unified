@@ -33,12 +33,9 @@ function configuredEffort(row,model){
  return row?.effort||row?.config?.reasoning_effort||row?.info?.defaults?.reasoning_effort||field?.default||'';
 }
 export function nextMessageBlocked(session,working=false){
- const generation=session?.collaborationGeneration;
- return !!(configurationHeld(session)||ownershipState(session).blocked||
-  (generation?.id&&!generation.terminal)||
-  (session?.messages||[]).some(row=>row.delivery?.status==='sending')||
-  (session?.workers||[]).some(row=>['queued','starting','working','running','stopping'].includes(row.status))||
-  ['working','running','busy','stopping'].includes(session?.status)||(working&&session?.status!=='starting'));
+ // Saving future intent neither interrupts nor reconfigures active work.
+ // Actual unresolved mutations and remote ownership still need resolution.
+ return !!(configurationHeld(session)||ownershipState(session).blocked);
 }
 // Bridge only our acknowledged saves while their state update is in flight.
 // Never replace an action's captured revision with a later poll/client revision.
@@ -182,7 +179,8 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
   {!embedded&&<button type="button" className="a-model-trigger" aria-label="Model and reasoning settings" aria-haspopup={compact?'dialog':undefined} disabled={unavailable} aria-expanded={!!open} aria-busy={checkingDefaults||undefined} title={checkingDefaults?`${modelLabel} · Checking bundle settings…`:modelLabel} data-action="view.update" onClick={show}><span>{!effective.model&&(delayed||failure)?'Model settings unavailable':compact?modelAndEffort:modelLabel}</span>{(session?.pendingModelSelection||pendingBundle)&&<small>Next message</small>}<ChevronDown/></button>}
   {open&&renderPanel(<section ref={panelRef} className={embedded?"a-embedded-model":`a-model-popover a-compact-popover${compact?' a-composer-options-panel':''}`} style={embedded?undefined:position} role="dialog" aria-label="Model for this chat" aria-describedby={`${descriptionId}-heading`}>
    <div className="a-settings-row a-composer-options-heading"><strong id={`${descriptionId}-heading`}>Model for this chat</strong>{!embedded&&<button type="button" className="a-icon" aria-label={compact?'Close chat options':'Close model settings'} data-action="view.update" onClick={close}><X/></button>}</div>
-   <p className="a-caption">Selected: {modelLabel}</p>
+   <p className="a-caption">{session?.pendingModelSelection||pendingBundle?'Next message: ':'Selected: '}{modelLabel}</p>
+   {working&&<p className="a-caption" role="status">Your current turn stays unchanged. You can save settings for your next message.</p>}
    {binding?.eligible===false&&<p role="status">{binding.reason} The existing selection is preserved.</p>}
    <div data-composer-page="provider">
    <label htmlFor="chat-provider">Connection{!isDraft&&catalog?.connectionScope&&<small> · {catalog.connectionScope} settings</small>}</label><select id="chat-provider" value={selected?draft.instance:''} data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={e=>chooseProvider(e.target.value)}>
@@ -191,10 +189,10 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
    {draft.instance&&!selected&&<small>Saved connection {draft.instance} is not available in this configuration scope.</small>}
    </div>
    <div data-composer-page="model">
-   <label htmlFor="chat-model">Model</label><ModelSelect key={draft.instance} id="chat-model" label="Conversation model" value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected||binding?.eligible===false} onChange={model=>{touched.current=true;edit({model})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})}/>
+   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})}/>}
    </div>
    <div data-composer-page="effort">
-   {choices.length>0?<><label htmlFor="chat-effort">Reasoning effort <strong>{effort||'Choose effort'}</strong></label>{effort&&!choices.includes(effort)&&<small>Saved effort {effort} is not advertised for this model. Choose an available effort to replace it.</small>}<input id="chat-effort" type="range" min="0" max={choices.length-1} step="1" value={Math.max(0,choices.indexOf(effort))} aria-valuetext={choices.includes(effort)?effort:'Choose effort; saved value is not advertised'} disabled={blocked||!draft.model} data-action={isDraft?'view.update':'conversation.configure'} onChange={previewEffort} onPointerUp={commitEffort} onKeyUp={commitEffort} onBlur={commitEffort}/><div className="a-effort-labels"><span>{choices[0]}</span><span>{choices.at(-1)}</span></div></>:<small>{entry?.metadata||selected?.configSchema||selected?.info?.config_fields?'Reasoning effort is not configurable for this model.':failure||delayed||entry?.phase==='error'?'Model capabilities unavailable.':'Loading model capabilities…'}{effort&&` Saved effort: ${effort}.`}</small>}
+   {choices.length>0?<><label htmlFor="chat-effort">Reasoning effort <strong>{effort||'Choose effort'}</strong></label>{effort&&!choices.includes(effort)&&<small>Saved effort {effort} is not advertised for this model. Choose an available effort to replace it.</small>}<input id="chat-effort" type="range" min="0" max={choices.length-1} step="1" value={Math.max(0,choices.indexOf(effort))} aria-valuetext={choices.includes(effort)?effort:'Choose effort; saved value is not advertised'} disabled={blocked||!draft.model||binding?.eligible===false} data-action={isDraft?'view.update':'conversation.configure'} onChange={previewEffort} onPointerUp={commitEffort} onKeyUp={commitEffort} onBlur={commitEffort}/><div className="a-effort-labels"><span>{choices[0]}</span><span>{choices.at(-1)}</span></div></>:<small>{binding?.eligible===false?'Saved connection settings need review before changing reasoning effort.':entry?.metadata||selected?.configSchema||selected?.info?.config_fields?'Reasoning effort is not configurable for this model.':failure||delayed||entry?.phase==='error'?'Model capabilities unavailable.':'Loading model capabilities…'}{effort&&` Saved effort: ${effort}.`}</small>}
    </div>
    <div className="a-dialog-actions"><button type="button" className="a-link" disabled={!selected} onClick={()=>isDraft?act('providers.models',{id:draft.instance,workspace:setup.workspace,...location,refresh:true}):act('runtime.control',{sessionId,operation:'configuration.catalog',args:{refresh:true,instance:draft.instance}})}>Refresh this connection</button><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{composerModel:{...draft,open:false},panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections'],aiConnectionEditor:{...(state.view?.aiConnectionEditor||{}),step:'list'}}})}>Manage connections</button></div>
    <details><summary>Advanced</summary>{!isDraft&&<p className="a-muted" data-part="delegation-routing">{delegationRoutingLabel(catalog?.delegationRouting||session?.runtimeReport?.delegationRouting)}</p>}{children}</details>

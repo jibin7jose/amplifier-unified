@@ -83,7 +83,7 @@ async def test_retired_save_and_preview_never_load_cold_bodies(app, monkeypatch,
 
 @pytest.mark.parametrize('state', ['starting', 'ready', 'idle'])
 @pytest.mark.parametrize('evidence', ['generation', 'turn', 'receipt', 'peer', 'stopping'])
-async def test_retired_configuration_preserves_hot_admission_fences(app, monkeypatch, state, evidence):
+async def test_retired_next_message_save_preserves_active_work_without_hydration(app, monkeypatch, state, evidence):
     import json
     from amplifier_web import cold_display
     from amplifier_web.next_message_configuration import save
@@ -104,9 +104,12 @@ async def test_retired_configuration_preserves_hot_admission_fences(app, monkeyp
         row['status'] = 'stopping'
     with monkeypatch.context() as guard:
         guard.setattr(cold_display, 'load', lambda *a: pytest.fail('Cold display body hydration'))
-        with pytest.raises(AppError, match='active work'):
-            save(app, {'sessionId': row['id'], 'expectedRevision': 0, 'bundle': 'work'})
-        assert row.get('nextMessageRevision', 0) == 0
+        before = {key: deepcopy(row[key]) for key in ('status', 'collaborationGeneration') if key in row}
+        refs = deepcopy(dict.get(row, '_coldFields'))
+        save(app, {'sessionId': row['id'], 'expectedRevision': 0, 'bundle': 'work'})
+        assert row['nextMessageRevision'] == 1
+        assert all(row[key] == value for key, value in before.items())
+        assert dict.get(row, '_coldFields') == refs
 
 
 async def test_retired_preparation_only_save_is_revisioned_and_keeps_status(app, monkeypatch):
@@ -124,7 +127,7 @@ async def test_retired_preparation_only_save_is_revisioned_and_keeps_status(app,
         assert row['pendingBundleSelection']['bundle'] == 'work'
 
 
-async def test_real_no_command_id_input_blocks_choices_during_ready_boundary(app):
+async def test_real_no_command_id_input_keeps_captured_choices_during_ready_boundary(app):
     from amplifier_web.runtime import RuntimeStartupError
     entered, release = asyncio.Event(), asyncio.Event()
     class HeldInput:
@@ -142,8 +145,10 @@ async def test_real_no_command_id_input_blocks_choices_during_ready_boundary(app
     try:
         assert app._session()['status'] == 'ready'
         assert app._session()['execution']['turns'][-1]['phase'] == 'running'
-        with pytest.raises(AppError, match='active work'):
-            await app.dispatch('conversation.configure', choices(app, bundle='work'), include_state=False)
+        before = deepcopy(app._session()['execution'])
+        await app.dispatch('conversation.configure', choices(app, bundle='work'), include_state=False)
+        assert app._session()['execution'] == before
+        assert app._session()['pendingBundleSelection']['bundle'] == 'work'
     finally:
         release.set()
         with pytest.raises(AppError, match='never admitted'):
@@ -165,7 +170,7 @@ async def test_idle_voice_accounting_does_not_block_next_message_choices(app, re
     assert app.runtime is None
 
 
-async def test_admitted_voice_input_blocks_choices_until_manager_settles(app):
+async def test_admitted_voice_input_allows_future_choices_without_affecting_manager(app):
     entered, release = asyncio.Event(), asyncio.Event()
     class HeldVoiceInput:
         async def send(self, session, text, input_id, emit):
@@ -183,13 +188,14 @@ async def test_admitted_voice_input_blocks_choices_until_manager_settles(app):
     await asyncio.wait_for(entered.wait(), 2)
     try:
         assert session['status'] == 'ready'
-        with pytest.raises(AppError, match='active work'):
-            await app.dispatch('conversation.configure', choices(app, bundle='work'), include_state=False)
-        assert session.get('nextMessageRevision', 0) == 0
+        before = deepcopy(session['execution'])
+        await app.dispatch('conversation.configure', choices(app, bundle='work'), include_state=False)
+        assert session['nextMessageRevision'] == 1
+        assert session['execution'] == before
     finally:
         release.set()
         await asyncio.wait_for(asyncio.gather(*pending), 2)
-    receipt = await app.dispatch('conversation.configure', choices(app, bundle='work'), include_state=False)
+    receipt = await app.dispatch('conversation.configure', choices(app, 1, bundle='work'), include_state=False)
     assert receipt['result']['status'] == 'saved'
     assert next(turn for turn in session['execution']['turns']
                 if turn['id'] == 'voice:open-call')['phase'] == 'running'
@@ -248,18 +254,18 @@ async def test_saved_choices_do_not_hydrate_prepare_or_mount(app, monkeypatch):
         await restored.close()
 
 
-async def test_preparation_does_not_disable_saved_choices_but_execution_does(app):
+async def test_preparation_and_execution_allow_saved_choices_but_configuration_hold_does_not(app):
     session = app._session()
     session.update(status='starting', preparation={'status': 'preparing'})
     await app.dispatch('conversation.configure', choices(app, bundle='work'))
     session['status'] = 'working'
-    with pytest.raises(AppError, match='active work'):
-        await app.dispatch('conversation.configure', choices(app, 1, bundle='anchors'))
+    await app.dispatch('conversation.configure', choices(app, 1, bundle='anchors'))
+    assert session['status'] == 'working'
     session['status'] = 'idle'
     session['pendingConfiguration'] = {'phase': 'error', 'effect': 'unknown'}
     with pytest.raises(AppError, match='configuration'):
-        await app.dispatch('conversation.configure', choices(app, 1, bundle='anchors'))
-    assert session['pendingBundleSelection']['bundle'] == 'work'
+        await app.dispatch('conversation.configure', choices(app, 2, bundle='work'))
+    assert session['pendingBundleSelection']['bundle'] == 'anchors'
 
 
 async def test_model_catalog_skips_execution_preflight_and_does_not_wait_for_resolver(app, monkeypatch):
@@ -408,6 +414,88 @@ async def test_genuine_input_consumes_latest_revision_and_no_older_ack(app, monk
     assert calls[1][1]['effort'] == 'low'
     assert current['bundle'] == 'work' and current['appliedConfigurationRevision'] == 2
     assert 'pendingModelSelection' not in current and 'pendingBundleSelection' not in current
+
+
+@pytest.mark.parametrize('interrupt', [False, True])
+async def test_active_input_keeps_its_snapshot_and_later_choices_wait_for_next_input(app, monkeypatch, interrupt):
+    from amplifier_web import draft_defaults
+    from amplifier_web.runtime import RuntimeManager, RuntimeStartupError
+    from amplifier_web.next_message_configuration import bind
+
+    runtime = RuntimeManager()
+    app.runtime = runtime
+    bind(app, runtime)
+    entered, release = asyncio.Event(), asyncio.Event()
+    mounted, controls, delivered = [], [], []
+
+    async def resolve(*args, **kwargs):
+        if kwargs.get('replacement'):
+            return {'bundle': args[2], 'fingerprint': 'fixture-plan',
+                    'selection': kwargs['replacement']['selection'], 'modelCompatible': True}
+        return valid_catalog()
+
+    async def start(snapshot, emit, **kwargs):
+        mounted.append(deepcopy(snapshot))
+        if len(mounted) == 1:
+            entered.set()
+            await release.wait()
+        kwargs['guard']()
+
+    async def control(sid, operation, value, **kwargs):
+        kwargs['guard']()
+        controls.append((operation, deepcopy(value)))
+
+    async def request(sid, op, **kwargs):
+        kwargs['guard']()
+        delivered.append(kwargs['input_id'])
+        return {'accepted': True}
+
+    monkeypatch.setattr(draft_defaults, 'resolve_defaults', resolve)
+    monkeypatch.setattr(runtime, 'start', start)
+    monkeypatch.setattr(runtime, 'control', control)
+    monkeypatch.setattr(runtime, '_request', request)
+    first = {'instance': 'one', 'model': 'chosen', 'effort': 'low'}
+    second = {**first, 'effort': 'high'}
+    await app.dispatch('conversation.configure', choices(app, bundle='work', selection=first))
+    current = app._session()
+    current['status'] = 'working'
+    pending = asyncio.create_task(runtime.send(current, 'first input', 'first', app.on_runtime_event))
+    await entered.wait()
+    # Re-select the old root while the new root is still being mounted. This
+    # must remain explicit future intent, not be mistaken for a no-op.
+    await app.dispatch('conversation.configure', choices(app, 1, bundle='anchors', selection=second))
+    assert current['pendingBundleSelection']['bundle'] == 'anchors'
+    if interrupt:
+        current['interruptionRevision'] = current.get('interruptionRevision', 0) + 1
+    release.set()
+    if interrupt:
+        with pytest.raises(RuntimeStartupError, match='stopped'):
+            await pending
+        assert not controls and not delivered
+        assert current['pendingModelSelection'] == second
+        return
+    await pending
+    assert mounted[0]['selection'] == first
+    assert controls == [('provider.select', first)] and delivered == ['first']
+    assert current['bundle'] == 'work'  # actual older mount, not the future root
+    assert current['pendingBundleSelection']['bundle'] == 'anchors'
+    assert current['pendingModelSelection'] == second and current['nextMessageStatus'] == 'saved'
+    await runtime.send(deepcopy(current), 'next input', 'second', app.on_runtime_event)
+    assert mounted[1]['bundle'] == 'anchors' and mounted[1]['selection'] == second
+    assert delivered == ['first', 'second']
+    assert controls[-1] == ('provider.select', second)
+    assert current['bundle'] == 'anchors' and current['appliedConfigurationRevision'] == 2
+    assert 'pendingModelSelection' not in current and 'pendingBundleSelection' not in current
+
+
+def test_mismatched_bundle_ack_cannot_change_current_or_future_configuration():
+    from amplifier_web.next_message_configuration import applied
+    current = {'nextMessageRevision': 2, 'appliedConfigurationRevision': 1, 'bundle': 'anchors',
+               'pendingBundleSelection': {'bundle': 'work'}, 'nextMessageStatus': 'saved',
+               'pendingModelSelection': {'instance': 'one', 'model': 'chosen'}}
+    before = deepcopy(current)
+    applied(current, {'revision': 2, 'bundle': 'unexpected'})
+    assert current == before
 
 
 @pytest.mark.parametrize('fault', ['stop', 'newer', 'permission'])

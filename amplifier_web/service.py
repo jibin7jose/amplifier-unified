@@ -161,7 +161,7 @@ ACTION_DEFINITIONS = {
     "configuration.defaults": ("Resolve new-chat bundle and model without creating a conversation",schema({"location": LOCATION,"workspace":string(4000),"bundle":string(4000)},[])),
     "providers.list": ("List provider connections and setup status without creating a conversation",schema({"refresh":{"type":"boolean"},"location": LOCATION,"sessionId":string(200),"workspace":string(4000)},[])),
     "providers.save": ("Add or edit a provider connection",schema({"sessionId":string(200),"id":string(200),"module":string(200),"source":string(4000),"config":{"type":"object"},"apiKey":string(16000),"apiKeyEnv":string(200),"useGitHubCli":{"type":"boolean"},"scope":{"enum":["global","project","local"]}},["module","config"])),
-    "providers.finishSetup": ("Save a connection's default model while preserving provider fields and existing model rules. Optionally initialize general and fast rules only for the first connection without custom routing.",schema({"sessionId":string(200),"id":string(200),"model":string(200),"scope":{"enum":["global","project","local"]},"initializeRouting":{"type":"boolean"}},["id","model"])),
+    "providers.finishSetup": ("Save a connection's default model and optional reasoning effort while preserving credentials, other provider fields and model rules. Omitted effort preserves it; null uses the provider default, distinct from the literal effort none. expectedModel rejects a stale default edit. Optionally initialize balanced routing only for the first connection without custom routing.",schema({"sessionId":string(200),"id":string(200),"model":string(200),"effort":{"type":["string","null"],"maxLength":100},"expectedModel":string(200),"scope":{"enum":["global","project","local"]},"initializeRouting":{"type":"boolean"}},["id","model"])),
     "providers.decisionModels": ("List installed optional decision backends and saved per-surface preferences. No inference or credential discovery.", schema({"sessionId":string(200),"workspace":string(4000),"location":LOCATION}, [])),
     "providers.configureDecisions": ("Save an explicit browser, computer, or both selection preference for new sessions. Both saves the same choice for the two independent purposes atomically. Standard remains the default. Requires separately composed UI-use tools; decision selection also requires a decision backend. Does not install or enable tools or change approvals.", schema({"sessionId":string(200),"purpose":{"enum":["browser","computer","both"]},"mode":{"enum":["standard","decision"]},"allowExternalState":{"type":"boolean"},"backend":schema({"provider":string(100),"model":string(200),"endpoint":string(2000)},["provider","model"]),"scope":{"enum":["global","project","local"]}},["purpose","mode","scope"])),
     "providers.imageModels": ("Discover compatible image models through a saved connection without generating an image",schema({"location":LOCATION,"id":string(200),"sessionId":string(200),"workspace":string(4000),"refresh":{"type":"boolean"}},["id"])),
@@ -2162,13 +2162,16 @@ class AppService:
                     reviewed_files.append({'id': row['id'], 'sha256': digest})
             return {'accepted': True, 'result': {'repository': repo['full_name'], 'repositoryId': repo['id'],
                     'visibility': 'private' if repo['private'] else 'public'}, 'files': reviewed_files, 'effects': []}
-        if action == 'feedback.diagnostics':
+        if action in {'feedback.diagnostics', 'feedback.report'}:
             async with self.lock:
                 try:
-                    result = self.feedback.diagnostics(args)
+                    result = self.feedback.report(args) if action == 'feedback.report' else self.feedback.diagnostics(args)
                 except ValueError as exc:
-                    raise AppError(str(exc), 404) from None
-                return {'accepted': True, 'revision': self.state['revision'], 'effects': [], 'result': result}
+                    raise AppError(str(exc), 400 if action == 'feedback.report' else 404) from None
+                effects = ([{'type': 'download', 'filename': result['filename'], 'mime': result['mime'],
+                             'content': result['content']}]
+                           if action == 'feedback.report' and args.get('destination') == 'download' else [])
+                return {'accepted': True, 'revision': self.state['revision'], 'effects': effects, 'result': result}
         if action == 'updates.diagnostics':
             if not self.update_manager:
                 raise AppError('Update service is unavailable.')

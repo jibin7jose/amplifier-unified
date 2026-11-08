@@ -612,6 +612,37 @@ async def test_guided_setup_selects_balanced_once_and_preserves_private_config(m
     assert retry['setupCompletion']['routingCreated'] is False
     assert manager.routing(workspace)['active']==active
 
+
+@pytest.mark.asyncio
+async def test_guided_default_effort_is_narrow_and_provider_default_differs_from_none(manager,tmp_path):
+    workspace=str(tmp_path)
+    await manager.perform('providers.save',{'workspace':workspace,'id':'first','module':'provider-openai',
+        'apiKey':'private-effort-fixture','config':{'opaque':{'keep':True},'default_model':'chosen-model'}})
+    keyfile=manager.store.shared_home/'keys.env'
+    original_key=keyfile.read_bytes()
+    routing=manager.routing(workspace)
+    for effort in ('medium','none',None):
+        result=await manager.perform('providers.finishSetup',{'workspace':workspace,'id':'first',
+            'model':'chosen-model','expectedModel':'chosen-model','effort':effort,'initializeRouting':False})
+        saved=manager.config(workspace).providers[0]['config']
+        assert 'reasoning_effort' in saved and saved['reasoning_effort']==effort
+        assert saved['opaque']=={'keep':True} and saved['api_key']=='${AMPLIFIER_FIRST_API_KEY}'
+        assert keyfile.read_bytes()==original_key and manager.routing(workspace)==routing
+        assert 'private-effort-fixture' not in str(result)
+    # Null intentionally overrides a broader configured effort; it must not
+    # disappear during scope merge and silently restore that broader value.
+    await manager.perform('providers.finishSetup',{'workspace':workspace,'id':'first',
+        'model':'chosen-model','effort':'high','scope':'global'})
+    await manager.perform('providers.finishSetup',{'workspace':workspace,'id':'first',
+        'model':'chosen-model','effort':None,'scope':'local'})
+    assert manager.config(workspace).providers[0]['config']['reasoning_effort'] is None
+    before=manager.store.read(workspace,'local')
+    for extra in ({'effort':''},{'effort':True},{'effort':'high','expectedModel':'stale-model'}):
+        with pytest.raises(ValueError):
+            await manager.perform('providers.finishSetup',{'workspace':workspace,'id':'first',
+                'model':'chosen-model','scope':'local',**extra})
+        assert manager.store.read(workspace,'local')==before
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('protection',['custom-balanced','explicit-profile','multiple-providers'])
 async def test_guided_setup_never_replaces_existing_routing(manager,tmp_path,protection):

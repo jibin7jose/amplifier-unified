@@ -34,7 +34,9 @@ def _initialize_update_directory(home, *, native, directory=None):
                       if isinstance(node, ast.FunctionDef) and node.name == "__init__")
     reached = []
 
-    def cache(path):
+    def cache(path, *, owned_root):
+        if owned_root != home:
+            raise AssertionError("Update cache lost its canonical app data identity")
         reached.append(path)
         raise _DirectoryPrepared
 

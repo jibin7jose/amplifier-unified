@@ -291,19 +291,33 @@ async def github_read(path, *, raw=False, timeout=30):
         raise RuntimeError('The release channel could not be reached') from exc
 
 
+RELEASE_CHECK_STAGES = frozenset({'release_metadata', 'release_revision', 'components'})
+RELEASE_CHECK_REASONS = frozenset({'timeout', 'git_missing', 'invalid_response', 'unavailable'})
+_RELEASE_CHECK_DETAILS = {
+    'release_metadata': 'Could not read published-release metadata. Check this host’s network access to GitHub, then check for updates again.',
+    'release_revision': 'Published-release metadata was read, but its Git tag could not be verified. Check Git and this host’s access to the public repository, then check for updates again.',
+    'components': 'The published application release was verified, but its component check failed. Review source details, then check for updates again.',
+}
+
+
 async def check():
     base=application_state()
+    stage='release_metadata'
     try:
         from .update_checks import cached
         async def release_lookup():
             return await github_read(f'repos/{REPOSITORY}/releases/latest')
         data=json.loads(await cached(['release', REPOSITORY], release_lookup))
+        if not isinstance(data,dict) or not isinstance(data.get('tag_name'),str):
+            raise ValueError('Unsupported release metadata')
         tag=data['tag_name'];version=version_tuple(tag)
         if not version or data.get('draft') or data.get('prerelease'):raise ValueError('Unsupported release tag')
+        stage='release_revision'
         async def tag_lookup():
             return await process('git','ls-remote',SOURCE,'refs/tags/'+tag,'refs/tags/'+tag+'^{}',env=git_environment(),timeout=30)
         output=await cached(['release-tag', SOURCE, tag], tag_lookup)
         rows=[line.split() for line in output.splitlines()]
+        if any(len(row)!=2 for row in rows):raise ValueError('Invalid release tag response')
         revision=next((row[0] for row in rows if row[1].endswith('^{}')),rows[0][0] if rows else '')
         if not re.fullmatch('[0-9a-f]{40}',revision):raise ValueError('Release revision not found')
         current=version_tuple(__version__)
@@ -319,6 +333,7 @@ async def check():
                 base['releaseNotesWarning']='Release notes for the available update could not be loaded. Installed release history is still available.'
         # An available app replaces this graph. Do not spend time checking the
         # old host's components against declarations about to be replaced.
+        stage='components'
         component_updates = await components.updates(process, git_environment()) if version == current else []
         # Never downgrade a development host to an older published application.
         refresh_components = bool(component_updates) and not ahead
@@ -329,8 +344,16 @@ async def check():
                       else 'A newer application release is available; installation restarts the host when idle.' if version>current
                       else 'Newer application components are available; installation restarts the host when idle.' if refresh_components
                       else 'The latest published application release is installed.')}
-    except (ValueError,KeyError,RuntimeError,TimeoutError):
-        return {**base,'status':'check_failed','detail':'No accessible published release was found. Check your network connection and release availability.'}
+    except (ValueError,KeyError,RuntimeError,TimeoutError,OSError) as error:
+        # Closed facts only: subprocess/HTTP exception text can contain account,
+        # endpoint and filesystem data. Never publish it as recovery guidance.
+        reason=('timeout' if isinstance(error,TimeoutError) else
+                'git_missing' if stage=='release_revision' and isinstance(error,FileNotFoundError) else
+                'invalid_response' if isinstance(error,(ValueError,KeyError)) else 'unavailable')
+        detail=('Git is not available to this running host. Install Git or use the installer-managed launcher, then check for updates again.'
+                if reason=='git_missing' else _RELEASE_CHECK_DETAILS[stage])
+        return {**base,'status':'check_failed','checkStage':stage,'checkReason':reason,
+                'detail':detail+' No update was installed by this check.'}
 
 async def stage(manager, *, feature=None, request_id=None):
     from .app_features import selection

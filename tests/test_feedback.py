@@ -74,6 +74,36 @@ async def test_diagnostics_include_build_and_bounded_state(tmp_path, github):
         await app.close()
 
 
+@pytest.mark.parametrize('include', [False, True])
+async def test_local_report_requires_no_gh_or_network_and_never_reads_drafts(tmp_path, monkeypatch, include):
+    monkeypatch.setattr(feedback.shutil,'which',lambda _: None)
+    monkeypatch.setattr(feedback,'github_api',AsyncMock(side_effect=AssertionError('network')))
+    monkeypatch.setenv('OPENAI_API_KEY','private-env-local-report')
+    app=AppService(tmp_path/'app',workspace=tmp_path)
+    try:
+        await app.dispatch('session.create',{'title':'private-conversation'})
+        app._session()['messages'].append({'id':'private','role':'user','text':'private-chat-content'})
+        app.state['view']['feedbackDraft']={'title':'private-draft','body':'never-read-this-draft'}
+        request={'title':'A local report','body':'Exact user-supplied context.','category':'bug',
+                 'includeDiagnostics':include,'destination':'none'}
+        response=await app.dispatch('feedback.report',request)
+        report=response['result']
+        assert report['submitted'] is False and report['diagnosticsIncluded'] is include
+        assert response['effects']==[] and not app.tasks
+        assert report['content'].startswith('# A local report\n\nExact user-supplied context.')
+        assert ('Reproduction diagnostics' in report['content']) is include
+        assert all(value not in report['content'] for value in (
+            str(tmp_path),'private-env-local-report','private-conversation','private-chat-content','private-draft','never-read-this-draft'))
+        assert app.db.execute('SELECT count(*) FROM feedback_requests').fetchone()[0]==0
+        assert app.state['view']['feedbackDraft']['body']=='never-read-this-draft'
+        downloaded=await app.dispatch('feedback.report',{**request,'destination':'download'})
+        assert downloaded['effects']==[{'type':'download','filename':'amplifier-feedback.md',
+            'mime':'text/markdown','content':downloaded['result']['content']}]
+        feedback.github_api.assert_not_awaited()
+    finally:
+        await app.close()
+
+
 async def test_accepted_but_lost_github_response_never_reposts(tmp_path, github):
     github.side_effect = TimeoutError("credential-bearing private failure")
     app = AppService(tmp_path, workspace=tmp_path)

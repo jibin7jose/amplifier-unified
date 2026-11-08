@@ -91,11 +91,14 @@ async def boundaries(request, handler):
 
 async def create_app(data_dir, workspace=None, runtime=None, voice=True, background_updates=True,
                      preload_providers=True, server_config=None, background_work=True):
+    from .windows_proactor import install as install_socket_cleanup
+    socket_cleanup = install_socket_cleanup()
     # Validate even with a supplied config. Resolving a Windows address first
     # could erase a junction/alias before the native boundary can reject it.
     data_dir = validated_data_dir(data_dir, create=True)
     config = validate_server(server_config) if server_config is not None else load_server_config(data_dir)
     app = web.Application(middlewares=[request_timing, boundaries, auth_required, client_context], client_max_size=MAX_REQUEST_BYTES)
+    app["windows_socket_cleanup"] = socket_cleanup
     app["server_config"] = config
     app["permitted_hosts"] = frozenset({"localhost", "127.0.0.1", "::1"} |
                                        {canonical_host(urlsplit(origin).hostname) for origin in config["public_origins"]})

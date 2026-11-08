@@ -186,6 +186,14 @@ async def collect(manager):
         'hasError': bool(state.get('error')),
         'checkInProgress': bool(getattr(manager, 'check_task', None) and not manager.check_task.done()),
     }
+    from .app_updates import RELEASE_CHECK_STAGES, RELEASE_CHECK_REASONS
+    application = state.get('application') or {}
+    if (application.get('status') == 'check_failed'
+            and isinstance(application.get('checkStage'),str)
+            and isinstance(application.get('checkReason'),str)
+            and application.get('checkStage') in RELEASE_CHECK_STAGES
+            and application.get('checkReason') in RELEASE_CHECK_REASONS):
+        report['releaseCheck'] = {name: application[name] for name in ('checkStage', 'checkReason')}
     for name, value in [('revision', manager.service.state.get('revision')), ('lastCheck', state.get('lastCheck')),
                         ('lastAttempt', state.get('lastAttempt')), ('available', state.get('available'))]:
         if type(value) in (int, float) and 0 <= value < 10**15:

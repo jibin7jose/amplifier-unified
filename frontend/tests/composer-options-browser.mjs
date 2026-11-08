@@ -43,14 +43,18 @@ try{
  const initialCatalog=await draftCatalog();assert.ok(initialCatalog.key);assert.equal(initialCatalog.entry.phase,'ready');assert.equal(initialCatalog.entry.supported,true);assert.equal(initialCatalog.entry.provenance,'provider-api');assert.equal(typeof initialCatalog.entry.loadedAt,'number');
  assert.equal((await discovery()).calls,1);
  await closeMenu();
- // Neither a configured default nor a saved pin is a discovered option. A
- // selection-only settings change must reuse the same host-owned cache.
+ // Neither a configured default nor a saved pin is a discovered option.
+ // Connection defaults scope provider-owned recommendation discovery; changing
+ // that default invalidates its catalog, unlike a conversation-only pin.
  assert.equal((await page.request.post(url+'/fixture/provider-preference',{data:{model:'unlisted-default'}})).ok(),true);
  await expect(options).toContainText('unlisted-default');
  await options.click();await assertDiscoveredOptions(menu.locator('select#chat-model'));
  await expect(menu.locator('select#chat-model')).toHaveValue('');
  await expect(menu.getByText('Saved selection: unlisted-default (not in the discovered list)',{exact:true})).toBeVisible();
- assert.deepEqual(await draftCatalog(),initialCatalog);assert.equal((await discovery()).calls,1);
+ const preferenceCatalog=await draftCatalog();
+ assert.notEqual(preferenceCatalog.key,initialCatalog.key);
+ assert.deepEqual(preferenceCatalog.entry.models,initialCatalog.entry.models);
+ assert.equal((await discovery()).calls,2);
  await closeMenu();
  const pinned=await page.evaluate(async()=>{const setup=window.amplifier.getState().view.newSessionDraft||{};return window.amplifier.dispatch('view.update',{patch:{newSessionDraft:{...setup,selection:{instance:'test-provider',model:'owned-custom-model',effort:'high'}}}})});
  assert.equal(pinned.accepted,true);
@@ -59,7 +63,7 @@ try{
  await closeMenu();await page.reload();await options.click();await assertDiscoveredOptions(menu.locator('select#chat-model'));await expect(menu.locator('select#chat-model')).toHaveValue('');
  await expect(menu.getByText('Saved selection: owned-custom-model (not in the discovered list)',{exact:true})).toBeVisible();await expect(composer).toHaveDraft('Use my selected model');
  await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().view.newSessionDraft.selection)).toEqual({instance:'test-provider',model:'owned-custom-model',effort:'high'});
- assert.deepEqual(await draftCatalog(),initialCatalog);assert.equal((await discovery()).calls,1);
+ assert.deepEqual(await draftCatalog(),preferenceCatalog);assert.equal((await discovery()).calls,2);
  const unsent=await(await page.request.get(url+'/fixture')).json();assert.deepEqual(unsent.started,[]);assert.deepEqual(unsent.sent,[]);
  await expect(menu.locator('#chat-provider')).toBeFocused();
  await expect(menu.getByRole('button',{name:/^(Choose model|Choose provider|Choose reasoning effort|Back to chat options)$/})).toHaveCount(0);
@@ -93,16 +97,32 @@ try{
  await options.click();await page.screenshot({path:output+'/readiness107-options-mobile.png'});await closeMenu();
  await page.getByRole('button',{name:'Send message',exact:true}).click();await page.getByText('Synthetic first response',{exact:true}).waitFor();
  const data=await(await page.request.get(url+'/fixture')).json();assert.equal(data.sent.length,1);assert.equal(data.sent[0].selection.instance,'test-provider');assert.equal(data.sent[0].bundle,'work');assert.equal(data.sent[0].selection.model,'chosen-model');assert.equal(data.sent[0].selection.effort,'high');
- // A running conversation keeps readable output while configuration controls
- // refuse changes. This state is synthetic; no external provider is running.
+ // A running conversation allows future settings without mutating its captured
+ // request. This state is synthetic; no external provider is running.
  const sid=data.sent[0].sessionId;await page.request.post(url+'/fixture/activity',{data:{sessionId:sid,status:'working'}});
- await options.click();await expect(menu.locator('#chat-provider')).toBeDisabled();await expect(menu.locator('#chat-model')).toBeDisabled();
- // A disabled connection cannot receive focus. Opening the dialog still
- // needs a reachable focus target rather than leaving focus behind it.
- await expect.poll(()=>menu.evaluate(el=>el.contains(document.activeElement))).toBe(true);
- await showComposerOption(page,'bundle');await expect(bundle).toBeDisabled();
+ await composer.fill('Preserve this unsent draft during active work');
+ await options.click();await expect(menu.locator('#chat-provider')).toBeEnabled();await expect(menu.locator('#chat-model')).toBeEnabled();
+ await expect(menu.locator('#chat-provider')).toBeFocused();
+ await expect(menu.getByText('Your current turn stays unchanged. You can save settings for your next message.',{exact:true})).toBeVisible();
+ const nextModel=actionResponse('conversation.configure',args=>args.selection?.model==='first');
+ await menu.locator('#chat-model').selectOption('first');await accepted(nextModel);
+ const nextEffort=actionResponse('conversation.configure',args=>args.selection?.effort==='high');
+ await menu.locator('#chat-effort').press('End');await accepted(nextEffort);
+ await showComposerOption(page,'bundle');await expect(bundle).toBeEnabled();
+ const nextBundle=actionResponse('conversation.configure',args=>args.bundle==='anchors');
+ await bundle.selectOption('anchors');await accepted(nextBundle);
+ const restoreBundle=actionResponse('conversation.configure',args=>args.bundle==='work');
+ await bundle.selectOption('work');await accepted(restoreBundle);
+ const restoreModel=actionResponse('conversation.configure',args=>args.selection?.model==='chosen-model');
+ await menu.locator('#chat-model').selectOption('chosen-model');await accepted(restoreModel);
+ const restoreEffort=actionResponse('conversation.configure',args=>args.selection?.effort==='high');
+ await menu.locator('#chat-effort').press('End');await accepted(restoreEffort);
+ const active=await(await page.request.get(url+'/fixture')).json();
+ assert.deepEqual(active.sent,data.sent,'No current request or captured selection changes');
+ assert.deepEqual(active.started,data.started,'Saving does not start another worker');
  await expect(page.getByText('Synthetic first response',{exact:true})).toBeVisible();
- await closeMenu();await page.request.post(url+'/fixture/activity',{data:{sessionId:sid,status:'idle'}});
+ await closeMenu();await expect(composer).toHaveDraft('Preserve this unsent draft during active work');
+ await page.request.post(url+'/fixture/activity',{data:{sessionId:sid,status:'idle'}});
  const menuSaved=page.waitForResponse(response=>{
   if(response.request().method()!=='POST'||new URL(response.url()).pathname!=='/api/actions')return false;
   const body=response.request().postDataJSON();
@@ -178,15 +198,15 @@ try{
   return {key,entry:state.modelCatalogs?.[key]};
  },sid);
  await options.click();await expect(menu.locator('select#chat-model')).toHaveValue('chosen-model');
- assert.deepEqual(await currentCatalog(),initialCatalog);assert.equal((await discovery()).calls,1);
+ assert.deepEqual(await currentCatalog(),preferenceCatalog);assert.equal((await discovery()).calls,2);
  assert.equal((await page.request.post(url+'/fixture/model-discovery',{data:{mode:'error'}})).ok(),true);
  await menu.getByRole('button',{name:'Refresh this connection',exact:true}).click();
  const manual=menu.getByRole('textbox',{name:'Conversation model',exact:true});
  await expect(manual).toBeVisible();await expect(manual).toHaveValue('chosen-model');
  await expect(menu.getByText('Manual ID — not verified by discovery. The connection checks it when you send.',{exact:true})).toBeVisible();
  await assertDiscoveredOptions(menu.locator('select#chat-model-catalog'));
- const failedCatalog=await currentCatalog();assert.equal(failedCatalog.key,initialCatalog.key);assert.equal(failedCatalog.entry.phase,'error');assert.equal(failedCatalog.entry.loadedAt,initialCatalog.entry.loadedAt);assert.equal(failedCatalog.entry.provenance,'provider-api');assert.deepEqual(failedCatalog.entry.models,initialCatalog.entry.models);
- assert.equal((await discovery()).calls,2);
+ const failedCatalog=await currentCatalog();assert.equal(failedCatalog.key,preferenceCatalog.key);assert.equal(failedCatalog.entry.phase,'error');assert.equal(failedCatalog.entry.loadedAt,preferenceCatalog.entry.loadedAt);assert.equal(failedCatalog.entry.provenance,'provider-api');assert.deepEqual(failedCatalog.entry.models,preferenceCatalog.entry.models);
+ assert.equal((await discovery()).calls,3);
  const expectedRevision=await page.evaluate(sid=>window.amplifier.getState().sessions.find(row=>row.id===sid).nextMessageRevision||0,sid);
  const manualSaved=actionResponse('conversation.configure',args=>args?.sessionId===sid&&args.expectedRevision===expectedRevision&&args.selection?.instance==='test-provider'&&args.selection.model==='manual-deployment-id');
  await manual.fill('manual-deployment-id');await manual.press('Tab');
@@ -195,14 +215,14 @@ try{
  await assertDiscoveredOptions(menu.locator('select#chat-model-catalog'));await expect(menu.locator('select#chat-model-catalog')).toHaveValue('');
  await closeMenu();await page.reload();await expect(options).toContainText('manual-deployment-id');await options.click();await expect(manual).toHaveValue('manual-deployment-id');
  await expect(menu.getByText('Saved selection: manual-deployment-id (not in the discovered list)',{exact:true})).toBeVisible();
- await assertDiscoveredOptions(menu.locator('select#chat-model-catalog'));assert.deepEqual(await currentCatalog(),failedCatalog);assert.equal((await discovery()).calls,2);
+ await assertDiscoveredOptions(menu.locator('select#chat-model-catalog'));assert.deepEqual(await currentCatalog(),failedCatalog);assert.equal((await discovery()).calls,3);
  await closeMenu();await expect(composer).toHaveDraft('Keep this draft while managing connections');
  assert.equal((await(await page.request.get(url+'/fixture')).json()).sent.length,1);
  await composer.fill('Use the explicit manual deployment');await page.getByRole('button',{name:'Send message',exact:true}).click();
  await expect.poll(async()=>(await(await page.request.get(url+'/fixture')).json()).sent.length).toBe(2);
  const manualSend=(await(await page.request.get(url+'/fixture')).json()).sent[1];
  assert.equal(manualSend.sessionId,sid);assert.equal(manualSend.text,'Use the explicit manual deployment');assert.equal(manualSend.selection.instance,'test-provider');assert.equal(manualSend.selection.model,'manual-deployment-id');assert.equal(manualSend.bundle,'work');
- assert.equal((await discovery()).calls,2);
- await writeFile(output+'/catalog-cache.json',JSON.stringify({initialCatalog,failedCatalog,manualSelection:manualSend.selection,discovery:await discovery()},null,2));
+ assert.equal((await discovery()).calls,3);
+ await writeFile(output+'/catalog-cache.json',JSON.stringify({initialCatalog,preferenceCatalog,failedCatalog,manualSelection:manualSend.selection,discovery:await discovery()},null,2));
  assert.deepEqual(errors,[]);console.log('PASS: one model panel with Advanced bundle; real host cache and explicit manual-ID save/send, no default/pin injection, preserved drafts/reload, exact submissions, touch/focus, light/dark reduced-motion 320px.');
 }finally{await browser?.close();fixture.kill()}

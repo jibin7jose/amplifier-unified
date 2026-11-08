@@ -24,9 +24,25 @@ try{
  await page.reload();await page.waitForSelector('#amp-one');if(!await status.isVisible())await openSettingsPage(page,'updates');await expect(status).toContainText('You’re up to date');
  const transition=async mode=>{const response=await page.request.post(boot.url+'/fixture/current-update',{data:{mode}});assert.ok(response.ok());return response.json()};
  const failed=await transition('failure');assert.equal(failed.historyPreserved,true);await expect(status).toContainText('Component source needs review');await expect(panel.getByRole('button',{name:'Review source details'})).toBeVisible();await expect(panel).not.toContainText('Open Updates to review');
- await page.screenshot({path:output+'/blocked-mobile.png'});await page.setViewportSize({width:1280,height:950});await page.screenshot({path:output+'/blocked-desktop.png'});
+ const advanced=panel.locator('[data-part="ecosystem-update-details"]'),review=panel.getByRole('button',{name:'Review source details',exact:true});
+ for(const width of [390,1280]){
+  await page.setViewportSize({width,height:950});
+  for(let repeat=0;repeat<2;repeat++){
+   if(await advanced.getAttribute('open')!==null)await advanced.locator(':scope > summary').click();
+   await expect(advanced).toHaveJSProperty('open',false);
+   await review.click();
+   await expect(advanced).toHaveJSProperty('open',true);
+   await expect(advanced.locator(':scope > summary')).toBeFocused();
+   // This fixture's conflict is in the recorded graph receipt, not an invented
+   // cached-source row. The action must reveal that existing evidence.
+   await expect(advanced.locator('[data-part="update-diagnostics"] > .a-update-failure p')).toBeVisible();
+   await expect(advanced.locator('[data-part="update-diagnostics"] > .a-update-failure p')).toContainText('A package source declaration could not be reconciled');
+   await expect(panel.getByText('Source details opened below.',{exact:true})).toBeVisible();
+  }
+ }
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:output+'/blocked-mobile.png'});await page.setViewportSize({width:1280,height:950});await page.screenshot({path:output+'/blocked-desktop.png'});
  await transition('uncertain');await expect(status).toContainText('Installation needs verification');
  await transition('current');await expect(status).toContainText('You’re up to date');
- assert.deepEqual(errors,[]);Object.assign(result,{status:'passed',package:boot.package,currentDesktop:true,currentMobile:true,historyRetained:true,reload:true,currentFailureHasAction:true,uncertainPreserved:true});
+ assert.deepEqual(errors,[]);Object.assign(result,{status:'passed',package:boot.package,currentDesktop:true,currentMobile:true,historyRetained:true,reload:true,currentFailureHasAction:true,sourceActionReopensAndReveals:true,uncertainPreserved:true});
 } catch(error){Object.assign(result,{status:'failed',error:String(error),fixtureLog:log});throw error}
 finally{await writeFile(output+'/browser-result.json',JSON.stringify(result,null,2));await browser?.close();child.kill('SIGTERM');await new Promise(resolve=>{if(child.exitCode!==null)return resolve();child.once('exit',resolve);setTimeout(resolve,5000)})}

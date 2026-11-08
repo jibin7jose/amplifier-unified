@@ -126,6 +126,21 @@ export function ChatDetails({chat,model,now,close}){
  const title=chat.title||'Untitled conversation',managed=chat.location?.kind==='managed';
  const mixed=state.pinnedItemIds,pins=mixed||state.pinnedSessionIds||[],pinKey=mixed?'session:'+chat.id:chat.id,pinIndex=pins.indexOf(pinKey),orderAction=mixed?'navigation.pinOrder':'session.pinOrder';
  const [pinError,setPinError]=useState(''),[reviewError,setReviewError]=useState(''),[reviewing,setReviewing]=useState(false);
+ const [pinning,setPinning]=useState(false),pinFlight=useRef(false),pinOwner=useRef(null),pinAlive=useRef(true);
+ const pinContext=chat.id+'|'+navigationDetailsContext(state);pinOwner.current=pinContext;
+ useEffect(()=>{pinAlive.current=true;return()=>{pinAlive.current=false}},[]);
+ useEffect(()=>setPinError(''),[pinContext]);
+ const togglePin=async()=>{
+  if(pinFlight.current)return;pinFlight.current=true;setPinning(true);setPinError('');
+  const owner=pinContext,target={id:chat.id,pinned:!chat.pinned};
+  try{
+   const response=await act('session.pin',target);
+   const receipt=response?.result?.accepted!==undefined?response.result:response;
+   if(receipt?.accepted!==true)throw Error(receipt?.error||'The pin change could not be confirmed. Review this chat’s current pin state.');
+   if(pinAlive.current&&pinOwner.current===owner)close(true);
+  }catch(error){if(pinAlive.current&&pinOwner.current===owner)setPinError(error.message||'The pin change could not be confirmed.')}
+  finally{pinFlight.current=false;if(pinAlive.current)setPinning(false)}
+ };
  const [readError,setReadError]=useState(''),[reading,setReading]=useState(false),readFlight=useRef(false);
  const unread=unreadChatItems(state,chat.id);
  const markedUnread=unread.length>0||activity.kind==='unread';
@@ -151,8 +166,9 @@ export function ChatDetails({chat,model,now,close}){
    <button type="button" className="a-link" data-action="session.select" onClick={()=>{close();choose(chat.id)}}><ArrowUpRight/>Open chat</button>
    {errorItem&&<button type="button" className="a-link" data-action="attention.read" disabled={reviewing} onClick={review}>{reviewing?'Marking reviewed…':'Mark error reviewed'}</button>}
    {reviewError&&<span role="alert">{reviewError}</span>}
-   <button type="button" aria-label={`${chat.pinned?'Unpin':'Pin'} ${title}`} aria-pressed={!!chat.pinned} data-action="session.pin" onClick={()=>act('session.pin',{id:chat.id,pinned:!chat.pinned})}><Pin/>{chat.pinned?'Unpin':'Pin'}</button>
-   {chat.pinned&&<><button type="button" aria-label={'Move '+title+' up'} data-action={orderAction} disabled={pinIndex<1} onClick={()=>move(-1)}><ArrowUp/>Move up</button><button type="button" aria-label={'Move '+title+' down'} data-action={orderAction} disabled={pinIndex<0||pinIndex===pins.length-1} onClick={()=>move(1)}><ArrowDown/>Move down</button>{pinError&&<span role="alert">{pinError}</span>}</>}
+   <button type="button" aria-label={`${chat.pinned?'Unpin':'Pin'} ${title}`} aria-pressed={!!chat.pinned} aria-busy={pinning||undefined} disabled={pinning} data-action="session.pin" onClick={togglePin}><Pin/>{chat.pinned?'Unpin':'Pin'}</button>
+   {chat.pinned&&<><button type="button" aria-label={'Move '+title+' up'} data-action={orderAction} disabled={pinIndex<1} onClick={()=>move(-1)}><ArrowUp/>Move up</button><button type="button" aria-label={'Move '+title+' down'} data-action={orderAction} disabled={pinIndex<0||pinIndex===pins.length-1} onClick={()=>move(1)}><ArrowDown/>Move down</button></>}
+   {pinError&&<span role="alert">{pinError}</span>}
    <button type="button" aria-label={'Rename '+title} data-action="view.update" onClick={()=>setDraft({mode:'chat-rename',id:chat.id,name:title})}><Pencil/>Rename</button>
    <button type="button" disabled={reading||readUnavailable} data-action={markedUnread?'attention.read':'session.markUnread'} onClick={changeRead}>{reading?'Saving…':markedUnread?'Mark read':'Mark unread'}</button>
    {readError&&<span role="alert">{readError}</span>}

@@ -8,7 +8,7 @@ import {FeedbackFollowup} from './feedback-followup';
 import {FeedbackExcerpt} from './feedback-excerpt';
 import {FeedbackReconcile} from './feedback-lifecycle';
 
-const empty=()=>({title:'',body:'',category:'bug',includeDiagnostics:true,attachments:[],confirmExcerpts:false,confirmedExcerpts:[],uploadDestination:null,confirmedFiles:[]});
+const empty=()=>({title:'',body:'',category:'bug',includeDiagnostics:false,attachments:[],confirmExcerpts:false,confirmedExcerpts:[],uploadDestination:null,confirmedFiles:[]});
 const sizeLabel=bytes=>bytes<1024?`${bytes} B`:bytes<1024*1024?`${Math.ceil(bytes/1024)} KB`:`${(bytes/(1024*1024)).toFixed(1)} MB`;
 const encodeFile=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not read this file.'));reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.readAsDataURL(file)});
 export function FeedbackPanel({state,act}){
@@ -79,14 +79,14 @@ export function FeedbackPanel({state,act}){
   submitting.current=true;setBusy(true);setError('');
   // Freeze both text and identity before the first await. A lost response must
   // never generate a second GitHub issue or submit newly edited text as a retry.
-  const source=current.current,payload=source.pending||{requestId:crypto.randomUUID(),title:source.title,body:source.body,category:source.category,includeDiagnostics:source.includeDiagnostics!==false,...(source.includeDiagnostics!==false?{deviceDiagnostics:feedbackDiagnostics(state)}:{}),confirmExcerpts:source.confirmExcerpts===true,confirmedExcerpts:source.confirmedExcerpts||[],...(source.uploadDestination?{uploadDestination:source.uploadDestination,confirmedFiles:source.confirmedFiles||[]}:{}),attachmentIds:(source.attachments||[]).map(row=>row.id)};
+  const source=current.current,payload=source.pending||{requestId:crypto.randomUUID(),title:source.title,body:source.body,category:source.category,includeDiagnostics:source.includeDiagnostics===true,...(source.includeDiagnostics===true?{deviceDiagnostics:feedbackDiagnostics(state)}:{}),confirmExcerpts:source.confirmExcerpts===true,confirmedExcerpts:source.confirmedExcerpts||[],...(source.uploadDestination?{uploadDestination:source.uploadDestination,confirmedFiles:source.confirmedFiles||[]}:{}),attachmentIds:(source.attachments||[]).map(row=>row.id)};
   try{await save({...source,pending:payload});await act('feedback.submit',payload)}
   catch{setError('The submission was not acknowledged. Check its status using the same request below; this will not post it twice.')}
   finally{submitting.current=false;setBusy(false)}
  }
  async function startNew(){if(busy||uploading)return;setError('');setRetryUpload(null);try{await save(empty())}catch{setError('Could not start a new draft. Reconnect and try again.')}}
  return <section className={`a-feedback${dragging?' is-dragging':''}`} data-part="feedback" onPaste={paste} onDrop={drop} onDragOver={event=>{if(event.dataTransfer?.types?.includes('Files')){event.preventDefault();event.stopPropagation();if(!frozen)setDragging(true)}}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget))setDragging(false)}}>
-  <p>Send a bug report, idea, or question to <a href={issues} target="_blank" rel="noopener noreferrer">microsoft/amplifier-unified</a>. Uses the host’s GitHub sign-in.</p>
+  <p>Send a bug report, idea, or question to <a href={issues} target="_blank" rel="noopener noreferrer">microsoft/amplifier-unified</a>. Direct submission uses the host’s GitHub CLI sign-in. Without it, prepare a local report below and submit through your browser.</p>
   {(result||error)&&<div className="a-feedback-result"><ResultNotice phase={result?.status==='submitted'?'success':['failed','unknown'].includes(result?.status)?'error':'working'} message={result?.message}/>{error&&<ResultNotice phase="error" message={error}/>} {result?.url&&<a className="a-feedback-link" href={result.url} target="_blank" rel="noopener noreferrer">View issue <ExternalLink size={14}/></a>} {result?.status==='unknown'&&<><a href={issues} target="_blank" rel="noopener noreferrer">Check repository issues <ExternalLink size={14}/></a>{result.attachmentsUrl&&<a href={result.attachmentsUrl} target="_blank" rel="noopener noreferrer">Check attachment branch <ExternalLink size={14}/></a>}</>}</div>}
   <form onSubmit={submit} data-action="feedback.submit">
    <label htmlFor="feedback-category">Type</label><select id="feedback-category" data-action="view.update" value={shown.category||'bug'} disabled={frozen} onChange={e=>edit({category:e.target.value})}><option value="bug">Bug report</option><option value="idea">Feature idea</option><option value="question">Question</option><option value="other">Other feedback</option></select>
@@ -110,17 +110,51 @@ export function FeedbackPanel({state,act}){
    </div>}
    {!pending&&<FeedbackExcerpt state={state} act={act} frozen={frozen} onStage={stageExcerpt}/>}
    {selected.some(row=>row.excerpt)&&<label className="a-feedback-checkbox"><input type="checkbox" checked={shown.confirmExcerpts===true} disabled={frozen} onChange={e=>edit({confirmExcerpts:e.target.checked,confirmedExcerpts:e.target.checked?selected.filter(row=>row.excerpt).map(row=>({id:row.id,sha256:row.excerpt.sha256})):[]})}/>Include the reviewed conversation excerpts listed above when I send this feedback.</label>}
-   <label className="a-feedback-checkbox"><input type="checkbox" data-action="view.update" checked={shown.includeDiagnostics!==false} disabled={frozen} onChange={e=>edit({includeDiagnostics:e.target.checked})}/>Include reproduction diagnostics</label>
-   {shown.includeDiagnostics!==false&&<FeedbackDiagnostics key={result?`receipt:${result.requestId}`:state.selectedSessionId||'current'} state={state} act={act} requestId={result?.requestId} device={pending?.deviceDiagnostics}/> }
+   <label className="a-feedback-checkbox"><input type="checkbox" data-action="view.update" checked={shown.includeDiagnostics===true} disabled={frozen} onChange={e=>edit({includeDiagnostics:e.target.checked})}/>Include reproduction diagnostics</label>
+   {shown.includeDiagnostics===true&&<FeedbackDiagnostics key={result?`receipt:${result.requestId}`:state.selectedSessionId||'current'} state={state} act={act} requestId={result?.requestId} device={pending?.deviceDiagnostics}/> }
    <p className="a-caption">Your text, selected diagnostics and the files listed above are sent when you submit. Files stay in repository history and are linked from the issue. Reviewed excerpts use the visibility shown during review; ordinary files use the destination and visibility you explicitly review; your GitHub sign-in needs repository Contents write access. Chats, paths, provider settings, and credentials are not attached automatically.</p>
    <div className="a-dialog-actions">
     {!done&&<button type="submit" className="a-primary" data-action="feedback.submit" disabled={working||uploading||!!retryUpload||!pending&&selected.some(row=>!row.excerpt)&&(!shown.uploadDestination||JSON.stringify(shown.confirmedFiles||[])!==JSON.stringify(selected.filter(row=>!row.excerpt).map(row=>({id:row.id,sha256:row.sha256}))))||selected.some(row=>row.excerpt)&&!shown.confirmExcerpts||!shown.title?.trim()||!shown.body?.trim()}><Send/>{working?'Sending…':pending?'Check submission':'Send feedback'}</button>}
     {(done||pending&&!busy)&&<button type="button" className="a-soft" data-action="view.update" onClick={startNew}><Plus/>New feedback</button>}
    </div>
   </form>
+  <LocalFeedbackReport draft={shown} state={state} act={act} working={working||uploading} uncertain={result?.status==='unknown'}/>
   {!!requests.filter(item=>item.requestId!==pending?.requestId).length&&<div className="a-feedback-recent"><h3>Submissions</h3>{requests.filter(item=>item.requestId!==pending?.requestId).map(item=><div key={item.requestId} className="a-feedback-receipt"><strong>{item.title}</strong><ResultNotice phase={item.status==='submitted'?'success':['failed','unknown'].includes(item.status)?'error':'working'} message={item.message}/>{item.url&&<a href={item.url} target="_blank" rel="noopener noreferrer">View issue <ExternalLink size={14}/></a>}<FeedbackDiagnostics state={state} act={act} requestId={item.requestId}/>{item.status==='unknown'&&<a href={issues} target="_blank" rel="noopener noreferrer">Check repository issues</a>}{(state.attention?.items||[]).filter(i=>i.requestId===item.requestId&&!i.read).map(i=><button key={i.id} className="a-link" type="button" data-action="attention.read" onClick={()=>readItems(act,[i])}>Mark reviewed</button>)}</div>)}</div>}
   <FeedbackReconcile state={state} act={act}/>
   <FeedbackFollowup state={state} act={act}/>
+ </section>;
+}
+
+export function LocalFeedbackReport({draft,state,act,working=false,uncertain=false}){
+ const [report,setReport]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ const flight=useRef(false),alive=useRef(true),owner=useRef(null);
+ const identity=JSON.stringify([state.selectedSessionId,draft?.title,draft?.body,draft?.category,draft?.includeDiagnostics===true]);
+ if(owner.current?.identity!==identity)owner.current={identity};
+ useEffect(()=>{alive.current=true;return()=>{alive.current=false}},[]);
+ useEffect(()=>{setReport(null);setError('');setNotice('')},[identity]);
+ async function prepare(){
+  if(flight.current||working||!draft?.title?.trim()||!draft?.body?.trim())return;
+  const captured=owner.current;
+  flight.current=true;setBusy(true);setError('');setNotice('');
+  try{
+   const response=await act('feedback.report',{title:draft.title,body:draft.body,category:draft.category||'bug',
+    includeDiagnostics:draft.includeDiagnostics===true,...(draft.includeDiagnostics===true?{deviceDiagnostics:feedbackDiagnostics(state)}:{}),destination:'none'});
+   if(response?.accepted!==true||response.result?.submitted!==false||typeof response.result.content!=='string')throw Error(response?.error||'The local report could not be prepared.');
+   if(alive.current&&owner.current===captured)setReport({owner:captured,...response.result});
+  }catch(error){if(alive.current&&owner.current===captured)setError(error.message||'The local report could not be prepared.')}
+  finally{flight.current=false;if(alive.current)setBusy(false)}
+ }
+ const current=report?.owner===owner.current?report:null;
+ return <section aria-label="Local feedback report"><h3>No host GitHub sign-in?</h3>
+  <p>Prepare a report without GitHub CLI. Nothing is posted. Attachments and excerpts are not included; add them separately after reviewing the destination in your browser.</p>
+  {uncertain&&<p role="alert">The earlier submission is unconfirmed. Check repository issues before posting again; this report does not resolve that outcome.</p>}
+  <button type="button" className="a-soft" data-action="feedback.report" disabled={busy||working||!draft?.title?.trim()||!draft?.body?.trim()} onClick={prepare}>{busy?'Preparing report…':'Prepare local report'}</button>
+  {current&&<><label>Local report preview<textarea aria-label="Local feedback report preview" readOnly rows={10} value={current.content}/></label>
+   <div className="a-dialog-actions"><button type="button" className="a-soft" onClick={async()=>{const captured=owner.current;try{await navigator.clipboard.writeText(current.content);if(alive.current&&owner.current===captured)setNotice('Report copied. Nothing was submitted.')}catch{if(alive.current&&owner.current===captured)setError('Clipboard unavailable. Select and copy the report preview.')}}}>Copy local report</button>
+    <button type="button" className="a-soft" onClick={()=>{let url;try{url=URL.createObjectURL(new Blob([current.content],{type:'text/markdown'}));const link=document.createElement('a');link.href=url;link.download='amplifier-feedback.md';link.click();setNotice('Report download started. Nothing was submitted.')}catch{setError('Download unavailable. Select and copy the report preview.')}finally{if(url)setTimeout(()=>URL.revokeObjectURL(url),1000)}}}>Save local report</button>
+    <a href="https://github.com/microsoft/amplifier-unified/issues/new" target="_blank" rel="noopener noreferrer">Open GitHub issue form <ExternalLink size={14}/></a>
+   </div><p className="a-caption">Your report is not put in the link or sent automatically. Paste it into the browser form and review before submitting. Browser sign-in and repository access may still be required.</p></>}
+  {notice&&<p role="status">{notice}</p>}{error&&<p role="alert">{error}</p>}
  </section>;
 }
 

@@ -428,7 +428,7 @@ class UpdateManager:
         self.lock = asyncio.Lock()
         self.inventory = []
         from .update_checks import CheckCache
-        self.check_cache = CheckCache(self.directory)
+        self.check_cache = CheckCache(self.directory, owned_root=self.home)
         self.check_task = None
         from .shared_settings import SettingsReadCache
         self.settings_cache = SettingsReadCache(limit=512)
