@@ -5,7 +5,6 @@ import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
 const vite=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {ArchiveContext,ArchiveButton,ArchiveNotice}=await vite.ssrLoadModule('/src/archive-feedback.jsx');
-const {ConversationLibrary}=await vite.ssrLoadModule('/src/conversation-library.jsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>vite.close());
 test('shared button has pending label and same target for archive and restore',async()=>{
@@ -35,10 +34,4 @@ test('success Undo is bound to the archived id; error/unknown never offers Undo'
  assert.equal(root.root.findByProps({'data-archive-notice':true}).props.role,'alert');
  assert.equal(root.root.findByProps({'data-archive-notice':true}).props.style,undefined);
  await act(async()=>root.unmount());
-});
-test('library component uses the shared interaction instead of raw integration dispatch',async()=>{
- const calls=[],chat={id:'a'},value={pending:[],run:(...args)=>calls.push(args)};
- let root;await act(async()=>{root=create(React.createElement(ArchiveContext.Provider,{value},React.createElement(ConversationLibrary,{state:{},session:chat,act:()=>{throw Error('raw dispatch')}})))});
- await act(async()=>root.root.findByType('button').props.onClick());
- assert.deepEqual(calls,[[chat,true]]);await act(async()=>root.unmount());
 });

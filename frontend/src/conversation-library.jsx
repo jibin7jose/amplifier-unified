@@ -1,16 +1,10 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {ArchiveButton} from './archive-feedback.jsx';
-import {Archive,ArchiveRestore,Share2,Copy} from 'lucide-react';
+import {Share2,Copy} from 'lucide-react';
 
 export function LibraryFilters({state,act}){
  const view=state.view||{},organization=state.conversationOrganization||{};
  return <div aria-label="Conversation library filters"><label>Conversations<select aria-label="Active or archived conversations" value={view.navArchive||'active'} data-action="view.update" onChange={e=>act('view.update',{patch:{navArchive:e.target.value}})}><option value="active">Active</option><option value="archived">Archived ({organization.archivedCount||0})</option><option value="all">Active and archived</option></select></label></div>;
 }
-export function ConversationLibrary({state,session,act}){
- const archived=Object.hasOwn(state.conversationOrganization?.archived||{},session.id);
- return <section className="a-settings-section"><h3>Conversation library</h3><p>Archive keeps this conversation and its files. Work already running continues.</p><ArchiveButton className="a-soft" chat={session} archived={archived}>{archived?'Restore conversation':'Archive conversation'}</ArchiveButton></section>;
-}
-
 export function ConversationSharing({session,act}){
  const [preview,setPreview]=useState(null),[links,setLinks]=useState([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[expiry,setExpiry]=useState(604800);
  const generation=useRef(0),[nextOffset,setNextOffset]=useState(null);

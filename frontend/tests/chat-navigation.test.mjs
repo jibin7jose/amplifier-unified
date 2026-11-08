@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chatPage,workspaceChats,visibleWorkspaces,workspaceLabel,CHAT_PAGE_SIZE,recentLimit,recentPageMatches} from '../src/chat-navigation.js';
+import {chatPage,visibleWorkspaces,workspaceLabel,CHAT_PAGE_SIZE,recentLimit,recentPageMatches} from '../src/chat-navigation.js';
 const fixture=()=>({view:{},selectedWorkspaceId:'project',selectedSessionId:'chat-0',workspaces:[{id:'project',path:'/fixture',available:true},{id:'other',path:'/other',available:true}],sessions:Array.from({length:5000},(_,i)=>({id:'chat-'+i,title:'Saved chat '+i,workspaceId:'project',workspace:'/fixture'}))});
 
 test('pinning retains Recent membership and normal sort with stable ties',()=>{
@@ -86,11 +86,6 @@ test('selection moves to its page while page controls can browse elsewhere',()=>
  state.view.navChatPage={...chatPage(state,workspace).scope,index:900000};assert.equal(chatPage(state,workspace).index,49);
 });
 
-test('unresolved workspaces are scoped by ID and never group every null path',()=>{
- const workspace={id:'missing-a',path:null},sessions=[{id:'a',workspaceId:'missing-a',workspace:null},{id:'b',workspaceId:'missing-b',workspace:null},{id:'legacy',workspace:null}];
- assert.deepEqual(workspaceChats(sessions,workspace).map(row=>row.id),['a']);
-});
-
 test('primary chat lists exclude workers, preserve independent forks, and count only roots',()=>{
  const state=fixture();state.sessions=[
   {id:'root',workspaceId:'project',sessionKind:'root'},
@@ -102,28 +97,11 @@ test('primary chat lists exclude workers, preserve independent forks, and count 
   {id:'legacy-root',workspaceId:'project',nativeParentId:null},
  ];state.selectedSessionId='worker';
  const expected=['root','web-fork','cli-fork','legacy-root'];
- assert.deepEqual(workspaceChats(state.sessions,state.workspaces[0]).map(row=>row.id),expected);
- assert.deepEqual(workspaceChats(state.sessions).map(row=>row.id),expected);
  assert.equal(chatPage(state,state.workspaces[0]).total,4);
  state.view.navFilter='Worker-only';assert.equal(chatPage(state,state.workspaces[0]).total,0);
  state.view.navFilter='Internal-only';assert.equal(chatPage(state,state.workspaces[0]).total,0);
  state.selectedSessionId='internal';state.view.navFilter='';assert.deepEqual(chatPage(state,state.workspaces[0]).items.map(row=>row.id),expected);
  assert.equal(state.sessions.length,7,'worker and internal history stays available in app state');
-});
-
-test('direct subagent history handles aliased native parents without including forks or other projects',async()=>{
- const {directSubagentChats}=await import('../src/chat-navigation.js');
- const parent={id:'web-parent',nativeIdentity:'native-parent',nativeProject:'one'};
- const sessions=[parent,
-  {id:'aliased',sessionKind:'worker',parentId:'web-parent'},
-  {id:'native',sessionKind:'worker',nativeParentId:'native-parent',nativeProject:'one'},
-  {id:'other-project',sessionKind:'worker',nativeParentId:'native-parent',nativeProject:'two'},
-  {id:'grandchild',sessionKind:'worker',parentId:'aliased'},
-  {id:'fork',sessionKind:'root',parentId:'web-parent',nativeParentId:'native-parent',nativeProject:'one'},
-  {id:'web-fork',parentId:'web-parent',forkTranscript:[]},
- ];
- assert.deepEqual(directSubagentChats(sessions,parent).map(row=>row.id),['aliased','native']);
- assert.deepEqual(directSubagentChats(sessions,null),[]);
 });
 
 test('legacy forks and edits with native lineage retain independent chat navigation',async()=>{

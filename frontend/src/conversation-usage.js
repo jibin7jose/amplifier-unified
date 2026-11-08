@@ -5,8 +5,3 @@ export function usageMetric(metric, currency=false,compact=false){
  if(metric.estimatedCalls>0)notes.push('includes estimates');
  return `${currency?'$':''}${value}${notes.length?' · '+notes.join(' · '):''}`;
 }
-
-export function usageExport(snapshot){
- const {sessionId,scope,source,calls,metrics,providers,coverage,excludedUnboundCalls}=snapshot.usage;
- return {observedAt:snapshot.observedAt,sessionId,scope,source,calls,metrics,providers,coverage,excludedUnboundCalls};
-}

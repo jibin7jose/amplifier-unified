@@ -25,16 +25,6 @@ export function isTopLevelChat(chat){
  if(chat?.forkTranscript?.length||chat?.editOrigin)return true;
  return !chat?.nativeParentId;
 }
-export function directSubagentChats(sessions=[],parent){
- if(!parent)return [];
- const nativeId=parent.nativeIdentity||parent.runtimeSessionId||parent.id;
- return sessions.filter(chat=>chat.id!==parent.id&&!isTopLevelChat(chat)&&(chat.parentId===parent.id||(
-  chat.nativeParentId===nativeId&&(parent.nativeProject?chat.nativeProject===parent.nativeProject:parent.workspaceId?chat.workspaceId===parent.workspaceId:!!parent.workspace&&chat.workspace===parent.workspace)
- )));
-}
-export function workspaceChats(sessions=[],workspace){
- return sessions.filter(chat=>isTopLevelChat(chat)&&(!workspace||(chat.workspaceId?chat.workspaceId===workspace.id:!!workspace.path&&chat.workspace===workspace.path)));
-}
 function recentActivity(chat){
  return [chat.navigationActivityAt,chat.recentActivityAt,chat.createdAt].find(value=>typeof value==='number'&&Number.isFinite(value)&&value>=0)??0;
 }
