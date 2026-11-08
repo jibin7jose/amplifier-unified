@@ -321,6 +321,7 @@ class SurfaceProvider:
             async def stream(request, **kwargs):
                 from . import provider_capture as capture
                 ticket = capture.observe(capture.take, self, request)
+                trace = capture.observe(capture.describe_take, self, request, ticket)
                 try:
                     request = await self._prepare(request, commit=True)
                 except BaseException:
@@ -337,7 +338,7 @@ class SurfaceProvider:
                     # Never carry a ContextVar token across an outward yield.
                     token = WORK_ATTEMPT.set((self.delivery, attempt) if attempt else None)
                     try:
-                        with capture.dispatch(ticket, self.original, request):
+                        with capture.dispatch(ticket, self.original, request, trace):
                             return await operation()
                     finally:
                         WORK_ATTEMPT.reset(token)
@@ -394,6 +395,7 @@ class SurfaceProvider:
     async def complete(self, request, **kwargs):
         from . import provider_capture as capture
         ticket = capture.observe(capture.take, self, request)
+        trace = capture.observe(capture.describe_take, self, request, ticket)
         try:
             request = await self._prepare(request, commit=True)
         except BaseException:
@@ -407,7 +409,7 @@ class SurfaceProvider:
             raise
         token = WORK_ATTEMPT.set((self.delivery, attempt) if attempt else None)
         try:
-            with capture.dispatch(ticket, self.original, request):
+            with capture.dispatch(ticket, self.original, request, trace):
                 response = await self.original.complete(request, **kwargs)
             if hasattr(self.delivery, 'finish_work'):
                 self.delivery.finish_work(attempt, response)

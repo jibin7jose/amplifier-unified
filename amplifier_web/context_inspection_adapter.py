@@ -44,7 +44,8 @@ class ContextInspection:
         self.budgets = (self.budgets + [(reference, fingerprint, budget_public(decision),
                                        provider, weakref.ref(asyncio.current_task()))])[-4:]
 
-    async def begin(self, row, request, provider, options, provider_defaults=None, captured_budget=None):
+    async def begin(self, row, request, provider, options, provider_defaults=None, captured_budget=None,
+                    capture_diagnostic=None):
         config = preferences(self.home)
         metadata, bodies = provider_policy(provider)
         enabled = config['enabled'] and metadata
@@ -166,6 +167,8 @@ class ContextInspection:
             'configuredContextBudget': context_limit, 'compactionThreshold': threshold},
             budget=budget, budgetStatus=budget_status, budgetBinding=binding_evidence, limitEvidence=limit_evidence,
             bodyRecording=enabled and bodies and config['bodies'])
+        if capture_diagnostic is not None:
+            header['captureDiagnostic'] = capture_diagnostic
         # Build synchronously from the actual admitted object, before any await
         # can permit another task to mutate a shared request. Storage alone runs
         # off-thread. Only bounded text and schema fields are projected.

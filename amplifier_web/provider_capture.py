@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 DISPATCH = contextvars.ContextVar('amplifier_web_budget_capture_dispatch', default=None)
 FITTING = contextvars.ContextVar('amplifier_web_budget_capture_fit', default=None)
+TRACE = contextvars.ContextVar('amplifier_web_capture_trace', default=None)
 _HOST_WRAPPERS = weakref.WeakKeyDictionary()
 
 
@@ -24,6 +25,138 @@ def observe(operation, *args):
         return operation(*args)
     except Exception:
         return None
+
+
+def purpose_code(purpose, request):
+    """Fixed diagnostic vocabulary, not a foreground/authority decision."""
+    known = {'context-compaction': 'context_compaction',
+             'context_compaction': 'context_compaction', 'image_generation': 'image_generation'}
+    if type(purpose) is dict:
+        value = purpose.get('purpose')
+        if type(value) is str and len(value) <= 64 and value in known:return known[value]
+        # These are existing host labels; never export a supplied label.
+        label = purpose.get('label')
+        if type(label) is str and label == 'Session naming':return 'title'
+        if type(label) is str and label == 'Memory consolidation':return 'memory_consolidation'
+        if value is not None or purpose:return 'unknown'
+    metadata = getattr(request, 'metadata', None)
+    value = metadata.get('purpose') if type(metadata) is dict else None
+    return (known.get(value, 'unknown') if type(value) is str and len(value) <= 64
+            else 'unspecified' if value is None else 'unknown')
+
+
+def note_fit(owner, request, status):
+    """Four weak notes on the existing fit owner, never a persistent registry."""
+    note = (weakref.ref(request), weakref.ref(asyncio.current_task()),
+            weakref.ref(owner.original), status)
+    notes = getattr(owner, '_capture_fit_notes', ())
+    owner._capture_fit_notes = [n for n in notes if n[0]() is not None
+                               and not (n[0]() is request and n[1]() is asyncio.current_task())][-3:] + [note]
+
+
+@dataclass(eq=False)
+class AttemptTrace:
+    provider: object  # weak; diagnostic-only, cannot be passed to claim/consume
+    fit: str
+    take: str
+    candidates: int
+    used: bool = False
+
+
+def describe_take(owner, request, ticket):
+    """Read bounded identity metadata only; the authoritative take already ran."""
+    weakref.ref(request)  # Unsupported identity cannot inherit a fit note.
+    provider = weakref.ref(owner.original)
+    task = asyncio.current_task()
+    rows = [t for t in owner._capture_tickets if t.request() is request]
+    notes = [n for n in getattr(owner, '_capture_fit_notes', ())
+             if n[0]() is request and n[1]() is task and n[2]() is owner.original]
+    fit = notes[-1][3] if len(notes) == 1 else 'not_observed'
+    if ticket is not None:
+        take = ticket.reason if not ticket.valid else 'taken'
+    elif any(t.task() is not task for t in rows) and not any(t.task() is task for t in rows):
+        fit, take = 'not_observed', 'task_mismatch'
+    elif sum(not t.taken and t.task() is task for t in rows) > 1:
+        take = 'ambiguous'
+    elif any(t.taken and t.task() is task for t in rows):
+        take = 'already_taken'
+    else:
+        take = 'no_ticket'
+    # No note can outlive this exact dispatch interval or become its retry's note.
+    owner._capture_fit_notes = [n for n in getattr(owner, '_capture_fit_notes', ())
+                               if n[0]() is not None and not (n[0]() is request and n[1]() is task)]
+    return AttemptTrace(provider, fit, take, 0 if take == 'task_mismatch' else min(4, len(rows)))
+
+
+@dataclass(eq=False)
+class TraceScope:
+    attempt: AttemptTrace | None
+    request: object
+    provider: object
+    task: object
+    active: bool = True
+
+
+def trace_scope(attempt, provider, request):
+    # Independent weak references; never supply an unproven identity to capture.
+    def reference(value):
+        try:return weakref.ref(value)
+        except TypeError:return None
+    return TraceScope(attempt, reference(request), reference(provider),
+                      reference(asyncio.current_task()))
+
+
+def entry_trace(execution, provider, request, purpose):
+    """Freeze pre-await observation for THIS call, never a latest/global marker."""
+    result = {'purpose': purpose_code(purpose, request), 'dispatch': 'not_observed',
+              'fit': 'not_observed', 'take': 'not_observed', 'candidates': 0}
+    scope = TRACE.get()
+    if scope is None or not scope.active:return result
+    if scope.task is None or scope.task() is not asyncio.current_task():
+        result['dispatch'] = 'task_mismatch'
+    elif scope.request is None or scope.provider is None:
+        result['dispatch'] = 'identity_unproven'
+    elif scope.request() is not request:
+        result['dispatch'] = 'request_mismatch'
+    elif not matches_provider(execution, scope.provider(), provider):
+        result['dispatch'] = 'provider_mismatch'
+    elif scope.attempt is None:
+        result['dispatch'] = 'identity_unproven'
+    elif scope.attempt.used:
+        result['dispatch'] = 'already_observed'
+    elif scope.attempt.provider() is not scope.provider():
+        result['dispatch'] = 'provider_mismatch'
+    else:
+        scope.attempt.used = True  # Before metadata/admission may reenter.
+        result.update(dispatch='observed', fit=scope.attempt.fit, take=scope.attempt.take,
+                      candidates=scope.attempt.candidates)
+    return result
+
+
+def public_trace(entry, claimed, consumed):
+    """Independent from captured_budget; must never disable legacy fallback."""
+    allowed = {
+        'purpose': {'unspecified', 'unknown', 'title', 'memory_consolidation',
+                    'context_compaction', 'image_generation'},
+        'dispatch': {'not_observed', 'observed', 'unavailable', 'task_mismatch', 'request_mismatch',
+                     'provider_mismatch', 'identity_unproven', 'already_observed'},
+        'fit': {'not_observed', 'created', 'fitted_value_unavailable', 'identity_unsupported'},
+        'take': {'not_observed', 'taken', 'task_mismatch', 'no_ticket', 'ambiguous',
+                 'already_taken', 'provider_changed', 'evicted_fit', 'superseded_fit',
+                 'diagnostic_failure', 'consumed'},
+    }
+    result = {'version': 1}
+    for key, values in allowed.items():
+        value = entry.get(key) if type(entry) is dict else None
+        result[key] = value if type(value) is str and value in values else 'not_observed' if key != 'purpose' else 'unknown'
+    if entry is None:result['dispatch'] = 'unavailable'
+    count = entry.get('candidates') if type(entry) is dict else None
+    result['candidates'] = count if type(count) is int and 0 <= count <= 4 else 0
+    result['claim'] = 'claimed' if claimed is not None else 'not_claimed'
+    statuses = {'captured', 'not_reported', 'ticket_unavailable', 'request_changed', 'binding_unsupported'}
+    status = consumed.get('status') if type(consumed) is dict else None
+    result['consume'] = status if type(status) is str and status in statuses else 'not_observed'
+    return result
 
 
 def bind_wrapper(wrapper, original):
@@ -132,19 +265,27 @@ def invalidate(owner, request):
     for ticket in owner._capture_tickets:
         if ticket.request() is request:ticket.close('superseded_fit')
     owner._capture_tickets[:] = [t for t in owner._capture_tickets if t.valid and t.request() is not None]
+    # An explicit new fit must not inherit the prior attempt's diagnostic note
+    # if preparation fails before begin_fit is reached.
+    owner._capture_fit_notes = [n for n in getattr(owner, '_capture_fit_notes', ())
+                               if n[0]() is not request and n[0]() is not None]
 
 
 def begin_fit(owner, original, prepared, options, kwargs=None):
     entry = next((row for row in owner.prepared if row[0] is original and row[1] is prepared), None)
-    if entry is None or not isinstance(entry[2], str):return None
+    if entry is None or not isinstance(entry[2], str):
+        observe(note_fit, owner, original, 'fitted_value_unavailable')
+        return None
     try:
         ticket = FitTicket(weakref.ref(original), weakref.ref(asyncio.current_task()),
                            weakref.ref(owner.original), provider_chain(owner.original),
                            entry[2], budget_options(options, kwargs or {}))
     except TypeError:
+        observe(note_fit, owner, original, 'identity_unsupported')
         return None
     owner._capture_tickets.append(ticket)
     while len(owner._capture_tickets) > 4:owner._capture_tickets.pop(0).close('evicted_fit')
+    observe(note_fit, owner, original, 'created')
     return ticket
 
 
@@ -181,15 +322,20 @@ class Dispatch:
 
 
 @contextmanager
-def dispatch(ticket, provider, request):
+def dispatch(ticket, provider, request, trace=None):
     # The token is scoped to an awaited entry/anext/aclose, never an outward yield.
     value = None
     if ticket is not None:
         try:value = Dispatch(ticket, provider, weakref.ref(request), weakref.ref(asyncio.current_task()))
         except TypeError:pass
     token = DISPATCH.set(value)
+    observation = observe(trace_scope, trace, provider, request)
+    trace_token = TRACE.set(observation)
     try:yield
-    finally:DISPATCH.reset(token)
+    finally:
+        if observation is not None:observation.active = False
+        TRACE.reset(trace_token)
+        DISPATCH.reset(token)
 
 
 @contextmanager

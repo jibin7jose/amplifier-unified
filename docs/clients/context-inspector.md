@@ -173,6 +173,34 @@ otherwise a small identical nested call could borrow the same count through that
 second path. This also avoids the redundant preflight fingerprint traversal for
 the canonical fitted-owner path.
 
+### Passive capture-stage evidence
+
+Future headers may carry `captureDiagnostic`: a versioned, fixed-vocabulary
+observation of purpose, dispatch, fit, take, claim and consume stages, plus a
+candidate count bounded to four. `unspecified` purpose does not mean conversational;
+unknown values remain unknown. Existing auxiliary/background exclusions are
+unchanged. No labels, prompt text, private hashes, options or object addresses
+enter this field, and older headers are not backfilled.
+
+The fitting owner keeps at most four weak identity notes alongside its bounded
+fit cache. A separate diagnostic dispatch scope can record an attempted entry
+when no ticket exists, but cannot claim a ticket, supply a budget or affect
+legacy fallback. It matches the exact request/task/provider; mismatched, inherited,
+nested or repeated entries do not borrow the earlier fit details. Unsupported
+weak identity remains unproven. A missing marker means **not observed**, never
+proof that the surface owner was bypassed.
+
+The call snapshots reached stages before metadata/admission awaits and adds the
+existing consume outcome at the final synchronous observation point. No new
+await, request scan, encoding, count call, persistent registry or execution
+authority is introduced. Per-next streaming scopes expire before outward yields;
+their shared diagnostic attempt is observed once. Diagnostic failures are
+nonfatal and cannot suppress a working fallback budget.
+
+This makes a future naturally occurring failure diagnosable; it does not repair
+historical captures or claim that the unexplained 0.63 live numeric omission is
+fixed. Synthetic Live/Boundary checks are not a substitute for that live evidence.
+
 ### Separate provider-owner proposal: exact model window
 
 OpenAI's `_budget_decision` and legacy `request_budget` return a dictionary. The

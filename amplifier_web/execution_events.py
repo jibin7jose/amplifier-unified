@@ -176,7 +176,8 @@ class ExecutionEvents:
         purpose=CALL_PURPOSE.get()
         if purpose:parent,turn=None,purpose.get('turnId',turn)
         call_id = "llm:"+str(uuid.uuid4())
-        from .provider_capture import claim, consume, observe
+        from .provider_capture import claim, consume, observe, entry_trace, public_trace
+        trace = observe(entry_trace, self, provider, request, purpose)
         capture = observe(claim, self, sid, provider, request, call_id) if not purpose else None
         info = provider.get_info()
         if inspect.isawaitable(info):
@@ -207,10 +208,9 @@ class ExecutionEvents:
         observer = self.context_inspectors.get(sid)
         captured_budget = (observe(consume, capture, self, row, provider, request, request_options)
                            if observer is not None else None)
-        if captured_budget is None:
-            await safe_observe(observer, 'begin', row, request, provider, request_options, defaults)
-        else:
-            await safe_observe(observer, 'begin', row, request, provider, request_options, defaults, captured_budget)
+        diagnostic = observe(public_trace, trace, capture, captured_budget)
+        await safe_observe(observer, 'begin', row, request, provider, request_options,
+                           defaults, captured_budget, diagnostic)
         return row
 
     async def provider_call(self, sid, provider, request, invoke, *, label=None, run_id=None, request_options=None):
