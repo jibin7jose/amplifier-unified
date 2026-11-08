@@ -20,7 +20,7 @@ def source(session):
                     internal.get('nativeInputId') if internal else None)
         # Cache only descriptors, including input identity multiplicity. A
         # duplicate outside the requested page must not qualify a native row.
-        facts = rows.project('unified-navigation-v3:'+session['id'], fact) if isinstance(rows, TranscriptIndex) else [fact(row,i) for i,row in enumerate(rows)]
+        facts = rows.project('unified-navigation-v4:'+session['id'], fact) if isinstance(rows, TranscriptIndex) else [fact(row,i) for i,row in enumerate(rows)]
         input_counts = Counter(row[4] for row in facts if row[4])
         visible = [row for row in facts if row[0]]
         def read(positions):

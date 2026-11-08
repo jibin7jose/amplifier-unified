@@ -117,11 +117,12 @@ def test_forged_missing_and_conflicting_binding_never_gets_caption(store, change
         assert not {"origin", "attributionCaption", "attributionOrigin"} & item.keys()
 
 
-def test_identical_human_peer_and_native_inputs_never_share_provenance(store):
+@pytest.mark.parametrize("kind", ["user", "steer"])
+def test_identical_human_peer_and_native_inputs_never_share_provenance(store, kind):
     peer, _ = retained(store)
     human = {"id": "human", "role": "user", "inputId": "human-input", "text": TEXT}
     native = display_message({"role": "user", "content": peer_input(peer["peerEnvelope"], TEXT),
-                              "metadata": {"amplifier_input": {"version": 1, "kind": "user", "id": "request"}}},
+                              "metadata": {"amplifier_input": {"version": 1, "kind": kind, "id": "request"}}},
                              0, {"id": "recipient"})
     session = {"id": "recipient", "messages": [human, peer]}
     result = resolve(store, peer, rows=[human, peer, native], session=session)
@@ -139,13 +140,14 @@ def test_identical_human_peer_and_native_inputs_never_share_provenance(store):
     assert session["messages"][-1]["text"] == TEXT
 
 
-def test_native_duplicate_retained_outside_page_remains_ambiguous(store):
+@pytest.mark.parametrize("kind", ["user", "steer"])
+def test_native_duplicate_retained_outside_page_remains_ambiguous(store, kind):
     peer, _ = retained(store)
     native = display_message({"role": "user", "content": peer_input(peer["peerEnvelope"], TEXT),
-                              "metadata": {"amplifier_input": {"version": 1, "kind": "user", "id": "request"}}},
+                              "metadata": {"amplifier_input": {"version": 1, "kind": kind, "id": "request"}}},
                              0, {"id": "recipient"})
     duplicate = display_message({"role": "user", "content": native["text"],
-                                 "metadata": {"amplifier_input": {"version": 1, "kind": "user", "id": "request"}}},
+                                 "metadata": {"amplifier_input": {"version": 1, "kind": kind, "id": "request"}}},
                                 130, {"id": "recipient"})
     session = {"id": "recipient", "messages": [peer, native] + [
         {"id": str(i), "role": "assistant", "text": "Answer"} for i in range(128)] + [duplicate]}
@@ -275,15 +277,16 @@ def app_caption(db, session, row):
     return PeerAttribution(db).resolve(session, [row])[0].get("attribution", {}).get("caption")
 
 
+@pytest.mark.parametrize("kind", ["user", "steer"])
 @pytest.mark.parametrize("duplicate", [False, True])
-def test_native_navigation_keeps_index_wide_input_ambiguity_without_body_scan(store, tmp_path, monkeypatch, duplicate):
+def test_native_navigation_keeps_index_wide_input_ambiguity_without_body_scan(store, tmp_path, monkeypatch, duplicate, kind):
     from amplifier_foundation.session.jsonl import TranscriptIndex
     from amplifier_web import automatic_history
     from amplifier_web.conversation_navigation import query
     from amplifier_web.browser_detail import MESSAGE_LIMIT
     peer, _ = retained(store, text=TEXT * 180)
     native = {"role": "user", "content": peer_input(peer["peerEnvelope"], peer["text"]),
-              "metadata": {"amplifier_input": {"version": 1, "kind": "user", "id": "request"}}}
+              "metadata": {"amplifier_input": {"version": 1, "kind": kind, "id": "request"}}}
     rows = [native] + [{"role": "assistant", "content": "Saved " + str(i)} for i in range(130)]
     if duplicate:
         rows.append(copy.deepcopy(native))  # Outside the focused window.
@@ -595,7 +598,9 @@ def test_full_range_minimal_export_safe_caption_and_original_markdown(store, tmp
     assert AGENT not in snapshot(tmp_path, session, [], options)[0]
 
 
-async def test_checkpoint_reload_older_pages_query_export_keep_one_caption_and_native_bytes(app, tmp_path, monkeypatch):
+@pytest.mark.parametrize("kind", ["user", "steer"])
+@pytest.mark.parametrize("cached_duplicate", [False, True])
+async def test_checkpoint_reload_older_pages_query_export_keep_one_caption_and_native_bytes(app, tmp_path, monkeypatch, kind, cached_duplicate):
     from amplifier_web.session_files import project_slug
     source, target = app.state["sessions"]
     await send(app, identity="checkpoint-peer", mode="notify", text=TEXT)
@@ -605,15 +610,25 @@ async def test_checkpoint_reload_older_pages_query_export_keep_one_caption_and_n
     monkeypatch.setattr("amplifier_web.automatic_history.directory", lambda session: root)
     monkeypatch.setattr("amplifier_web.conversation_export.directory", lambda session: root)
     native = [{"role": "user", "content": peer_input(peer["peerEnvelope"], TEXT),
-               "metadata": {"amplifier_input": {"version": 1, "kind": "user", "id": peer["inputId"]}}}]
+               "metadata": {"amplifier_input": {"version": 1, "kind": kind, "id": peer["inputId"]}}}]
     native += [{"role": "assistant", "content": "Saved reply " + str(i)} for i in range(125)]
     path = root / "transcript.jsonl"
     path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in native))
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     target.update(nativeProject=project_slug(tmp_path), nativeIdentity=target["id"], historyManaged=False)
+    if cached_duplicate:
+        # Earlier display readers discarded kind=steer's identity. Retain the
+        # exact old display copy and append cursor, then reconstruct from native
+        # metadata without rewriting either the native bytes or the receipt.
+        cached = [display_message(row, index, target) for index, row in enumerate(native)]
+        cached[0].pop("nativeInputId", None)
+        target["messages"].extend(cached)
+        target.update(nativeBoundary=cached[-1]["nativeIndex"], nativeBoundaryId=cached[-1]["id"])
     await app.history.load(target["id"])
     await app.history.load(target["id"])
     assert sum(row["id"] == peer["id"] for row in target["messages"]) == 1
+    assert len(target["messages"]) == len(native)
+    assert not any(row.get("text") == native[0]["content"] for row in target["messages"])
     older = page(target, "messages", before=target["messages"][-60]["id"], resolver=app.peer_attribution.resolve)
     # Load all earlier pages, not only the middle window.
     while older["before"]:
@@ -627,6 +642,246 @@ async def test_checkpoint_reload_older_pages_query_export_keep_one_caption_and_n
     assert content.count(AGENT) == 1 and TEXT in content
     assert peer_input(peer["peerEnvelope"], TEXT) not in content
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+
+
+@pytest.mark.parametrize("marker", [
+    None, {}, {"version": 1, "kind": "service", "id": "request", "source": "notification"},
+    {"version": 2, "kind": "steer", "id": "request"},
+    {"version": 1, "kind": "steer", "id": ""},
+    {"version": 1, "kind": "steer", "id": ["request"]},
+])
+def test_unproven_native_envelope_is_not_repaired_from_text(store, marker):
+    peer, _ = retained(store)
+    body = peer_input(peer["peerEnvelope"], TEXT)
+    raw = {"role": "user", "content": body, "metadata": {"amplifier_input": marker}}
+    native = display_message(raw, 0, {"id": "recipient"})
+    assert "nativeInputId" not in native
+    session = {"id": "recipient", "messages": [peer]}
+    merge_web_history(session, [native])
+    assert len(session["messages"]) == 2
+    projected = PeerAttribution(store).resolve(session, session["messages"])
+    assert projected[0]["attribution"]["caption"] == AGENT
+    assert projected[1]["text"] == body and "attribution" not in projected[1]
+
+
+@pytest.mark.parametrize("change", ["receipt", "binding", "target", "sender", "body", "identity", "duplicate"])
+def test_native_steering_identity_does_not_replace_receipt_binding(store, change):
+    peer, receipt = retained(store)
+    native = display_message({"role": "user", "content": peer_input(peer["peerEnvelope"], TEXT),
+        "metadata": {"amplifier_input": {"version": 1, "kind": "steer", "id": "request"}}},
+        0, {"id": "recipient"})
+    session = {"id": "recipient", "messages": [peer]}
+    if change == "receipt":
+        store.execute("DELETE FROM commands")
+    elif change == "binding":
+        receipt["displayBinding"] = "wrong"
+    elif change == "target":
+        receipt["target"]["sessionId"] = "other"
+    elif change == "sender":
+        receipt["senderSessionId"] = "other"
+    elif change == "body":
+        native["text"] += "changed"
+    elif change == "identity":
+        native["nativeInputId"] = "other"
+    else:
+        session["messages"].append({**peer, "id": "duplicate"})
+    store.execute("UPDATE commands SET receipt=? WHERE id='request'", (json.dumps(receipt),))
+    assert "attribution" not in PeerAttribution(store).resolve(session, [native])[0]
+
+
+def test_partial_native_steering_ambiguity_cannot_alias_or_remove_cached_copy(store):
+    from amplifier_web.automatic_history import align_expanded_inputs, alias_peer_inputs
+    peer, _ = retained(store)
+    native = display_message({"role": "user", "content": peer_input(peer["peerEnvelope"], TEXT),
+        "metadata": {"amplifier_input": {"version": 1, "kind": "steer", "id": "request"}}},
+        0, {"id": "recipient"})
+    native["nativeInputAmbiguous"] = True  # Second occurrence outside this page.
+    cached = {key: value for key, value in native.items() if key not in {"nativeInputId", "nativeInputAmbiguous"}}
+    original = copy.deepcopy([peer, cached])
+    session = {"id": "recipient", "messages": original}
+    assert align_expanded_inputs(original, [native]) == original
+    assert alias_peer_inputs(session, [native]) == [native]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("id", "unrelated"), ("nativeIndex", 3), ("text", "Changed body"),
+    ("role", "assistant"), ("source", "human"),
+])
+def test_cached_copy_repair_requires_every_native_anchor(store, field, value):
+    from amplifier_web.automatic_history import align_expanded_inputs
+    peer, _ = retained(store)
+    native = display_message({"role": "user", "content": peer_input(peer["peerEnvelope"], TEXT),
+        "metadata": {"amplifier_input": {"version": 1, "kind": "steer", "id": "request"}}},
+        0, {"id": "recipient"})
+    cached = {key: item for key, item in native.items() if key != "nativeInputId"}
+    cached[field] = value
+    current = [peer, cached]
+    before = copy.deepcopy(current)
+    aligned = align_expanded_inputs(current, [native], peer_only=True)
+    assert len(aligned) == 2 and aligned[-1] == cached
+    assert current == before
+
+
+@pytest.mark.parametrize("length", [3, 301])
+def test_steering_projection_replaces_old_cache_and_reuses_warm_facts(store, tmp_path, monkeypatch, length):
+    from amplifier_foundation.session.history import SessionHistoryStore
+    from amplifier_web import automatic_history, conversation_navigation
+    peer, _ = retained(store)
+    raw = {"role": "user", "content": peer_input(peer["peerEnvelope"], TEXT),
+           "metadata": {"amplifier_input": {"version": 1, "kind": "steer", "id": "request"}}}
+    rows = [raw] + [{"role": "assistant", "content": f"Answer {i}"} for i in range(length - 2)] + [raw]
+    path = tmp_path / "transcript.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    before = path.read_bytes()
+    session = {"id": "recipient", "nativeProject": "fixture", "historyManaged": True, "messages": [peer]}
+    monkeypatch.setattr(automatic_history, "directory", lambda _: tmp_path)
+    index = SessionHistoryStore(tmp_path).indexed_messages()
+    # Seed precisely the old descriptor policy, not fake body contents. A new
+    # reader policy must not trust its missing steering identity on a warm file.
+    index.project("unified-display-v3:recipient", lambda row, i: (
+        automatic_history.display_identity(session, i, row["role"], row["content"]),
+        automatic_history.display_identity(session, i, row["role"], row["content"]), row["role"], None))
+    index.project("unified-navigation-v3:recipient", lambda row, i: (
+        automatic_history.display_identity(session, i, row["role"], row["content"]), row["role"], True, i, None))
+    calls = []
+    display = automatic_history.display_message
+    def observed(*args, **kwargs):
+        calls.append(args[1])
+        return display(*args, **kwargs)
+    monkeypatch.setattr(automatic_history, "display_message", observed)
+    for warm in (False, True):
+        calls.clear()
+        page = automatic_history.read_transcript(session, limit=1)
+        assert page["messages"][0]["nativeInputId"] == "request"
+        assert page["messages"][0]["nativeInputAmbiguous"] is True
+        if warm:
+            assert len(calls) == 1  # Only the selected body, not N native bodies.
+        calls.clear()
+        facts, read = conversation_navigation.source(session)
+        selected = read([0])
+        assert selected[0]["nativeInputId"] == "request"
+        assert selected[0]["nativeInputAmbiguous"] is True
+        assert len(facts) == length
+        if warm:
+            assert len(calls) == 1
+    assert path.read_bytes() == before
+
+
+async def test_restart_reconstructs_cached_steering_copy_then_pages_original(store, tmp_path, monkeypatch):
+    from amplifier_web import automatic_history
+    root = tmp_path / "native"
+    root.mkdir()
+    monkeypatch.setattr(automatic_history, "directory", lambda _: root)
+    app_path = tmp_path / "app"
+    service = AppService(app_path, NoModel(), workspace=tmp_path)
+    try:
+        peer, receipt = retained(service.db)
+        session = service._new_session({"title": "Receiving"})
+        session.update(id="recipient", messages=[peer], nativeProject="fixture", historyManaged=False)
+        raw = {"role": "user", "content": peer_input(peer["peerEnvelope"], TEXT),
+               "metadata": {"amplifier_input": {"version": 1, "kind": "steer", "id": "request"}}}
+        native = display_message(raw, 0, session)
+        session["messages"].append({key: value for key, value in native.items() if key != "nativeInputId"})
+        session.update(nativeBoundary=0, nativeBoundaryId=native["id"])
+        path = root / "transcript.jsonl"
+        path.write_text(json.dumps(raw) + "\n")
+        before = path.read_bytes()
+        service.state["sessions"] = [session]
+        service.state["selectedSessionId"] = "recipient"
+        service._publish()
+    finally:
+        await service.close()
+    reopened = AppService(app_path, NoModel(), workspace=tmp_path)
+    try:
+        # Supported passive repair action, even with an unchanged native stamp:
+        # session.history -> history_page -> canonical load, not browser reload.
+        # No migration guesses from the saved display-only copy.
+        from test_collaborative_workspaces import until
+        restored = reopened._session("recipient")
+        restored["nativeRevision"] = automatic_history.revision(restored)
+        assert len(restored["messages"]) == 2
+        accepted = await reopened.dispatch("session.history", {"id": "recipient"}, command_id="repair-display")
+        assert accepted["accepted"] is True
+        await until(lambda: len(reopened._session("recipient")["messages"]) == 1)
+        restored = reopened._session("recipient")
+        assert len(restored["messages"]) == 1
+        assert restored["messages"][0]["id"] == peer["id"]
+        await reopened.history.windows.load("recipient")
+        window = reopened.history.windows.project(restored)
+        assert len(window["messages"]) == 1
+        assert window["messages"][0]["attribution"]["caption"] == AGENT
+        assert window["messages"][0]["text"] == TEXT
+        assert json.loads(reopened.db.execute("SELECT receipt FROM commands WHERE id='request'").fetchone()[0]) == receipt
+        assert path.read_bytes() == before
+        assert reopened.runtime.starts == reopened.runtime.sends == 0
+    finally:
+        await reopened.close()
+
+
+@pytest.mark.parametrize("kind", ["user", "steer"])
+def test_passive_query_and_export_repair_old_display_copy_without_prior_merge(store, tmp_path, monkeypatch, kind):
+    from amplifier_web import automatic_history
+    from amplifier_web.history_query import _rows
+    peer, _ = retained(store)
+    raw = {"role": "user", "content": peer_input(peer["peerEnvelope"], TEXT),
+           "metadata": {"amplifier_input": {"version": 1, "kind": kind, "id": "request"}}}
+    native = display_message(raw, 0, {"id": "recipient"})
+    cached = {key: value for key, value in native.items() if key != "nativeInputId"}
+    # Preserve a separate human input whose entire body is the model envelope.
+    human = {"id": "human", "role": "user", "inputId": "human", "text": raw["content"]}
+    session = {"id": "recipient", "title": "Receiving", "nativeProject": "fixture",
+               "historyManaged": False, "messages": [peer, cached, human]}
+    original = copy.deepcopy(session)
+    monkeypatch.setattr(automatic_history, "directory", lambda _: tmp_path)
+    monkeypatch.setattr("amplifier_web.conversation_export.directory", lambda _: tmp_path)
+    path = tmp_path / "transcript.jsonl"
+    path.write_text(json.dumps(raw) + "\n")
+    before = path.read_bytes()
+    rows, _ = _rows(session)
+    assert [row["id"] for row in rows] == [peer["id"], "human"]
+    exported, _ = snapshot(tmp_path, session, [], {}, resolver=PeerAttribution(store).resolve)
+    assert exported.count(AGENT) == 1
+    assert exported.count(raw["content"]) == 1  # The human's literal copy survives.
+    assert session == original and path.read_bytes() == before
+
+
+async def test_ambiguous_steering_cannot_alias_a_retained_human_for_work(app, monkeypatch):
+    source, _ = app.state["sessions"]
+    retained_human = {"id": "human", "role": "user", "inputId": "request",
+                      "inputOrigin": "user", "text": "Same"}
+    source.update(nativeProject="fixture", messages=[retained_human])
+    native = {"id": "native", "role": "user", "nativeInputId": "request",
+              "nativeInputAmbiguous": True, "nativeIndex": 2, "text": "Same"}
+    monkeypatch.setattr("amplifier_web.automatic_history.read_transcript", lambda *args, **kwargs: {"messages": [native]})
+    with pytest.raises(AppError, match="unambiguously"):
+        app.collaboration.resolve_message(source, "native", strict_source=True)
+
+
+@pytest.mark.parametrize("kind", ["user", "steer"])
+@pytest.mark.parametrize("attachment", [False, True])
+def test_peer_repair_does_not_change_nonpeer_expanded_export_policy(tmp_path, monkeypatch, kind, attachment):
+    from amplifier_web import automatic_history
+    from amplifier_web.automatic_history import align_expanded_inputs
+    visible = {"id": "human", "role": "user", "inputId": "request", "text": "Read @note.md"}
+    content = "Read @note.md\n\nExpanded mention content"
+    if attachment:
+        visible["attachments"] = [{"name": "note.md", "id": "fixture"}]
+        content = [{"type": "text", "text": visible["text"]},
+                   {"type": "text", "text": "Expanded attachment content"}]
+    raw = {"role": "user", "content": content,
+           "metadata": {"amplifier_input": {"version": 1, "kind": kind, "id": "request"}}}
+    session = {"id": "recipient", "title": "Receiving", "nativeProject": "fixture",
+               "historyManaged": False, "messages": [visible]}
+    native = display_message(raw, 0, session)
+    session["messages"].append({key: value for key, value in native.items() if key != "nativeInputId"})
+    original = copy.deepcopy(session)
+    assert align_expanded_inputs(session["messages"], [native], peer_only=True) == session["messages"]
+    monkeypatch.setattr(automatic_history, "directory", lambda _: tmp_path)
+    monkeypatch.setattr("amplifier_web.conversation_export.directory", lambda _: tmp_path)
+    (tmp_path / "transcript.jsonl").write_text(json.dumps(raw) + "\n")
+    exported, _ = snapshot(tmp_path, session, [], {})
+    assert "Read @note.md" in exported
+    assert session == original
 
 @pytest.mark.parametrize("identity", [{"bad": "request"}, ["request"], 1, True, "x" * 201])
 @pytest.mark.parametrize("peer", [False, True])
@@ -682,6 +937,10 @@ async def test_negative_report_notifications_are_host_attributed_before_and_afte
     await finish(app, peer, 'result-request')
     assert app_caption(app.db, source, row) == SYSTEM
     assert row['inputOrigin'] == 'peer' and row['role'] == 'user'
+    native = display_message({"role": "user", "content": peer_input(row["peerEnvelope"], row["text"]),
+        "metadata": {"amplifier_input": {"version": 1, "kind": "steer", "id": row["inputId"]}}},
+        0, source)
+    assert app_caption(app.db, source, native) == SYSTEM
 
 
 async def test_later_reply_and_old_success_keep_exact_independent_display_claims(app):

@@ -104,8 +104,11 @@ def display_message(row, index, session, *, include_internal=False):
         provenance={'version':1,'kind':'service','id':recovery,'source':'local-job-recovery'}
     observation={}
     input_identity = {}
+    # Request-boundary steering persists the same canonical input ID under a
+    # different delivery kind. Keep it for exact web/native reconciliation;
+    # neither the role nor a host-looking text envelope proves peer authorship.
     if (row['role'] == 'user' and isinstance(provenance, dict)
-            and provenance.get('version') == 1 and provenance.get('kind') == 'user'
+            and provenance.get('version') == 1 and provenance.get('kind') in ('user', 'steer')
             and isinstance(provenance.get('id'), str) and 0 < len(provenance['id']) <= 200):
         input_identity = {'nativeInputId': provenance['id']}
     if isinstance(provenance,dict) and provenance.get('version')==1 and provenance.get('kind')=='service' and all(isinstance(provenance.get(key),str) and 0<len(provenance[key])<=128 for key in ('id','source')):
@@ -173,7 +176,7 @@ def read_transcript(session, *, before=None, limit=100, diagnostics=None):
                 value.get('role'), row.get('nativeInputId') if row else None)
 
     with measure(service, 'history.transcript.facts', synchronous=True, session_id=session['id']):
-        facts = (messages.project('unified-display-v3:' + str(native_id), project)
+        facts = (messages.project('unified-display-v4:' + str(native_id), project)
                  if isinstance(messages, TranscriptIndex)
                  else [project(value, index) for index, value in enumerate(messages)])
     input_counts = Counter(fact[3] for fact in facts if fact[3])
@@ -229,13 +232,15 @@ def remove_internal_copies(session, hidden):
         session.pop('nativeBoundaryId', None)
 
 
-def align_expanded_inputs(current, incoming):
+def align_expanded_inputs(current, incoming, *, peer_only=False):
     """Use canonical input metadata, never an expanded-text prefix.
 
     The native prompt includes attachment or mention context, so its text differs
     from the web bubble. Bind its exact native identity while retaining the
     bubble and its attachment metadata. Repair an earlier display copy only
     when its native index, ID and text all still match the canonical row.
+    Passive peer repair leaves unrelated mention/attachment export policy alone;
+    all inputs still participate in uniqueness checks before that filter.
     """
     from .peer_attribution import input_identity
     native_by_input = {}
@@ -254,13 +259,16 @@ def align_expanded_inputs(current, incoming):
     replacements, copies = {}, set()
     for identity, positions in web_by_input.items():
         natives = native_by_input.get(identity, [])
-        if len(positions) != 1 or len(natives) != 1:
+        if len(positions) != 1 or len(natives) != 1 or natives[0].get('nativeInputAmbiguous'):
             continue
         position, native = positions[0], natives[0]
         message = current[position]
-        if message.get('peerEnvelope'):
+        if peer_only and not isinstance(message.get('peerEnvelope'), dict):
+            continue
+        if 'peerEnvelope' in message:
             from amplifier_operations.coordination import peer_input
-            if native.get('text') != peer_input(message['peerEnvelope'], message.get('text', '')):
+            if (not isinstance(message['peerEnvelope'], dict)
+                    or native.get('text') != peer_input(message['peerEnvelope'], message.get('text', ''))):
                 continue
         if ((message.get('nativeIndex') is not None and message['nativeIndex'] != native['nativeIndex'])
                 or (message.get('nativeMessageId') and message['nativeMessageId'] != native['id'])):

@@ -206,6 +206,23 @@ async def main():
             service._message(recipient, "assistant", "Retained answer " + str(index))
         agent = await send("visible-peer", "agent")
         human = await send("human-forward", "ui")
+        # Reconstruct the actual two-path failure shape: one retained peer
+        # bubble plus its old, unmarked native display copy. Canonical metadata
+        # still has kind=steer, unlike the ordinary next-turn kind=user.
+        from amplifier_operations.coordination import peer_input
+        from amplifier_web.automatic_history import display_message, merge_web_history
+        peer_message = next(row for row in recipient["messages"] if row["id"] == agent["messageId"])
+        wrapped = peer_input(peer_message["peerEnvelope"], peer_message["text"])
+        native_peer = display_message({"role": "user", "content": wrapped,
+            "metadata": {"amplifier_input": {"version": 1, "kind": "steer", "id": "visible-peer",
+                                            "target_generation_id": "receiving-generation"}}},
+            0, recipient)
+        cached_peer = {key: value for key, value in native_peer.items() if key != "nativeInputId"}
+        recipient["messages"].append(cached_peer)
+        merge_web_history(recipient, [native_peer])
+        # An external human/client can paste the very same model envelope. Its
+        # own input identity must keep it ordinary and distinct, not collapsed.
+        lookalike = service._message(recipient, "user", wrapped, inputId="human-envelope-lookalike")
         quoted = service._message(recipient, "user", "Sent by Amplifier from another chat", inputId="literal-quote")
         ordinary = service._message(recipient, "user", specimen, inputId="markdown-parity-user")
         assistant = service._message(recipient, "assistant", specimen)
@@ -239,6 +256,9 @@ async def main():
                 "queryWorkers": len(query_workers),
                 "peerTextDigest": hashlib.sha256(peer_text.encode()).hexdigest(), "peerTextLength": len(peer_text.encode()),
                 "agent": agent["messageId"], "human": human["messageId"], "older": older["messageId"],
+                "nativePeer": native_peer["id"], "lookalike": lookalike["id"],
+                "peerCopies": sum(row.get("inputId") == "visible-peer" or row["id"] == native_peer["id"]
+                                  for row in recipient["messages"]),
                 "quote": quoted["id"], "forged": forged["id"], "notification": notification['messageId'],
                 "ordinaryMarkdown": ordinary["id"], "assistantMarkdown": assistant["id"],
                 "installedStatic": INSTALLED, "backendFile": str(Path(server.__file__).resolve())})

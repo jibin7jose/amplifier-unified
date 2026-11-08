@@ -25,7 +25,8 @@ async def test_worker_rechecks_target_after_input_preparation(monkeypatch):
 
 
 @pytest.mark.parametrize('late', [False, True])
-async def test_real_loop_drains_bursts_including_final_checkpoint_without_new_generation(monkeypatch, tmp_path, late):
+@pytest.mark.parametrize('peer', [False, True])
+async def test_real_loop_drains_bursts_including_final_checkpoint_without_new_generation(monkeypatch, tmp_path, late, peer):
     """Real core/context/loop, scripted provider/tool; no model account required."""
     live = pytest.importorskip('amplifier_module_loop_live.runtime')
     pytest.importorskip('amplifier_module_context_simple')
@@ -68,10 +69,26 @@ async def test_real_loop_drains_bursts_including_final_checkpoint_without_new_ge
             session.coordinator.register_capability('live.checkpoint', checkpoint)
             await responses.put(ChatResponse(content=[TextBlock(text='Already finished')]))
             await asyncio.wait_for(entered.wait(), 5)
+        bodies = []
         for i in range(3):
-            result = await submit(SimpleNamespace(coordinator=session.coordinator), runtime,
-                {'text': f'Correction {i}', 'inputId': f'correction-{i}',
-                 'targetGenerationId': generation}, None, lambda: 0)
+            args = {'text': f'Correction {i}', 'inputId': f'correction-{i}',
+                    'targetGenerationId': generation}
+            controls = SimpleNamespace(coordinator=session.coordinator)
+            body = args['text']
+            if peer:
+                from amplifier_web.collaboration_input import steer
+                from amplifier_operations.coordination import peer_input
+                controls.tasks = SimpleNamespace(record=lambda: {}, continuation_allowed=AsyncMock(return_value=True))
+                message = {'peerEnvelope': {'inputId': args['inputId'], 'requestId': args['inputId'],
+                    'recipientSessionId': runtime.session_id, 'senderSessionId': 'source',
+                    'mode': 'steer'}, 'text': body}
+                authorize = AsyncMock(return_value={'admitted': True, 'message': message})
+                result = await steer(controls, runtime, args, None, authorize)
+                assert authorize.await_count == 2
+                body = peer_input(message['peerEnvelope'], body)
+            else:
+                result = await submit(controls, runtime, args, None, lambda: 0)
+            bodies.append(body)
             assert result['accepted'] and result['disposition'] == 'queued'
         if late:
             release.set()
@@ -91,6 +108,17 @@ async def test_real_loop_drains_bursts_including_final_checkpoint_without_new_ge
         assert requests.empty()
         assert finished['generation_id'] == generation
         assert all(f'correction-{i}' in finished['input_ids'] for i in range(3))
+        # The producer already persists steering identity. The display reader
+        # must not discard it merely because delivery occurred mid-generation.
+        from amplifier_web.automatic_history import display_message
+        transcript = await session.coordinator.get('context').get_messages()
+        inputs = [row for row in transcript if row.get('role') == 'user'
+                  and row.get('content') in ['Do several steps', *bodies]]
+        markers = [(row.get('metadata') or {}).get('amplifier_input') for row in inputs]
+        assert [(marker['id'], marker['kind']) for marker in markers] == [
+            ('original', 'user'), *((f'correction-{i}', 'steer') for i in range(3))]
+        assert [display_message(row, i, {'id': runtime.session_id}).get('nativeInputId')
+                for i, row in enumerate(inputs)] == ['original', *[f'correction-{i}' for i in range(3)]]
     finally:
         if task:
             task.cancel()

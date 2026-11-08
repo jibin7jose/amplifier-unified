@@ -728,7 +728,7 @@ class Collaboration:
             native.get("nativeInputId") and row.get("inputId") == native["nativeInputId"]
             or type(native.get("nativeIndex")) is int and row.get("nativeIndex") == native["nativeIndex"])]
         if candidates:
-            if len(candidates) != 1:
+            if len(candidates) != 1 or native.get("nativeInputAmbiguous"):
                 self.error("The exact saved message cannot be reconciled unambiguously.", 409)
             retained = candidates[0]
             if strict_source and (

@@ -40,10 +40,11 @@ def _rows(session):
         # that may not yet have reached a checkpoint. Repeated messages retain
         # their multiplicity. This is a retrieval view, never a persisted merge.
         if not session.get("historyManaged"):
-            from .automatic_history import alias_peer_inputs
+            from .automatic_history import alias_peer_inputs, align_expanded_inputs
             from .peer_attribution import input_identity
             from .voice_input_projection import align as align_voice_inputs
             current, native = align_voice_inputs(session, result["messages"])
+            current = align_expanded_inputs(current, native, peer_only=True)
             rows = alias_peer_inputs({**session, "messages": current}, native)
             # Canonical input IDs already claimed their exact retained peer
             # bubbles. Other legacy UI rows retain the existing occurrence

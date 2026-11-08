@@ -74,6 +74,10 @@ try{
  assert.equal(facts.installedStatic,installedStatic);
  const article=id=>page.locator(`article[data-message-id="${id}"]`);
  const caption='Sent by Amplifier from another chat';
+ assert.equal(facts.peerCopies,1,'Canonical steering metadata repairs only the exact old native display copy');
+ await expect(article(facts.nativePeer)).toHaveCount(0);
+ await expect(article(facts.lookalike)).toHaveClass(/a-user/);
+ await expect(article(facts.lookalike).locator('.a-peer-summary')).toHaveCount(0);
  await expect(article(facts.agent)).toHaveAttribute('aria-label',caption);
  await expect(article(facts.agent).locator('.a-message-attribution')).toHaveText(caption);
  await expect(article(facts.human)).toHaveAttribute('aria-label','From another chat');
@@ -98,6 +102,7 @@ try{
  await expect(groupSummary).toBeFocused();
  await expect(groupSummary).toHaveAttribute('aria-expanded','true');
  await expect(summary).toBeVisible();
+ await expect(peer.getByRole('button',{name:'Preview source chat: PRIVATE SOURCE TITLE',exact:true})).toBeVisible();
  await expect(summary).toHaveAttribute('aria-expanded','false');
  await expect(peer.locator('.a-peer-content')).toHaveCount(0);
  assert.equal(detailReads.length,0,'Collapsed peer must not fetch its full payload');
@@ -149,6 +154,9 @@ try{
  await article(facts.quote).getByRole('button',{name:'Remove Thumbs up reaction',exact:true}).click();
  await expect(badge).toBeVisible();
  await page.reload();await expect(badge).toBeVisible();
+ await expect(article(facts.nativePeer)).toHaveCount(0);
+ await expect(article(facts.agent)).toHaveCount(1);
+ await expect(article(facts.lookalike)).toHaveClass(/a-user/);
  await expect(summary).toHaveAttribute('aria-expanded','false');
  await expect(groupSummary).toHaveAttribute('aria-expanded','false');
  await expect(summary).toBeHidden();
@@ -220,6 +228,8 @@ try{
  // The focused rail is another receiving boundary, not a compact-text lookup.
  const focused=await (await page.request.get(new URL(`/api/conversation/navigation?sessionId=receiving&messageId=${encodeURIComponent(facts.agent)}&window=true`,page.url()).href,{headers})).json();
  assert.equal(focused.messages.find(row=>row.id===facts.agent).attribution?.caption,caption);
+ assert.equal(focused.messages.filter(row=>row.id===facts.agent).length,1);
+ assert.equal(focused.messages.some(row=>row.id===facts.nativePeer),false);
  await page.evaluate(id=>window.amplifier.dispatch('message.reveal',{sessionId:'receiving',messageId:id}),facts.agent);
  await expect(summary).toHaveAttribute('aria-expanded','true');
  assert.deepEqual(await page.evaluate(()=>{const state=window.amplifier.getState();return {
