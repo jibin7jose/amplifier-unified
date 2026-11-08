@@ -221,19 +221,26 @@ def _observed_work(row, turns, accounting):
     return result
 
 
-def stored_execution(tree, *, _retired=None):
+def _stored_nodes(rows, turn_ids, receipts):
+    nodes = []
+    for row in rows:
+        if not any(row.get(key) for key in ('nativeHistory', 'canonicalHistory', 'liveObservation')):
+            nodes.append(row)  # Existing app-only data retains its original policy.
+        elif (observed := _observed_work(row, turn_ids, receipts)) is not None:
+            nodes.append(observed)
+    return nodes
+
+
+def stored_execution(tree, *, _retired=None, _nodes=None):
     """Keep owned placement/receipts and legacy history, not canonical bodies."""
     accounting = accounting_projection(tree, _retired=_retired)
     receipts = {(row.get('sessionId'), row['id']): row for row in accounting}
     turns = [row for row in tree.get('turns', []) if not any(
         row.get(key) for key in ('nativeHistory', 'canonicalHistory'))]
     turn_ids = {row['id'] for row in turns}
-    nodes = []
-    for row in tree.get('nodes', []):
-        if not any(row.get(key) for key in ('nativeHistory', 'canonicalHistory', 'liveObservation')):
-            nodes.append(row)  # Existing app-only data retains its original policy.
-        elif (observed := _observed_work(row, turn_ids, receipts)) is not None:
-            nodes.append(observed)
+    nodes = _nodes(tree.get('nodes', []), turn_ids, receipts) if _nodes is not None else None
+    if nodes is None:
+        nodes = _stored_nodes(tree.get('nodes', []), turn_ids, receipts)
     return {**{key: value for key, value in tree.items() if key != 'plan'},
         'retiredUsageNodes': accounting, 'nodes': nodes, 'turns': turns}
 

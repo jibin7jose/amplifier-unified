@@ -223,8 +223,16 @@ Fragment size accounting conservatively charges shared objects more than once.
 `test_execution_preparation.py` checks changed-fragment work, cross-fragment
 aliases, duplicate precedence, eviction and oversized fallback;
 `test_execution_references.py` retains pointer-failure/retry and resource checks.
-This still traverses the source witnesses and rebuilds live placements, and is
-not history-independent publication or a fix for unrelated storage GC delays.
+Observed placements reuse the existing canonical JSON fragment cache after
+witnessing each source fragment, its current turn membership and its exact
+accounting receipts. Changed dependencies re-run the canonical projection;
+unchanged fragments avoid repeating placement validation and JSON encoding.
+This uses the existing encoding budget, not a new retained graph. Inline values
+and unsupported inputs keep the original projection. The reference tests also
+check changed receipts shared across fragments, removed turns, rejected rows
+and small-budget fallback against complete canonical readback.
+This still traverses the source witnesses and decodes stored placement fragments;
+it is not history-independent publication or a fix for unrelated storage GC delays.
 
 For repeatable comparisons, `execution_publication_scaling.py --cycles 4` records
 87 publications for three owners (three cold, 84 steady); `--size small` uses

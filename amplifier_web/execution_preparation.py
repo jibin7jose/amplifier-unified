@@ -189,18 +189,20 @@ class ExecutionPreparation:
                 return self.MAX_BYTES + 1
         return charge
 
-    def _part(self, key, value, reserved=0):
+    def _part(self, key, value, reserved=0, project=None):
         try:
             witness = _witness(value)
         except (Unsupported, pickle.PicklingError, RecursionError, TypeError, ValueError):
-            return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')), None
+            return json.dumps(project(value) if project else value,
+                              ensure_ascii=False, sort_keys=True, separators=(',', ':')), None
         old = self.entries.get(key)
         if old is not None and old[0] == witness:
             self.entries.move_to_end(key)
             return old[1], old[3]
         # Synchronous builtin traversal: no await or custom hook can mutate
         # the graph between witnessing it and applying the original encoder.
-        text = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        text = json.dumps(project(value) if project else value,
+                          ensure_ascii=False, sort_keys=True, separators=(',', ':'))
         token = object()
         charge = sys.getsizeof(witness) + sys.getsizeof(text) + sys.getsizeof(key) + 256
         if old is not None:
@@ -213,11 +215,39 @@ class ExecutionPreparation:
             return text, token
         return text, None
 
+    def placements(self, owner, rows, turns, receipts, parts, reserved):
+        """Reuse canonical JSON, within the existing encoding budget.
+
+        Called only after the whole input passes the builtin content witness.
+        A fragment also witnesses every receipt and turn membership it depends
+        on. Decoding the saved JSON produces detached storage-only rows; no
+        borrowed graph, revision counter or new authority is retained.
+        """
+        from .session_projection import _stored_nodes
+        if (type(rows) is not list or len(rows) < self.CHUNK
+                or any(type(row) is not dict or any(
+                    type(row.get(key)) not in (str, type(None))
+                    for key in ('id', 'sessionId', 'turnId', 'kind')) for row in rows)):
+            return None
+        result = []
+        for start in range(0, len(rows), self.CHUNK):
+            fragment = rows[start:start + self.CHUNK]
+            dependencies = [(row.get('turnId') in turns,
+                receipts.get((row.get('sessionId'), row.get('id')))
+                if row.get('kind') in ('llm', 'worker') else None) for row in fragment]
+            text, token = self._part((owner, 'nodes', start, 'projection'),
+                (fragment, dependencies), reserved,
+                project=lambda value: _stored_nodes(value[0], turns, receipts))
+            result.extend(json.loads(text))
+            if text != '[]':
+                parts.append((text, token))
+        return result
+
     def prepare(self, owner, tree):
         result, _ = self._prepare(owner, tree, reserved=self._reserved({}))
         return result
 
-    def _prepare(self, owner, tree, *, previous=None, reserved=0):
+    def _prepare(self, owner, tree, *, previous=None, reserved=0, node_parts=None):
         if (type(owner) is not str or len(owner) > 200 or type(tree) is not dict
                 or any(type(key) is not str or len(key) > 200 for key in tree)):
             return prepare(tree), None
@@ -225,7 +255,9 @@ class ExecutionPreparation:
         cacheable = True
         for name in sorted(tree):
             value = tree[name]
-            if type(value) is list and len(value) >= self.CHUNK:
+            if name == 'nodes' and node_parts is not None:
+                parts, chunked = node_parts, True
+            elif type(value) is list and len(value) >= self.CHUNK:
                 parts = [self._part((owner, name, start), value[start:start + self.CHUNK], reserved)
                          for start in range(0, len(value), self.CHUNK)]
                 chunked = True
@@ -275,10 +307,21 @@ class ExecutionPreparation:
             if resource is not None:
                 pending[identity] = previous
                 return None, {**resource, **dict(previous.projection)}
-        value = stored_execution(tree, _retired=lambda rows: self.retired(identity, rows))
+        node_parts = None
+        def project_nodes(rows, turns, receipts):
+            nonlocal node_parts
+            if len(receipts) < self.CHUNK:
+                return None  # Inline values retain the canonical Python representation.
+            parts = []
+            result = self.placements(identity, rows, turns, receipts, parts, self._reserved(pending))
+            if result is not None:
+                node_parts = parts
+            return result
+        value = stored_execution(tree, _retired=lambda rows: self.retired(identity, rows),
+            _nodes=project_nodes if digest is not None else None)
         if len(value.get('retiredUsageNodes', ())) < self.CHUNK:
             return value, None
-        resource = self.reference(db, session, value, pending)
+        resource = self.reference(db, session, value, pending, node_parts=node_parts)
         projection = execution_reference(db, value, resource=resource)
         entry = pending.get(identity)
         if entry is not None and digest is not None:
@@ -297,7 +340,7 @@ class ExecutionPreparation:
                     self.bytes -= self.entries.popitem(last=False)[1][2]
         return None, projection
 
-    def reference(self, db, session, tree, pending):
+    def reference(self, db, session, tree, pending, *, node_parts=None):
         """Reuse only complete freshly witnessed, successfully committed files."""
         from . import resource_files
         identity = session['id']
@@ -308,7 +351,7 @@ class ExecutionPreparation:
             previous = None
         prepared, signature = self._prepare(identity, tree,
             previous=previous.signature if previous is not None else None,
-            reserved=self._reserved(pending))
+            reserved=self._reserved(pending), node_parts=node_parts)
         if prepared is None:
             reference = resource_files.reuse_reference(db, previous.resource)
             if reference is not None:
@@ -316,7 +359,8 @@ class ExecutionPreparation:
                 return reference
             # Missing or changed storage evidence keeps ordinary preparation,
             # adoption and complete file validation, never a dangling pointer.
-            prepared, signature = self._prepare(identity, tree, reserved=self._reserved(pending))
+            prepared, signature = self._prepare(identity, tree, reserved=self._reserved(pending),
+                                               node_parts=node_parts)
         reference = resource_files.put_prepared(db, prepared)
         pending[identity] = None
         if signature is not None and eligible:

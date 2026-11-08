@@ -507,7 +507,7 @@ def test_digest_refresh_reserves_distinct_committed_and_pending_entries(db, monk
     row['execution']['nodes'][-1]['displayOnly'] = 'unchanged canonical projection'
     # Exercise the committed-reference return at the constrained reservation
     # boundary without manufacturing encoding fragments just to fill a cache.
-    def reuse(db, session, tree, pending):
+    def reuse(db, session, tree, pending, **kwargs):
         assert resource_files.prepare(tree).identity == reference['$resource']
         pending[session['id']] = committed
         return resource_files.reuse_reference(db, committed.resource)
@@ -570,3 +570,59 @@ def test_failed_fragment_encoding_keeps_committed_reference_and_repairs_exactly(
     result = save_projected(cache, db, row)
     assert result != first
     assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == stored_execution(row['execution'])
+
+
+@pytest.mark.parametrize('change', ['node', 'receipt', 'turn', 'shared-receipt', 'all-invalid'])
+def test_placement_fragments_revalidate_changed_dependencies_and_preserve_exact_output(db, monkeypatch, change):
+    from amplifier_web import session_projection
+    cache, row = ExecutionPreparation(), observed_owner()
+    tree = row['execution']
+    # One changed receipt must invalidate every fragment that depends on it.
+    if change == 'shared-receipt':
+        tree['nodes'][128] = copy.deepcopy(tree['nodes'][0])
+    save_projected(cache, db, row)
+    if change == 'node':
+        tree['nodes'][-1]['phase'] = 'running'
+    elif change == 'receipt':
+        tree['retiredUsageNodes'][-1]['usage']['inputTokens'] = 900
+        tree['retiredUsageNodes'][-1]['revision'] = 2
+    elif change == 'shared-receipt':
+        tree['retiredUsageNodes'][0]['usage']['inputTokens'] = 901
+        tree['retiredUsageNodes'][0]['revision'] = 2
+    elif change == 'turn':
+        tree['turns'].clear()
+    else:
+        for node in tree['nodes']:
+            node['observationWindow'] = 'invalid'
+    expected = session_projection.stored_execution(tree)
+    if change in ('turn', 'all-invalid'):
+        assert expected['nodes'] == []
+    calls, original = [], session_projection._observed_work
+    def observe(node, *args):
+        calls.append(node['id'])
+        return original(node, *args)
+    monkeypatch.setattr(session_projection, '_observed_work', observe)
+    result = save_projected(cache, db, row)
+    assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == expected
+    if change in ('node', 'receipt'):
+        assert len(calls) <= cache.CHUNK
+    elif change == 'shared-receipt':
+        assert len(calls) == 2 * cache.CHUNK
+    else:
+        assert len(calls) == len(tree['nodes'])
+    assert cache.bytes + cache._reserved({}) <= cache.MAX_BYTES
+    assert cache.accounting_bytes <= cache.MAX_BYTES
+
+
+def test_placement_preparation_falls_back_with_small_budget_and_inline_values(db):
+    from amplifier_web.session_projection import stored_execution
+    cache, row = ExecutionPreparation(), observed_owner()
+    cache.MAX_BYTES = 1000
+    result = save_projected(cache, db, row)
+    assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == stored_execution(row['execution'])
+    assert cache.bytes + cache._reserved({}) <= cache.MAX_BYTES
+    # A large node list alone does not turn inline tuple values into JSON lists.
+    tree = {'nodes': [{'id': str(i), 'value': ('inline', i)} for i in range(300)]}
+    inline, reference = cache.stored(db, row, tree, {})
+    assert reference is None and inline == stored_execution(tree)
+    assert type(inline['nodes'][0]['value']) is tuple
