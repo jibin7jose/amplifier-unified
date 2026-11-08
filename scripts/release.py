@@ -112,6 +112,15 @@ def prepare(root, version, notes_file, build=False):
         if identity.get('version') != version:
             raise ValueError('Built frontend version does not match the prepared candidate')
         result.update(buildStatus='passed', build=identity, buildSeconds=round(time.monotonic() - started, 3))
+    result['nextSteps'] = ([] if build else [
+        'Run buildCommand once in the owned prepared test environment; retain its generated assets.'
+    ]) + [
+        'Review and commit the prepared metadata and generated assets, then push and open the release PR. '
+        'Include the version rationale, authored notes and affected validation.',
+        'After merge, release.yml publishes automatically; post-release.yml verifies the published package. '
+        'Record those results without repeating unchanged checks. Live adoption is separate.'
+    ]
+    result['guidance'] = 'docs/validation/release-qualification.md#preparing-a-version-change'
     return result
 
 
@@ -256,7 +265,14 @@ def publish(root, repository, tag, revision, dist):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, epilog=(
+        'Start: prepare --version X.Y.Z --notes-file /path/to/entry.json. '
+        'The entry is one JSON object with version, title, changes (a nonempty list), '
+        'and optional notices. Add --build in an owned prepared test environment. '
+        'Output names the remaining steps; merging the release PR starts existing publication '
+        'and installed-package smoke workflows. Preparation never commits or publishes. '
+        'See docs/validation/release-qualification.md for version choice and recovery.'
+    ))
     parser.add_argument("command", choices=["prepare", "plan", "verify", "publish"])
     parser.add_argument("--dist", type=Path, default=Path("dist"))
     parser.add_argument("--version")
@@ -272,7 +288,11 @@ def main():
     if args.command == "prepare":
         if not args.version or not args.notes_file:
             parser.error('prepare requires --version and --notes-file')
-        print(json.dumps(prepare(root, args.version, args.notes_file, args.build)))
+        try:
+            result = prepare(root, args.version, args.notes_file, args.build)
+        except (ValueError, OSError) as exc:
+            parser.exit(1, f'Release preparation failed: {exc}\n')
+        print(json.dumps(result))
     elif args.command == "plan":
         result = plan(root, args.revision, fetch_tag=args.fetch_tag)
         if args.output:

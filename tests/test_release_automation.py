@@ -162,6 +162,22 @@ def test_prepare_cli_produces_metadata_without_installing_or_building(preparatio
     assert payload['version'] == '1.2.4'
     assert payload['buildStatus'] == 'not-run'
     assert payload['buildCommand'] == ['npm','run','build','--prefix','frontend']
+    assert payload['nextSteps'][0].startswith('Run buildCommand once')
+    assert 'Live adoption is separate' in payload['nextSteps'][-1]
+
+
+def test_prepare_cli_reports_invalid_notes_without_traceback_or_source_changes(preparation):
+    root, notes = preparation
+    before = {path: path.read_bytes() for path in [root/'pyproject.toml', root/'uv.lock',
+              root/'amplifier_web/__init__.py', root/'amplifier_web/release-notes.json']}
+    notes.write_text('{"version":')
+    result = subprocess.run([sys.executable, str(Path(__file__).parents[1]/'scripts/release.py'),
+                             'prepare', '--version', '1.2.4', '--notes-file', str(notes)],
+                            cwd=root, capture_output=True, text=True)
+    assert result.returncode == 1 and not result.stdout
+    assert result.stderr.startswith('Release preparation failed: ')
+    assert 'Traceback' not in result.stderr
+    assert before == {path: path.read_bytes() for path in before}
 
 
 def test_automatic_publication_only_watches_the_dedicated_version_owner():

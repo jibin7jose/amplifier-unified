@@ -102,7 +102,10 @@ python scripts/release.py prepare --version X.Y.Z --notes-file /path/to/authored
 It validates the notes and three version owners before changing them, preserves
 unrelated edits and historical notice identities, and refuses conflicting notes
 already saved for that version. An identical retry changes nothing. It neither
-installs dependencies nor commits, tags or publishes. Run with `--build` in the
+installs dependencies nor commits, tags or publishes. `--help` describes the notes
+input; JSON output includes the remaining steps and a link to this guidance.
+Expected preparation failures report a concise error and a nonzero exit status.
+Run with `--build` in the
 owned prepared DTU to perform the single canonical frontend build in that same
 invocation; otherwise its output gives the build command for the environment
 owner. Complete routine preparation in one invocation, then commit, push and open
