@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import copy
+import base64
 import json
+import math
 import time
 import uuid
 
@@ -12,6 +14,10 @@ MAX_TASKS = 128
 RECORD = 'assignment.task.record'
 ASSIGNMENT_RECORD = 'assignment.record.v2'
 STORAGE = 'records-v1'
+PAGE_BYTES = 9 * 1024  # Task summaries only; the retained member/control envelope is separate.
+_TERMINAL = "json_extract(receipt,'$.result.status') IN ('completed','cancelled')"
+_CREATED = "coalesce(json_extract(receipt,'$.result.createdAt'),0)"
+_TASK_ID = "json_extract(receipt,'$.result.id')"
 
 
 def definitions(schema, string):
@@ -22,9 +28,11 @@ def definitions(schema, string):
                'blockedReason': string(1000),
                'dependsOn': {'type': 'array', 'maxItems': 32, 'uniqueItems': True, 'items': string(200)}}
     claim = {**revision, 'claimId': string(200)}
+    page = {**source, 'view': {'enum': ['active', 'history']},
+            'limit': {'type': 'integer', 'minimum': 1, 'maximum': 16}, 'after': string(2048)}
     return {
-        'assignment.tasks.list': ('Read optional assignment tasks and observed holder activity without loading history or starting work. Readiness, ownership and worker activity are separate. A stopped or blocked holder keeps its claim; no automatic takeover. Independent chats are not enrolled. Completion is a participant report, not verified artifact success.', schema(source, ['sessionId'])),
-        'assignment.tasks.wait': ('Passively wait for a scoped task-list change; rechecks membership after every wait. No execution or history reads.', schema({**source, 'afterVersion': string(64), 'waitMs': {'type': 'integer', 'minimum': 0, 'maximum': 30000}}, ['sessionId', 'afterVersion'])),
+        'assignment.tasks.list': ('Read a bounded current page of task summaries; active is unfinished work, history is reported complete/cancelled. Follow nextAfter as after; refresh when coverage changed. Exact details and prerequisites use tasks.read. Claims and observed worker activity remain separate; omission is not completion. No execution or history loading.', schema(page, ['sessionId'])),
+        'assignment.tasks.wait': ('Passively observe the same task page and visible holder activity; rechecks membership after every wait. Pass the same view/limit/after with afterVersion. No execution or history reads.', schema({**page, 'afterVersion': string(64), 'waitMs': {'type': 'integer', 'minimum': 0, 'maximum': 30000}}, ['sessionId', 'afterVersion'])),
         'assignment.tasks.read': ('Read one task and its current claim authority. A historical claim receipt alone does not authorize completion.', schema(target, ['sessionId', 'taskId'])),
         'assignment.tasks.create': ('Assignment owner creates a task. Dependencies must be existing assignment tasks. Does not commission or start work.', schema({**source, **content, 'expectedAssignmentRevision': {'type': 'integer', 'minimum': 1}}, ['sessionId', 'title', 'expectedAssignmentRevision'])),
         'assignment.tasks.update': ('Owner edits an unclaimed unfinished task, including its block and acyclic dependencies. Completed/cancelled tasks cannot be reopened.', schema({**revision, **content}, ['sessionId', 'taskId', 'expectedRevision'])),
@@ -47,6 +55,9 @@ class AssignmentTasks:
             WHERE json_extract(receipt,'$.commandAction')='assignment.task.record'
             AND json_extract(receipt,'$.result.claim.sessionId') IS NOT NULL
             AND json_extract(receipt,'$.result.status') NOT IN ('completed','cancelled')""")
+        self.service.db.execute(f"""CREATE INDEX IF NOT EXISTS assignment_task_pages ON commands(
+            json_extract(receipt,'$.assignmentId'), ({_TERMINAL}), {_CREATED}, {_TASK_ID})
+            WHERE json_extract(receipt,'$.commandAction')='assignment.task.record'""")
 
     def error(self, detail, status=409):
         self.collaboration.error(detail, status)
@@ -74,19 +85,6 @@ class AssignmentTasks:
         key = self.key(identity)
         row = self.service.db.execute('SELECT receipt FROM commands WHERE id=?', (key,)).fetchone()
         return self._record(value, key, row[0]) if row else None
-
-    def board(self, value):
-        """Existing capped public response only; internal exact callers use get."""
-        if value.get('taskStorage') != STORAGE:
-            return value.get('tasks', {})
-        rows = self.service.db.execute("""SELECT id,receipt FROM commands
-            WHERE json_extract(receipt,'$.assignmentId')=?
-            AND json_extract(receipt,'$.commandAction')='assignment.task.record'
-            ORDER BY rowid LIMIT ?""", (value['id'], MAX_TASKS + 1)).fetchall()
-        if len(rows) > MAX_TASKS:
-            self.error('This task board exceeds the supported response size.')
-        return {task['id']: task for key, encoded in rows
-                for task in [self._record(value, key, encoded)]}
 
     def count(self, value):
         if value.get('taskStorage') != STORAGE:
@@ -208,32 +206,108 @@ class AssignmentTasks:
         return {**copy.deepcopy(task), 'readiness': readiness, 'blockedBy': blocked,
                 'claim': self.claim_status(value, task), 'worker': self.worker(value, task)}
 
-    def snapshot(self, source, task_id=None):
+    def _page_rows(self, value, view, after, limit):
+        terminal = view == 'history'
+        if value.get('taskStorage') != STORAGE:
+            # Legacy maps remain bounded and passive reads do not convert them.
+            tasks = sorted(value.get('tasks', {}).values(), key=self._order)
+            return [task for task in tasks
+                    if (task['status'] in {'completed', 'cancelled'}) == terminal
+                    and (after is None or self._order(task) > after)][:limit + 1]
+        query = f"""SELECT id,receipt FROM commands INDEXED BY assignment_task_pages
+            WHERE json_extract(receipt,'$.commandAction')='assignment.task.record'
+            AND json_extract(receipt,'$.assignmentId')=? AND ({_TERMINAL})=?"""
+        args = [value['id'], terminal]
+        if after is not None:
+            query += f' AND ({_CREATED}, {_TASK_ID}) > (?,?)'
+            args.extend(after)
+        query += f' ORDER BY {_CREATED}, {_TASK_ID} LIMIT ?'
+        args.append(limit + 1)
+        return [self._record(value, key, encoded) for key, encoded in self.service.db.execute(query, args)]
+
+    @staticmethod
+    def _order(task):
+        return task.get('createdAt') or 0, task['id']
+
+    def _after(self, token, scope, revision):
+        if not token:
+            return None, revision
+        try:
+            if not isinstance(token, str) or len(token) > 2048:
+                raise ValueError()
+            version, saved_scope, first_revision, created, identity = json.loads(
+                base64.b64decode(token, altchars=b'-_', validate=True))
+            if (version != 1 or saved_scope != scope or type(first_revision) is not int
+                    or first_revision < 1 or type(created) not in (int, float)
+                    or not math.isfinite(created) or not isinstance(identity, str) or not identity):
+                raise ValueError()
+            return (created, identity), first_revision
+        except (ValueError, TypeError, UnicodeError, OverflowError):
+            self.error('This task cursor is invalid or belongs to another page. Refresh tasks.', 409)
+
+    def _summary(self, value, task, sid):
+        readiness, blocked = self.readiness(value, task)
+        worker = self.worker(value, task)
+        if worker:
+            reason = worker.get('blockedReason', '')
+            worker = {**worker, 'blockedReason': reason[:160], 'blockedReasonTruncated': len(reason) > 160}
+        reason = task.get('blockedReason', '')
+        return {key: task[key] for key in ('id', 'revision', 'title', 'status')} | {
+            'readiness': readiness, 'blockedCount': len(blocked), 'dependencyCount': len(task.get('dependsOn', [])),
+            'blockedReason': reason[:160], 'blockedReasonTruncated': len(reason) > 160,
+            'claim': self.claim_status(value, task), 'worker': worker,
+            'detailRef': {'action': 'assignment.tasks.read', 'args': {'sessionId': sid, 'taskId': task['id']}}}
+
+    def snapshot(self, source, task_id=None, *, view='active', after=None, limit=8):
+        if view not in {'active', 'history'} or type(limit) is not int or not 1 <= limit <= 16:
+            self.error('Choose an active/history task page with 1 to 16 items.', 400)
         value = self.assignments.current(source)
         if not value:
             if task_id:
                 self.error('This conversation has no assignment task list.', 404)
-            return {'assignmentId': None, 'tasks': [], 'members': [], 'canManage': False, 'version': 'unassigned'}
+            return {'assignmentId': None, 'tasks': [], 'members': [], 'canManage': False,
+                    'view': view, 'nextAfter': None, 'version': 'unassigned'}
         if self.member(value, source['id']) is None:
             self.error('Read tasks only as a current bound assignment member.', 403)
-        tasks = self.board(value)
-        if task_id and task_id not in tasks:
-            self.error('Task not found in this assignment.', 404)
         result = {'assignmentId': value['id'], 'assignmentRevision': value['revision'],
                   'ownerSessionId': value['ownerSessionId'], 'assignmentStatus': value['status'],
                   'canManage': source['id'] == value['ownerSessionId'],
                   'assignmentControl': {key: copy.deepcopy(value[key]) for key in
                       ('id', 'revision', 'status', 'ownerSessionId', 'limits', 'members', 'integration') if key in value},
-                  'tasks': [self.project(value, task, tasks=tasks) for task in tasks.values()],
                   'members': []}
         for sid in value['members']:
             row = self.member(value, sid)
             if row:
                 result['members'].append({'sessionId': sid, 'label': row.get('title') or 'Conversation'})
-        result['version'] = fingerprint([value['id'], value['revision'],
-            [(t['id'], (t.get('claim') or {}).get('status'), t['worker']) for t in result['tasks']], result['members']])
         if task_id:
-            result['task'] = self.project(value, tasks[task_id], tasks=tasks)
+            task = self.get(value, task_id)
+            if task is None:
+                self.error('Task not found in this assignment.', 404)
+            dependencies = {identity: self.get(value, identity) for identity in task.get('dependsOn', [])}
+            result['task'] = self.project(value, task, tasks=dependencies)
+            result['dependencies'] = [{'id': identity, 'available': item is not None,
+                **({key: item[key] for key in ('title', 'status', 'revision')} if item else {})}
+                for identity, item in dependencies.items()]
+            return result
+        scope = fingerprint([source['id'], source['workspace'], value['id'], view])
+        seek, first_revision = self._after(after, scope, value['revision'])
+        rows = self._page_rows(value, view, seek, limit)
+        tasks = []
+        for task in rows[:limit]:
+            item = self._summary(value, task, source['id'])
+            if len(json.dumps([*tasks, item], ensure_ascii=False).encode()) > PAGE_BYTES:
+                if not tasks:
+                    self.error('This task summary exceeds the page budget; read its exact detail.', 409)
+                break
+            tasks.append(item)
+        next_after = None
+        if len(rows) > len(tasks):
+            created, identity = self._order(rows[len(tasks) - 1])
+            next_after = base64.urlsafe_b64encode(json.dumps([1, scope, first_revision, created, identity]).encode()).decode()
+        result.update(tasks=tasks, view=view, nextAfter=next_after,
+            coverage={'kind': 'current-page', 'changed': first_revision != value['revision'],
+                'detail': 'Current observations, not a frozen board. Refresh to include items that entered this view before the cursor.'})
+        result['version'] = fingerprint([scope, after, limit, value['revision'], tasks, result['members']])
         return result
 
     def content(self, value, task, args):
@@ -270,7 +344,7 @@ class AssignmentTasks:
         if action == 'assignment.tasks.wait':
             def read():
                 current = self.collaboration.source({'sessionId': args['sessionId']}, origin, caller, hydrate=False)
-                result = self.snapshot(current)
+                result = self.snapshot(current, **{key: args[key] for key in ('view', 'after', 'limit') if key in args})
                 return {'accepted': True, 'result': result, 'changed': result['version'] != args['afterVersion']}
             return await self.service.coordination.signal.wait(read, wait_ms=args.get('waitMs', 30000))
         async with self.service.lock:
@@ -278,7 +352,8 @@ class AssignmentTasks:
             if source['id'] != args['sessionId']:
                 self.error('Task actions belong to the calling conversation.', 403)
             if action in {'assignment.tasks.list', 'assignment.tasks.read'}:
-                return {'accepted': True, 'result': self.snapshot(source, args.get('taskId'))}
+                return {'accepted': True, 'result': self.snapshot(source, args.get('taskId'),
+                    **{key: args[key] for key in ('view', 'after', 'limit') if key in args})}
             async with self.assignments.mutation(source, identity):
                 if origin not in {'ui', 'user'}:
                     self.collaboration.active_binding(source)

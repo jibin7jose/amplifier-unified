@@ -74,7 +74,8 @@ async def test_saved_finite_and_explicit_uncapped_counts_survive_restart(app, co
 ])
 async def test_optional_execution_counts_still_validate_values(app, field, value):
     source = app.state['sessions'][0]
-    before = await start(app)
+    await start(app)
+    before = app.assignments.current(source)
     with pytest.raises((AppError, ValueError)):
         await limits(app, source, **{field: value})
     assert app.assignments.current(source) == before

@@ -101,12 +101,11 @@ class Assignments:
             'commandAction': ASSIGNMENT_RECORD if value.get('taskStorage') == STORAGE else 'assignment.record',
             'result': value})
 
-    def project(self, value):
-        """Preserve the current bounded public shape without internal hydration."""
-        from .assignment_tasks import STORAGE
-        result = copy.deepcopy(value)
-        if result.pop('taskStorage', None) == STORAGE:
-            result['tasks'] = self.tasks.board(value)
+    def project(self, value, *, session_id):
+        """Current controls reference tasks; historical command results stay exact."""
+        result = {key: copy.deepcopy(item) for key, item in value.items()
+                  if key not in {'tasks', 'taskStorage'}}
+        result['taskListRef'] = {'action': 'assignment.tasks.list', 'args': {'sessionId': session_id}}
         return result
 
     @asynccontextmanager
@@ -356,7 +355,7 @@ class Assignments:
         if not value:
             return {'assignment': None}
         usage = self.usage(value)
-        return {'assignment': self.project(value), 'usage': {key: item for key, item in usage.items() if key != 'receipts'},
+        return {'assignment': self.project(value, session_id=session['id']), 'usage': {key: item for key, item in usage.items() if key != 'receipts'},
                 'inFlightCalls': sum(row.get('phase') in LIVE and not row.get('endedAt') for row in usage['receipts']),
                 **({'independentWork': self.external_requests(value)} if value['status'] == 'stopped' else {}),
                 'enforcement': 'Supported model admission only. Reservations are allowances; actual calls and effects may exceed them.'}
@@ -490,7 +489,7 @@ class Assignments:
                 value['revision'] += 1
                 self.save(value)
             receipt = {'accepted': True, 'commandAction': action, 'assignmentId': value['id'],
-                       'result': {'assignment': self.project(value)},
+                       'result': {'assignment': self.project(value, session_id=source['id'])},
                        'interruptions': {sid: 'requested' for sid in stops}, 'interruptionsPending': len(stops)}
             if recovery:
                 receipt['result']['stopRecovery'] = {'assignmentRevision': args['expectedRevision'], 'members': recovery}

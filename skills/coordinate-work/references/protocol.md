@@ -397,14 +397,21 @@ Do not repeat a mutation merely to obtain smaller printed output.
 
 ## Optional shared task list
 
-Use `assignment.tasks.list` to inspect your existing assignment's task list.
+Use `assignment.tasks.list` for a current page of unfinished items (`view: active`,
+the default); use `view: history` for completed/cancelled items. Follow `nextAfter`
+as `after` with the same view. `coverage.changed` means progress occurred between
+pages; refresh to include items that entered the view before the cursor. A page
+is not the whole board. Use `detailRef` or `assignment.tasks.read` for full details,
+reports and exact off-page prerequisites; missing coverage is not completion.
 Unassigned independent chats have no shared list; never enroll them implicitly.
 The commissioning owner may create or edit an unclaimed item with its title,
 acceptance details, optional block and dependencies. Use the current
 `expectedAssignmentRevision` for creation and each item's `expectedRevision`
 for transitions. Dependencies are acyclic and completed/cancelled items cannot
 be reopened or redefined. `assignment.tasks.wait` passively observes a version;
-it neither sends input nor starts a worker.
+pass the same view/limit/after and the page's `version` as `afterVersion`. It neither
+sends input nor starts a worker. Current assignment controls expose `taskListRef`;
+historical retry receipts can retain their earlier whole-board shape.
 
 A bound participant uses `assignment.tasks.claim` to claim a ready item for its
 own conversation. Concurrent claims have one winner. Retain the returned item

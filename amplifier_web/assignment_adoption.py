@@ -226,7 +226,7 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
                 receipt = {'accepted': True, 'commandAction': action, 'assignmentId': value['id'],
                            'senderSessionId': source['id'], 'targetSessionId': target['id'],
                            'workspace': source['workspace'], 'membership': copy.deepcopy(membership),
-                           'result': {'assignment': assignments.project(value), 'inputSent': False}}
+                           'result': {'assignment': assignments.project(value, session_id=source['id']), 'inputSent': False}}
                 if authority['full']:
                     receipt['readmissionAuthority'] = authority['full']
                 collaboration.insert(identity, digest, receipt)

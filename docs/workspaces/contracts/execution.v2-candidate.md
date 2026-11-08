@@ -494,8 +494,8 @@ reads remain passive and never acquire a native writer or replay work.
 ### Optional shared task list
 
 **Current implementation:** an assignment retains at most 128 work items, including
-completed and cancelled items. The accepted lifetime/paging revision below has
-not yet been implemented or qualified; it supersedes that ceiling when shipped.
+completed and cancelled items. Per-item storage and paged observations below are
+implemented; removal of the accepted lifetime ceiling remains a separate batch.
 
 An explicit assignment owns its shared work items. The commissioning owner
 creates and edits unclaimed items,
@@ -573,8 +573,8 @@ converted assignment it cannot interpret, never treat it as an empty list.
 
 The [design and transition](../shared-task-history.md) records the accepted
 minor-release response change, reviewed consumers, matching-reader backup
-boundary and incremental implementation. These are targets, not new runtime
-behavior or qualification claims.
+boundary and incremental implementation. The no-lifetime-ceiling direction
+remains a target; source implementation and exact qualification are distinct.
 
 New commissioned roots share an explicit host-owned assignment with their
 commissioning root. Existing peers and historical commissioning records are

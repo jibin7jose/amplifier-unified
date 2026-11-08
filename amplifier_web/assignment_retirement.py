@@ -151,7 +151,7 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
                     'senderSessionId': source['id'], 'targetSessionId': target['id'],
                     'previousMembership': previous,
                     'reuseBinding': reuse_binding(app, source, target, task),
-                    'result': {'assignment': assignments.project(value), 'inputSent': False,
+                    'result': {'assignment': assignments.project(value, session_id=source['id']), 'inputSent': False,
                                'activeMemberCount': assignments.active_member_count(value)}}
                 collaboration.insert(identity, digest, receipt)
                 app._publish_changes(sessions={source['id'], target['id']})

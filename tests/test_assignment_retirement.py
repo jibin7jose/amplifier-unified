@@ -113,7 +113,8 @@ async def test_normalized_current_claim_blocks_retirement_until_settled(app, ter
                  **({'report': 'Contribution finished'} if terminal == 'complete' else {}))
     receipt = await retire(app, source, target)
     assert receipt['result']['assignment']['members'][target['id']]['status'] == 'retired'
-    assert task['id'] in receipt['result']['assignment']['tasks']
+    assert 'tasks' not in receipt['result']['assignment']
+    assert receipt['result']['assignment']['taskListRef']['args']['sessionId'] == source['id']
     assert 'taskStorage' not in receipt['result']['assignment']
     assert app.assignments.tasks.get(app.assignments.current(source), task['id'])['status'] in {'completed', 'cancelled'}
 

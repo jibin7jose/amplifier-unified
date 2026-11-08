@@ -22,7 +22,8 @@ def rows(app):
 
 async def legacy(app, count=1):
     owner = app.state['sessions'][0]
-    value = await start(app)
+    await start(app)
+    value = app.assignments.current(owner)
     value['tasks'] = {}
     for index in range(count):
         identity = 'task:' + str(uuid.uuid5(uuid.NAMESPACE_URL, value['id'] + ':' + str(index)))
@@ -36,11 +37,17 @@ async def legacy(app, count=1):
 
 
 @pytest.mark.parametrize('count', [0, 1, 128])
-async def test_lazy_conversion_keeps_bounded_public_shape_order_and_legacy_receipts(app, count):
+async def test_lazy_conversion_keeps_paged_order_and_legacy_receipts(app, count):
     owner, before = await legacy(app, count)
     commands = rows(app)
-    observed = (await app.dispatch('assignment.tasks.list', {'sessionId': owner['id']}))['result']
-    assert [task['id'] for task in observed['tasks']] == list(before['tasks'])
+    observed, after = [], None
+    while True:
+        page = (await app.dispatch('assignment.tasks.list', {'sessionId': owner['id'], **({'after': after} if after else {})}))['result']
+        observed.extend(task['id'] for task in page['tasks'])
+        after = page['nextAfter']
+        if after is None:
+            break
+    assert observed == list(before['tasks'])
     assert rows(app) == commands  # Passive read does not convert.
     if count:
         first = next(iter(before['tasks'].values()))
@@ -52,7 +59,8 @@ async def test_lazy_conversion_keeps_bounded_public_shape_order_and_legacy_recei
     assert app.collaboration.receipt(current['id'])['commandAction'] == ASSIGNMENT_RECORD
     projected = (await app.dispatch('assignment.read', {'sessionId': owner['id']}))['result']['assignment']
     assert 'taskStorage' not in projected
-    assert list(projected['tasks']) == (list(before['tasks']) if count else [result['result']['task']['id']])
+    assert 'tasks' not in projected
+    assert projected['taskListRef'] == {'action': 'assignment.tasks.list', 'args': {'sessionId': owner['id']}}
     for identity, task in before['tasks'].items():
         if identity != result['result']['task']['id']:
             assert app.assignments.tasks.get(current, identity) == task
@@ -198,7 +206,7 @@ async def test_matching_reader_restart_and_actual_backup_preserve_claim_and_exac
     owner, value = await legacy(app, 2)
     task = next(iter(value['tasks'].values()))
     result = await change(app, owner, 'claim', task, 'backup-claim')
-    expected = app.assignments.project(app.assignments.current(owner))
+    expected = app.assignments.project(app.assignments.current(owner), session_id=owner['id'])
     command_rows = rows(app)
     saved = await backup(app)
     restore_home = tmp_path / 'restore'; restore_home.mkdir()
@@ -211,7 +219,7 @@ async def test_matching_reader_restart_and_actual_backup_preserve_claim_and_exac
         restored = AppService(home, workspace=owner['workspace'])
         try:
             actor = restored._session(owner['id'])
-            assert restored.assignments.project(restored.assignments.current(actor)) == expected
+            assert restored.assignments.project(restored.assignments.current(actor), session_id=actor['id']) == expected
             repeated = await change(restored, actor, 'claim', task, 'backup-claim')
             assert repeated['duplicate'] and repeated['result'] == result['result']
             actual = dict((identity, (digest, receipt)) for identity, digest, receipt in rows(restored))
