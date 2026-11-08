@@ -1,4 +1,6 @@
 import {showFixtureConversation} from './browser-chat-pages.mjs';
+import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
+import {existsSync} from 'node:fs';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
@@ -18,9 +20,10 @@ async function openPublishing(page){
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',[root+'tests/fixtures/publishing_ui_server.py'],{stdio:['ignore','pipe','inherit']});
-let browser;
+const stopFixture=ownFixture(fixture,{label:'Publishing fixture'});
+let browser,failure,cleanup,result;
 try{
- const ready=await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>reject(Error('Fixture timeout')),30000);fixture.stdout.on('data',chunk=>{output+=chunk;for(const line of output.split('\n'))try{const row=JSON.parse(line);if(row.url){clearTimeout(timer);resolve(row)}}catch{}});fixture.once('error',reject);fixture.once('exit',code=>reject(Error('Fixture exited '+code)))});
+ const ready=await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>reject(Error('Fixture timeout')),30000);fixture.stdout.on('data',chunk=>{output+=chunk;for(const line of output.split('\n'))try{const row=JSON.parse(line);if(row.publishingFixtureCleanup)cleanup=row.publishingFixtureCleanup;if(row.url){clearTimeout(timer);resolve(row)}}catch{}});fixture.once('error',error=>{clearTimeout(timer);reject(error)});fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exited '+code))})});
  browser=await chromium.launch({headless:true});
  const page=await browser.newPage({viewport:{width:1280,height:950},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}}),errors=[];
  page.on('pageerror',e=>errors.push(e.message));
@@ -144,5 +147,18 @@ try{
  snapshot=await list('loopback');assert.equal(snapshot.targets.selectedTargetId,'loopback');assert.equal(snapshot.publishing.sites.find(row=>row.id==='fixture-site').status,'removed');assert.equal(snapshot.selected,ready.sessionId);assert.equal(snapshot.draft,'Keep publishing draft');assert.deepEqual(snapshot.sent,[]);assert.deepEqual(errors,[]);
  const mutations=snapshot.calls.filter(row=>['publishing.build','publishing.preview','publishing.review','publishing.deploy','publishing.rollback','publishing.stop','publishing.remove'].includes(row.action));assert.ok(mutations.every(row=>['loopback','private-fixture'].includes(row.args.targetId)));
  assert.ok(mutations.filter(row=>row.args.targetId==='private-fixture').every(row=>Number.isInteger(row.args.targetRevision)&&row.args.serviceId===ready.remoteServiceId));
- console.log(JSON.stringify({passed:true,immutableReleaseAndPreview:true,explicitReviewedDeployment:true,lostResponseExactRetry:true,confirmedUnknownAcknowledgedWithoutReplay:true,uncertain409RetainsPending:true,generic409RetryRetainsPending:true,duplicateSubmissionSuppressed:true,staleRevisionRefresh:true,actualUpdateAndRollbackBytes:true,statusAndLogs:true,stopRemoveRetainHistory:true,reload:true,mobileBounds:true,draftAndSelectionPreserved:true,noModelInvocations:true,targetSaveDoesNotConnect:true,lostTargetSaveResolvesRevisionRejection:true,actualServiceIdentityInspection:true,targetConfigurationInvalidatesInspection:true,staleTargetFormCannotOverwrite:true,staleTargetIdentityCannotImport:true,actualUnixServiceViaFakeSSH:true,immutableRetryTargetDespiteSelectionChange:true,remoteMutationsCarryReviewedIdentity:true,remoteImportUpdateRollbackAndCleanup:true,noProductionSSHClaim:true}));
-}finally{await browser?.close();fixture.kill()}
+ result={passed:true,immutableReleaseAndPreview:true,explicitReviewedDeployment:true,lostResponseExactRetry:true,confirmedUnknownAcknowledgedWithoutReplay:true,uncertain409RetainsPending:true,generic409RetryRetainsPending:true,duplicateSubmissionSuppressed:true,staleRevisionRefresh:true,actualUpdateAndRollbackBytes:true,statusAndLogs:true,stopRemoveRetainHistory:true,reload:true,mobileBounds:true,draftAndSelectionPreserved:true,noModelInvocations:true,targetSaveDoesNotConnect:true,lostTargetSaveResolvesRevisionRejection:true,actualServiceIdentityInspection:true,targetConfigurationInvalidatesInspection:true,staleTargetFormCannotOverwrite:true,staleTargetIdentityCannotImport:true,actualUnixServiceViaFakeSSH:true,immutableRetryTargetDespiteSelectionChange:true,remoteMutationsCarryReviewedIdentity:true,remoteImportUpdateRollbackAndCleanup:true,noProductionSSHClaim:true};
+}catch(error){failure=error;throw error}
+finally{
+ await finishFixture({label:'Publishing fixture',originalError:failure,
+  close:[['browser',()=>browser?.close()]],stop:async()=>{
+   await stopFixture();
+   assert.equal(cleanup?.pid,fixture.pid,'Expected cleanup receipt from the owned fixture');
+   assert.equal(cleanup.signal,'SIGTERM');
+   assert.equal(cleanup.runnerCleanup,true);assert.equal(cleanup.remoteCleanup,true);
+   assert.equal(cleanup.homeRemoved,true);assert.equal(cleanup.remoteHomeRemoved,true);
+   assert.equal(existsSync(cleanup.home),false);assert.equal(existsSync(cleanup.remoteHome),false);
+   console.log(JSON.stringify({publishingFixtureCleanup:cleanup}));
+  }});
+}
+console.log(JSON.stringify({...result,fixtureCleanupVerified:true}));

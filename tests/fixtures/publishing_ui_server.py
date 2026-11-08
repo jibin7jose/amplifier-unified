@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import tempfile
 
@@ -102,19 +103,41 @@ sys.exit(result.returncode)
     await site.start()
     url = f'http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}'
     app['allowed_origins'] = app['allowed_origins'] | {url}
-    print(json.dumps({'url': url, 'sessionId': sid, 'remoteServiceId': remote_identity['serviceId'],
-                      'alternateServiceId': alternate_identity['serviceId'], 'alternateSocketPath': str(alternate_socket),
-                      'remoteConfig': {'targetId': 'private-fixture', 'label': 'Isolated remote fixture',
-                                       'hostname': 'fixture-host', 'python': sys.executable,
-                                       'socketPath': str(remote_socket), 'expectedBind': '127.0.0.1'}}), flush=True)
+    stopped = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    installed_signals = []
+    shutdown = {'pid': os.getpid(), 'home': str(home), 'remoteHome': str(remote_home),
+                'signal': None, 'runnerCleanup': False, 'remoteCleanup': False}
+
+    def request_stop(signum):
+        shutdown['signal'] = signal.Signals(signum).name
+        stopped.set()
+
     try:
-        await asyncio.Event().wait()
+        for signum in (signal.SIGTERM, signal.SIGINT) if os.name == 'posix' else ():
+            loop.add_signal_handler(signum, request_stop, signum)
+            installed_signals.append(signum)
+        print(json.dumps({'url': url, 'sessionId': sid, 'remoteServiceId': remote_identity['serviceId'],
+                          'alternateServiceId': alternate_identity['serviceId'], 'alternateSocketPath': str(alternate_socket),
+                          'remoteConfig': {'targetId': 'private-fixture', 'label': 'Isolated remote fixture',
+                                           'hostname': 'fixture-host', 'python': sys.executable,
+                                           'socketPath': str(remote_socket), 'expectedBind': '127.0.0.1'}}), flush=True)
+        await stopped.wait()
     finally:
-        await runner.cleanup()
-        await asyncio.to_thread(remote.close)
-        await asyncio.to_thread(alternate.close)
+        try:
+            await runner.cleanup()
+            shutdown['runnerCleanup'] = True
+            await asyncio.to_thread(remote.close)
+            await asyncio.to_thread(alternate.close)
+            shutdown['remoteCleanup'] = True
+        finally:
+            for signum in installed_signals:
+                loop.remove_signal_handler(signum)
+    return shutdown
 
 
 if __name__ == '__main__':
     with tempfile.TemporaryDirectory(prefix='publishing-fixture-') as directory, tempfile.TemporaryDirectory(prefix='pub-remote-', dir=Path('/tmp').resolve()) as remote_directory:
-        asyncio.run(main(Path(directory).resolve(), Path(remote_directory)))
+        shutdown = asyncio.run(main(Path(directory).resolve(), Path(remote_directory)))
+    shutdown.update(homeRemoved=not Path(directory).exists(), remoteHomeRemoved=not Path(remote_directory).exists())
+    print(json.dumps({'publishingFixtureCleanup': shutdown}), flush=True)
