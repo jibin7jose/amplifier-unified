@@ -70,6 +70,13 @@ The app checks retention again after retiring an idle runtime, then stages only
 reviewed inodes by atomic rename under its action lock. Shared resource creation
 after that boundary gets a fresh file. No new conversation work is replayed.
 
+Startup discards expired unconfirmed deletion previews, including shared-history
+previews. This removes only review metadata; it never deletes conversation files.
+Only finite numeric expiry values are eligible; unknown or non-finite values are
+preserved. Current previews remain usable, and confirmed plans and completed tombstones do
+not expire. Cleanup runs before requests are admitted so it cannot race a
+confirmation already in progress.
+
 A confirmed deletion journal/tombstone precedes filesystem cleanup. Interrupted
 cleanup reports `deleted: true, cleanupPending: true` and a warning; restart
 resumes the confirmed cleanup before hydrating saved views. Completed receipts

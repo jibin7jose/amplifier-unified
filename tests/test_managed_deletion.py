@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import copy
 import json
 from pathlib import Path
+import sqlite3
 import threading
 from types import SimpleNamespace
 import uuid
@@ -100,6 +101,70 @@ async def test_confirmation_expiry_changes_and_active_work_refuse(app):
     row['status']='idle';row['approvals']=[{'id':'a','status':'pending'}]
     with pytest.raises(AppError,match='active work'):await preview(app,sid)
     assert (files/'new.txt').read_text()=='Changed after review'
+
+
+def test_startup_preview_expiry_preserves_unknown_and_current_records(tmp_path, monkeypatch):
+    monkeypatch.setattr(managed_deletion.time, 'time', lambda: 1000)
+    values = {
+        'expired': '{"expiresAt":999}',
+        'expired-fractional': '{"expiresAt":999.9}',
+        'expired-negative': '{"expiresAt":-1}',
+        'expired-minimum-integer': '{"expiresAt":-9223372036854775808}',
+        'expired-minimum-finite': '{"expiresAt":-1.7976931348623157e308}',
+        'positive-overflow': '{"expiresAt":1e999}',
+        'negative-overflow': '{"expiresAt":-1e999}',
+        'boundary': '{"expiresAt":1000}',
+        'future': '{"expiresAt":1001}',
+        'missing': '{}',
+        'text': '{"expiresAt":"0"}',
+        'null': '{"expiresAt":null}',
+        'boolean': '{"expiresAt":false}',
+        'malformed': 'incomplete saved preview',
+    }
+    with sqlite3.connect(tmp_path/'app.sqlite3') as db:
+        managed_deletion.initialize(db)
+        db.executemany('INSERT INTO managed_deletions VALUES (?,?,?,?)',
+                       [(key, key, 'preview', value) for key, value in values.items()])
+        db.commit()
+        managed_deletion.recover(tmp_path, db, {})
+        remaining = dict(db.execute('SELECT id,value FROM managed_deletions'))
+        assert remaining == {key: value for key, value in values.items() if not key.startswith('expired')}
+        assert not db.in_transaction
+
+
+@pytest.mark.parametrize('history', [False, True])
+async def test_restart_reaps_only_expired_unconfirmed_preview(app, tmp_path, history):
+    expired, fresh, completed = [await create(app) for _ in range(3)]
+    files = Path(expired['workspace'])
+    (files/'keep.txt').write_text('An expired review is not a deletion.')
+    native_session(files, expired['id'])
+    if history:
+        review = (await app.dispatch('storage.historyDeletePreview', {
+            'project': project_slug(files), 'nativeId': expired['id']}))['result']
+    else:
+        review = await preview(app, expired['id'])
+    expired_key = review['id']
+    encoded = app.db.execute('SELECT value FROM managed_deletions WHERE id=?', (expired_key,)).fetchone()[0]
+    plan = json.loads(encoded); plan['expiresAt'] = 0
+    app.db.execute('UPDATE managed_deletions SET value=? WHERE id=?', (json.dumps(plan), expired_key))
+    app.db.commit()
+    await preview(app, fresh['id'])
+    completed_review = await preview(app, completed['id'])
+    await delete(app, completed_review)
+    retained = app.db.execute('SELECT * FROM managed_deletions WHERE id != ? ORDER BY id', (expired_key,)).fetchall()
+    await app.close()
+    restored = AppService(app.data_dir, Runtime(), workspace=tmp_path)
+    try:
+        assert restored.db.execute('SELECT * FROM managed_deletions ORDER BY id').fetchall() == retained
+        assert (files/'keep.txt').read_text() == 'An expired review is not a deletion.'
+        assert (amplifier_home()/'projects'/project_slug(files)/'sessions'/expired['id']).exists()
+        assert managed_deletion.removed(restored.db, completed['id'])
+        assert not managed_deletion.removed(restored.db, expired['id'])
+        with pytest.raises(AppError, match='Review this chat'):
+            await restored.dispatch('session.delete', {'id':expired_key, 'confirmationToken':review['confirmationToken']})
+        assert not restored.runtime.sent and not restored.runtime.started
+    finally:
+        await restored.close()
 
 
 async def test_symlink_and_unowned_marker_fail_without_touching_outside(app,tmp_path):

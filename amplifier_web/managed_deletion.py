@@ -683,6 +683,16 @@ def _purge(home, plan):
 def recover(home, db, state):
     """Resume only already-confirmed plans, before any saved view can reappear."""
     initialize(db)
+    # Startup admits no confirmation requests. Runtime expiry could remove a
+    # preview while confirmation is awaiting its locks, losing the durable plan.
+    # Preserve unknown/malformed expiry values rather than guessing their age.
+    db.execute("""DELETE FROM managed_deletions WHERE phase='preview' AND
+        CASE WHEN json_valid(value) THEN
+            json_type(value, '$.expiresAt') IN ('integer', 'real')
+            AND json_extract(value, '$.expiresAt') BETWEEN ? AND ?
+            AND json_extract(value, '$.expiresAt') < ?
+        ELSE 0 END""", (-sys.float_info.max, sys.float_info.max, time.time()))
+    db.commit()
     for plan_value, in db.execute("SELECT value FROM managed_deletions WHERE phase='confirmed'").fetchall():
         value = json.loads(plan_value)
         scrub_state(state, value)
