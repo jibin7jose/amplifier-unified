@@ -51,12 +51,13 @@ async def settled_thread(function, *args, **kwargs):
 def definitions(schema, string):
     fields = {'workspaceId': string(100), 'sessionId': string(200),
               'requestId': {**string(200), 'minLength': 1},
-              'backend': {'enum': ['docker', 'incus']}}
+              'backend': {'enum': ['docker', 'incus'], 'default': 'docker'}}
     return {'workspace.environments.setup': (
-        'Set up this app’s isolated test runner on an already installed local Docker or Incus daemon. '
+        'Set up this app’s managed Smart Tool runner on an already installed local Docker daemon by default. '
+        'Choose Incus explicitly for specialized native or registered-machine workflows. Existing bindings never migrate. '
         'Downloads the approved runner and base image, verifies a disposable offline check, and saves private app configuration. '
         'Does not install a daemon, change system settings, or adopt other environments. Keep requestId stable; uncertain effects never replay.',
-        schema(fields, list(fields))),
+        schema(fields, [key for key in fields if key != 'backend'])),
         'workspace.environments.setup.reconcile': ('Inspect the original setup request and settle proven saved configuration or cleanup without rerunning setup.', schema({key: value for key, value in fields.items() if key != 'backend'}, [key for key in fields if key != 'backend'])),
         'workspace.environments.setup.cleanup': ('Clean up only this interrupted setup’s verified disposable probe and unused owned network. Preserve installed packages, base images and private receipts. Never touch a ready runner or active task environment.', schema({key: value for key, value in fields.items() if key != 'backend'}, [key for key in fields if key != 'backend']))}
 
@@ -299,7 +300,8 @@ def same_owner(record, args, actor, authority, origin=None):
 async def request(app, args, actor, guard=None, *, authority=None, origin=None):
     folder = root(app)
     identity = hashlib.sha256(json.dumps([args['sessionId'], args['requestId']], separators=(',', ':')).encode()).hexdigest()[:32]
-    intent = {key: args[key] for key in ('workspaceId', 'sessionId', 'requestId', 'backend')}
+    intent = {key: args[key] for key in ('workspaceId', 'sessionId', 'requestId')}
+    intent['backend'] = args.get('backend', 'docker')
     if intent['backend'] not in {'docker', 'incus'}:
         raise ValueError('Choose an available local test backend.')
     path = folder / (identity + '.json')
@@ -332,7 +334,7 @@ async def request(app, args, actor, guard=None, *, authority=None, origin=None):
             raise ValueError('A previous setup has an uncertain result. Its saved operation must be reconciled before new setup effects.')
         if guard:
             await guard()
-        record = {'id': identity, 'intent': intent, 'actor': actor, 'backend': args['backend'], 'state': 'accepted',
+        record = {'id': identity, 'intent': intent, 'actor': actor, 'backend': intent['backend'], 'state': 'accepted',
                   'phase': 'checking', 'detail': 'Checking the local test runner.', 'createdAt': time.time(), 'updatedAt': time.time()}
         if authority is not None:
             record['authority'] = authority

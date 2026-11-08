@@ -7,9 +7,15 @@ lifetime of an accepted check.
 
 ## Setup and readiness
 
-`workspace.environments.setup` selects an existing Docker or Incus service and
+`workspace.environments.setup` defaults to an existing Docker service and
 installs the exact qualified deterministic tool dependencies into app-owned
-storage. It accepts a backend choice and stable request identity, never an
+storage. This is the Compose-based **Smart Tool DTU** library, not the legacy
+Incus bundle or a raw CLI replacement for host controls. Choose `backend: incus`
+explicitly for specialized native workflows. Registered remote machines remain
+Incus-only; remote Docker registration is not supported. A default never converts
+an existing backend, resource, request or unknown outcome.
+
+Setup accepts a backend choice and stable request identity, never an
 arbitrary executable, image, socket, command or credentials. Setup does not
 install a container daemon, alter firmware, restart shared services or configure
 a model provider. Missing platform or backend requirements are reported before
@@ -28,6 +34,14 @@ and does not claim every project's dependencies are prepared. Upgrading a backen
 does not replace the retained backend of an existing environment.
 
 ## Runner update policy
+
+The bootstrap revision in `task_environments.DTU_COMMIT` is a reviewed starting
+point, not the active installation's update policy. New setup records its
+app-owned moving-source provenance. The existing updater installs later exact
+commits separately and requires target-local lifecycle proof before selecting
+them. Do not add a newer commit to the historical static allowlist: a package
+import or Docker image probe does not qualify its library, dependencies or
+cleanup. Explicit pins and older retained installations are unchanged.
 
 App-managed runner packages follow their declared moving upstream source under
 the global update preference. A resolved commit is an installation identity,

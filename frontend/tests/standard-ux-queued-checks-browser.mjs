@@ -23,7 +23,11 @@ try{
  await page.getByRole('group',{name:'Workspace view',exact:true}).getByRole('button',{name:'Details',exact:true}).click();
  await page.getByText('Managed resources',{exact:true}).click();const panel=page.getByRole('region',{name:'Test environments',exact:true});
  await expect(panel.getByRole('form',{name:'Queue isolated check'})).toBeVisible();assert.deepEqual((await facts()).calls,[]);
- await mode({setupRequired:true});await panel.getByRole('button',{name:'Refresh test environments',exact:true}).click();await panel.getByRole('button',{name:'Set up with Docker',exact:true}).click();await expect(panel.getByRole('form',{name:'Queue isolated check'})).toBeVisible();assert.equal((await facts()).setupCalls.length,1);checks.push('Setup uses the same explicit host action from workspace controls.');
+ await mode({setupRequired:true});await panel.getByRole('button',{name:'Refresh test environments',exact:true}).click();
+ await expect(panel).toContainText('Use Docker for new ordinary checks with the managed Smart Tool runner');
+ await expect(panel.getByRole('button',{name:'Set up with Incus',exact:true})).toBeVisible();
+ await page.screenshot({path:out+'/managed-runner-setup.png'});
+ await panel.getByRole('button',{name:'Set up with Docker',exact:true}).click();await expect(panel.getByRole('form',{name:'Queue isolated check'})).toBeVisible();assert.equal((await facts()).setupCalls.length,1);assert.equal((await facts()).setupCalls[0].backend,'docker');checks.push('Setup recommends managed Docker, preserves explicit Incus, and dispatches the same host action from workspace controls.');
  const originalScope={sessionId:initial.sessionId,workspaceId:initial.workspaceId};
  const invariant=async()=>{const now=await facts();assert.equal(now.sessionId,originalScope.sessionId);assert.equal(now.workspaceId,originalScope.workspaceId);assert.deepEqual(now.messages,initial.messages);assert.deepEqual(now.runtimeCalls,initial.runtimeCalls);assert.equal(now.workspaceFile,initial.workspaceFile);assert.equal(await page.evaluate(()=>window.amplifier.getState().view.draft),'Keep the queued check private draft')};
  const queued=panel.getByRole('region',{name:'Queued checks',exact:true});

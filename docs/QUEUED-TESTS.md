@@ -1,5 +1,14 @@
 # Host-owned isolated checks
 
+For new ordinary checks, use the managed Docker Compose Smart Tool runner.
+`workspace.environments.setup` defaults to Docker; it does not install a daemon.
+Keep using `workspace.tests.submit` rather than replacing host admission, durable
+jobs or retained cleanup with raw `digital-twin-universe` CLI calls. The three
+managed profiles select workload preparation, not a different backend.
+Explicit Incus/native workflows and currently Incus-only registered remote
+machines remain supported exceptions. Existing jobs, pins, backend bindings and
+UNKNOWN owners are not migrated by this default.
+
 `workspace.tests.submit` queues bounded checks per root conversation. The global
 **Settings → Testing & resources → Advanced execution limits** controls both the
 total pending queue and **Maximum pending checks per chat**. All work count limits

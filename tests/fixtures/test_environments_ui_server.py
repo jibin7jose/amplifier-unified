@@ -67,8 +67,9 @@ async def main(home, port, backend='docker'):
         probes['setupRead'] += 1
         return {'status': 'disabled' if mode['setupRequired'] else 'ready',
                 'reason': 'Controlled fixture; no backend installation.', 'operation': None,
-                'backends': [{'id': 'docker', 'label': 'Docker', 'available': True, 'reason': 'Controlled fixture'}]}
-    async def setup_request(app, args, actor, guard=None):
+                'backends': [{'id': name, 'label': label, 'available': True, 'reason': 'Controlled fixture'}
+                             for name, label in [('docker', 'Docker'), ('incus', 'Incus')]]}
+    async def setup_request(app, args, actor, guard=None, *, authority=None, origin=None):
         if guard:
             await guard()
         setup_calls.append(dict(args))

@@ -28,6 +28,17 @@ def args(**extra):
     return {'workspaceId': 'workspace', 'sessionId': 'session', 'requestId': 'setup', 'backend': 'docker', **extra}
 
 
+def test_shared_schema_allows_docker_default_and_explicit_incus():
+    import jsonschema
+    definitions = setup.definitions(
+        lambda fields, required: {'type': 'object', 'properties': fields, 'required': required},
+        lambda maximum: {'type': 'string', 'maxLength': maximum})
+    schema = definitions['workspace.environments.setup'][1]
+    assert schema['properties']['backend']['default'] == 'docker'
+    jsonschema.validate({key: value for key, value in args().items() if key != 'backend'}, schema)
+    jsonschema.validate(args(backend='incus'), schema)
+
+
 async def settle(app):
     await asyncio.gather(*list(app._test_setup_tasks.values()))
     latest = setup.read_json(setup.root(app) / 'latest.json')
@@ -88,6 +99,32 @@ async def test_revoke_before_external_effect_never_installs(app, monkeypatch):
     assert result['state'] == 'failed'
     app.smart_tools.install.assert_not_called()
     assert not (app.data_dir / 'test-environments.json').exists()
+
+
+async def test_omitted_backend_is_docker_and_duplicate_keeps_same_intent(app, monkeypatch):
+    async def backend(base, selected, owned, record, step):
+        assert base['backend'] == 'docker'
+        return {**base, 'dockerHost': selected['dockerHost']}, {'probeRemoved': True}
+    monkeypatch.setattr(setup, 'setup_docker', backend)
+    request = {key: value for key, value in args().items() if key != 'backend'}
+    await setup.request(app, request, {'sessionId': 'session'})
+    result = await settle(app)
+    assert result['state'] == 'completed' and result['backend'] == 'docker'
+    assert result['intent'] == args()
+    assert (await setup.request(app, args(), {'sessionId': 'session'}))['duplicate']
+    app.smart_tools.install.assert_awaited_once()
+
+
+async def test_default_never_replaces_existing_incus_binding(app, monkeypatch):
+    existing = {'backend': 'incus', 'installationId': 'old', 'incus': {'project': 'retained'}}
+    monkeypatch.setattr(owner, 'configuration', lambda _: (existing, 'ready', 'Existing Incus'))
+    request = {key: value for key, value in args().items() if key != 'backend'}
+    await setup.request(app, request, {'sessionId': 'session'})
+    result = await settle(app)
+    assert result['state'] == 'failed'
+    assert 'does not silently replace' in result['detail']
+    app.smart_tools.install.assert_not_called()
+    assert existing == {'backend': 'incus', 'installationId': 'old', 'incus': {'project': 'retained'}}
 
 
 async def test_unknown_side_effect_never_replays_and_blocks_new_intent(app, monkeypatch):

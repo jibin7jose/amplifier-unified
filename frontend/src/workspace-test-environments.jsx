@@ -153,6 +153,7 @@ export function TaskEnvironments({workspaceId,sessionId,act,active,readOnly}){
    {setup.operation&&<p role="status">Runner setup: {setup.operation.state?.replaceAll('_',' ')}. {setup.operation.detail}</p>}
    {setup.status!=='ready'&&<>
     <p>{setup.reason}</p>
+    <p>Use Docker for new ordinary checks with the managed Smart Tool runner. Choose Incus only for a specialized native workflow. Existing environments keep their original backend.</p>
     {!readOnly&&setup.backends?.filter(row=>row.available).map(backend=><button key={backend.id} type="button" className="a-soft" disabled={controlsBlocked||['accepted','running','outcome_unknown'].includes(setup.operation?.state)} onClick={()=>mutate('workspace.environments.setup',{backend:backend.id})}>Set up with {backend.label}</button>)}
     {!setup.backends?.some(row=>row.available)&&setup.backends?.map(backend=><p key={backend.id}>{backend.label}: {backend.reason}</p>)}
     <p>Setup downloads the approved runner and base image and checks an isolated environment. It uses an already installed local test service. Project preparation may download locked dependencies; the checks themselves run offline.</p>

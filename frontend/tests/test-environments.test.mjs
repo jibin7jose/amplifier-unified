@@ -259,12 +259,15 @@ for(const rejected of [false,true])test(`an old mount's late ${rejected?'rejecti
  }finally{await act(async()=>root?.unmount())}
 });
 
-test('setup uses the same narrow host action and shows durable progress',async()=>{
- let root;const calls=[],setup={status:'disabled',reason:'Not set up',backends:[{id:'docker',label:'Docker',available:true,reason:'Available'}],operation:null};
+test('setup recommends managed Docker, retains explicit Incus and shows durable progress',async()=>{
+ let root;const calls=[],setup={status:'disabled',reason:'Not set up',backends:[{id:'docker',label:'Docker',available:true,reason:'Available'},{id:'incus',label:'Incus',available:true,reason:'Available'}],operation:null};
  const dispatch=async(action,args)=>{calls.push({action,args});if(action!=='workspace.environments.read')setup.operation={id:'setup',state:'running',detail:'Downloading the approved base image.'};return accepted(action==='workspace.environments.read'?{items:[],capability:{status:'disabled'},setup}:{operation:setup.operation})};
  try{
   await act(async()=>{root=create(React.createElement(TaskEnvironments,{workspaceId:'w',sessionId:'a',act:dispatch,active:true}))});
   assert.match(text(root.toJSON()),/already installed local test service/);
+  assert.match(text(root.toJSON()),/Use Docker for new ordinary checks with the managed Smart Tool runner/);
+  assert.match(text(root.toJSON()),/Existing environments keep their original backend/);
+  assert.ok(button(root,'Set up with Incus'));
   await act(async()=>button(root,'Set up with Docker').props.onClick());
   const mutation=calls.find(row=>row.action!=='workspace.environments.read');
   assert.equal(mutation.action,'workspace.environments.setup');assert.equal(mutation.args.backend,'docker');assert.ok(mutation.args.requestId);

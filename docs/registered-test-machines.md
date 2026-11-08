@@ -4,6 +4,13 @@ Global Settings → Testing & resources → Other test machines connects an alre
 
 ## Supported setup
 
+The recommended new **local** runner is the Docker Compose Smart Tool path.
+Registration below is a deliberate **Incus-only remote exception**, not remote
+Docker support. Run the managed host on the Docker machine to use its supported
+local daemon route; do not point a local Unix socket configuration at a remote
+daemon or borrow another installation's state. Changing the local default does
+not retarget existing registered checks or their cleanup controllers.
+
 The origin may run on macOS, Windows, WSL or Linux with Git and an existing trusted SSH connection; it needs no local Docker daemon or Linux snapshot runtime. Registered targets are native Linux Incus runners using an existing trusted SSH connection, configured qualified adapter, cached approved base image, and Python 3.13 or newer in that adapter. Registration installs only a small hash-qualified controller in private account storage. It never installs a daemon, changes BIOS/virtualization settings, enables SSH trust, or changes system services.
 
 A machine's CPU, memory, free-space and dependency-build budgets are shared by cooperating native clients using the same OS account. Registered controllers also share mutable running/retained/disk admission limits by exact Incus daemon/project/account. Different accounts, older clients, unrelated container workloads, remote Docker daemons and Docker Desktop are not collectively governed by this authority. Current physical observations still include outside CPU/memory/disk pressure.
