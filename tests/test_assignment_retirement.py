@@ -9,6 +9,25 @@ from amplifier_web.runtime import RuntimeManager
 from amplifier_web.service import AppError
 from test_assignments import app, child, limits, call, agent_action, generation
 from test_collaborative_workspaces import settled
+from test_task_continuity import controls, create
+
+
+async def save_task(app, target, status=None):
+    """Persist native authority even when the transport fixture has no task."""
+    native = controls(target.get('runtimeSessionId') or target['id'])
+    native.state_path = lambda: app.data_dir / 'sessions' / native.session.session_id / 'control-state.json'
+    try:
+        if status:
+            await create(native)
+            if status != 'active':
+                await native.perform('task.' + {'completed': 'complete', 'paused': 'pause', 'blocked': 'block'}[status], {
+                    'commandId': 'settle-task', 'expectedRevision': 1,
+                    'condition': native.tasks.record()['objective'], 'evidence': ['Accepted contribution'],
+                    'reason': 'Waiting for acceptance'})
+        native.persist(task_only=True)
+        return copy.deepcopy(native.tasks.record())
+    finally:
+        await native.close()
 
 
 async def setup(app):
@@ -16,6 +35,7 @@ async def setup(app):
     target, created = await child(app, source)
     app.runtime.stopped_boundary = RuntimeManager().stopped_boundary
     await settle(app, target)
+    await save_task(app, target)
     return source, target, created
 
 
@@ -130,9 +150,7 @@ async def reviewed_args(app, source, target):
 async def test_full_owner_readmits_completed_retired_member_from_peer_only_input(app):
     source, target, created = await setup(app)
     await full_access(app, source)
-    target['task'] = {'id': 'original-task', 'revision': 3, 'status': 'completed',
-                      'maxTurns': 8, 'goalState': {'turns_used': 3},
-                      'evidence': ['Original contribution accepted']}
+    target['task'] = await save_task(app, target, 'completed')
     await limits(app, source, maxMembers=2, maxTotalTokens=100)
     charged = call(target, 'charged')
     assert (await admission(app, target['id'], {'call': charged}))['allowed']
@@ -147,7 +165,7 @@ async def test_full_owner_readmits_completed_retired_member_from_peer_only_input
     args = await reviewed_args(app, source, target)
     from amplifier_web.assignment_retirement import reuse_binding
     assert app.access_mode.full(source)
-    assert retirement['reuseBinding'] == reuse_binding(app, source, target)
+    assert retirement['reuseBinding'] == reuse_binding(app, source, target, target['task'])
     assert target['status'] == 'idle' and not target.get('failure'), target.get('failure')
     receipt = await agent_action(app, source, 'assignment.adopt', args, 'full-readmit')
     value = app.assignments.current(target)
@@ -187,8 +205,7 @@ async def test_full_readmission_refuses_changed_or_unsettled_retirement(app, cha
         target['status'] = 'stopped' if change == 'stop' else 'error'
         target['interruptionRevision'] = 1
     elif change in {'paused', 'new-task'}:
-        target['task'] = {'id': 'new-task', 'revision': 1,
-                          'status': 'paused' if change == 'paused' else 'active'}
+        target['task'] = await save_task(app, target, 'paused' if change == 'paused' else 'active')
     elif change in {'unknown-input', 'queued'}:
         app.collaboration.insert('unsettled', 'fixture', {
             'commandAction': 'coordination.send', 'target': {'sessionId': target['id']},
@@ -350,7 +367,7 @@ async def test_retirement_witness_lookup_does_not_scan_unrelated_command_bodies(
             return 0
         app.db.set_progress_handler(step, 1)
         try:
-            value = reuse_binding(app, source, target)
+            value = reuse_binding(app, source, target, {})
         finally:
             app.db.set_progress_handler(None, 0)
         return value, steps
@@ -432,7 +449,7 @@ async def test_retirement_refuses_unfinished_or_uncertain_work(app, busy):
     elif busy == 'call':
         ingest(target, {**call(target, 'uncertain'), 'phase': 'outcome_unknown'})
     elif busy == 'task':
-        target['task'] = {'id': 'unfinished', 'status': 'blocked'}
+        target['task'] = await save_task(app, target, 'blocked')
     elif busy == 'claim':
         value = app.assignments.current(source)
         value['tasks'] = {'claimed': {'status': 'claimed', 'claim': {'sessionId': target['id']}}}

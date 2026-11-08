@@ -40,6 +40,12 @@ unsettled inputs or checks, unfinished saved tasks and shared task claims preven
 retirement. A native ownership check protects the transition. User Stop and
 unknown operation outcomes are not cleared.
 
+Saved-task eligibility and the reuse binding read the canonical native control
+record under that ownership check; a lost reply or cached host projection cannot
+prove completion. Missing or malformed saved state stays unknown, while an
+available `task: null` proves no saved task; ordinary human/UI adoption remains
+unchanged.
+
 `maxMembers` counts current bound members and reservations. Retired, detached
 and never-created records remain available as history without occupying those
 slots. The brief and assignment controls distinguish current and retained

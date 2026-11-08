@@ -9,6 +9,7 @@ from amplifier_operations.coordination import fingerprint
 from .capacity import LIVE, usage_snapshot
 from .management import Management
 from .schedule_handoff import latest_human
+from .task_continuity import _load_control
 
 
 def reusable_retirement(app, source, target):
@@ -31,8 +32,15 @@ def reusable_retirement(app, source, target):
             or receipt.get('targetSessionId') != target['id']
             or receipt.get('assignmentId') != value['id']
             or retired.get('ownerSessionId') != source['id']
-            or retired.get('members', {}).get(target['id']) != member
-            or receipt.get('reuseBinding') != reuse_binding(app, source, target)):
+            or retired.get('members', {}).get(target['id']) != member):
+        return False
+    try:
+        task = _load_control(app, target, current_only=True)['task'] or {}
+    except ValueError:
+        # Unavailable native state cannot prove standing reuse. Preserve the
+        # ordinary human-instruction path, without substituting a cached task.
+        return False
+    if receipt.get('reuseBinding') != reuse_binding(app, source, target, task):
         return False
     source_task = source.get('task') or app.coordination.task(source['id'])
     if (source.get('status') in {'stopped', 'stopping', 'error', 'interrupted'}
@@ -40,7 +48,7 @@ def reusable_retirement(app, source, target):
             or source_task.get('status') == 'blocked' and not dependency_blocked(source_task)
             or target.get('status') != 'idle' or target.get('failure') or safety_halt(target)):
         return False
-    require_finished(app, target, value)
+    require_finished(app, target, value, task)
     return True
 
 
@@ -188,7 +196,6 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
         if duplicate:
             return duplicate
         target = collaboration.authorize(source, {'sessionId': args['targetSessionId']})
-        human = validate(app, source, target, args, origin)['human']
         # Every eligible status needs the real native lease. The lease spans the
         # durable commit; an idle projection alone is never ownership evidence.
         with ExitStack() as boundary:
@@ -199,6 +206,9 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
                 boundary.enter_context(prove(target))
             except (OSError, RuntimeError, ValueError) as exc:
                 collaboration.error(f'Could not confirm that this chat has stopped. {exc}', 409)
+            # Full reuse must observe saved task authority after acquiring the
+            # lease too: another writer could have changed it since preflight.
+            human = validate(app, source, target, args, origin)['human']
             async with assignments.mutation(source, identity, additional=(target['id'],)):
                 previous = assignments.current(source)['members'].get(target['id'], {})
                 assignments.reserve_member(source, target['id'], identity)

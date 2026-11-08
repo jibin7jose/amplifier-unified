@@ -7,6 +7,7 @@ from contextlib import ExitStack, closing
 from amplifier_operations.coordination import fingerprint
 from .capacity import LIVE, usage_snapshot
 from .management import Management
+from .task_continuity import _load_control
 from . import task_environments as environments
 
 
@@ -24,12 +25,16 @@ def checked(app, source, target, args, origin):
     if (target['id'] == source['id'] or value['members'].get(target['id'], {}).get('status') != 'bound'
             or (assignments.current(target) or {}).get('id') != value['id']):
         error('Choose a current helper member, not the assignment owner.', 409)
-    require_finished(app, target, value)
-    return value
+    try:
+        task = _load_control(app, target, current_only=True)['task'] or {}
+    except ValueError as exc:
+        error(str(exc), 409)
+    require_finished(app, target, value, task)
+    return value, task
 
 
-def require_finished(app, target, value):
-    """Shared settlement checks for retirement and standing-authority reuse."""
+def require_finished(app, target, value, task):
+    """Check the same canonical task used by the retirement reuse binding."""
     error = app.collaboration.error
     active = target.get('collaborationGeneration') or {}
     if (target.get('status') not in {'idle', 'stopped'}
@@ -44,7 +49,6 @@ def require_finished(app, target, value):
             or (target.get('pendingConfiguration') or {}).get('phase') in {'queued', 'applying'}
             or Management.unresolved_configuration(target)):
         error('Wait for this member’s settings change to finish before retiring it.', 409)
-    task = target.get('task') or app.coordination.task(target['id'])
     if task.get('id') and task.get('status') != 'completed':
         error('Complete this member’s saved task before retiring its participation.', 409)
     if any((item.get('claim') or {}).get('sessionId') == target['id']
@@ -73,7 +77,7 @@ def require_finished(app, target, value):
             error('Wait for this member’s test environment to stop and reconcile uncertain operations before retirement.', 409)
 
 
-def reuse_binding(app, source, target):
+def reuse_binding(app, source, target, task):
     """Freeze scope, not transcript bodies or a second authority record."""
     from .manager_placement import task_binding
     from .schedule_handoff import latest_human
@@ -93,7 +97,7 @@ def reuse_binding(app, source, target):
     return {
         'version': 1, 'source': context(source), 'sourceTask': task_binding(app, source),
         'target': context(target), 'targetAccess': app.access_mode.snapshot(target)['revision'],
-        'targetTask': fingerprint(target.get('task') or app.coordination.task(target['id'])),
+        'targetTask': fingerprint(task),
         'targetGeneration': (target.get('collaborationGeneration') or {}).get('id'),
         'targetHuman': (latest_human(target) or {}).get('id'),
         'targetAdoption': adoption[0] if adoption else None,
@@ -123,7 +127,6 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
         if duplicate:
             return duplicate
         target = collaboration.authorize(source, {'sessionId': args['targetSessionId']})
-        value = checked(app, source, target, args, origin)
         with ExitStack() as boundary:
             prove = getattr(app.runtime, 'stopped_boundary', None)
             if not callable(prove):
@@ -132,6 +135,9 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
                 boundary.enter_context(prove(target))
             except (OSError, RuntimeError, ValueError) as exc:
                 collaboration.error(f'Could not confirm that this chat has stopped. {exc}', 409)
+            # A native writer could have changed its task after preflight. This
+            # observation owns both eligibility and the saved reuse fingerprint.
+            value, task = checked(app, source, target, args, origin)
             async with assignments.mutation(source, identity, additional=(target['id'],)):
                 previous = copy.deepcopy(value['members'][target['id']])
                 value['members'][target['id']] = {**previous, 'status': 'retired',
@@ -146,7 +152,7 @@ async def dispatch(assignments, action, args, origin, command_id, caller):
                 receipt = {'accepted': True, 'commandAction': action, 'assignmentId': value['id'],
                     'senderSessionId': source['id'], 'targetSessionId': target['id'],
                     'previousMembership': previous,
-                    'reuseBinding': reuse_binding(app, source, target),
+                    'reuseBinding': reuse_binding(app, source, target, task),
                     'result': {'assignment': copy.deepcopy(value), 'inputSent': False,
                                'activeMemberCount': assignments.active_member_count(value)}}
                 collaboration.insert(identity, digest, receipt)
