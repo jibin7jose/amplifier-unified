@@ -90,6 +90,7 @@ accounting store or synthesized generation is part of this integration.
 | Owner operation | Meaning |
 | --- | --- |
 | Create | Return the identity from the canonical session-creation path. |
+| Attach saved conversation | Resolve the exact saved root identity in the launcher's trusted history workspace without loading history or starting execution. |
 | Prompt | Submit one identified input and observe its matching native outcome; acceptance alone is not completion. |
 | Cancel | Request the existing Stop operation; report the actual terminal outcome, including completion races. |
 | Release observation | Detach this observer without archiving history or cancelling accepted work. |
@@ -103,6 +104,20 @@ write-policy changes, child ceilings, Stop and reservation/usage ownership retai
 their current semantics. Missing load, configuration, MCP or extension support in
 this experimental path stays unadvertised and fails explicitly without creating
 a replacement session. The existing adapter path keeps its supported behavior.
+
+The next slice advertises optional standard `session/resume`, which returns no
+history replay. Requested `cwd` must match the owner's saved execution location
+(`workingDirectory`, falling back to `workspace`); it cannot move the conversation
+or broaden its permissions. Metadata attachment does not acquire an exclusive
+writer or establish that native execution can resume. The next prompt uses the
+existing owner admission, lock, configuration and native-history checks, reporting
+busy, read-only or unsupported outcomes without creating a replacement or replaying
+an earlier input. Root identity and saved history survive a fresh owned service.
+Full `session/load` remains unadvertised: ACP requires complete visible-history
+replay, which a bounded recent-message page cannot satisfy. Existing passive
+history-window reads remain with their current owner. Consumers supporting only
+load, including the currently reviewed Conversations connector, are not yet
+qualified for reconnect continuity through this path.
 
 Interactive approval forwarding is a separate limitation of this first path.
 The existing access-mode owner resolves standing Full; the adapter may join its

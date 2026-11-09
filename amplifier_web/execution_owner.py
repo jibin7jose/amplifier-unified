@@ -92,6 +92,31 @@ class ExecutionOwner:
         self.attached.add(identity)
         return identity
 
+    async def attach(self, identity, cwd):
+        """Attach to saved metadata; prompt admission still owns native resume.
+
+        Reading an attachment must not hydrate history, select a browser chat,
+        start a runtime or imply that its exclusive writer has been acquired.
+        """
+        if not isinstance(identity, str) or not identity:
+            raise ValueError("An exact saved conversation identity is required")
+        requested = Path(cwd).resolve(strict=True)
+        async with self.service.lock:
+            source, = self.service._session_read_sources([identity], (
+                "id", "workspace", "workingDirectory", "sessionKind"))
+            if source["id"] != identity:
+                raise ValueError("Use the exact saved conversation identity")
+            if source.get("sessionKind") != "root":
+                raise ValueError("Only saved root conversations support this attachment")
+            workspace = source.get("workspace")
+            if not workspace or Path(workspace).resolve(strict=True) != self.workspace:
+                raise ValueError("This conversation belongs to a different workspace")
+            location = source.get("workingDirectory") or workspace
+            if requested != Path(location).resolve(strict=True):
+                raise ValueError("cwd does not match the saved execution location")
+            self.attached.add(identity)
+        return identity
+
     def require_attachment(self, identity):
         if identity not in self.attached:
             raise ValueError("Execution is not attached to this connection")
