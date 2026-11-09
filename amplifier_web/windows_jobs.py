@@ -552,6 +552,18 @@ class WindowsOwnedProcess:
             if self._process is not None:
                 self._process.stdin.close()
             native, k = self._native, self._native.k
+            # EXIT reports the payload, not the guard's own process exit.
+            # Reclaiming the job immediately can kill the trusted guard between
+            # its final status write and return, manufacturing guard exit 1.
+            # Only normal, confirmed payload exit earns this finite grace;
+            # force close/cancellation still interrupts it. Descendants remain
+            # contained and are reclaimed below, independent of pipe EOF.
+            if self._payload_returncode is not None and self._guard_handle is not None:
+                guard_deadline = asyncio.get_running_loop().time() + self._cleanup_seconds
+                while not self._force_close and not native.exited(self._guard_handle):
+                    if asyncio.get_running_loop().time() >= guard_deadline:
+                        break
+                    await asyncio.sleep(0.01)
             if self._assigned:
                 native.check(k.TerminateJobObject(self._job, 1))
             elif self._guard_handle is not None and not native.exited(self._guard_handle):

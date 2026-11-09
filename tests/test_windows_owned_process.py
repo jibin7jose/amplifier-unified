@@ -423,6 +423,58 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.owner._process.stdout.assert_not_called()
         self.assertEqual(self.k.TerminateJobObject.call_count, 1)
 
+    async def test_normal_exit_does_not_kill_guard_between_exit_frame_and_exit(self):
+        self.owner._payload_returncode = 0
+        exited = False
+        self.native.exited.side_effect = lambda handle: exited
+        self.native.active.side_effect = lambda job: 0 if exited else 1
+        def terminate(job, code):
+            self.assertTrue(exited, "normal cleanup killed the guard after its EXIT frame")
+            return 1
+        self.k.TerminateJobObject.side_effect = terminate
+        async def finish_guard():
+            nonlocal exited
+            await asyncio.sleep(0.01)
+            exited = True
+        finishing = asyncio.create_task(finish_guard())
+        result = await self.owner._finish()
+        await finishing
+        self.assertEqual(result.payload_returncode, 0)
+        self.k.TerminateJobObject.assert_called_once()
+
+    async def test_stalled_guard_after_exit_frame_is_still_bounded_and_reclaimed(self):
+        self.owner._payload_returncode = 0
+        exited = False
+        self.native.exited.side_effect = lambda handle: exited
+        def terminate(job, code):
+            nonlocal exited
+            exited = True
+            return 1
+        self.k.TerminateJobObject.side_effect = terminate
+        start = asyncio.get_running_loop().time()
+        await self.owner._finish()
+        elapsed = asyncio.get_running_loop().time() - start
+        self.assertGreaterEqual(elapsed, self.owner._cleanup_seconds)
+        self.assertLess(elapsed, 1)
+        self.k.TerminateJobObject.assert_called_once()
+
+    async def test_force_close_interrupts_normal_guard_exit_grace(self):
+        self.owner._payload_returncode = 0
+        self.owner._cleanup_seconds = 10
+        exited = False
+        self.native.exited.side_effect = lambda handle: exited
+        def terminate(job, code):
+            nonlocal exited
+            exited = True
+            return 1
+        self.k.TerminateJobObject.side_effect = terminate
+        finishing = asyncio.create_task(self.owner._finish())
+        await asyncio.sleep(0.01)
+        self.k.TerminateJobObject.assert_not_called()
+        await asyncio.wait_for(self.owner.close(), 1)
+        await finishing
+        self.k.TerminateJobObject.assert_called_once()
+
     async def test_query_or_termination_failure_retains_owner(self):
         for target in ("query", "termination", "close"):
             with self.subTest(target=target):
