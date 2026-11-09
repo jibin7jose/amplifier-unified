@@ -63,3 +63,7 @@
 @media(hover:none),(pointer:coarse){#amp-one .a-nav-slot .a-workspace-new-chat{opacity:1;width:44px;min-width:44px;height:44px;flex-basis:44px}}
 
 #amp-one .a-navigation-status[data-attention="blocked"],#amp-one .a-navigation-status[data-attention="decision"]{color:var(--a-warning,#b78020)}
+#amp-one .a-workspace-identity{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:0 0 21px;width:21px;height:23px;color:var(--a-muted)}
+#amp-one .a-workspace-identity>svg{width:17px;height:17px}
+#amp-one .a-workspace-identity>.a-navigation-status{position:absolute;right:-3px;bottom:-2px;width:12px;height:12px;border-radius:50%;background:var(--a-surface)}
+#amp-one .a-workspace-identity>.a-navigation-status svg{width:11px;height:11px}

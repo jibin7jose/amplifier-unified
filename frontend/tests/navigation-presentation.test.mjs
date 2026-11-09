@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {activityFor,relativeActivity,compactParent,parentPath} from '../src/navigation-presentation.js';
+import {activityFor,relativeActivity,compactParent,parentPath,pinnedWorkspaceSubtitle} from '../src/navigation-presentation.js';
 
 test('navigation distinguishes unresolved input, active work, errors, and new replies',()=>{
  assert.equal(activityFor({status:'working',approvals:[{status:'pending'}]}).kind,'attention');
@@ -51,6 +51,16 @@ test('workspace rows retain distinguishing ancestors beyond a common deep parent
  const {workspaceContext}=await import('../src/navigation-presentation.js');
  assert.equal(workspaceContext({name:'app',path:'/one/common/deep/app',pathLabel:'one/common/deep/app'}),'one/common/deep');
  assert.equal(workspaceContext({name:'app',path:'/two/common/deep/app',pathLabel:'two/common/deep/app'}),'two/common/deep');
+});
+
+test('pinned workspaces identify their type, qualifying only collisions or explicit full paths',()=>{
+ const row={name:'app',path:'/one/common/deep/app',pathLabel:'one/common/deep/app'};
+ assert.equal(pinnedWorkspaceSubtitle(row),'Workspace','leaf collisions alone do not imply duplicate aliases');
+ assert.equal(pinnedWorkspaceSubtitle({...row,nameQualifier:'one/common/deep'}),'Workspace · one/common/deep');
+ assert.equal(pinnedWorkspaceSubtitle({...row,customName:'Shared',nameQualifier:'one/common/deep/app'}),'Workspace · one/common/deep/app');
+ assert.equal(pinnedWorkspaceSubtitle(row,true),'Workspace · /one/common/deep/app');
+ assert.equal(pinnedWorkspaceSubtitle({...row,path:'C:\\work\\app'},true),'Workspace · C:\\work\\app');
+ assert.equal(pinnedWorkspaceSubtitle({...row,path:'/'},true),'Workspace · /');
 });
 
 test('active execution supersedes saved blocked task, while questions still require attention',()=>{

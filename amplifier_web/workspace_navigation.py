@@ -196,6 +196,29 @@ def _registry_labels(paths):
     return path_labels(paths)
 
 
+@lru_cache(maxsize=4)
+def _name_qualifiers(registrations):
+    """Labels depend on effective registry names/paths, never chat activity."""
+    groups = {}
+    for path, name in registrations:
+        groups.setdefault(name.casefold(), {})[path] = name
+    result = {}
+    for paths in groups.values():
+        if len(paths) < 2:
+            continue
+        labels = path_labels(paths)
+        context = {}
+        for path, label in labels.items():
+            leaf = _path(path).name
+            suffix = '/' + leaf
+            context[path] = ((label[:-len(suffix)] or '/')
+                             if leaf == paths[path] and label.endswith(suffix) else label)
+        # Removing a repeated leaf must not merge an alias's location with a
+        # default-named workspace. Original shortest suffixes remain unique.
+        result.update(context if len(set(context.values())) == len(context) else labels)
+    return result
+
+
 def _index(state, *, aggregates=None):
     archive = state.get('view', {}).get('navWorkspaceArchive', 'active')
     registrations = [row for row in state.get('workspaces', [])
@@ -321,6 +344,18 @@ def snapshot(state, *, index=None, pinned_only=False, exclude_pinned=False, work
     paths = [path for path, node in nodes.items() if node.get('workspace')] if pinned_only or query or mode == 'recent' else nodes[location]['children']
     selected = state.get('selectedWorkspaceId')
     pins = {identity: position for position, identity in enumerate(workspace_pins(state))}
+    names = []
+    for path, node in nodes.items():
+        if not node.get('workspace'):
+            continue
+        registrations = node.get('workspaceSelections', {})
+        identity = min((identity for identity in registrations if identity in pins),
+                       key=pins.get, default=selected)
+        registration = registrations.get(identity, node['workspace'])
+        names.append((str(path), registration.get('name') or path.name or str(path)))
+    # Compare names across the indexed registry before pin/query/page filtering.
+    # Legacy IDs for one path count once. Aliases, not folder leaves, own names.
+    qualifiers = _name_qualifiers(frozenset(names))
     rows = []
     for path in paths:
         node = nodes[path]
@@ -336,6 +371,8 @@ def snapshot(state, *, index=None, pinned_only=False, exclude_pinned=False, work
         if workspace_id is not None and workspace_id not in node.get('workspaceSelections', {}):
             continue
         row = _row(path, node, pinned or selected)
+        if row['workspaceId'] and row['path'] in qualifiers:
+            row['nameQualifier'] = qualifiers[row['path']]
         if pinned is not None:
             row['pinned'] = True
         rows.append(row)

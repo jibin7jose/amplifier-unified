@@ -81,6 +81,14 @@ Use **Workspace** for the registered folder-backed entity and **No workspace** f
 a standalone chat. “Project” remains ordinary language for someone’s undertaking,
 not an alternate UI name or a new membership model.
 
+Mixed pins distinguish a workspace destination from a chat: pinned workspaces
+keep a recognizable folder icon and a small **Workspace** subtitle even while
+showing activity separately. Location is secondary: show the shortest distinguishing
+folder context for duplicate display names, considering the indexed registry
+rather than just the visible pin page. The explicit full-path preference and
+inspectable/copyable full path remain available. Mixed pin order and actions stay
+with their existing owners; a subtitle does not change membership or execution.
+
 A new web view without saved client state already starts on Home. Restoring an
 existing view, refreshing or reconnecting retains its place; explicit chat links
 keep their target. Validate these existing boundaries before changing startup.

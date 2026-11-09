@@ -121,6 +121,31 @@ try{
  await action('session.pin',{id:sid,pinned:true});
  await expect(page.locator(`[data-sidebar-section=recent] [data-session-id="${sid}"]`)).toHaveCount(1);
  workspaceRegion=pinned;
+ await expect(row(b).locator('.a-workspace-result-path')).toHaveText('Workspace · team-two');
+ await expect(row(b).locator('.a-workspace-identity>svg')).toBeVisible();
+ // A unique alias needs no location, even when its folder leaf is duplicated.
+ await action('workspace.rename',{id:b.id,name:'Launch readiness'});
+ await expect(row(b).locator('.a-workspace-result-path')).toHaveText('Workspace');
+ await action('settings.update',{patch:{workspaces:{showPaths:true}}});
+ await expect(row(b).locator('.a-workspace-result-path')).toHaveText('Workspace · '+b.path);
+ await action('settings.update',{patch:{workspaces:{showPaths:false}}});
+ await action('workspace.rename',{id:a.id,name:'Launch readiness'});
+ await expect(row(b).locator('.a-workspace-result-path')).toHaveText('Workspace · team-two/'+b.name);
+ await action('workspace.rename',{id:a.id,name:a.name});
+ await action('workspace.rename',{id:b.id,name:b.name});
+ await expect(row(b).locator('.a-workspace-result-path')).toHaveText('Workspace · team-two');
+ // A running workspace retains its type icon; activity is a smaller separate badge.
+ await action('workspace.pin',{id:a.id,pinned:true});
+ const activity=async status=>{const response=await page.request.post(url+'/fixture/activity',{data:{sessionId:sid,status}});assert.ok(response.ok())};
+ await activity('working');
+ await expect(row(a).locator('.a-workspace-identity>svg')).toBeVisible();
+ const badge=row(a).locator('.a-workspace-identity>.a-navigation-status');
+ await expect(badge).toHaveAttribute('data-kind','working');
+ await expect(badge).toHaveAttribute('aria-label','1 chats working');
+ const iconBounds=await row(a).locator('.a-workspace-identity>svg').boundingBox(),badgeBounds=await badge.boundingBox();
+ assert.ok(badgeBounds.width<iconBounds.width&&badgeBounds.height<iconBounds.height);
+ await page.screenshot({path:out+'/pinned-workspace-working.png'});
+ await activity('idle');await action('workspace.pin',{id:a.id,pinned:false});
  const order=()=>pinned.locator('[data-order-id]').evaluateAll(rows=>rows.map(row=>row.dataset.orderId));
  await expect.poll(order).toEqual(['workspace:'+b.id,'session:'+sid]);
  await expect(section.getByRole('button',{name:'New chat in '+b.path,exact:true})).toHaveCount(1);
@@ -189,6 +214,25 @@ try{
  }
  await page.screenshot({path:out+'/action-space-detailed.png'});
  await presentation('standard');await expect(page.locator('#amp-one')).toHaveAttribute('data-interface-detail','standard');
+ for(const detail of ['minimal','detailed','standard']){
+  await presentation(detail);
+  await expect(page.locator('#amp-one')).toHaveAttribute('data-interface-detail',detail);
+  await expect(row(b).locator('.a-workspace-result-path')).toBeVisible();
+  assert.equal((await row(b).boundingBox()).height,54);
+ }
+ const workspaceGrip=pinned.getByRole('button',{name:'Reorder '+b.name,exact:true});
+ const dragBox=await workspaceGrip.boundingBox();
+ await page.mouse.move(dragBox.x+dragBox.width/2,dragBox.y+dragBox.height/2);await page.mouse.down();
+ await page.mouse.move(dragBox.x+dragBox.width/2,dragBox.y+dragBox.height/2+12,{steps:4});
+ const workspacePreview=page.locator('.a-pinned-drag .a-pinned-workspace');
+ await expect(workspacePreview.locator('.a-workspace-result-path')).toBeVisible();
+ await expect(workspacePreview.locator('.a-workspace-result-path')).toHaveText('Workspace · team-two');
+ await expect(workspacePreview.locator('.a-workspace-identity>svg')).toBeVisible();
+ // The floating container is rotated; compare layout height, not its transformed box.
+ assert.equal(await workspacePreview.evaluate(node=>node.offsetHeight),54);
+ await page.keyboard.press('Escape');await page.mouse.up();
+ await expect(workspacePreview).toHaveCount(0);
+ await composer.focus();await page.mouse.move(1000,900);
  for(const target of shortcutRows)assert.equal((await target.locator(':scope>.a-navigation-more').boundingBox()).width,0);
  await writeFile(out+'/action-space.json',JSON.stringify(actionSpace,null,2)+'\n');
  await row(b).hover();
@@ -198,7 +242,7 @@ try{
  assert.ok(pinnedGeometry.draft.x+pinnedGeometry.draft.width<=pinnedGeometry.more.x+1);
  const labelGeometry=await row(b).evaluate(node=>{
   const rect=el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}};
-  const label=node.querySelector('.a-workspace-label'),icon=node.querySelector('.a-workspace-select>.a-navigation-status');
+  const label=node.querySelector('.a-workspace-label'),icon=node.querySelector('.a-workspace-identity');
   return {row:rect(node),label:rect(label),icon:rect(icon),lines:[...label.children].map(line=>({rect:rect(line),overflow:getComputedStyle(line).overflowX})),overflow:getComputedStyle(label).overflowX};
  });
  assert.ok(labelGeometry.icon.right<=labelGeometry.label.left);
@@ -275,6 +319,7 @@ try{
  await expect(details.getByText('0',{exact:true})).toBeVisible();
  await page.keyboard.press('Escape');
  await action('workspace.rename',{id:b.id,name:'Pinned empty workspace'});
+ await expect(row(b).locator('.a-workspace-result-path')).toHaveText('Workspace');
  await expect(row(b).getByRole('button',{name:'Details and actions for Pinned empty workspace',exact:true})).toBeVisible();
  await action('workspace.pin',{id:a.id,pinned:true});
  await row(b).hover();

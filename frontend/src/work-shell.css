@@ -295,9 +295,13 @@
 #amp-one.a-approachable-shell .a-nav-chat[data-has-workspace=true] .a-nav-chat-label>.a-nav-chat-workspace,
 #amp-one.a-approachable-shell .a-nav-chat[data-show-paths=true] .a-nav-chat-label>small,
 #amp-one.a-approachable-shell .a-workspace-row[data-show-paths=true] .a-workspace-result-path,
+#amp-one.a-approachable-shell .a-pinned-workspace .a-workspace-result-path,
 #amp-one.a-approachable-shell[data-interface-detail=detailed] .a-quiet-sidebar .a-nav-chat-label>small,
 #amp-one.a-approachable-shell[data-interface-detail=detailed] :is(.a-pinned-chats,.a-pinned-drag) .a-nav-chat-label>small{display:block}
 #amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-nav-chat[data-has-workspace=true],
 #amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-nav-chat[data-show-paths=true],
 #amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-workspace-row[data-show-paths=true],
+#amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-pinned-workspace,
 #amp-one.a-approachable-shell[data-interface-detail=detailed] :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-nav-chat{height:54px;min-height:54px;max-height:54px}
+#amp-one.a-approachable-shell :is(.a-pinned-chats,.a-pinned-drag) .a-workspace-identity>.a-navigation-status{width:12px;height:12px}
+#amp-one.a-approachable-shell :is(.a-pinned-chats,.a-pinned-drag) .a-workspace-identity>.a-navigation-status svg{width:11px;height:11px}

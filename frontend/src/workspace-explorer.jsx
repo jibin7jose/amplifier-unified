@@ -3,7 +3,7 @@ import {useRegionActivity} from './activity-region';
 import React,{useEffect,useRef,useState} from 'react';
 import {ArrowLeft,ChevronRight,Folder,FolderDot,MoreHorizontal,Search,FolderPlus,Pencil,Trash2,MessageCircle,MessageSquarePlus,Pin,PinOff,ArrowUp,ArrowDown} from 'lucide-react';
 import {NavigationRow,NavigationStatus,WorkspaceDetails,useActivityClock,navigationDetailsContext} from './navigation-details';
-import {workspaceContext,parentPath} from './navigation-presentation';
+import {workspaceContext,parentPath,pinnedWorkspaceSubtitle} from './navigation-presentation';
 import {movePin} from './chat-navigation';
 import {LandingCollection} from './work-landing';
 
@@ -18,15 +18,17 @@ export function WorkspaceRow({row,state,act,now,open,newChat,browse,onEdit,compa
  const [error,setError]=useState('');
  const move=async offset=>{try{setError('');const result=await act(orderAction,{ids:movePin(pins,key,pins[index+offset])});const receipt=result?.result?.accepted!==undefined?result.result:result;if(receipt?.accepted===false)throw Error(receipt.error||'Could not reorder pins.')}catch(err){setError(err.message||'Could not reorder pins.')}};
  const counts=row.activityCounts||{},summary=counts.attention?{kind:'attention',attentionType:counts.error?'error':counts.decision?'decision':counts.blocked?'blocked':'error',label:`${counts.attention} chats need attention`}:counts.working?{kind:'working',label:`${counts.working} chats working`}:counts.waiting?{kind:'waiting',label:`${counts.waiting} chats waiting`}:row.unread?{kind:'unread',label:`${row.unread} chats with unread activity`}:counts.paused?{kind:'paused',label:`${counts.paused} chats paused`}:null;
+ const paths=!!state.settings?.workspaces?.showPaths;
+ const subtitle=pinnedShortcut?pinnedWorkspaceSubtitle(row,paths):paths?row.path:'in '+workspaceContext(row);
  const content=<>{handle}
   <button type="button" className="a-workspace-select" data-tooltip="off" onPointerEnter={revealNavigationTitles} onFocus={revealNavigationTitles} data-navigation-select data-action={workspace?'workspace.select':'view.update'} aria-label={workspace?'Open chats in '+row.path:browseLabel} aria-pressed={workspace?selected:undefined} onClick={()=>workspace?open(row):browse(row.path)}>
-   {summary?<NavigationStatus activity={summary}/>:<span className="a-navigation-status" aria-hidden="true">{workspace?<FolderDot/>:<Folder/>}</span>}<span className="a-workspace-label"><span data-scroll-title><span>{row.customName||row.name}</span></span><small className="a-workspace-result-path" data-scroll-title><span>{state.settings?.workspaces?.showPaths?row.path:'in '+workspaceContext(row)}</span></small>{landing&&<small className="a-landing-status">{workspace&&summary?summary.label:`${count} ${noun}`}</small>}</span>
+   {pinnedShortcut?<span className="a-workspace-identity"><Folder aria-hidden="true"/>{summary&&<NavigationStatus activity={summary}/>}</span>:summary?<NavigationStatus activity={summary}/>:<span className="a-navigation-status" aria-hidden="true">{workspace?<FolderDot/>:<Folder/>}</span>}<span className="a-workspace-label"><span data-scroll-title><span>{row.customName||row.name}</span></span><small className="a-workspace-result-path" data-scroll-title><span>{subtitle}</span></small>{landing&&<small className="a-landing-status">{workspace&&summary?summary.label:`${count} ${noun}`}</small>}</span>
    {!pinnedShortcut&&<span className="a-workspace-count" aria-label={`${count} ${noun}`}>{count}</span>}{!workspace&&row.canBrowse&&<ChevronRight className="a-workspace-arrow"/>}
   </button>
   {!compact&&workspace&&row.canBrowse&&<button type="button" className="a-workspace-drill" data-action="view.update" aria-label={browseLabel} title={`${row.descendantWorkspaceCount} nested workspaces`} onClick={()=>browse(row.path)}><ChevronRight/></button>}
   {compact&&workspace&&<button type="button" className="a-icon a-workspace-new-chat" data-action="session.draft" aria-label={'New chat in '+row.path} title={canDraft?'New chat in '+row.path:'Workspace folder unavailable'} disabled={!canDraft} onClick={e=>{e.stopPropagation();newChat(row)}}><MessageSquarePlus/></button>}
  </>;
- const className=`a-workspace-row ${landing?'a-landing-workspace ':''}${workspace?'is-workspace':''} ${selected?'is-selected':''}`;
+ const className=`a-workspace-row ${landing?'a-landing-workspace ':''}${workspace?'is-workspace':''} ${selected?'is-selected':''}${pinnedShortcut?' a-pinned-workspace':''}`;
  if(floating)return <div className={className} data-show-paths={!!state.settings?.workspaces?.showPaths}>{content}<MoreHorizontal className="a-navigation-more"/></div>;
  if(!workspace)return <div className={className} data-show-paths={!!state.settings?.workspaces?.showPaths} data-workspace-path={row.path}>{content}</div>;
  return <NavigationRow contextKey={navigationDetailsContext(state)} className={className} data-show-paths={!!state.settings?.workspaces?.showPaths} data-workspace-path={row.path} data-qualified={!row.customName&&row.pathLabel?.includes('/')} label={row.customName||row.name} details={({close})=><WorkspaceDetails row={row} now={now} actions={<>

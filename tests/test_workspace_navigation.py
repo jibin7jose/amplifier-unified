@@ -149,6 +149,78 @@ def test_pages_are_bounded_and_reset_after_browsing_or_filtering():
     assert reset['page'] == 1 and reset['filter'] == ''
 
 
+def test_name_qualifiers_use_display_names_across_unpinned_filtered_and_off_page_rows():
+    value = state([
+        workspace('one', '/work/team-one/app'),
+        workspace('two', '/work/team-two/app'),
+        workspace('alias', '/work/another-folder', name='app'),
+        workspace('unique', '/work/other/app', name='Unique alias'),
+        *[workspace(str(i), f'/work/project-{i:03}') for i in range(205)],
+    ], [], 'one')
+    value['pinnedWorkspaceIds'] = ['one', 'unique']
+    rows = snapshot(value, pinned_only=True)['rows']
+    assert [(row['workspaceId'], row.get('nameQualifier')) for row in rows] == [
+        ('one', 'team-one'), ('unique', None)]
+    filtered = browse(value, navWorkspaceFilter='team-two')
+    assert filtered['rows'][0]['nameQualifier'] == 'team-two'
+    alias = browse(value, navWorkspaceFilter='another-folder')['rows'][0]
+    assert alias['customName'] == 'app'
+    assert alias['nameQualifier'] == 'another-folder'
+    # Renaming the other registrations removes the collision, even when unpinned.
+    value['workspaces'][1]['name'] = 'Second app'
+    value['workspaces'][2]['name'] = 'Other app'
+    value['view']['navWorkspaceFilter'] = ''
+    assert 'nameQualifier' not in snapshot(value, pinned_only=True)['rows'][0]
+
+
+def test_duplicate_alias_qualifiers_retain_deep_ancestors_and_windows_roots():
+    value = state([
+        workspace('one', '/one/common/deep/app', name='Shared'),
+        workspace('two', '/two/common/deep/app', name='Shared'),
+        workspace('win', r'C:\work\client', name='Shared'),
+        workspace('drive', 'D:\\', name='Shared'),
+    ], [])
+    value['pinnedWorkspaceIds'] = ['one', 'two', 'win', 'drive']
+    rows = snapshot(value, pinned_only=True)['rows']
+    assert [row['nameQualifier'] for row in rows] == [
+        'one/common/deep/app', 'two/common/deep/app', 'client', 'D:']
+
+
+def test_final_qualifiers_stay_unique_across_aliases_and_default_names():
+    value = state([
+        workspace('one', '/work/one/app'),
+        workspace('two', '/work/two/app'),
+        workspace('alias', '/work/one', name='app'),
+        workspace('root-level', '/app'),
+    ], [])
+    value['pinnedWorkspaceIds'] = ['one', 'two', 'alias', 'root-level']
+    rows = snapshot(value, pinned_only=True)['rows']
+    qualifiers = [row['nameQualifier'] for row in rows]
+    assert len(set(qualifiers)) == 4 and all(qualifiers)
+    assert qualifiers == ['one/app', 'two/app', 'one', '/app']
+    value['workspaces'] = [workspace('root-level', '/app'), workspace('other', '/elsewhere/app')]
+    value['pinnedWorkspaceIds'] = ['root-level', 'other']
+    assert [row['nameQualifier'] for row in snapshot(value, pinned_only=True)['rows']] == ['/', 'elsewhere']
+
+
+def test_name_collision_deduplicates_legacy_registration_paths_and_reuses_activity_cache():
+    from amplifier_web.workspace_navigation import _name_qualifiers
+    value = state([workspace('old', '/work/app'), workspace('new', '/work/app')],
+                  [chat('a', 'new')], 'new')
+    value['pinnedWorkspaceIds'] = ['old']
+    assert 'nameQualifier' not in snapshot(value, pinned_only=True)['rows'][0]
+    value['workspaces'].append(workspace('other', '/elsewhere/app'))
+    _name_qualifiers.cache_clear()
+    first = snapshot(value, pinned_only=True)['rows'][0]
+    assert first['workspaceId'] == 'old' and first['nameQualifier'] == 'work'
+    before = _name_qualifiers.cache_info()
+    value['sessions'][0]['status'] = 'working'
+    again = snapshot(value, pinned_only=True)['rows'][0]
+    assert again['nameQualifier'] == 'work' and again['activityCounts']['working'] == 1
+    assert _name_qualifiers.cache_info().misses == before.misses
+    assert _name_qualifiers.cache_info().hits == before.hits + 1
+
+
 def test_browsing_persists_for_same_selection_but_reveals_new_workspace_on_selection():
     value = state([workspace('one', '/home/dev/one'), workspace('two', '/home/play/two')],
                   [chat('a', 'one'), chat('b', 'two')], 'one')
