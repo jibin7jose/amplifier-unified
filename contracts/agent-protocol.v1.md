@@ -39,6 +39,9 @@ reply; an agent's supported triggers and outcome channels belong to its implemen
 2. **AP2 — Preserve native composition.** The Amplifier adapter retains supported
    bundles, providers, tools, hooks, contexts and loops. Adapter extraction is not
    permission to substitute a differently constrained engine or discard capabilities.
+   An explicit dependency-preparation policy must be enforced by the native owner
+   before readiness and throughout its applicable execution lifetime. A readiness
+   claim cannot replace enforcement or silently weaken the requested policy.
    Broken: ACP adoption silently removes a provider or live loop. Affected: Amplifier users.
 
 3. **AP3 — Keep identity and authority.** A native execution session retains its
@@ -88,6 +91,7 @@ Which extracted native policies need separate reusable packages to keep the agen
 
 | Date | Change | Evidence |
 | --- | --- | --- |
+| 2026-11-09 | Require truthful enforcement of explicitly requested dependency-preparation policy. | [Native preparation boundary](../docs/architecture/protocol-fit.md#native-dependency-preparation); focused worker qualification remains separate from ACP parity. |
 | 2026-11-07 | Scope exclusive execution ownership to native identity, separate from shared conversation participation. | [Conversation ownership design](../docs/architecture/state-and-storage.md#conversation-participation-and-execution); implementation qualification remains pending. |
 | 2026-10-02 | Ratified for implementation; exclude amplifier-agent as the native backend. | User approval of the plan and direction; implementation evidence remains separate. |
 | 2026-10-02 | Initial AP1–6. | [Native runtime and external adapter review](../docs/architecture/evidence.md). |

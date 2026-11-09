@@ -22,7 +22,7 @@ the protocol migration; unrelated releases do not wait for it.
 
 ## Sequence and gates
 
-The November 7 refinement below defines the next small batches. The broader waves
+The November 9 refinement below defines the next small batches. The broader waves
 and Q matrix remain migration qualification, not prerequisites for every package
 extraction or unrelated main release.
 
@@ -173,20 +173,35 @@ discarding supported product behavior.
 
 ## Next bounded batches
 
-Refined November 7 against [current source and retained prototypes](evidence.md#november-7-ownership-review).
+Reordered November 9 by user direction: repository decomposition and the ACP pilot
+are the primary development lanes. This supersedes their earlier secondary priority
+for this work, while Main's current releases remain independent. The
+[November 7 ownership review](evidence.md#november-7-ownership-review) remains the
+starting map, with current source deltas qualified separately.
 This sequence delivers independent development before a full protocol migration.
 Each row is a separate reviewable change; no repository is created by this proposal.
 
 | Batch / owner | Deliverable | Focused exit evidence |
 | --- | --- | --- |
-| 1: shell SDK / component authoring | Extract `packages/shell-sdk`, its authoring instructions and a standalone fixture consumer into a releasable package; retain existing interface semantics | Build/install the artifact without private app imports; load one component in an owned Unified DTU; incompatible interface reports a useful failure |
-| 2: portable clients and capabilities | Separate authored components/appearance artifacts, then qualifying document/rendering or publishing libraries behind named adapters | Independent fixture consumer and actual integration path; built-in shell imports of settings/navigation/API remain app-owned until adapters replace them |
-| 3: native execution and conversation proof | Reuse current root workers/retention and retained ACP adapter mechanisms; define conversation, participation and execution identities distinctly | The two-stage experience proof below, with native history and accepted-work ownership preserved |
+| 1a: native ACP execution | Enforce the existing Foundation preparation policy for an explicitly immutable worker, then exercise the retained adapter against current native execution | Truthful readiness, actual prompt/stream/checkpoint/load, with Full and active Stop qualified separately; no adapter bypass or copied runtime |
+| 1b: independent current web build | Export the current HTTP/SSE client and its finite canonical build inputs as a disposable source capsule; build a separate static artifact with exact paired-server provenance | Build outside any Unified checkout and exercise a synthetic HTTP/SSE peer; no second maintained catalog/SDK owner or implied cross-version compatibility |
+| 1c: independent peers and conversation fixture | Provide a one-command standard ACP peer/runner and a fixture-local experience owner with distinct participants and execution bindings | Stream/cancel, explicit missing capabilities and lost-reply/duplicate-delivery behavior; ordinary ACP messages, no private sibling imports or invented wire fields |
+| 2: integrated experience and first component delivery | Combine the qualified boundaries for the two-stage proof below; release independently versioned artifacts and test their Unified assembly | Native plus another ACP implementation, then two participants in one conversation; installed artifacts, ownership and unsupported behavior visible |
+| 3: further client and capability extraction | Publish the current client from its owning repository; introduce the supported independent compatibility/adoption boundary; continue SDK, authored component and capability packages | Select a compatible alternative and return to the tested default retaining new work; fixture and actual integration paths; AHP client migration remains separate |
 | 4: catalog/read boundary and Rust comparison | Define typed catalog queries and a separately named selected-history-page interface; retain native writers; compare a bounded Rust implementation only after fixtures exist | Same inputs, visible results, error/expiry semantics and cold/warm cost measurements; return to current implementation without rewriting history |
-| 5: independent whole-client release | Build web client against an exact current HTTP/SSE fixture and packaged server; introduce a supported public compatibility boundary | Install a tested default, select a compatible alternative, and return to the default while retaining new work; AHP implementation follows separately |
 
-Batch 1 can start without selecting the host language. Batches 2 and 4 need not
-wait for all external ACP peers. The SDK's extraction must preserve the current
+The three first batches run in parallel. Their common milestone is independently
+runnable artifacts and an actual native ACP conversation, not a complete migration.
+Use existing owned repositories or local fixture packages while repository/package
+registration is pending. Neither SDK publication, the exhaustive audit, generated
+static removal nor a language choice gates these first batches. Keep those items,
+developer feedback adoption, automatic resource/evidence lifetimes and the turnkey
+release path on the backlog; this changes ordering, not completion criteria.
+
+The first client artifact remains paired with the exact server source revision.
+An export is disposable build input, not a new canonical copy of shared sources.
+It preserves the current monorepo build and does not introduce compatibility
+fallbacks or retire tracked static assets. The SDK's extraction must preserve the current
 extension validator: it fingerprints static JavaScript assets, so narrowing that
 coupling requires an explicit validator/host compatibility decision, not just a
 package move. Existing bundled web/server rules continue until their public seam

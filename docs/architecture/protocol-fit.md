@@ -57,6 +57,22 @@ It is not established as a drop-in replacement for today's bundle/module runtime
 Build `amplifier-agent-acp` over the runtime we already use. The user explicitly
 excluded `microsoft/amplifier-agent` from the migration; do not adopt it as the backend.
 
+### Native dependency preparation
+
+An explicitly immutable native worker binds Foundation's public dependency-installation
+policy before accepting work. That policy covers inherited asynchronous/thread work,
+lazy activation and joined cleanup for the worker lifetime. Only after binding the
+compatible policy may its native readiness report include `runtimePreparation`:
+`version: 1`, `immutable: true`, `dependencyInstallation: false`, and
+`policy: "foundation-dependency-installation"`. Missing policy support or a malformed
+launcher value fails before readiness; ordinary mutable startup retains its behavior.
+
+This is the native launcher/worker boundary, not an added ACP field. The adapter
+checks the report; it does not manufacture it. The policy prevents Foundation
+dependency installation, not arbitrary module filesystem or subprocess effects.
+It establishes neither Full authorization nor source closure, cancellation, resume
+or broader protocol conformance; those need their own evidence.
+
 ## Mapping inventory
 
 This assigns a destination, not a promise that every mapping already exists.
