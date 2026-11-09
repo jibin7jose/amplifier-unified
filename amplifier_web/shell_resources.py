@@ -28,7 +28,7 @@ GLOBAL_KEYS = frozenset({'workspaces', 'settings', 'workspaceDefaults', 'pinnedS
     'hiddenNativeWorkspaces'})
 CHAT_GLOBALS = GLOBAL_KEYS - {'sharedHistory', 'locationListing', 'actionStatus'}
 CHAT_FILTERS = ('navChatScope', 'navSort', 'navFilter', 'navStatusFilter', 'navLocationFilter',
-    'navArchive', 'navCollection', 'navChatPage', 'navShowAgentCreated')
+    'navArchive', 'navCollection', 'navChatPage', 'navShowAgentCreated', 'navGroup', 'navAge')
 WORKSPACE_FILTERS = ('navWorkspaceBrowseFor', 'navWorkspacePath', 'navWorkspaceFilter',
     'navWorkspacePage', 'navWorkspaceMode', 'navWorkspaceArchive')
 
@@ -131,6 +131,12 @@ class ShellResources:
     def registered(self, identity):
         self._prune()
         return identity in self.clients
+
+    def list_clock(self, identity):
+        from .chat_navigation import list_clock
+        registration = self.clients.get(identity)
+        return (list_clock() if registration is not None
+                and registration['wanted'] & {'sidebarSearch', 'sidebarWorkspace'} else None)
 
     def _bound(self, identity):
         service = self.shell.service
@@ -265,9 +271,11 @@ class ShellResources:
         else:
             query = view
         fields = (*CHAT_FILTERS, 'navPinnedPage', 'navRecentLimit', 'navRecentRevision')
+        from .chat_navigation import list_clock
         return (navigation_revision, globals_key,
                 workspace if query.get('navChatScope') != 'all' else None,
-                scoped.get('selectedSessionId'), encoded({key: query.get(key) for key in fields}))
+                scoped.get('selectedSessionId'), encoded({key: query.get(key) for key in fields}),
+                list_clock() if name in {'sidebarSearch', 'sidebarWorkspace'} else None)
 
     @staticmethod
     def _record(value, previous, previous_revision=0):
@@ -317,8 +325,9 @@ class ShellResources:
         recent = tuple((item['id'], self.shell.recent_limits.get(self.shell.recent_key(client, item)))
                        for item in instances
                        if item['slot'] == 'navigation')
+        clock = self.list_clock(identity)
         stamp = (bootstrap, nav, workspace_revision, root_navigation_revision, self._epochs(GLOBAL_KEYS), encoded(client.get('views', {})),
-                 scoped_views, tuple(registration['scope']), registration['wanted'], recent,
+                 scoped_views, tuple(registration['scope']), registration['wanted'], recent, clock,
                  state.get('revision') if any(item['package'] not in ('builtin.chats', 'builtin.workspaces')
                      and not item['package'].startswith('builtin.')
                      for item in composition['instances']) else None)
@@ -332,9 +341,11 @@ class ShellResources:
             count(self.shell.service, 'shell.resources.snapshot.hit')
             return registration['envelope']
         try:
-            result = self._snapshot(identity, state=state, client=client, bootstrap=bootstrap,
-                navigation_revision=nav, workspace_revision=workspace_revision, root_navigation_revision=root_navigation_revision,
-                scoped_states=scoped_states, resolved_instances=instances)
+            from .chat_navigation import frozen_list_clock
+            with frozen_list_clock(clock):
+                result = self._snapshot(identity, state=state, client=client, bootstrap=bootstrap,
+                    navigation_revision=nav, workspace_revision=workspace_revision, root_navigation_revision=root_navigation_revision,
+                    scoped_states=scoped_states, resolved_instances=instances)
         except ResourceLimit:
             result = {'hostInstanceId': self.shell.service.instance_id, 'clientId': identity,
                 'demandId': registration['demandId'], 'bootstrapKey': bootstrap,

@@ -106,9 +106,14 @@ class StateProjections:
             if key[0] in {'session-index', 'attention', 'workspace-index', 'workspaces', 'chat-registry'}:
                 retained[key] = value
             elif key[0] == 'chat-index':
+                # Pins change grouped metadata and finite-age membership, not
+                # merely order. Rebuild from all roots so newly pinned old chats
+                # can enter, and unpinned expired chats can leave.
+                if key[-1] in {'search', 'workspace'}:
+                    continue
                 rows, scope, counts = value
                 sort = scope.get('sort', 'activity')
-                pin_first = key[-1]
+                pin_first = key[-2]
                 rows = [{**row, 'pinned': row['id'] in pins} for row in rows]
                 rows.sort(key=lambda row: (not row['pinned'] if pin_first else False, pins[row['id']] if pin_first and row['pinned'] else
                     row['title'].lower() if sort == 'name' else
@@ -217,7 +222,7 @@ class StateProjections:
         return (state.get('selectedSessionId'), state.get('selectedWorkspaceId'),
                 cls.view_scope(state, ('navChatScope', 'navSort', 'navFilter', 'navStatusFilter', 'navLocationFilter',
                                       'navArchive', 'navCollection', 'navChatPage', 'navPinnedPage', 'navShowAgentCreated',
-                                      'navRecentLimit', 'navRecentRevision')))
+                                      'navRecentLimit', 'navRecentRevision', 'navGroup', 'navAge')))
 
     @classmethod
     def workspace_scope(cls, state):
@@ -273,14 +278,16 @@ class StateProjections:
         from .chat_navigation import catalog, registry, snapshot
         view = state.get('view', {})
         workspace = None if view.get('navChatScope') == 'all' else state.get('selectedWorkspaceId')
-        filters = {key: view.get(key) for key in ('navChatScope', 'navSort', 'navFilter', 'navStatusFilter', 'navLocationFilter', 'navArchive', 'navCollection')}
+        filters = {key: view.get(key) for key in ('navChatScope', 'navSort', 'navFilter', 'navStatusFilter', 'navLocationFilter', 'navArchive', 'navCollection', 'navGroup', 'navAge')}
+        from .chat_navigation import list_clock
+        filters['listClock'] = state.get('_navigationListClock', list_clock()) if section in {'search', 'workspace'} else None
         if section:
             filters['navStatusFilter'] = 'all'
         catalog_state = {**state, 'view': {**view, 'navStatusFilter': 'all'}} if section else state
         registrations = self.get(('chat-registry',), lambda: registry(state))
         pin_first = section not in ('recent', 'shortcuts')
-        index = self.get(('chat-index', workspace, json.dumps(filters, sort_keys=True), pin_first),
-                         lambda: catalog(catalog_state, indexed=registrations, pin_first=pin_first))
+        index = self.get(('chat-index', workspace, json.dumps(filters, sort_keys=True), pin_first, section),
+                         lambda: catalog(catalog_state, indexed=registrations, pin_first=pin_first, section=section))
         return index
 
     def root_navigation_dependencies(self, state):
@@ -300,11 +307,15 @@ class StateProjections:
         return stamp
 
     def chats(self, state, *, section=None):
+        from .chat_navigation import list_clock
+        clock = list_clock() if section in {'search', 'workspace'} else None
+        if clock is not None:
+            state = {**state, '_navigationListClock': clock}
         directory = self.directory
         if directory is not None:
             dependencies = self.root_navigation_dependencies(state)
             scope = self.navigation_page_scope(state, section=section)
-            page = self.directory_read(('directory-chats', *dependencies, section, *scope),
+            page = self.directory_read(('directory-chats', *dependencies, section, *scope, clock),
                 'chats', state, {'section': section}, lambda: directory.chats(state, section=section))
             if section in {'shortcuts', 'pinned'} and page['scope']['selectedSessionId'] != state.get('selectedSessionId'):
                 # Selection is a receipt, except for the selected agent-created
@@ -313,7 +324,7 @@ class StateProjections:
             return page
         from .chat_navigation import snapshot
         index = self.chat_catalog(state, section=section)
-        return self.get(('chats', section, *self.chat_scope(state)), lambda: snapshot(state, indexed=index, section=section))
+        return self.get(('chats', section, *self.chat_scope(state), clock), lambda: snapshot(state, indexed=index, section=section))
 
     def navigation_page_scope(self, state, *, section):
         selected, workspace, view = self.chat_scope(state)

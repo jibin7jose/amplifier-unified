@@ -959,8 +959,9 @@ class AppService:
         if client_id is not None:
             self.clients.reconcile(client_id)
             cached = self._client_snapshots.get(client_id)
+            preferences_stamp = (self._shared_preferences_stamp, self.shell.resources.list_clock(client_id))
             if (cached is None or cached['revision'] != self.state['revision'] or session_id is not None
-                    or self._client_snapshot_preferences.get(client_id) != self._shared_preferences_stamp):
+                    or self._client_snapshot_preferences.get(client_id) != preferences_stamp):
                 from .browser_state import snapshot
                 derived = self.projections.browser(self.state, selected_context=(
                     session_id is None and self.clients.records[client_id]['kind'] == 'web'))
@@ -980,7 +981,7 @@ class AppService:
                     cached['shellChangeToken'] = self.shell.change_token(client_id)
                 if session_id is None:
                     self._client_snapshots[client_id] = cached
-                    self._client_snapshot_preferences[client_id] = self._shared_preferences_stamp
+                    self._client_snapshot_preferences[client_id] = preferences_stamp
             return cached
         cached = getattr(self, '_browser_snapshot', None)
         if cached is None or cached['revision'] != self.state['revision']:

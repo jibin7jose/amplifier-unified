@@ -5,6 +5,8 @@ import math
 import time
 import uuid
 from typing import Any, TypedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from .session_navigation import is_top_level, is_agent_created
 from .managed_chats import is_managed
@@ -39,7 +41,51 @@ PAGE_SIZE = 100
 RECENT_LIMITS = (20, 40, 60, 80, 100)
 MAX_POST_ADMISSIONS = 16
 SIDEBAR_FILTER_KEYS = {'navSort', 'navArchive', 'navCollection', 'navLocationFilter',
-                       'navStatusFilter', 'navFilter', 'navChatPage'}
+                       'navStatusFilter', 'navFilter', 'navChatPage', 'navGroup', 'navAge'}
+AGE_SECONDS = {'24h': 86400, '7d': 7*86400, '30d': 30*86400,
+               '90d': 90*86400, '1y': 365*86400}
+DATE_GROUPS = ('Last 24 hours', '1–7 days ago', '7–30 days ago', '30–90 days ago',
+               '90 days–1 year ago', 'Over 1 year ago', 'Activity time unavailable')
+STATUS_GROUPS = {'attention': 'Needs you', 'unread': 'Ready for you', 'working': 'Working',
+                 'waiting': 'Waiting', 'paused': 'Paused', 'idle': 'Pick up again'}
+_list_clock = ContextVar('navigation_list_clock', default=None)
+
+
+def list_clock():
+    # Relative filters and date buckets share a minute witness in query caches.
+    saved = _list_clock.get()
+    return saved if saved is not None else int(time.time() // 60) * 60
+
+
+@contextmanager
+def frozen_list_clock(now):
+    token = _list_clock.set(now)
+    try:
+        yield
+    finally:
+        _list_clock.reset(token)
+
+
+def list_group(group, pinned, recent, workspace_id, workspace_name, kind, now):
+    """Scalar-only grouping: callers order the complete catalog before paging."""
+    if pinned:
+        return ('pin', 'Pinned', -1)
+    if group == 'workspace':
+        return ('workspace:' + (workspace_id or ''), workspace_name or 'No workspace', 0)
+    if group == 'status':
+        keys = tuple(STATUS_GROUPS)
+        kind = kind if kind in STATUS_GROUPS else 'idle'
+        return ('status:' + kind, STATUS_GROUPS[kind], keys.index(kind))
+    at = timestamp(recent)
+    index = (next((i for i, seconds in enumerate(AGE_SECONDS.values()) if at >= now-seconds), 5)
+             if at is not None and at > 0 else 6)
+    return ('date:' + str(index), DATE_GROUPS[index], index)
+
+
+def group_row(row, group, now):
+    identity, title, _ = list_group(group, row['pinned'], row['recentActivityAt'],
+        row.get('workspaceId'), row.get('workspaceName'), row['activity']['kind'], now)
+    return {**row, 'group': {'id': identity, 'title': title}}
 
 
 def valid_recent_limit(value):
@@ -291,6 +337,10 @@ def view_patch(patch):
         view_patch(value)
     if 'navSort' in patch and patch['navSort'] not in ('activity', 'created', 'name'):
         raise ValueError('Choose recent activity, newest created, or name.')
+    if 'navGroup' in patch and patch['navGroup'] not in ('recent', 'workspace', 'status'):
+        raise ValueError('Choose Recent, Workspace or Status grouping.')
+    if 'navAge' in patch and patch['navAge'] not in (*AGE_SECONDS, 'all'):
+        raise ValueError('Choose 24h, 7d, 30d, 90d, 1y or All.')
     if 'navArchive' in patch and patch['navArchive'] not in ('active', 'archived', 'all'):
         raise ValueError('Choose active, archived or all conversations.')
     if 'navCollection' in patch and patch['navCollection'] is not None and (not isinstance(patch['navCollection'], str) or len(patch['navCollection']) > 200):
@@ -353,7 +403,7 @@ def registry(state):
     return by_id, by_path, labels, roots, grouped
 
 
-def catalog(state, *, indexed=None, pin_first=True):
+def catalog(state, *, indexed=None, pin_first=True, section=None):
     """Filter/sort once; selected chat and pagination belong to each client."""
     by_id, by_path, labels, roots, grouped = registry(state) if indexed is None else indexed
     selected = by_id.get(state.get('selectedWorkspaceId'))
@@ -364,6 +414,11 @@ def catalog(state, *, indexed=None, pin_first=True):
     scope = {'mode': mode, 'workspaceId': selected['id'] if mode == 'workspace' and selected else None,
              'filter': query, 'selectedSessionId': state.get('selectedSessionId')}
     sort = view.get('navSort', 'activity')
+    grouped_catalog = section in {'search', 'workspace'}
+    group, age = view.get('navGroup', 'recent'), view.get('navAge', 'all')
+    now = state.get('_navigationListClock', list_clock())
+    if grouped_catalog:
+        scope.update(group=group, age=age)
     if sort != 'activity':
         scope['sort'] = sort
     location_filter = view.get('navLocationFilter', 'all') if mode == 'all' else 'all'
@@ -404,6 +459,10 @@ def catalog(state, *, indexed=None, pin_first=True):
         shared_id = session.get('runtimeSessionId') or session.get('nativeIdentity') or session['id']
         if not _matches((title, description, session['id'], shared_id, workspace['path'], workspace.get('name', '')), query):
             continue
+        if grouped_catalog and age in AGE_SECONDS and session['id'] not in pins:
+            at = navigation_activity(session)
+            if at <= 0 or at < now - AGE_SECONDS[age]:
+                continue
         summary = activity(session, bool(unread.get(session['id'])),
                            error_reviewed=session['id'] in reviewed_errors,
                            blocked=task_blocked(state, session['id']))
@@ -426,6 +485,14 @@ def catalog(state, *, indexed=None, pin_first=True):
         pin_order.get(row['id'], 0) if pin_first and row['pinned'] else
         (row['title'].lower() if sort == 'name' else
          -(row['createdAt'] or 0) if sort == 'created' else -row['recentActivityAt'])))
+    if grouped_catalog:
+        rows = [group_row(row, group, now) for row in rows]
+        # Stable sort retains saved pin order and the chosen sort within groups.
+        rows.sort(key=lambda row: (
+            list_group(group, row['pinned'], row['recentActivityAt'], row['workspaceId'],
+                       row['workspaceName'], row['activity']['kind'], now)[2],
+            row['group']['title'].lower() if group == 'workspace' and not row['pinned'] else '',
+            row['group']['id'] if group == 'workspace' and not row['pinned'] else ''))
     return rows, scope, counts
 
 
@@ -434,7 +501,7 @@ def snapshot(state: dict[str, Any], *, indexed=None, section: str | None = None)
     # Section counts are computed before the activity filter, so switching from
     # Attention to Working still reports the full matching count for each.
     catalog_state = {**state, 'view': {**view, 'navStatusFilter': 'all'}} if section else state
-    rows, scope, counts = catalog(catalog_state, pin_first=section not in ('recent', 'shortcuts')) if indexed is None else indexed
+    rows, scope, counts = catalog(catalog_state, pin_first=section not in ('recent', 'shortcuts'), section=section) if indexed is None else indexed
     scope = {**scope, 'selectedSessionId': state.get('selectedSessionId')}
     if section:
         scope['section'] = section

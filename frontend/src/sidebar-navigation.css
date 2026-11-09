@@ -33,3 +33,12 @@
  #amp-one:not([data-interface-detail="detailed"]) .a-quiet-sidebar :is(.a-nav-chat,.a-workspace-row):not(:hover,:focus-within,.is-peeking)>:is(.a-navigation-more,.a-workspace-new-chat){width:0;min-width:0;flex-basis:0;padding-inline:0;margin-inline:0;overflow:hidden;opacity:0}
 }
 .a-chat-shortcut{position:absolute;left:4px;top:50%;transform:translateY(-50%);z-index:2;display:grid;place-items:center;width:22px;height:24px;border:1px solid var(--a-line);border-radius:6px;background:var(--a-surface,#fff);color:var(--a-ink);box-shadow:0 1px 4px #0002;font:600 12px/1 system-ui;pointer-events:none}
+#amp-one .a-chat-list-views{display:flex;align-items:start;flex-wrap:wrap;gap:16px;margin:12px 0;min-width:0}
+#amp-one .a-chat-list-views>label{display:grid;gap:4px;min-width:0;flex:1 1 150px}
+#amp-one .a-chat-list-views select{max-width:100%;min-width:0}
+#amp-one .a-chat-age-filter{flex:2 1 240px;min-width:0}
+#amp-one .a-chat-age-filter>label{display:flex;justify-content:space-between;gap:8px}
+#amp-one .a-chat-age-filter input[type=range]{display:block;box-sizing:border-box;width:100%;min-width:0;min-height:32px;padding:0;margin:0;accent-color:var(--a-accent)}
+#amp-one .a-chat-age-stops{display:flex;justify-content:space-between;gap:4px;font-size:var(--a-text-sm,13px);color:var(--a-muted)}
+#amp-one .a-chat-age-filter small{display:block;color:var(--a-muted);font-size:var(--a-text-sm,13px);margin-top:4px}
+#amp-one .a-chat-group-heading{grid-column:1/-1;margin:16px 0 6px;font-size:var(--a-text-sm,13px);font-weight:600;color:var(--a-muted)}

@@ -93,6 +93,36 @@ async def test_cold_snapshot_never_runs_query_on_host_and_releases_loop_lock(ser
                for row in receipts)
 
 
+async def test_delayed_grouped_completion_keeps_payload_clock_not_notification_clock(service, monkeypatch):
+    from amplifier_web import chat_navigation
+    now = [1_800_000_000]
+    monkeypatch.setattr(chat_navigation.time, 'time', lambda: now[0])
+    for row in service.state['sessions']:
+        row.update(recentActivityAt=now[0]-86400, navigationActivityAt=now[0]-86400)
+    owner = prepare(service)
+    client = service.shell.client('browser')
+    client['baselineView']['navRecentView'] = {'navAge': '24h'}
+    service.shell.put('client', 'browser', client)
+    owner.queries.factory = held_projector
+    notified = []
+    original = service.shell.notify
+    def notify(identity):
+        notified.append(chat_navigation.list_clock())
+        original(identity)
+    monkeypatch.setattr(service.shell, 'notify', notify)
+    snapshot(service, wanted=('sidebarSearch',))
+    await started(service)
+    assert all(job['inputs']['state']['_navigationListClock'] == now[0]
+               for job in owner.queries.jobs.values())
+    now[0] += 60
+    (service.data_dir / 'query-release').touch()
+    await asyncio.wait_for(asyncio.shield(owner.queries.runner), 15)
+    assert notified and set(notified) == {now[0]}
+    complete = await settle(service, wanted=('sidebarSearch',))
+    page = complete['instances']['chats']['resources']['sidebarSearch']['value']['sidebarNavigation']['search']
+    assert page['total'] == 0 and page['items'] == []
+
+
 async def test_exact_existing_query_oracle_and_independent_full_api(service, tmp_path):
     from amplifier_web.native_catalog import NativeCatalog
     from test_native_directory import seed

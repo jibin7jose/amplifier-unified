@@ -80,6 +80,31 @@ async def test_independent_instances_clients_and_bounded_queries(service):
 
 
 @pytest.mark.asyncio
+async def test_catalog_group_and_age_are_persisted_per_client_instance(service):
+    composition = deepcopy(DEFAULT)
+    composition['instances'].append({'id': 'other-chats', 'package': 'builtin.chats',
+        'slot': 'navigation', 'scope': {'mode': 'all'}})
+    change = await prepare(service, composition)
+    await command(service, 'shell.changes.apply', clientId='browser-one', changeId=change, expectedRevision=0)
+    before = deepcopy(service.state)
+    await command(service, 'shell.view.update', clientId='browser-one', instanceId='chats',
+                  patch={'navRecentView': {'navGroup': 'workspace', 'navAge': '24h'},
+                         'navGroup': 'status', 'navAge': '7d'})
+    first = service.shell.inspect('browser-one', snapshots=True)['snapshots']
+    assert first['chats']['sidebarNavigation']['search']['scope']['group'] == 'workspace'
+    assert first['chats']['sidebarNavigation']['search']['scope']['age'] == '24h'
+    assert first['chats']['sidebarNavigation']['workspace']['scope']['group'] == 'status'
+    assert first['chats']['sidebarNavigation']['workspace']['scope']['age'] == '7d'
+    assert first['other-chats']['sidebarNavigation']['search']['scope']['age'] == 'all'
+    second = service.shell.inspect('browser-two', snapshots=True)['snapshots']
+    assert second['chats']['sidebarNavigation']['search']['scope']['group'] == 'recent'
+    assert second['chats']['sidebarNavigation']['search']['scope']['age'] == 'all'
+    saved = service.shell.get('client', 'browser-one')['views']['chats']['view']
+    assert saved['navRecentView'] == {'navGroup': 'workspace', 'navAge': '24h'}
+    assert service.state == before
+
+
+@pytest.mark.asyncio
 async def test_prepare_preview_apply_report_revert_and_stale_revision(service):
     composition = deepcopy(DEFAULT)
     composition['instances'].reverse()

@@ -75,6 +75,7 @@ def test_directory_pin_changes_preserve_recent_membership_and_order(tmp_path, se
     {}, {'navChatScope':'workspace'}, {'navSort':'name'}, {'navSort':'created'},
     {'navFilter':'special'}, {'navFilter':'*/beta*'}, {'navArchive':'archived'},
     {'navStatusFilter':'working'}, {'navStatusFilter':'unread'},
+    {'navGroup':'recent'}, {'navGroup':'workspace'}, {'navGroup':'status'}, {'navAge':'24h'},
 ])
 def test_directory_page_matches_complete_catalog(tmp_path,section,view):
     complete,directory = directory_fixture(tmp_path)
@@ -87,6 +88,104 @@ def test_directory_page_matches_complete_catalog(tmp_path,section,view):
     assert chats(directory,working,section=section)==expected
     assert len(decoded)==len(expected['items'])
     assert working['sessions']==[]
+
+
+@pytest.mark.parametrize('group', ['recent', 'workspace', 'status'])
+@pytest.mark.parametrize('age', ['24h', '7d', '30d', '90d', '1y', 'all'])
+def test_group_and_age_query_filters_complete_catalog_before_paging(tmp_path, monkeypatch, group, age):
+    now = 1_800_000_000
+    monkeypatch.setattr(chat_navigation.time, 'time', lambda: now)
+    state, directory = directory_fixture(tmp_path, 240)
+    state['view'].update(navGroup=group, navAge=age, navSort='name')
+    # All 240 summaries are persisted; the query has no resident sessions.
+    for i, row in enumerate(state['sessions']):
+        at = now-((i % 6)*80_000)
+        row.update(recentActivityAt=now, navigationActivityAt=at)
+    state['sessions'][1].update(navigationActivityAt=now-86400)  # inclusive boundary
+    state['sessions'][2].update(navigationActivityAt=now-86401)
+    state['sessions'][7].update(navigationActivityAt=0, recentActivityAt=0, createdAt=0)
+    boundaries = {}
+    for position, (key, seconds) in enumerate(chat_navigation.AGE_SECONDS.items()):
+        for delta in (-1, 0, 1):
+            row = state['sessions'][40+position*3+delta+1]
+            row.update(navigationActivityAt=now-seconds+delta)
+            boundaries[(key, delta)] = row['id']
+    state['sessions'][8].update(navigationActivityAt=now-366*86400)
+    for position, invalid in enumerate([-1, float('inf'), float('nan')], 9):
+        state['sessions'][position].update(navigationActivityAt=invalid, recentActivityAt=0, createdAt=0)
+    directory.sync(state['sessions'], state)
+    dormant = {**state, 'sessions': []}
+    decoded = []
+    original = directory.decode
+    directory.decode = lambda row: (decoded.append(row['id']), original(row))[1]
+    expected = chat_navigation.snapshot(state, section='search')
+    actual = chats(directory, dormant, section='search')
+    assert actual == expected
+    assert len(decoded) == len(actual['items']) <= 50
+    assert actual['items'][:3] == expected['items'][:3]
+    collected = []
+    for index in range(actual['pages']):
+        state['view']['navChatPage'] = {**actual['scope'], 'index': index}
+        page = chats(directory, dormant, section='search')
+        assert page == chat_navigation.snapshot(state, section='search')
+        collected.extend(page['items'])
+    identities = [row['id'] for row in collected]
+    assert len(identities) == len(set(identities)) == actual['total']
+    assert identities[:3] == ['s10', 's3', 's140']  # age never hides/reorders pins
+    assert 's1' in identities
+    assert ('s2' in identities) == (age != '24h')
+    assert ('s7' in identities) == (age == 'all')
+    assert ('s8' in identities) == (age == 'all')
+    # Invalid navigation dates fall back to the known zero/unknown date.
+    for identity in ['s9', 's11']:
+        assert (identity in identities) == (age == 'all')
+    for (key, delta), identity in boundaries.items():
+        seconds = chat_navigation.AGE_SECONDS[key]
+        expected = age == 'all' or now-seconds+delta >= now-chat_navigation.AGE_SECONDS[age]
+        assert (identity in identities) == expected, (age, key, delta)
+    # Every group is contiguous across the entire catalog, not just each page.
+    groups = [row['group']['id'] for row in collected]
+    runs = [value for index, value in enumerate(groups) if not index or value != groups[index-1]]
+    assert len(runs) == len(set(runs))
+    assert dormant['sessions'] == []
+    state['view'].update(navFilter='special', navStatusFilter='working')
+    assert chats(directory, dormant, section='search') == chat_navigation.snapshot(state, section='search')
+
+
+def test_group_and_age_projection_invalidates_changed_preferences_and_clock(tmp_path, monkeypatch):
+    from amplifier_web.state_projections import StateProjections
+    now = [1_800_000_000]
+    monkeypatch.setattr(chat_navigation.time, 'time', lambda: now[0])
+    state, directory = directory_fixture(tmp_path, 20)
+    state['sessions'][1].update(navigationActivityAt=now[0]-86400, recentActivityAt=now[0]-86400)
+    directory.sync(state['sessions'], state)
+    dormant = {**state, 'sessions': []}
+    projections = StateProjections(service=SimpleNamespace(directory=directory))
+    first = projections.chats(dormant, section='search')
+    assert projections.chats(dormant, section='search') is first
+    state['view'].update(navAge='24h', navGroup='status')
+    filtered = projections.chats(dormant, section='search')
+    assert filtered is not first and 's1' in [row['id'] for row in filtered['items']]
+    now[0] += 60
+    expired = projections.chats(dormant, section='search')
+    assert 's1' not in [row['id'] for row in expired['items']]
+    assert expired is projections.chats(dormant, section='search')
+
+
+def test_query_uses_one_clock_for_order_and_decoration_across_minute(tmp_path, monkeypatch):
+    now = 1_800_000_000
+    state, directory = directory_fixture(tmp_path, 4)
+    state['pinnedSessionIds'] = []
+    state['view'].update(navGroup='recent', navSort='name')
+    for index, row in enumerate(state['sessions'][1:]):
+        row.update(title=chr(65+index), recentActivityAt=now,
+                   navigationActivityAt=now-86400+(-1 if index == 2 else 0 if index == 0 else 60))
+    directory.sync(state['sessions'], state)
+    clock = iter([now, now+60])
+    monkeypatch.setattr('amplifier_web.history_directory_query.list_clock', lambda: next(clock))
+    page = chats(directory, {**state, 'sessions': []}, section='search')
+    assert [row['title'] for row in page['items']] == ['A', 'B', 'C']
+    assert [row['group']['id'] for row in page['items']] == ['date:0', 'date:0', 'date:1']
 
 
 def test_directory_workspace_and_mixed_pins_match(tmp_path):

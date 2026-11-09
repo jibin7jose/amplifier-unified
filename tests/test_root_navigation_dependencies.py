@@ -8,6 +8,42 @@ from amplifier_web.shell_resources import scope_for
 from test_shell_modules import service, settled_resources
 
 
+@pytest.mark.parametrize('resource,section', [('sidebarSearch', 'search'), ('sidebarWorkspace', 'workspace')])
+async def test_grouped_cutoff_expires_through_settled_browser_delivery(service, monkeypatch, resource, section):
+    from amplifier_web import chat_navigation
+    now = [1_800_000_000]
+    monkeypatch.setattr(chat_navigation.time, 'time', lambda: now[0])
+    for row in service.state['sessions']:
+        row.update(recentActivityAt=now[0]-86400, navigationActivityAt=now[0]-86400)
+    service._save_changes(sessions={'alpha', 'beta'}, globals={'workspaces'})
+    client = service.clients.attach('age-client')
+    client.update(selectedSessionId='alpha', selectedWorkspaceId='one')
+    shell_client = service.shell.client('age-client')
+    shell_client['views']['chats'] = {'view': {
+        'navAge': '24h', 'navRecentView': {'navAge': '24h'}}}
+    service.shell.put('client', 'age-client', shell_client)
+    with service.clients.bind('age-client'):
+        owner = service.shell.resources
+        owner.register('age-client', 1, [resource], scope_for(service.state))
+        await settled_resources(service, 'age-client')
+        first = service.browser_state()
+        page = lambda frame: frame['shellResources']['instances']['chats']['resources'][resource]['value']['sidebarNavigation'][section]
+        assert page(first)['total'] > 0
+        assert service.browser_state() is first
+        revision = service.state['revision']
+        now[0] += 60
+        # The browser snapshot and settled resource fast paths must both see time.
+        changed = service.browser_state()
+        assert changed is not first
+        await settled_resources(service, 'age-client')
+        service._client_snapshots.pop('age-client', None)
+        expired = service.browser_state()
+        assert page(expired)['total'] == 0
+        assert page(expired)['items'] == []
+        assert service.state['revision'] == revision
+        assert service.browser_state() is expired
+
+
 @pytest.mark.parametrize('kind', ['worker', 'internal'])
 async def test_nonroot_native_title_does_not_build_root_pages(service, tmp_path, kind):
     workspace = deepcopy(service.state['workspaces'][0])
