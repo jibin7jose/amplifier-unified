@@ -221,6 +221,12 @@ Live mutable references stay on their owner thread and never hydrate cold fields
 the canonical traversal/cycle guard still fails closed. Live and durable root
 costs are recorded separately; the live walk and individual SQL operations are
 not a strict wall-clock latency bound.
+Each live walk visits shared containers once, including beyond 65,536 containers.
+Its temporary identity map retains strong references within the existing
+1,000,000-container traversal bound; it does not copy bodies or survive the walk.
+This trades more temporary metadata on large graphs for avoiding repeated shared
+subtrees and false traversal-limit deferrals. Every later capture still walks
+current mutable state, including borrowed nested edits and unsaved client roots.
 
 Before collection, changed durable rows are decoded again off the interactive
 thread. Progress-only changes with the same roots can collect. A new immutable

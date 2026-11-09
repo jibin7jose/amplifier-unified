@@ -78,11 +78,19 @@ async def test_maintenance_retains_in_memory_clients_even_before_their_next_save
     try:
         service.clients.attach('inactive')
         value = put(service.db, {'unsaved': 'retained'})
-        service.clients.records['inactive']['attachments'] = {'draft': [value]}
+        parent = put(service.db, {'nested': value})
+        orphan = put(service.db, {'orphan': True})
+        service.clients.records['inactive']['attachments'] = {'draft': [parent]}
         service.db.commit()
         service._last_storage_sweep = -1e30
         maintenance(service)
+        await service._storage_maintenance_task
         assert resource(service.db, value['$resource']) == {'unsaved': 'retained'}
+        assert resource(service.db, parent['$resource']) == {'nested': value}
+        assert not service._resource_scan_status['blocked']
+        assert service.db.execute('SELECT 1 FROM state_resources WHERE id=?',
+                                  (orphan['$resource'],)).fetchone() is None
+        assert not (root(service.db) / (orphan['$resource'] + '.json')).exists()
     finally:
         await service.close()
 

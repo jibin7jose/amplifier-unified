@@ -418,16 +418,21 @@ class ReferenceBudget:
 def references(value, *, budget=None):
     """Walk containers, not every scalar, without hydrating cold payloads.
 
-    Shared projections can expose the same mutable graph several times. Keep a
-    bounded identity set for duplicate/cycle suppression, not a payload cache.
-    The traversal limit fails closed on an oversized or otherwise cyclic graph.
+    Shared projections can expose the same mutable graph several times. Retain
+    each visited container until this walk ends, within the traversal limit:
+    stopping duplicate suppression early can revisit a large shared graph until
+    valid roots exceed that limit. This is not a cache across mutable reads.
     """
     from .cold_display import ColdRecord
-    pending, seen, visited = [value], {}, 0
+    pending, seen = [value], {}
+    scalars = {str, int, float, bool, type(None)}
     while pending:
         if budget is not None:
             budget.step()
         current = pending.pop()
+        identity = id(current)
+        if identity in seen:
+            continue
         if isinstance(current, dict):
             if type(current) is dict or isinstance(current, ColdRecord):
                 reference, children = dict.get(current, '$resource'), dict.values(current)
@@ -439,14 +444,9 @@ def references(value, *, budget=None):
             reference, children = current.get('$resource'), current.values()
         else:
             continue
-        identity = id(current)
-        if identity in seen:
-            continue
-        visited += 1
-        if visited > 1_000_000:
+        if len(seen) >= 1_000_000:
             raise ValueError('Resource reference graph exceeds the traversal limit.')
-        if len(seen) < 65_536:
-            seen[identity] = current  # Strong reference prevents temporary ID reuse.
+        seen[identity] = current  # Strong reference prevents temporary ID reuse.
         if isinstance(reference, str):
             yield reference
         for child in children:
@@ -456,7 +456,7 @@ def references(value, *, budget=None):
             # Mapping ABC checks for ordinary JSON scalars on this hot path.
             kind = type(child)
             if kind is dict or kind is list or (
-                    kind not in (str, int, float, bool, type(None))
+                    kind not in scalars
                     and isinstance(child, (Mapping, list))):
                 pending.append(child)
 
