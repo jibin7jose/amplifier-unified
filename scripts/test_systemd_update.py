@@ -121,6 +121,10 @@ def main():
                "--env", "XDG_RUNTIME_DIR=/run/user/1234",
                "--env", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1234/bus", name,
                "/opt/test/bin/python", "/src/tests/fixtures/systemd_update_service.py", "exercise")
+        docker("exec", "--user", "1234", "--env", "HOME=/home/updater",
+               "--env", "XDG_RUNTIME_DIR=/run/user/1234",
+               "--env", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1234/bus", name,
+               "/opt/test/bin/python", "/src/tests/fixtures/systemd_shutdown_policy.py")
     except BaseException:
         # These work even if PID 1 exited before journald or D-Bus came up. State
         # only, not full inspect (which can contain environment variables).

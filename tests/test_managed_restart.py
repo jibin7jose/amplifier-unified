@@ -17,9 +17,10 @@ from test_service import Runtime
 
 
 @pytest.fixture(autouse=True)
-def systemd_restart_contract(monkeypatch):
+def systemd_restart_contract(monkeypatch, tmp_path):
     # These command assertions describe systemd, independently of the test host.
     monkeypatch.setattr(sys, 'platform', 'linux')
+    monkeypatch.setattr('amplifier_web.deployment_service.unit_path',lambda:tmp_path/'unit.service')
 
 
 async def restart_fixture(tmp_path):
@@ -59,6 +60,46 @@ async def test_accepted_restart_is_queued_not_acknowledged(tmp_path,monkeypatch)
         assert manager.diagnostics.state['latest']['status']=='accepted'
         assert not service.state['updates'].get('error')
         assert 'become ready' in service.state['updates']['detail']
+    finally:
+        await service.close()
+
+
+async def test_legacy_unit_reloaded_before_restart_dispatch(tmp_path,monkeypatch):
+    from amplifier_web import deployment_service
+    service,manager,marker=await restart_fixture(tmp_path)
+    unit=deployment_service.unit_path()
+    unit.write_text(deployment_service.MARKER+'\n[Service]\nExecStart=/owned/amplifier-unified --no-open --data-dir '+str(tmp_path)+' --workspace /workspace serve\n')
+    calls=[]
+    monkeypatch.setattr(deployment_service,'_systemctl',lambda *a,**k:calls.append((a,k)))
+    async def command(*args,**kwargs):
+        assert calls==[(('daemon-reload',),{'timeout':30})]
+        assert 'KillMode=mixed\n' in unit.read_text()
+        calls.append((args,kwargs))
+        return CommandOutput('',{'exitCode':0})
+    monkeypatch.setattr(app_updates,'process',command)
+    try:
+        await app_updates.request_managed_restart(manager)
+        await assert_retained_handoff(service,marker,'accepted')
+        assert len(calls)==2
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize('error',[RuntimeError('reload failed'),TimeoutError(),asyncio.CancelledError()])
+async def test_shutdown_preparation_failure_never_dispatches_restart(tmp_path,monkeypatch,error):
+    service,manager,marker=await restart_fixture(tmp_path)
+    def prepare(home):raise error
+    monkeypatch.setattr('amplifier_web.deployment_service.prepare_managed_shutdown',prepare)
+    async def command(*args,**kwargs):pytest.fail('No restart after failed preparation')
+    monkeypatch.setattr(app_updates,'process',command)
+    try:
+        if isinstance(error,asyncio.CancelledError):
+            with pytest.raises(asyncio.CancelledError):
+                await app_updates.request_managed_restart(manager)
+        else:
+            await app_updates.request_managed_restart(manager)
+        await assert_retained_handoff(service,marker,'rejected')
+        assert 'service restart' in service.state['updates']['error']
     finally:
         await service.close()
 

@@ -12,7 +12,8 @@ from test_service import Runtime
 
 
 @pytest.fixture(autouse=True)
-def base_installation(monkeypatch):
+def base_installation(monkeypatch, tmp_path):
+    monkeypatch.setattr('amplifier_web.deployment_service.unit_path', lambda: tmp_path / 'unit.service')
     monkeypatch.setattr(app_updates, 'installed_extras', lambda: [])
     monkeypatch.setattr(app_updates.components, 'installed_graph', lambda: [{'name':'amplifier-core','version':'1.6.1'}])
     monkeypatch.setattr(app_updates.components, 'updates', AsyncMock(return_value=[]))

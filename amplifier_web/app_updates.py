@@ -708,7 +708,7 @@ async def request_managed_restart(manager):
     unknown, not successful or rejected. The durable marker and work gate
     survive every outcome of the handoff.
     """
-    from .deployment_service import managed_restart_command
+    from .deployment_service import managed_restart_command, prepare_managed_shutdown
     from .update_diagnostics import CommandFailure, exception_type
 
     marker=dict(manager.service.state['updates']['pendingRestart'])
@@ -717,14 +717,18 @@ async def request_managed_restart(manager):
     command_id=uuid.uuid4().hex
     manager.diagnostics.record('service-restart-request','started',commandId=command_id)
     started=time.monotonic()
+    dispatched=False
     try:
-        result=await process(*managed_restart_command(),timeout=30)
+        await asyncio.to_thread(prepare_managed_shutdown,manager.home)
+        command=managed_restart_command()
+        dispatched=True
+        result=await process(*command,timeout=30)
     except BaseException as error:
         if not isinstance(error,(Exception,asyncio.CancelledError)):raise
         facts={'durationMs':round((time.monotonic()-started)*1000),'errorType':exception_type(error)}
         facts.update(getattr(error,'diagnostic_facts',{}))
         exit_code=facts.get('exitCode')
-        rejected=(isinstance(error,CommandFailure) and type(exit_code) is int and exit_code>0) or (isinstance(error,OSError) and not isinstance(error,TimeoutError))
+        rejected=not dispatched or (isinstance(error,CommandFailure) and type(exit_code) is int and exit_code>0) or (isinstance(error,OSError) and not isinstance(error,TimeoutError))
         status='rejected' if rejected else 'uncertain'
         marker.update(requestStatus=status)
         manager.diagnostics.record('service-restart-request','failed' if rejected else status,commandId=command_id,**facts)

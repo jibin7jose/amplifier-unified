@@ -286,6 +286,15 @@ When the app diagnostic collector is available it owns durable storage and confi
 
 For a systemd user service, the host queues `systemctl --user --no-block restart amplifier-unified.service`. Systemd owns the replacement process; Unified does not launch a second unmanaged host. A successful command response means the job was accepted, not that the new server is ready. If systemd terminates the requesting child before it receives that response, the request remains unconfirmed. The attempt ID, expected version/revision, and pending restart survive signals, cancellation, timeouts, and rejected requests. New work stays paused until a successor is verified. Genuine request rejection shows service-restart guidance and retains its diagnostic receipt.
 
+Before a managed restart or service start/stop/restart, legacy generated Linux
+units with no explicit kill policy receive `KillMode=mixed` and a private backup.
+Systemd then signals the host first, allowing it to settle its workers through
+the normal shutdown path; timeout escalation still covers the whole service.
+The installed command, environment, data root and explicit operator policies
+are preserved. A failed daemon reload prevents restart dispatch; retry reloads
+the corrected unit without rewriting it or creating another backup. This does
+not replay conversation inputs or clear genuine worker failures.
+
 The successor makes a bounded local HTTP health check after startup. HTTPS checks pin the configured leaf certificate; they do not disable certificate verification or forward credentials through configured proxies. Only authenticated control requests receive the captured running Git revision and process identity. A wrong version, wrong revision, different server, missing provenance, or an unready listener never counts as success. Timeout/cancellation keeps the attempt available for diagnosis and later confirmation.
 
 An older incomplete or malformed pending restart receipt is retired at startup instead of keeping updates and conversations paused forever. The active restart marker and stale pending application are cleared, a sanitized failed `restart-repair` diagnostic is recorded, and the interrupted restart remains explicitly unacknowledged: Unified does not infer success from a version-only receipt or probe it as though it were a complete handoff. Any unrelated pending ecosystem release is retained. A prior diagnostic failure remains the current failure record for review.
