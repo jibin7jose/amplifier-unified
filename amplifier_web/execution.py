@@ -20,8 +20,12 @@ def voice_usage_turns(tree):
     return identities
 
 
+def pending_voice_node(node):
+    return voice_usage_node(node) and node.get('phase') in LIVE_PHASES and not node.get('endedAt')
+
+
 def pending_voice_usage(tree):
-    return any(voice_usage_node(node) and node.get('phase') in LIVE_PHASES and not node.get('endedAt')
+    return any(pending_voice_node(node)
                for node in [*tree.get('nodes', []), *tree.get('retiredUsageNodes', [])]) or any(
         turn.get('lifecycle') == 'voice' and turn.get('phase') in LIVE_PHASES
         for turn in tree.get('turns', []))

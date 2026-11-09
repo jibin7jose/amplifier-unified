@@ -345,11 +345,11 @@ def test_three_owners_skip_conversion_only_after_fresh_content_and_committed_pro
     # Even after every derived encoding fragment is evicted, an exact committed
     # resource plus freshly witnessed original input needs no reconversion.
     cache.entries.clear(); cache.bytes = 0
-    calls, original = [], session_projection.stored_execution
+    calls, original = [], session_projection._stored_execution_fields
     def observe(*args, **kwargs):
         calls.append(1)
         return original(*args, **kwargs)
-    monkeypatch.setattr(session_projection, 'stored_execution', observe)
+    monkeypatch.setattr(session_projection, '_stored_execution_fields', observe)
     for name, row in rows.items():
         row['streaming'] = 'new token'
         actual = save_projected(cache, db, row, rows)
@@ -383,11 +383,11 @@ def test_original_execution_mutations_cannot_reuse_projection(db, change, monkey
         tree['retiredUsageNodes'][-1]['producerId'] = None
     else: tree['retiredUsageNodes'][-1]['assignmentReservation']['tokens'].append(903)
     expected = session_projection.stored_execution(tree)
-    calls, original = [], session_projection.stored_execution
+    calls, original = [], session_projection._stored_execution_fields
     def observe(*args, **kwargs):
         calls.append(1)
         return original(*args, **kwargs)
-    monkeypatch.setattr(session_projection, 'stored_execution', observe)
+    monkeypatch.setattr(session_projection, '_stored_execution_fields', observe)
     result = save_projected(cache, db, row)
     assert calls == [1]
     assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == expected
@@ -404,11 +404,11 @@ def test_projection_shortcut_never_skips_owner_or_resource_validation(db, change
     elif change == 'runtime': row['runtimeSessionId'] = 'different'
     elif change == 'workspace': row['workspace'] = '/different'
     else: row = copy.deepcopy(row)
-    calls, original = [], session_projection.stored_execution
+    calls, original = [], session_projection._stored_execution_fields
     def observe(*args, **kwargs):
         calls.append(1)
         return original(*args, **kwargs)
-    monkeypatch.setattr(session_projection, 'stored_execution', observe)
+    monkeypatch.setattr(session_projection, '_stored_execution_fields', observe)
     assert save_projected(cache, db, row) == previous
     assert calls == [1]
 
@@ -457,7 +457,7 @@ async def test_scalar_shortcut_preserves_changed_worker_and_task_view_and_restar
         row['messages'].append({'id': 'next-input', 'role': 'user', 'text': 'Changed input',
                                 'inputId': 'next-input', 'createdAt': 2})
         with monkeypatch.context() as patch:
-            patch.setattr(session_projection, 'stored_execution', lambda *a, **k: pytest.fail(
+            patch.setattr(session_projection, '_stored_execution_fields', lambda *a, **k: pytest.fail(
                 'Unchanged execution must not be converted for a task/report save'))
             app._publish_changes(sessions={row['id']})
         assert app._execution_preparation.references[row['id']] is previous
@@ -516,6 +516,8 @@ def test_digest_refresh_reserves_distinct_committed_and_pending_entries(db, monk
     # Exercise the committed-reference return at the constrained reservation
     # boundary without manufacturing encoding fragments just to fill a cache.
     def reuse(db, session, tree, pending, **kwargs):
+        if kwargs.get('node_parts') is not None:
+            tree = {**tree, 'nodes': [node for text, _ in kwargs['node_parts'] for node in json.loads(text)]}
         assert resource_files.prepare(tree).identity == reference['$resource']
         pending[session['id']] = committed
         return resource_files.reuse_reference(db, committed.resource)
@@ -634,3 +636,51 @@ def test_placement_preparation_falls_back_with_small_budget_and_inline_values(db
     inline, reference = cache.stored(db, row, tree, {})
     assert reference is None and inline == stored_execution(tree)
     assert type(inline['nodes'][0]['value']) is tuple
+
+
+def test_current_edit_does_not_decode_unchanged_placement_fragments(db, monkeypatch):
+    from amplifier_web.session_projection import stored_execution
+    cache, row = ExecutionPreparation(), observed_owner()
+    save_projected(cache, db, row)
+    row['execution']['nodes'][-1]['label'] = 'current edit'
+    expected = stored_execution(row['execution'])
+    decoded, loads = [], json.loads
+    def observe(text, *args, **kwargs):
+        if isinstance(text, str) and text.startswith('[') and '"liveObservation":true' in text:
+            decoded.append(len(text))
+        return loads(text, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(json, 'loads', observe)
+        result = save_projected(cache, db, row)
+    assert not decoded, 'Already encoded placements were decoded solely to save them again'
+    assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == expected
+
+
+@pytest.mark.parametrize('budget', [64 * 1024 * 1024, 1000])
+@pytest.mark.parametrize('change', ['pending-node', 'ended-voice', 'voice-turn', 'removed-turn', 'rejected-node'])
+def test_encoded_summary_matches_complete_canonical_history(db, budget, change):
+    from amplifier_web.cold_display import execution_reference
+    from amplifier_web.session_projection import stored_execution
+    cache, row = ExecutionPreparation(), observed_owner()
+    cache.MAX_BYTES = budget
+    tree = row['execution']
+    tree['turns'][0]['phase'] = 'completed'
+    save_projected(cache, db, row)
+    # Completed receipts cannot mask pending facts carried only by placements.
+    node = tree['nodes'][-1]
+    node.update(phase='running', lifecycle='voice')
+    if change == 'ended-voice':
+        node['endedAt'] = 20
+    elif change == 'voice-turn':
+        node['phase'] = 'completed'
+        tree['turns'][0].update(phase='running', lifecycle='voice')
+    elif change == 'removed-turn':
+        tree['turns'].clear()
+    elif change == 'rejected-node':
+        node['observationWindow'] = 'invalid'
+    result = save_projected(cache, db, row)
+    expected = stored_execution(tree)
+    assert result == execution_reference(db, expected)
+    assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == expected
+    assert cache.bytes + cache.accounting_bytes + cache._reserved({}) <= 2 * cache.MAX_BYTES
+    assert save_projected(cache, db, row) == result

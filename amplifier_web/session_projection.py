@@ -231,18 +231,21 @@ def _stored_nodes(rows, turn_ids, receipts):
     return nodes
 
 
-def stored_execution(tree, *, _retired=None, _nodes=None):
-    """Keep owned placement/receipts and legacy history, not canonical bodies."""
+def _stored_execution_fields(tree, *, _retired=None):
+    """Canonical fields and placement dependencies, before projecting nodes."""
     accounting = accounting_projection(tree, _retired=_retired)
     receipts = {(row.get('sessionId'), row['id']): row for row in accounting}
     turns = [row for row in tree.get('turns', []) if not any(
         row.get(key) for key in ('nativeHistory', 'canonicalHistory'))]
     turn_ids = {row['id'] for row in turns}
-    nodes = _nodes(tree.get('nodes', []), turn_ids, receipts) if _nodes is not None else None
-    if nodes is None:
-        nodes = _stored_nodes(tree.get('nodes', []), turn_ids, receipts)
-    return {**{key: value for key, value in tree.items() if key != 'plan'},
-        'retiredUsageNodes': accounting, 'nodes': nodes, 'turns': turns}
+    return ({**{key: value for key, value in tree.items() if key not in {'plan', 'nodes'}},
+        'retiredUsageNodes': accounting, 'turns': turns}, turn_ids, receipts)
+
+
+def stored_execution(tree, *, _retired=None):
+    """Keep owned placement/receipts and legacy history, not canonical bodies."""
+    fields, turn_ids, receipts = _stored_execution_fields(tree, _retired=_retired)
+    return {**fields, 'nodes': _stored_nodes(tree.get('nodes', []), turn_ids, receipts)}
 
 
 def persist(home, state, cache, *, session_ids=None, by_id=None, references=None, scoped_result=False,

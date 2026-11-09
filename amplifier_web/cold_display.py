@@ -448,15 +448,28 @@ def compact_execution_references(state, db):
         references['execution'] = dict(converted[identity])
 
 
-def execution_reference(db, value, *, prepared=None, resource=None):
+def pending_execution_nodes(rows):
+    """Small facts computed from canonical rows, including encoded fragments."""
     from .capacity import LIVE
-    from .execution import LIVE_PHASES, pending_voice_usage
-    pending = any(row.get('kind') == 'llm' and row.get('producerId')
-                  and row.get('phase') in LIVE
-                  for row in [*value.get('nodes', []), *value.get('retiredUsageNodes', [])])
+    from .execution import pending_voice_node
+    observation = voice = False
+    for row in rows:
+        observation |= bool(row.get('kind') == 'llm' and row.get('producerId') and row.get('phase') in LIVE)
+        voice |= bool(pending_voice_node(row))
+        if observation and voice:
+            break
+    return observation, voice
+
+
+def execution_reference(db, value, *, prepared=None, resource=None, node_summary=(False, False)):
+    from itertools import chain
+    from .execution import LIVE_PHASES
+    pending, voice = pending_execution_nodes(chain(value.get('nodes', []), value.get('retiredUsageNodes', [])))
     pending_work = any(row.get('phase') in LIVE_PHASES for row in value.get('turns', []))
+    voice |= any(turn.get('lifecycle') == 'voice' and turn.get('phase') in LIVE_PHASES
+                 for turn in value.get('turns', []))
     from .resource_files import put_prepared
     reference = resource if resource is not None else (
         put(db, value) if prepared is None else put_prepared(db, prepared))
-    return {**reference, 'executionProjection': 1, 'pendingObservation': pending, 'pendingWork': pending_work,
-            'pendingVoice': pending_voice_usage(value)}
+    return {**reference, 'executionProjection': 1, 'pendingObservation': pending or node_summary[0],
+            'pendingWork': pending_work, 'pendingVoice': voice or node_summary[1]}

@@ -215,59 +215,65 @@ class ExecutionPreparation:
                 return self.MAX_BYTES + 1
         return charge
 
-    def _part(self, key, value, reserved=0, project=None):
+    def _part(self, key, value, reserved=0, project=None, summarize=None):
         try:
             witness = hashlib.sha256(_witness(value)).digest()
         except (Unsupported, pickle.PicklingError, RecursionError, TypeError, ValueError):
-            return json.dumps(project(value) if project else value,
-                              ensure_ascii=False, sort_keys=True, separators=(',', ':')), None
+            projected = project(value) if project else value
+            return (json.dumps(projected, ensure_ascii=False, sort_keys=True, separators=(',', ':')),
+                    None, summarize(projected) if summarize else None)
         old = self.entries.get(key)
         if old is not None and old[0] == witness:
             self.entries.move_to_end(key)
-            return old[1], old[3]
+            return old[1], old[3], old[4]
         # Synchronous builtin traversal: no await or custom hook can mutate
         # the graph between witnessing it and applying the original encoder.
-        text = json.dumps(project(value) if project else value,
+        projected = project(value) if project else value
+        summary = summarize(projected) if summarize else None
+        text = json.dumps(projected,
                           ensure_ascii=False, sort_keys=True, separators=(',', ':'))
         token = object()
-        charge = sys.getsizeof(witness) + sys.getsizeof(text) + sys.getsizeof(key) + 256
+        charge = sys.getsizeof(witness) + sys.getsizeof(text) + sys.getsizeof(key) + sys.getsizeof(summary) + 256
         if old is not None:
             self.bytes -= self.entries.pop(key)[2]
         if charge + reserved + self.accounting_bytes <= 2 * self.MAX_BYTES:
             while self.entries and self.bytes + charge + reserved + self.accounting_bytes > 2 * self.MAX_BYTES:
                 self.bytes -= self.entries.popitem(last=False)[1][2]
-            self.entries[key] = (witness, text, charge, token)
+            self.entries[key] = (witness, text, charge, token, summary)
             self.bytes += charge
-            return text, token
-        return text, None
+            return text, token, summary
+        return text, None, summary
 
-    def placements(self, owner, rows, turns, receipts, parts, reserved):
+    def placements(self, owner, rows, turns, receipts, reserved):
         """Reuse canonical JSON, within the existing encoding budget.
 
         Called only after the whole input passes the builtin content witness.
         A fragment also witnesses every receipt and turn membership it depends
-        on. Decoding the saved JSON produces detached storage-only rows; no
-        borrowed graph, revision counter or new authority is retained.
+        on. Pending facts accompany that encoding, so unchanged fragments do
+        not need decoding. No borrowed graph or new authority is retained.
         """
+        from .cold_display import pending_execution_nodes
         from .session_projection import _stored_nodes
         if (type(rows) is not list or len(rows) < self.CHUNK
                 or any(type(row) is not dict or any(
                     type(row.get(key)) not in (str, type(None))
                     for key in ('id', 'sessionId', 'turnId', 'kind')) for row in rows)):
             return None
-        result = []
+        parts, observation, voice = [], False, False
         for start in range(0, len(rows), self.CHUNK):
             fragment = rows[start:start + self.CHUNK]
             dependencies = [(row.get('turnId') in turns,
                 receipts.get((row.get('sessionId'), row.get('id')))
                 if row.get('kind') in ('llm', 'worker') else None) for row in fragment]
-            text, token = self._part((owner, 'nodes', start, 'projection'),
+            text, token, summary = self._part((owner, 'nodes', start, 'projection'),
                 (fragment, dependencies), reserved,
-                project=lambda value: _stored_nodes(value[0], turns, receipts))
-            result.extend(json.loads(text))
+                project=lambda value: _stored_nodes(value[0], turns, receipts),
+                summarize=pending_execution_nodes)
+            observation |= summary[0]
+            voice |= summary[1]
             if text != '[]':
                 parts.append((text, token))
-        return result
+        return parts, (observation, voice)
 
     def prepare(self, owner, tree):
         result, _ = self._prepare(owner, tree, reserved=self._reserved({}))
@@ -276,19 +282,21 @@ class ExecutionPreparation:
     def _prepare(self, owner, tree, *, previous=None, reserved=0, node_parts=None):
         if (type(owner) is not str or len(owner) > 200 or type(tree) is not dict
                 or any(type(key) is not str or len(key) > 200 for key in tree)):
+            if node_parts is not None:
+                tree = {**tree, 'nodes': [row for text, _ in node_parts for row in json.loads(text)]}
             return prepare(tree), None
         fragments, signature = [], []
         cacheable = True
-        for name in sorted(tree):
-            value = tree[name]
+        for name in sorted(set(tree) | ({'nodes'} if node_parts is not None else set())):
+            value = tree.get(name)
             if name == 'nodes' and node_parts is not None:
                 parts, chunked = node_parts, True
             elif type(value) is list and len(value) >= self.CHUNK:
-                parts = [self._part((owner, name, start), value[start:start + self.CHUNK], reserved)
+                parts = [self._part((owner, name, start), value[start:start + self.CHUNK], reserved)[:2]
                          for start in range(0, len(value), self.CHUNK)]
                 chunked = True
             else:
-                parts = [self._part((owner, name, None), value, reserved)]
+                parts = [self._part((owner, name, None), value, reserved)[:2]]
                 chunked = False
             tokens = tuple(token for _, token in parts)
             cacheable &= all(token is not None for token in tokens)
@@ -314,7 +322,7 @@ class ExecutionPreparation:
         skipping conversion. Changed input follows the canonical projection.
         """
         from .cold_display import execution_reference
-        from .session_projection import stored_execution
+        from .session_projection import _stored_execution_fields, _stored_nodes
         from . import resource_files
         identity = session['id']
         owner = (id(session), session.get('runtimeSessionId'), session.get('workspace'))
@@ -333,22 +341,20 @@ class ExecutionPreparation:
             if resource is not None:
                 pending[identity] = previous
                 return None, {**resource, **dict(previous.projection)}
-        node_parts = None
-        def project_nodes(rows, turns, receipts):
-            nonlocal node_parts
-            if len(receipts) < self.CHUNK:
-                return None  # Inline values retain the canonical Python representation.
-            parts = []
-            result = self.placements(identity, rows, turns, receipts, parts, self._reserved(pending))
-            if result is not None:
-                node_parts = parts
-            return result
-        value = stored_execution(tree, _retired=lambda rows: self.retired(identity, rows, self._reserved(pending)),
-            _nodes=project_nodes if digest is not None else None)
+        value, turns, receipts = _stored_execution_fields(tree,
+            _retired=lambda rows: self.retired(identity, rows, self._reserved(pending)))
+        # Encoded nodes are an explicit part of preparation, not a partial
+        # canonical tree masquerading as complete. Inline/unsupported values
+        # still take the ordinary projection and retain Python representations.
+        placements = (self.placements(identity, tree.get('nodes', []), turns, receipts, self._reserved(pending))
+                      if digest is not None and len(receipts) >= self.CHUNK else None)
+        node_parts, node_summary = placements if placements is not None else (None, (False, False))
+        if node_parts is None:
+            value['nodes'] = _stored_nodes(tree.get('nodes', []), turns, receipts)
         if len(value.get('retiredUsageNodes', ())) < self.CHUNK:
             return value, None
         resource = self.reference(db, session, value, pending, node_parts=node_parts)
-        projection = execution_reference(db, value, resource=resource)
+        projection = execution_reference(db, value, resource=resource, node_summary=node_summary)
         entry = pending.get(identity)
         if entry is not None and digest is not None:
             summary = tuple((key, projection[key]) for key in (

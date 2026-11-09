@@ -251,12 +251,18 @@ Observed placements reuse the existing canonical JSON fragment cache after
 witnessing each source fragment, its current turn membership and its exact
 accounting receipts. Changed dependencies re-run the canonical projection;
 unchanged fragments avoid repeating placement validation and JSON encoding.
+Two pending-observation/voice facts accompany each canonical fragment under the
+same content, turn and receipt witness. Saving unchanged fragments uses those
+facts without decoding the encoded placements merely to derive reference flags.
 This uses the existing encoding budget, not a new retained graph. Inline values
 and unsupported inputs keep the original projection. The reference tests also
 check changed receipts shared across fragments, removed turns, rejected rows
 and small-budget fallback against complete canonical readback.
-This still traverses the source witnesses and decodes stored placement fragments;
-it is not history-independent publication or a fix for unrelated storage GC delays.
+The tests also compare the pending flags and complete saved history after changed
+voice lifecycle, removed turns and rejected placements, including a small-budget
+fallback. This still traverses source witnesses and decodes retired-accounting
+fragments; it is not history-independent publication or a fix for unrelated
+storage GC delays.
 
 For repeatable comparisons, `execution_publication_scaling.py --cycles 4` records
 87 publications for three owners (three cold, 84 steady); `--size small` uses
