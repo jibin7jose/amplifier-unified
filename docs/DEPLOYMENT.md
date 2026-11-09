@@ -27,7 +27,23 @@ The private server configuration is stored at `config/server.yaml` under Unified
 
 Additional top-level settings from local tooling or other versions do not prevent startup. Unified preserves them when saving ordinary configuration changes and does not activate features it does not implement. Known settings, including TLS, public origins and worker retention, retain their validation. Loading an existing configuration does not rewrite its file; an explicit `config reset all` resets the complete configuration.
 
-`setup-tls` creates Unified's local CA and a leaf certificate. Run `setup-tls force` only after changing an address that must appear in the certificate; it keeps the CA and replaces the leaf certificate.
+`setup-tls` creates Unified's local CA and a leaf certificate. Run `setup-tls force`
+after changing an address that must appear in the certificate or to renew an
+expiring leaf; it keeps the CA and replaces the leaf certificate. Restart the
+service afterward. An expired/expiring CA needs a deliberate CA rotation and
+redistribution of client trust, not `setup-tls force`, which preserves that CA.
+
+`doctor` inspects the configured certificate's validity (including a 30-day
+expiry warning), SAN coverage of every explicit bind and public-origin host,
+and chain against the app CA or this computer's system roots for supplied
+certificates. IP addresses require IP SANs; DNS wildcards cover one label only.
+Wildcard binds are not certificate identities. Include each intended LAN and
+Tailscale name/IP in `public_origins` before renewing an app-owned leaf.
+These are offline checks of configured files, without DNS queries or credentials:
+they do not prove which certificate the running process serves, network access,
+or trust on another device. Supplied certificates should be renewed with their
+issuer, not replaced with an app-owned CA. Native Windows certificate diagnostics
+and authenticated service/process qualification remain pending.
 
 To use an existing trusted certificate and its private key, keep the bind on
 loopback while configuring the pair, then enable the remote bind:
@@ -193,12 +209,33 @@ amplifier-unified service status
 
 Available lifecycle commands are `install`, `start`, `stop`, `restart`, `status`, `logs`, and `uninstall`. Repeating `install` with the same configuration reuses its definition and starts an inactive service without restarting a running host. After a package update, use `amplifier-unified service restart` to load the new version.
 
-`service status` verifies the expected installation through its configured
-listener on the host. Its `Host listener` address uses the actual listener's
-HTTP or HTTPS scheme. Configured public addresses are listed separately as
+`service status` checks every locally assigned numeric address resolved from its
+configured binds, not just the first successful response. Each `Host listener`
+line is a matching authenticated health response with the actual HTTP or HTTPS
+scheme. Failed probes and configured binds remain separate from verified
+listeners; the singular JSON `url` remains the first success, while `listenerUrls`
+contains all successes, `listenerChecks` retains individual failures, and
+`listenerScope` states the evidence limit and `listenerScopeComplete` reports
+whether candidate enumeration/admission was complete.
+Service readiness can still be true when one listener responds and another
+probe fails; inspect the individual results. A name is resolved once per pass
+and only locally assigned results are probed, with no second DNS lookup on
+connect. Probes use at most four concurrent two-second requests. On Linux and
+macOS, wildcard binds enumerate assigned IPv4/IPv6 addresses directly through
+the OS `getifaddrs` interface snapshot, including LAN, VPN and scoped link-local
+addresses, without public DNS. Each numeric candidate must still pass a local
+ownership check and authenticated health probe. Unsupported/failed enumeration
+falls back to loopback and reports **PARTIAL** scope, never complete wildcard
+coverage. Interfaces can change after the snapshot. This is not an inventory of
+unconfigured sockets, and it does not infer LAN reachability from loopback
+success. Configured public addresses are listed separately as
 **not checked**: a healthy host does not prove DNS, network access or certificate
 trust on another device. The authenticated status probe never follows redirects
-or sends its control token to a configured public address. Normal launch still
+or selects `public_origins` as credential-bearing probe targets. Nonlocal or
+unresolved bind names remain configuration only, not verified listeners; Linux
+nonloopback probes fail closed if global `ip_nonlocal_bind` prevents establishing
+local ownership. DNS resolution uses the operating system's resolver timeout,
+not the per-request HTTP timeout. Normal launch still
 opens the configured public address when one is set; verify it on the client.
 
 Foreground `serve` announces the listener and schedules browser opening only

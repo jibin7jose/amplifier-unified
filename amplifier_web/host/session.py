@@ -742,6 +742,8 @@ async def compose_configured_bundle(registry, loaded, config, *, execution_works
         # Routing is now an ordinary opt-out-capable default. A retained matrix
         # setting must not silently restore a behavior the user disabled.
         explicit_context_forwarding(loaded, config.settings, context_defaults)
+        from ..write_policy_refresh import WritePolicySource
+        write_policy_source = WritePolicySource(loaded, config, execution_workspace=execution_workspace)
         loaded = _apply_settings(loaded, config)
         # Existing root defaults are explicit selections, not a new forced
         # version. Reuse their effective source for child/sibling declarations.
@@ -754,6 +756,11 @@ async def compose_configured_bundle(registry, loaded, config, *, execution_works
     for key, value in root_identity.items():
         setattr(loaded, key, value)
     loaded = components.apply(loaded)
+    if snapshot:
+        from ..write_policy_refresh import WritePolicySource
+        write_policy_source = WritePolicySource(loaded, config, snapshot=True,
+                                               execution_workspace=execution_workspace)
+    loaded._host_write_policy_source = write_policy_source
     # Credentials and safety policy remain local host responsibilities. They
     # do not add modules or replace the saved source/model/routing selections.
     loaded = _apply_host_policy(loaded, config, execution_workspace=execution_workspace)
@@ -889,6 +896,11 @@ def apply_runtime_plan(loaded, edited, config, execution_workspace):
     for key in ("session", "agents", "context", "instruction"):
         if key in edited:
             setattr(loaded, key, edited[key])
+    from ..write_policy_refresh import WritePolicySource
+    # An edited live plan is already composed. Retain its explicit ceilings,
+    # rather than trusting provenance imported from bundle data.
+    loaded._host_write_policy_source = WritePolicySource(loaded, config, snapshot=True,
+                                                        execution_workspace=execution_workspace)
     loaded = _apply_host_policy(loaded, config, execution_workspace=execution_workspace)
     for key in ("providers", "tools", "hooks", "session", "agents"):
         if key in edited:
@@ -1165,6 +1177,9 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
                 **initialization)
         decision_accounts.require_complete()
         coordinator = session.coordinator
+        source = getattr(loaded, '_host_write_policy_source', None)
+        if source is not None:
+            coordinator.register_capability('web.write_policy.source', source)
         coordinator.register_capability("approval.interactive", approvals.interactive)
         from ..read_policy import validate_mounted_read_policy
         validate_mounted_read_policy(coordinator)

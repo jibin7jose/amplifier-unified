@@ -65,7 +65,21 @@ async def observe(session, paths):
         inspected = inspect_tools()
     except ValueError:
         return {'status': 'unknown', 'paths': {}, 'runtimeSessionId': getattr(session, 'session_id', None)}
-    result = await asyncio.to_thread(check, inspected, paths)
+    policy = capability('web.write_policy')
+    try:
+        effective = {}
+        for name, mounted in inspected.items():
+            if policy and isinstance(mounted, GuardedFileTool) and mounted.kind != 'read':
+                module = 'tool-apply-patch' if mounted.kind == 'patch' else 'tool-filesystem'
+                effective[name] = policy.invocation(mounted.tool, module, coordinator)
+            else:
+                effective[name] = mounted
+        revision = policy.revision if policy else None
+        result = await asyncio.to_thread(check, effective, paths)
+        if policy and policy.refresh()['settingsRevision'] != revision:
+            raise ValueError('The file policy changed during observation.')
+    except Exception:
+        return {'status': 'unknown', 'paths': {}, 'runtimeSessionId': getattr(session, 'session_id', None)}
     current = (coordinator.get('tools') or {}) if coordinator else {}
     stable = set(current) == set(tools) and all(current.get(name) is tool for name, tool in tools.items())
     if stable:

@@ -360,6 +360,16 @@ def load_config(workspace, *, home=None, legacy_home=None, session_id=None, glob
     return read_config(workspace, home=home, shared_home=shared, session_id=session_id, global_only=global_only, owner_session_id=owner_session_id)
 
 
+def runtime_settings(settings, home, registry_home):
+    """Normalize canonical settings for the selected runtime snapshot."""
+    def relocate(value):
+        if isinstance(value, dict): return {k:relocate(v) for k,v in value.items()}
+        if isinstance(value, list): return [relocate(v) for v in value]
+        if isinstance(value, str): return value.replace(str(home / "foundation"), str(registry_home))
+        return value
+    return relocate(settings)
+
+
 def read_config(workspace, *, home=None, shared_home=None, session_id=None, global_only=False, settings_cache=None, registry_home=None, owner_session_id=None):
     """Read runtime settings without loading keys, preparing caches or writing."""
     if os.name == "nt":
@@ -374,14 +384,13 @@ def read_config(workspace, *, home=None, shared_home=None, session_id=None, glob
     from ..updates import foundation_home
     registry_home = Path(registry_home) if registry_home is not None else foundation_home(home)
     # Keep explicit app-cache source overrides aligned with the active snapshot.
-    def relocate(value):
-        if isinstance(value, dict): return {k:relocate(v) for k,v in value.items()}
-        if isinstance(value, list): return [relocate(v) for v in value]
-        if isinstance(value, str): return value.replace(str(home / "foundation"), str(registry_home))
-        return value
     from ..access_mode import read_mode
     from ..image_migration import scoped_image_sources
-    return HostConfig(home, workspace, relocate(settings), registry_home, shared, global_only,
+    result = HostConfig(home, workspace, runtime_settings(settings, home, registry_home), registry_home, shared, global_only,
                       read_mode(home, workspace, session_id, owner_session_id=owner_session_id),
                       tuple(scoped_image_sources(workspace, shared_home=shared,
                                                 session_id=session_id, global_only=global_only)))
+    # Host provenance for settings-only refresh comparisons. Relocated runtime
+    # source paths must not look like a concurrent canonical settings change.
+    result._canonical_settings = copy.deepcopy(settings)
+    return result

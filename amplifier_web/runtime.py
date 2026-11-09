@@ -1752,6 +1752,20 @@ class RuntimeManager:
         except (RuntimeError, TimeoutError):
             return unknown
 
+    async def refresh_file_access(self, session_id, revision):
+        """Refresh only an existing worker; never revive a retired runtime."""
+        row = self.workers.get(session_id)
+        if (not row or row['process'].returncode is not None or not row['ready'].done()
+                or row['ready'].cancelled() or row['ready'].exception() is not None):
+            return False
+        try:
+            async with asyncio.timeout(10):
+                result = await self._request(session_id, 'file_access.refresh', settingsRevision=revision)
+            return (self.workers.get(session_id) is row and row['process'].returncode is None
+                    and result == {'settingsRevision': revision, 'boundary': 'next-tool-call'})
+        except (RuntimeError, TimeoutError):
+            return False
+
     async def desktop_readiness(self, session_id):
         """Inspect only the mounted worker; do not revive retired conversations."""
         row = self.workers.get(session_id)

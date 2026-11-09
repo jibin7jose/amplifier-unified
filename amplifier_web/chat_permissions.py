@@ -8,8 +8,8 @@ from .session_identity import native_id
 from .shared_settings import overlay, read_settings
 
 WRITE_KEYS = ('allowed_write_paths', 'denied_write_paths')
-PENDING_DETAIL = ('Write settings are saved or being saved. Existing work keeps its current access until it finishes. '
-                  'Finish or stop existing child work before sending another message; no new turn has started.')
+PENDING_DETAIL = ('Write settings are saved or being saved. The live tool boundary has not confirmed the refresh. '
+                  'Finish or stop existing child work if refresh remains unavailable; no new turn has started.')
 
 
 class _Unchanged(Exception):
@@ -119,3 +119,31 @@ def change(management, args, *, reset=False, before_write=None):
         'This chat already inherits workspace defaults.' if reset else
         'Chat write overrides saved.' if changed else 'Chat write overrides are unchanged.'))
     return result
+
+
+async def refresh_active(management, session, saved_revision, execution_epoch):
+    """Release only this write-change fence after the same worker confirms it."""
+    service = management.service
+    refresh = getattr(service.runtime, 'refresh_file_access', None)
+    if not callable(refresh):
+        return
+    async with service.lock:
+        if (not session.get('fileAccessPending') or session.get('configurationBusy')
+                or session.get('configurationPendingRevision', 0) != execution_epoch
+                or snapshot(management, session)['revision'] != saved_revision):
+            return
+        revision = session.get('configurationPendingRevision', 0)
+        settings = read_settings(session['workspace'], shared_home=management.settings.shared_home,
+                                 session_id=native_id(session))
+        settings_revision = fingerprint(settings)
+    if not await refresh(session['id'], settings_revision):
+        return
+    async with service.lock:
+        if (session.get('configurationBusy') or not session.get('fileAccessPending')
+                or session.get('configurationPendingRevision', 0) != revision
+                or snapshot(management, session)['revision'] != saved_revision):
+            return
+        session['configurationPending'] = False
+        session.pop('fileAccessPending', None)
+        session.pop('configurationRefresh', None)
+        service._publish_changes(sessions={session['id']})

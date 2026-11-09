@@ -52,9 +52,14 @@ Save and reset both require `file_access` at `session` scope for agents, includi
 when reset restores wider inherited access. Direct user controls use the same
 action. Native children cannot administer the root or bypass inherited ceilings.
 The canonical locked settings mutation rechecks authorization and the preview.
-Command receipts make an exact retry idempotent. A changed policy invalidates
-only this chat's configuration through the existing runtime owner; active work
-and persistent children reach their existing safe boundary before remounting.
+Command receipts make an exact retry idempotent. For a write-list-only change,
+the runtime confirms the saved revision without ending the active turn. Reference
+file, patch and image tools snapshot current write policy at the next invocation;
+source-checked file tools recheck after waiting for file admission. In-flight calls
+retain their invocation snapshot. Existing or preparing children can only narrow
+their captured ceilings; new children inherit the refreshed parent plan. Read
+policy, bundle restrictions, hooks and approval checks are not replaced.
+No extra user message, replay or synthetic input is needed.
 Before the canonical file write, the existing host record durably fences new
 input with a pending file-access change. New root/worker/voice execution is rejected,
 queued peer input waits, and schedules/observations recheck their existing
@@ -62,8 +67,11 @@ admission guards. Human messages to the current active root generation remain
 available as steering. They cannot fall forward into a new turn if that run ends
 before delivery; an undelivered message remains saved with its delivery state.
 Answers, approvals and Stop remain available for existing work.
-The UI explains pending access and how to finish or stop existing child work.
-Only confirmed retirement, or proof that no owned mount exists, clears the fence.
+The confirmed live boundary clears only its own write-change fence. Unavailable,
+lost or superseded refresh replies and unrelated configuration changes remain
+pending for the existing retirement path; inspect `fileAccessPending` rather than
+equating saved settings with mounted access. Finish or stop existing child work
+when that fallback is required.
 After host restart, new mounts read canonical settings; no old worker is adopted.
 A failed write or lost acknowledgment can conservatively retire the old mount,
 but cannot silently continue it with a missing fence. No-op reset adds no fence.

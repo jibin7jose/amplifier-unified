@@ -788,7 +788,7 @@ class Management:
             self.service._publish_progress(session_ids={session['id']}, record_only=True)
         return True
 
-    async def invalidate_configuration(self,*,publish=True,warm=True,session_ids=None):
+    async def invalidate_configuration(self,*,publish=True,warm=True,session_ids=None,write_policy_epochs=None):
         from .setup import SetupManager
         workspace=self.service.state.get('setup',{}).get('providersWorkspace')
         if workspace and warm:self.background(self.warm_providers(SetupManager(self.service.data_dir,catalog=self.provider_catalog),workspace))
@@ -804,7 +804,13 @@ class Management:
                 if (not session.get('historyManaged') or session.get('fileAccessPending')) and (session_ids is None or session['id'] in session_ids):
                     changed.add(session['id'])
                     session['configurationPending']=True
-                    session['configurationPendingRevision']=self.service.state['configurationRevision']
+                    # A write-list-only boundary must not invalidate the
+                    # authenticated execution scopes of existing children.
+                    # A concurrent ordinary invalidation still advances its
+                    # epoch and cannot be cleared by the write refresh.
+                    if ((write_policy_epochs or {}).get(session['id']) is None
+                            or session.get('configurationPendingRevision', 0) != write_policy_epochs[session['id']]):
+                        session['configurationPendingRevision']=self.service.state['configurationRevision']
                     if not session.get('configurationBusy'):
                         session['configurationRefresh']={'phase':'pending','revision':self.service.state['configurationRevision']}
                     refresh=self.service._claim_configuration_refresh(session)
@@ -1364,15 +1370,21 @@ class Management:
                 result = snapshot(self, session)
             else:
                 marked = False
+                live_refresh = False
+                write_epochs = {}
                 try:
                     async with self.service.lock:
                         session = target(self, args)
                         def before_write():
-                            nonlocal marked
+                            nonlocal marked, live_refresh
                             # Persist the admission fence BEFORE Foundation's
                             # atomic settings write. A lost write/ack stays
                             # fenced until retirement proves the next mount
                             # reads canonical settings. No-op calls never enter.
+                            live_refresh = (not session.get('configurationPending') and not session.get('configurationBusy')
+                                and callable(getattr(self.service.runtime, 'refresh_file_access', None)))
+                            epoch = session.get('configurationPendingRevision', 0)
+                            write_epochs[session['id']] = epoch
                             session.update(fileAccessPending=True, configurationPending=True)
                             if not session.get('configurationBusy'):
                                 session['configurationRefresh'] = {'phase':'pending', 'detail':PENDING_DETAIL}
@@ -1381,7 +1393,11 @@ class Management:
                         result = change(self, args, reset=action == 'permissions.reset', before_write=before_write)
                 finally:
                     if marked:
-                        await self.invalidate_configuration(warm=False, session_ids={session['id']})
+                        await self.invalidate_configuration(warm=False, session_ids={session['id']},
+                            write_policy_epochs=write_epochs if live_refresh else None)
+                if marked and live_refresh:
+                    from .chat_permissions import refresh_active
+                    await refresh_active(self, session, result['revision'], write_epochs[session['id']])
             await self.publish(permissions={**result, 'commandId': command_id})
         elif action=='permissions.get':
             session=self.configuration_session(args);scope=args.get('scope','global')

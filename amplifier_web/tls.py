@@ -175,3 +175,104 @@ def tls_ready(data_dir: Path, config: dict) -> bool:
     except (FileNotFoundError, OSError, ssl.SSLError, ValueError, NotImplementedError):
         return False
     return True
+
+
+def certificate_checks(data_dir: Path, config: dict) -> list[dict]:
+    """Offline configured-certificate diagnostics, not listener/client trust proof.
+
+    No DNS, remote certificate downloads, credential reads or trust-store writes.
+    ssl_context remains the owner of certificate/private-key matching.
+    """
+    if config['tls']['method'] == 'none':
+        return []
+    if _WINDOWS:
+        return [{'ok': False, 'message': 'Certificate SAN/chain diagnostics on native Windows remain unqualified.'}]
+    from cryptography import x509
+    from cryptography.x509.verification import PolicyBuilder, Store, VerificationError
+
+    chain = x509.load_pem_x509_certificates(resolve_path(data_dir, config['tls']['cert']).read_bytes())
+    leaf = chain[0]
+    now = datetime.now(UTC)
+    app_owned = (config['tls']['cert'] == 'config/tls/leaf.crt'
+                 and config['tls']['key'] == 'config/tls/leaf.key')
+    repair = ('Run amplifier-unified setup-tls force to renew the leaf while preserving the CA, then restart the service.'
+              if app_owned else 'Replace the supplied certificate/chain with your certificate issuer, then restart the service.')
+    checks = []
+
+    def validity(certificate, label, remediation):
+        valid = certificate.not_valid_before_utc <= now <= certificate.not_valid_after_utc
+        expiring = valid and certificate.not_valid_after_utc - now <= timedelta(days=30)
+        checks.append({'ok': valid and not expiring, 'message': (
+            f'{label} validity: {certificate.not_valid_before_utc.isoformat()} to {certificate.not_valid_after_utc.isoformat()}.'
+            + (' Certificate expires within 30 days. ' + remediation if expiring else
+               '' if valid else ' Certificate is expired or not yet valid. ' + remediation))})
+        return valid and not expiring
+
+    ca = None
+    if app_owned:
+        from cryptography.hazmat.primitives import serialization
+        ca_repair = 'Recover the existing CA from backup or plan an explicit CA rotation and redistribute client trust; do not run setup-tls force with an incomplete CA pair.'
+        try:
+            ca = x509.load_pem_x509_certificate(exported_ca_bytes(data_dir))
+            ca_key = serialization.load_pem_private_key((tls_dir(data_dir) / 'ca.key').read_bytes(), None)
+            if ca_key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo) != ca.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo):
+                raise ValueError('Local CA certificate/key do not match.')
+        except (OSError, ValueError, TypeError) as error:
+            checks.append({'ok': False, 'message': 'Local CA pair is missing or invalid. ' + ca_repair, 'detail': str(error)})
+            repair = ca_repair
+            ca = None
+        else:
+            ca_repair = 'Plan an explicit CA rotation and redistribute trust to clients; setup-tls force preserves this CA and cannot renew it.'
+            if not validity(ca, 'Local CA certificate', ca_repair):
+                repair = ca_repair
+
+    validity(leaf, 'TLS leaf certificate', repair)
+    try:
+        san = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        dns = san.get_values_for_type(x509.DNSName)
+        ips = san.get_values_for_type(x509.IPAddress)
+    except x509.ExtensionNotFound:
+        dns, ips = [], []
+
+    hosts = list(config['bind']) + [urlsplit(origin).hostname for origin in config['public_origins']]
+    for host in dict.fromkeys(hosts):
+        if host in {'0.0.0.0', '::'}:
+            continue  # A wildcard bind is not a client identity.
+        host = canonical_host(host)
+        try:
+            # Zones select a local interface for transport, not a certificate
+            # identity: X.509 IP SANs encode only the address bytes.
+            address = ipaddress.ip_address(host)
+            covered = type(address)(int(address)) in ips
+        except ValueError:
+            # Only a complete leftmost label may be a wildcard, never a suffix
+            # match, partial label, IP literal, or multi-level substitution.
+            covered = any(host == name.lower().rstrip('.') or (
+                name.startswith('*.') and host.count('.') == name.count('.')
+                and host.split('.', 1)[1] == name[2:].lower().rstrip('.'))
+                for name in dns)
+        checks.append({'ok': covered, 'message': (
+            f'Certificate SAN covers {host}.' if covered
+            else f'Certificate SAN is missing {host}. ' + repair)})
+
+    # Validate against the app CA for its fixed leaf layout. Supplied chains
+    # use this machine's system roots, not an unrelated app CA lying on disk.
+    if app_owned:
+        if ca is None:
+            return checks
+        roots = [ca]
+    else:
+        roots = [x509.load_der_x509_certificate(value)
+                 for value in ssl.create_default_context().get_ca_certs(binary_form=True)]
+    try:
+        # A SAN identity is required by the server verifier. Coverage of ALL
+        # configured identities is reported independently above.
+        name = dns[0].replace('*.', 'diagnostic.', 1) if dns else 'localhost'
+        identity = x509.IPAddress(ips[0]) if ips else x509.DNSName(name)
+        PolicyBuilder().store(Store(roots)).time(now).build_server_verifier(identity).verify(leaf, chain[1:])
+        checks.append({'ok': True, 'message': 'Certificate chain verifies against the local CA or this computer’s system roots; remote client trust is not checked.'})
+    except (VerificationError, ValueError) as error:
+        checks.append({'ok': False, 'message': 'Certificate chain could not be verified locally. ' + repair,
+                       'detail': str(error)})
+    checks.append({'ok': True, 'message': 'Certificate checks inspect configured files only; DNS, live TLS and trust on other devices are not verified.'})
+    return checks

@@ -14,7 +14,7 @@ from . import __version__
 def doctor(home):
     from .deployment import load_server_config
     import yaml
-    from .tls import ssl_context
+    from .tls import certificate_checks, ssl_context
     checks = []
     from .host_dependencies import MissingHostDependency, require_uv, tool_path
     import shutil
@@ -49,7 +49,8 @@ def doctor(home):
     try:
         ssl_context(home, config)
         checks.append({"ok": True, "message": "Secure connection is configured" if config['tls']['method'] != 'none' else "Local connection is configured"})
-    except (OSError, ValueError) as error:
+        checks.extend(certificate_checks(home, config))
+    except (OSError, ValueError, NotImplementedError) as error:
         checks.append({"ok": False, "message": "The connection certificate needs attention. Check your TLS settings.", "detail": str(error)})
     return {"ok": all(row['ok'] for row in checks), "version": __version__, "checks": checks}
 
@@ -123,7 +124,8 @@ async def _status_once(home, wait=0):
     try:
         config = load_server_config(home)
         manager = SimpleNamespace(home=home, service=SimpleNamespace(server_config=config, port=config['port']))
-        urls, pin = probe_targets(manager)
+        scope = {}
+        urls, pin = await asyncio.to_thread(probe_targets, manager, diagnostics=scope)
         token = (Path(home) / 'config/auth/control-token').read_text().strip()
     except (OSError, ValueError, yaml.YAMLError) as error:
         if initial_state == 'not configured':
@@ -132,34 +134,48 @@ async def _status_once(home, wait=0):
         return {"ok": False, "service": initial_state, "message": "Unified's connection settings need attention. Run amplifier-unified doctor.", "detail": str(error)}
     deadline = asyncio.get_running_loop().time() + wait
     state = 'unknown'
+    listener_checks = []
+    diagnostics = {'configuredBinds': config['bind'], 'publicUrls': config['public_origins'],
+                   'publicUrlsVerified': False, **scope}
+    slots = asyncio.Semaphore(4)
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2), trust_env=False) as client:
+        async def check_listener(url):
+            row = {'url': url.removesuffix('/api/health'), 'verified': False}
+            try:
+                async with slots:
+                    async with client.get(url, ssl=pin, allow_redirects=False,
+                                          headers={'Authorization': 'Bearer ' + token, 'Host': f"localhost:{config['port']}"}) as response:
+                        value = await response.json() if response.status == 200 else None
+                        if matches_health(value, home, expected):
+                            row['verified'] = True
+                        else:
+                            row['detail'] = 'No matching authenticated installation health response.'
+            except (aiohttp.ClientError, OSError, TimeoutError, ValueError):
+                # Do not print exception text that could include credentials.
+                row['detail'] = 'Connection, TLS pin, or health response failed.'
+            return row
+
         while True:
             try:
                 state = await asyncio.to_thread(service_state, home)
             except (OSError, RuntimeError, subprocess.SubprocessError):
                 state = 'unavailable'
-            for url in urls:
-                try:
-                    async with client.get(url, ssl=pin, allow_redirects=False,
-                                          headers={'Authorization': 'Bearer ' + token, 'Host': f"localhost:{config['port']}"}) as response:
-                        value = await response.json() if response.status == 200 else None
-                        if matches_health(value, home, expected):
-                            # A reachable manual host is useful information, but
-                            # cannot stand in for a healthy managed service.
-                            ok = state == 'running'
-                            if not ok and asyncio.get_running_loop().time() < deadline:
-                                continue
-                            return {"ok": ok, "responding": True, "service": state,
-                                    "message": "Unified is running and responding on this computer." if ok else "Unified responds on this computer, but its background service is " + state + ".",
-                                    "url": url.removesuffix('/api/health'),
-                                    "publicUrls": config['public_origins'],
-                                    "publicUrlsVerified": False}
-                except (aiohttp.ClientError, OSError, TimeoutError, ValueError):
-                    pass
+            # Resolve once per pass; connect numerically with at most four
+            # concurrent, two-second requests. One failed bind cannot hide others.
+            listener_checks = await asyncio.gather(*(check_listener(url) for url in urls))
+            verified = [row['url'] for row in listener_checks if row['verified']]
+            if verified and (state == 'running' or asyncio.get_running_loop().time() >= deadline):
+                # A manual host cannot stand in for a healthy managed service.
+                ok = state == 'running'
+                return {"ok": ok, "responding": True, "service": state,
+                        "message": "Unified is running and responding on this computer." if ok else "Unified responds on this computer, but its background service is " + state + ".",
+                        "url": verified[0], "listenerUrls": verified,
+                        "listenerChecks": listener_checks, **diagnostics}
             if asyncio.get_running_loop().time() >= deadline:
                 break
             await asyncio.sleep(.5)
     return {"ok": False, "responding": False, "service": state,
+            "listenerUrls": [], "listenerChecks": listener_checks, **diagnostics,
             "message": f"Unified is not ready yet (background service: {state}).",
             "nextStep": "Run amplifier-unified service logs to see why startup has not completed."}
 
@@ -176,8 +192,14 @@ def display(result, *, as_json=False, verbose=False):
                 print('  ' + row['detail'])
     else:
         print(result['message'])
-        if result.get('ok') and result.get('url'):
-            print('Host listener: ' + result['url'])
+        for url in result.get('listenerUrls', [result['url']] if result.get('ok') and result.get('url') else []):
+            print('Host listener: ' + url)
+        for row in result.get('listenerChecks', []):
+            if not row['verified']:
+                print('Listener not verified: ' + row['url'] + ' — ' + row['detail'])
+        if result.get('configuredBinds'):
+            print('Configured binds (not listener proof): ' + ', '.join(result['configuredBinds']))
+            print('Probe scope: ' + result['listenerScope'])
         for url in result.get('publicUrls', []):
             print('Configured public address (not checked): ' + url)
         if result.get('publicUrls'):

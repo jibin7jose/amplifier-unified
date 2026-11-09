@@ -162,7 +162,15 @@ class FileSourceGuard:
         from amplifier_core import ToolResult
         targets = {}
         invoked = False
+        original = tool
+        policy = self.coordinator.get_capability('web.write_policy')
+        def invocation():
+            if policy and kind != 'read':
+                module = 'tool-apply-patch' if kind == 'patch' else 'tool-filesystem'
+                return policy.invocation(original, module, self.coordinator)
+            return original
         try:
+            tool = invocation()
             targets = self._targets(tool, kind, arguments)
             # Capture before waiting: a simultaneous write by THIS coordinator
             # must not silently inherit a version produced while it waited.
@@ -172,6 +180,7 @@ class FileSourceGuard:
                     expected[path] = None
             async with _locked(self.directory, targets):
                 # Re-resolve aliases and recheck policy under admission.
+                tool = invocation()
                 if targets != self._targets(tool, kind, arguments):
                     raise SourceConflict('file_source_stale', 'The file path changed. Read it again before editing.')
                 if kind == 'read':
@@ -252,8 +261,11 @@ async def install_file_source_guard(coordinator, directory=None):
         return
     from .host.config import app_home
     guard = FileSourceGuard(coordinator, directory or app_home() / 'file-source-locks')
+    from .write_policy_refresh import IMAGES, PolicyImageTool
     for name, tool in list((coordinator.get('tools') or {}).items()):
         kind = _KNOWN.get((type(tool).__module__, type(tool).__name__))
         if kind:
             await coordinator.mount('tools', GuardedFileTool(tool, guard, kind), name=name)
+        elif (type(tool).__module__, type(tool).__name__) in IMAGES:
+            await coordinator.mount('tools', PolicyImageTool(tool, coordinator), name=name)
     coordinator.register_capability('web.file_source_guard', guard)

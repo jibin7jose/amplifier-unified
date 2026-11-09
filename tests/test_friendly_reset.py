@@ -128,7 +128,7 @@ async def test_status_checks_authenticated_local_health(aiohttp_server, monkeypa
     app = web.Application()
     app.router.add_get('/api/health', endpoint)
     server = await aiohttp_server(app)
-    monkeypatch.setattr(update_readiness, 'probe_targets', lambda manager: ([str(server.make_url('/api/health'))], None))
+    monkeypatch.setattr(update_readiness, 'probe_targets', lambda manager, **kw: ([str(server.make_url('/api/health'))], None))
     monkeypatch.setattr(update_readiness, 'running_identity', lambda: {'version': __version__, 'revision': None})
     monkeypatch.setattr(health, 'service_state', lambda home: 'running' if service == 'starting' and token.exists() else service)
     if service == 'starting':

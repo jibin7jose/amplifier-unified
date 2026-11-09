@@ -406,13 +406,145 @@ async def confirm_readiness(manager, health, expected=None, command_id=None, *, 
         return True
 
 
-def probe_targets(manager):
+def local_interface_addresses():
+    """Snapshot assigned numeric IPs from libc getifaddrs, without DNS/commands.
+
+    Linux and macOS share ifaddrs layout but not sockaddr family layout.
+    Windows is deliberately unsupported; its host qualification is separate.
+    """
+    import ctypes as c
+    import ipaddress
+    import socket
+
+    if sys.platform not in {'linux', 'darwin'}:
+        raise NotImplementedError('Local interface enumeration supports Linux and macOS only.')
+
+    class Ifaddrs(c.Structure):
+        pass
+
+    Ifaddrs._fields_ = [('next', c.POINTER(Ifaddrs)), ('name', c.c_char_p),
+                       ('flags', c.c_uint), ('addr', c.c_void_p),
+                       ('netmask', c.c_void_p), ('destination', c.c_void_p),
+                       ('data', c.c_void_p)]
+    libc = c.CDLL(None, use_errno=True)
+    try:
+        get, free = libc.getifaddrs, libc.freeifaddrs
+    except AttributeError as error:
+        raise NotImplementedError('getifaddrs is unavailable.') from error
+    get.argtypes, get.restype = [c.POINTER(c.POINTER(Ifaddrs))], c.c_int
+    free.argtypes, free.restype = [c.POINTER(Ifaddrs)], None
+    head = c.POINTER(Ifaddrs)()
+    if get(c.byref(head)) != 0:
+        raise OSError(c.get_errno(), 'Unable to enumerate local interfaces.')
+    hosts = []
+    try:
+        node = head
+        while node:
+            entry = node.contents
+            node = entry.next
+            if not entry.addr:
+                continue
+            header = c.string_at(entry.addr, 2)
+            family = header[1] if sys.platform == 'darwin' else int.from_bytes(header, sys.byteorder)
+            if family == socket.AF_INET:
+                host = socket.inet_ntop(family, c.string_at(entry.addr + 4, 4))
+            elif family == socket.AF_INET6:
+                packed = bytearray(c.string_at(entry.addr + 8, 16))
+                scope = int.from_bytes(c.string_at(entry.addr + 24, 4), sys.byteorder)
+                # Darwin can embed the interface index in link-local s6_addr[2:4].
+                if sys.platform == 'darwin' and packed[0] == 0xfe and packed[1] & 0xc0 == 0x80:
+                    scope = scope or int.from_bytes(packed[2:4], 'big')
+                    packed[2:4] = b'\0\0'
+                host = socket.inet_ntop(family, bytes(packed))
+                if ipaddress.ip_address(host).is_link_local:
+                    scope = scope or socket.if_nametoindex(entry.name.decode(errors='surrogateescape'))
+                if scope:
+                    host += '%' + str(scope)
+            else:
+                continue
+            ip = ipaddress.ip_address(host)
+            if not ip.is_unspecified and not ip.is_multicast:
+                hosts.append(host)
+    finally:
+        free(head)
+    return list(dict.fromkeys(hosts))
+
+
+def local_probe_hosts(bind, *, wildcard_hosts=None):
+    """Resolve once and admit only numeric addresses owned by this computer.
+
+    A bind name is not authority to send a control credential through DNS.
+    An ordinary ephemeral bind (without freebind/reuse options) establishes local
+    address ownership, not listener readiness. Wildcard candidates come only
+    from a local interface snapshot (or explicitly partial loopback fallback).
+    """
+    import ipaddress
+    import socket
+
+    if bind in {'0.0.0.0', '::'}:
+        if wildcard_hosts is None:
+            try:
+                wildcard_hosts = local_interface_addresses()
+            except (OSError, NotImplementedError):
+                wildcard_hosts = ['127.0.0.1', '::1']
+        version = 4 if bind == '0.0.0.0' else 6
+        hosts = []
+        for host in wildcard_hosts:
+            if ipaddress.ip_address(host).version == version:
+                hosts.extend(local_probe_hosts(host))
+        return list(dict.fromkeys(hosts))
+    host = bind
+    try:
+        # Numerical candidates must never consult DNS, including scoped IPv6.
+        numeric = False
+        try:
+            ipaddress.ip_address(host)
+            numeric = True
+        except ValueError:
+            pass
+        addresses = socket.getaddrinfo(host, 0, type=socket.SOCK_STREAM,
+                                       **({'flags': socket.AI_NUMERICHOST} if numeric else {}))
+    except OSError:
+        return []
+    hosts = []
+    for family, kind, protocol, _, address in addresses:
+        if family not in {socket.AF_INET, socket.AF_INET6}:
+            continue
+        ip = ipaddress.ip_address(address[0])
+        # IPv4-mapped sockets can use IPv4 nonlocal-bind policy even when the
+        # IPv6 sysctl is disabled. They are not an independent local identity.
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            continue
+        if ip.is_unspecified or ip.is_multicast:
+            continue
+        if sys.platform == 'linux' and not ip.is_loopback:
+            # Linux can globally permit nonlocal binds. In that configuration
+            # a successful ephemeral bind is no longer local-address evidence.
+            try:
+                if Path(f'/proc/sys/net/ipv{ip.version}/ip_nonlocal_bind').read_text().strip() != '0':
+                    continue
+            except OSError:
+                continue
+        try:
+            with socket.socket(family, kind, protocol) as candidate:
+                candidate.bind(address)
+        except OSError:
+            continue
+        value = str(ip)
+        if family == socket.AF_INET6 and address[3] and '%' not in value:
+            value += '%' + str(address[3])
+        hosts.append(value)
+    return list(dict.fromkeys(hosts))
+
+
+def probe_targets(manager, *, diagnostics=None):
     """Connect only to configured local bind addresses, with exact TLS pinning.
 
     Pin the configured leaf certificate so custom CA/DNS deployments work
     without routing a control token through a proxy or disabling TLS checks.
     """
-    from .deployment import resolve_path
+    import ipaddress
+    from .deployment import is_loopback, resolve_path
     config = manager.service.server_config
     secure = config['tls']['method'] != 'none'
     pin = None
@@ -422,10 +554,37 @@ def probe_targets(manager):
         certificate = x509.load_pem_x509_certificate(resolve_path(manager.home, config['tls']['cert']).read_bytes())
         pin = aiohttp.Fingerprint(certificate.fingerprint(hashes.SHA256()))
     urls = []
-    for host in config['bind']:
-        host = {'0.0.0.0': '127.0.0.1', '::': '::1'}.get(host, host)
-        host = '[' + host + ']' if ':' in host else host
-        urls.append(f"{'https' if secure else 'http'}://{host}:{manager.service.port}/api/health")
+    scope = 'Locally assigned addresses resolved from configured binds.'
+    complete = True
+    interfaces = None
+    if any(bind in {'0.0.0.0', '::'} for bind in config['bind']):
+        try:
+            interfaces = local_interface_addresses()
+            scope += ' Wildcard binds cover the assigned numeric interfaces from a local getifaddrs snapshot.'
+        except (OSError, NotImplementedError):
+            interfaces = ['127.0.0.1', '::1']
+            complete = False
+            scope += ' PARTIAL: local interface enumeration unavailable; wildcard binds test loopback only, not all interfaces.'
+    for bind in config['bind']:
+        hosts = local_probe_hosts(bind, wildcard_hosts=interfaces)
+        if not hosts:
+            complete = False
+        if bind in {'0.0.0.0', '::'}:
+            expected = {host for host in interfaces
+                        if ipaddress.ip_address(host).version == (4 if bind == '0.0.0.0' else 6)}
+            if expected - set(hosts):
+                complete = False
+        for host in hosts:
+            if not secure and not is_loopback(host):
+                complete = False
+                continue
+            host = '[' + host + ']' if ':' in host else host
+            urls.append(f"{'https' if secure else 'http'}://{host}:{manager.service.port}/api/health")
+    if diagnostics is not None:
+        if not complete:
+            scope += ' PARTIAL: some candidates could not be enumerated or admitted by local ownership/TLS checks.'
+        diagnostics.update(listenerScope=scope + ' Only matching authenticated responses are verified; this is not proof of remote client reachability.',
+                           listenerScopeComplete=complete)
     return list(dict.fromkeys(urls)), pin
 
 
@@ -443,25 +602,35 @@ async def wait_for_readiness(manager, token, *, timeout=60, interval=.25):
     diagnostics.record('restart-readiness', 'started', commandId=command_id,
                        expectedVersion=target['version'], expectedRevision=target['revision'])
     issue = None
+    deadline = asyncio.get_running_loop().time() + timeout
     try:
-        successor = await qualify_successor(manager, target)
-        urls, pin = probe_targets(manager)
-        deadline = asyncio.get_running_loop().time() + timeout
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2), trust_env=False) as client:
-            while not manager.closed and asyncio.get_running_loop().time() < deadline:
-                for url in urls:
-                    try:
-                        async with client.get(url, ssl=pin, allow_redirects=False, headers={
-                                'Authorization': 'Bearer ' + token, 'Host': f'localhost:{manager.service.port}'}) as response:
-                            if response.status == 200 and await confirm_readiness(manager, await response.json(), expected=target, command_id=command_id, successor=successor):
-                                return
-                    except (aiohttp.ClientError, OSError, TimeoutError, ValueError):
-                        pass
-                await asyncio.sleep(interval)
+        async with asyncio.timeout_at(deadline):
+            successor = await qualify_successor(manager, target)
+            # Resolver/syscall preparation must not stall the event loop or
+            # receive a fresh timeout budget after a slow DNS lookup.
+            urls, pin = await asyncio.to_thread(probe_targets, manager)
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2), trust_env=False) as client:
+                while not manager.closed and asyncio.get_running_loop().time() < deadline:
+                    for url in urls:
+                        if asyncio.get_running_loop().time() >= deadline:
+                            raise TimeoutError
+                        try:
+                            async with client.get(url, ssl=pin, allow_redirects=False, headers={
+                                    'Authorization': 'Bearer ' + token, 'Host': f'localhost:{manager.service.port}'}) as response:
+                                value = await response.json() if response.status == 200 else None
+                                if asyncio.get_running_loop().time() >= deadline:
+                                    raise TimeoutError
+                                if response.status == 200 and await confirm_readiness(manager, value, expected=target, command_id=command_id, successor=successor):
+                                    return
+                        except (aiohttp.ClientError, OSError, TimeoutError, ValueError):
+                            pass
+                    await asyncio.sleep(interval)
         issue = ('TimeoutError', 'failed')
     except asyncio.CancelledError:
         issue = ('CancelledError', 'interrupted')
         raise
+    except TimeoutError:
+        issue = ('TimeoutError', 'failed')
     except (OSError, ValueError):
         issue = ('ValueError', 'failed')
     finally:

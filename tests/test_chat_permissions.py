@@ -550,3 +550,91 @@ async def test_pending_access_fences_native_validation_and_configuration_inherit
     with pytest.raises(AppError, match='Source configuration is changing'):
         await app.dispatch('session.create', {'workspace':source['workspace'],'bundle':source['bundle'],
             'inheritConfiguration':{'sessionId':source['id'],'configurationHash':'not-used'}}, command_id='no-inheritance')
+
+
+async def test_approved_session_save_updates_active_mounted_tools_without_turn_or_retirement(app):
+    from test_write_policy_refresh import root, create
+    from pathlib import Path
+    source, peer = app.state['sessions']
+    source['status'] = 'working'
+    source['workers'] = [{'id': 'existing-child', 'persistent': True, 'status': 'idle'}]
+    coordinator, tools, policy = await root(Path(source['workspace']), session_id=native_id(source))
+    before = copy.deepcopy(source['collaborationGeneration'])
+    epoch = source.get('configurationPendingRevision', 0)
+    async def refresh(sid, revision):
+        assert sid == source['id'] and source['fileAccessPending']
+        return policy.refresh(expected=revision) == {
+            'settingsRevision': revision, 'boundary': 'next-tool-call'}
+    app.runtime.refresh_file_access = AsyncMock(side_effect=refresh)
+    await grant(app, ['file_access'], ['session'])
+    external = Path(source['workspace']).parent / 'approved'
+    assert not (await tools['apply_patch'].execute(create(external / 'next'))).success
+    values = args(app, allowed=[str(external)], denied=[])
+    _, done = await command(app, 'permissions.save', values, 'live-save', as_agent=True)
+    assert done['phase'] == 'ready'
+    assert not source.get('fileAccessPending') and not source['configurationPending']
+    assert source['status'] == 'working' and source['collaborationGeneration'] == before
+    assert source.get('configurationPendingRevision', 0) == epoch
+    assert source['workers'][0]['status'] == 'idle'
+    assert not peer.get('configurationPending') and not app.runtime.calls
+    assert (await tools['apply_patch'].execute(create(external / 'next'))).success
+    assert (await agent(app, source, 'permissions.save', values, 'live-save'))['duplicate']
+    assert app.runtime.refresh_file_access.await_count == 1
+
+
+@pytest.mark.parametrize('race', ['changed-settings', 'new-revision', 'lost-reply', 'other-pending'])
+async def test_live_refresh_never_clears_an_unknown_or_superseded_fence(app, race):
+    source = app.state['sessions'][0]
+    source['status'] = 'working'
+    async def refresh(sid, revision):
+        if race == 'changed-settings':
+            seed(app, 'session', {'overrides': {'tool-filesystem': {'config': {'denied_write_paths': ['new']}}}})
+        elif race == 'new-revision':
+            source['configurationPendingRevision'] = source.get('configurationPendingRevision', 0) + 1
+        return race != 'lost-reply'
+    app.runtime.refresh_file_access = AsyncMock(side_effect=refresh)
+    if race == 'other-pending':
+        source['configurationPending'] = True
+    _, done = await command(app, 'permissions.save', args(app, allowed=[], denied=['private']), 'race-save')
+    assert done['phase'] == 'ready'
+    assert source['fileAccessPending'] and source['configurationPending']
+    assert app.runtime.refresh_file_access.await_count == (0 if race == 'other-pending' else 1)
+    assert not app.runtime.calls
+
+
+async def test_live_write_refresh_preserves_authenticated_existing_child_scope(app):
+    from amplifier_web.child_execution import current
+    from amplifier_web.collaboration import BINDING, PRINCIPAL
+    source = app.state['sessions'][0]
+    source['status'] = 'working'
+    app.runtime.workers = {source['id']: {'runtimeOwnerId': 'same-process',
+        'process': SimpleNamespace(returncode=None)}}
+    origin = {'rootSessionId': native_id(source), 'runtimeSessionId': 'native-child',
+        'generationId': 'assigned-generation', 'runId': 'assigned-run', 'inputIds': ['user-input'],
+        **{key: source.get(key, 0) for key in ('interruptionRevision', 'executionRevision', 'configurationPendingRevision')}}
+    app.runtime.refresh_file_access = AsyncMock(return_value=True)
+    await command(app, 'permissions.save', args(app, allowed=[], denied=['private']), 'child-live-save')
+    binding = BINDING.set({'_childOrigin': origin, '_runtimeOwnerId': 'same-process',
+                          '_generationId': 'assigned-generation'})
+    principal = PRINCIPAL.set('native-child')
+    try:
+        assert current(app, source) == origin
+    finally:
+        PRINCIPAL.reset(principal)
+        BINDING.reset(binding)
+
+
+async def test_unrelated_invalidation_before_live_dispatch_is_not_erased(app, monkeypatch):
+    source = app.state['sessions'][0]
+    source['status'] = 'working'
+    app.runtime.refresh_file_access = AsyncMock(return_value=True)
+    original = app.management.invalidate_configuration
+    async def raced(**kwargs):
+        # An ordinary invalidation takes ownership between canonical save and
+        # write-only invalidation. Its epoch must remain a hard child fence.
+        await original(warm=False, session_ids={source['id']})
+        await original(**kwargs)
+    monkeypatch.setattr(app.management, 'invalidate_configuration', raced)
+    await command(app, 'permissions.save', args(app, allowed=[], denied=['private']), 'raced-invalidation')
+    assert source['fileAccessPending'] and source['configurationPending']
+    assert app.runtime.refresh_file_access.await_count == 0

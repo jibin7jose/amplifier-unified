@@ -331,6 +331,9 @@ class Worker:
             {key: (self.start_config or {}).get(key, 0) for key in
              ('interruptionRevision', 'executionRevision', 'configurationPendingRevision')})
         assigned_runtime, assigned_gate = self.runtime, self.activation_gate
+        root_policy = self.session.coordinator.get_capability('web.write_policy')
+        if root_policy is not None:
+            coordinator.register_capability('web.write_policy', root_policy)
         assigned_run = coordinator.get_capability('web.worker_run') if callable(lookup) else None
         def child_origin():
             if assigned is None or not assigned_generation or not assigned_run:
@@ -530,6 +533,8 @@ class Worker:
                 # Called at child invocation, before provider preparation can
                 # await a later root generation or Stop. Descendants keep the
                 # assignment they already received from their own parent.
+                if root_policy is not None:
+                    root_policy.refresh()
                 if assigned is None:
                     generation = getattr(self.runtime, 'generation', None) or {}
                     inputs = list(generation.get('input_ids', []))
@@ -962,6 +967,23 @@ class Worker:
                     await self.session.coordinator.get("context").set_messages(messages)
                 report["fork_context_messages"] = len(messages)
             host = self
+            from amplifier_web.write_policy_refresh import install as install_write_policy
+            policy_session, policy_runtime = self.session, self.runtime
+            policy_gate, policy_epoch = self.activation_gate, self.stop_revision
+            def policy_current():
+                from amplifier_web.access_mode import read_mode
+                source = policy_session.coordinator.get_capability('web.write_policy.source')
+                return (self.session is policy_session and self.runtime is policy_runtime
+                    and self.activation_gate is policy_gate and self.stop_revision == policy_epoch
+                    and policy_gate.current_valid and not policy_runtime.closed
+                    and not policy_runtime.stop_requested and not self.parked and not self.remounting
+                    and not self.ownership.yielding and not policy_session.coordinator.cancellation.is_cancelled
+                    and read_mode(self.home, self.workspace, policy_session.session_id,
+                        owner_session_id=(self.start_config or {}).get('ownerSessionId')) == source.config.access_mode)
+            source = self.session.coordinator.get_capability('web.write_policy.source')
+            if source is not None:
+                install_write_policy(self.session.coordinator, source,
+                    self.session.session_id, current=policy_current)
             from amplifier_web.app_guidance import install_app_access
             with startup_timing.phase('worker.app.access'):
                 await install_app_access(self.session.coordinator, self.app_access_bridge(self.session.coordinator))
@@ -1557,6 +1579,18 @@ class Worker:
             'interruptionRevision': data.get('interruptionRevision', 0)}
         self.context_bindings = dict(list(self.context_bindings.items())[-64:])
 
+    @contextmanager
+    def write_policy_boundary(self):
+        """Bind an existing writer for policy-only work; never acquire one."""
+        if (self.parked or self.remounting or self.shared_handle is None
+                or self.ownership.yielding or self.activation_gate is None):
+            raise ValueError('The originating runtime is not active.')
+        token = self.activation_gate.bind(self.activation)
+        try:
+            yield
+        finally:
+            self.activation_gate.reset(token)
+
     async def _command_serial(self, data):
         identity = data.get("id")
         try:
@@ -1628,7 +1662,14 @@ class Worker:
                 elif data.get('resourceAccess') is True:
                     from amplifier_web.resource_access import observe
                     inspected_session = self.session
-                    result = await observe(inspected_session, data.get('paths', []))
+                    if inspected_session and inspected_session.coordinator.get_capability('web.write_policy'):
+                        try:
+                            with self.write_policy_boundary():
+                                result = await observe(inspected_session, data.get('paths', []))
+                        except (ValueError, RuntimeError):
+                            result = {'status': 'unknown', 'paths': {}}
+                    else:
+                        result = await observe(inspected_session, data.get('paths', []))
                     if self.session is not inspected_session:
                         result = {'status': 'unknown', 'paths': {}}
                 elif data.get('integrationValidation') is True:
@@ -1645,6 +1686,15 @@ class Worker:
                     from artifact_runtime import discover
                 if 'patchPlacement' not in data and data.get('provenance') is not True and data.get('resourceAccess') is not True and data.get('integrationValidation') is not True:
                     result = await discover('worker', **({'verify': True} if data.get('verifyImports') is True else {}))
+            elif op == 'file_access.refresh':
+                # No input, activation, unpark, remount or shared tool mutation.
+                # The synchronous owner check and snapshot publication cannot
+                # interleave with Stop or a concurrently preparing child.
+                policy = self.session.coordinator.get_capability('web.write_policy') if self.session else None
+                if policy is None:
+                    raise ValueError('The live write-policy boundary is unavailable.')
+                with self.write_policy_boundary():
+                    result = policy.confirm(data['settingsRevision'])
             elif op == 'handoff.boundary':
                 from amplifier_web.handoff_boundary import inspect
                 from amplifier_web.handoff_drain import finish
