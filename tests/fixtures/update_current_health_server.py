@@ -53,6 +53,18 @@ async def main(home):
         elif mode=='current':
             state['diagnostics']['activeFailures']=copy.deepcopy(original);state['diagnostics'].pop('lastFailure',None)
             await manager.publish(phase='checked',error=None,pendingReplacement=None)
+        elif mode.startswith('notes-'):
+            application = dict(state['application'])
+            application.pop('releaseNotesWarning', None)
+            application.pop('releaseNotes', None)
+            if mode=='notes-empty': application['releaseNotes']=[]
+            elif mode=='notes-error': application['releaseNotesWarning']='Release notes could not be refreshed. Showing saved release history.'
+            elif mode=='notes-next': application['current']='0.60.1'
+            elif mode=='notes-ready':
+                application['releaseNotes']=[{'version':application['current'],'title':'Fixture release notes',
+                    'changes':['Exact installed-version notes arrived.'],'notices':[]}]
+            elif mode!='notes-missing': raise web.HTTPBadRequest()
+            await manager.publish(application=application)
         else:raise web.HTTPBadRequest()
         return web.json_response({'status':state['currentStatus'],'historyPreserved':all(k in state['diagnostics']['activeFailures'] for k in original)})
     async def observations(request):

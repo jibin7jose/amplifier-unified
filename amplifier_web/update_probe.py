@@ -78,7 +78,17 @@ async def main():
             facts['cliAbsent']=not any(importlib.util.find_spec(name) for name in ('amplifier_app_cli','amplifier_loop_live_cli','amplifier_workspace'))
             if not facts['cliAbsent']:raise RuntimeError('A CLI host dependency was introduced')
             facts.update(ok=True,stage='complete')
-    except Exception as error:facts.update(probe_failure(error,facts['stage']))
+    except Exception as error:
+        facts.update(probe_failure(error,facts['stage']))
+        # Keep the encountered reference private and bound to this attempt.
+        # No bundle/config composition is repeated on an automatic retry tick.
+        import os
+        from amplifier_web.update_health import retain_environment_failure
+        try:
+            retain_environment_failure(error, Path(os.environ['AMPLIFIER_WEB_HOME']),
+                                       os.environ.get('AMPLIFIER_UPDATE_ATTEMPT'))
+        except (OSError, ValueError, KeyError):
+            pass  # Missing recovery evidence retains the original refusal.
     finally:
         if session:
             try:await session.cleanup()

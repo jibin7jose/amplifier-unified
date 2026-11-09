@@ -1,5 +1,13 @@
 const version=value=>/^v?\d+\.\d+\.\d+$/.test(value||'')?value.replace(/^v/,''):null;
 
+// An omitted or malformed detail is not an empty release history.
+export function releaseEntries(value){
+ return Array.isArray(value)&&value.every(entry=>entry&&version(entry.version)&&
+  typeof entry.title==='string'&&Array.isArray(entry.changes)&&entry.changes.every(change=>typeof change==='string')&&
+  Array.isArray(entry.notices)&&entry.notices.every(notice=>notice&&
+   ['id','title','detail','action'].every(key=>typeof notice[key]==='string')))?value:null;
+}
+
 // Read the update owner's target. A newer availability check must not relabel
 // an in-flight installation, and component work cannot imply app success.
 export function updateReleaseSummary(updates,application,overview){
@@ -19,7 +27,7 @@ export function updateReleaseSummary(updates,application,overview){
  }else{
   stage=overview.applicationResult?'after':'installed';target=version(application.current);
  }
- const sources=[...(updates.pendingApp?.releaseNotes||[]),...(application.releaseNotes||[])];
+ const sources=[...(releaseEntries(updates.pendingApp?.releaseNotes)||[]),...(releaseEntries(application.releaseNotes)||[])];
  const notes=target?sources.find(entry=>version(entry.version)===target):null;
  return {stage,version:target,notes,
   heading:stage==='before'?'What’s new in':stage==='during'?'Included in this update':stage==='after'?'Now installed':'Installed release',

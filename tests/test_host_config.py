@@ -328,6 +328,32 @@ class HostSettingsTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt", "requires native Windows junctions, local NTFS and profile ACLs")
 class NativeHomeBoundaryTests(unittest.TestCase):
+    def test_update_recovery_private_read_rejects_declared_shared_home_junction(self):
+        import shutil
+        import subprocess
+        import uuid
+        from amplifier_web import windows_files
+        from amplifier_web.host import config as host_config
+        allocation = windows_files.address(Path.home() / (".unified-recovery-test-" + uuid.uuid4().hex))
+        unrelated = allocation / "unrelated"
+        alias = allocation / "shared-alias"
+        with windows_files.directory(unrelated, owned_root=allocation, create=True) as pinned:
+            original = b"FIXTURE_MISSING=must-not-be-read-through-alias\n"
+            pinned.publish_private("keys.env", original)
+        self.addCleanup(shutil.rmtree, allocation)
+        result = subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(alias), str(unrelated)],
+                                capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        self.addCleanup(alias.rmdir)
+        before = (unrelated / "keys.env").stat()
+        with patch.dict(os.environ, {"AMPLIFIER_HOME": str(alias)}):
+            with self.assertRaises(PermissionError):
+                host_config.missing_environment_available("FIXTURE_MISSING")
+        self.assertEqual((unrelated / "keys.env").read_bytes(), original)
+        after = (unrelated / "keys.env").stat()
+        self.assertEqual((before.st_ino, before.st_size, before.st_mtime_ns),
+                         (after.st_ino, after.st_size, after.st_mtime_ns))
+
     def test_app_home_through_read_config_rejects_junction_without_changing_target(self):
         import shutil
         import subprocess

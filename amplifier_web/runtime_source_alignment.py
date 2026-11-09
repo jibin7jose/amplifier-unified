@@ -40,7 +40,10 @@ def verify_checked_selection(checked, selection, *, exact=False):
                           source.get('status'), 'protected-runtime-source')
             raise ProtectedRuntimeSource(name, reason)
         if (exact or source['status'] == 'explicit-pin') and source['revision'] != policy['revision']:
-            raise ValueError('A selected module differs from its checked revision before installation.')
+            # Preserve the rejection as a source-policy fact, not a transport
+            # failure eligible for automatic exponential retry.
+            raise ProtectedRuntimeSource(name, 'runtime-source-constraint'
+                if source['status'] == 'explicit-pin' else 'runtime-resolution-mismatch')
 
 
 async def checked_batch_sources(batch, collector, config, checked):

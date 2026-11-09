@@ -84,6 +84,41 @@ test('initial compact state waits for note details instead of reporting them mis
  assert.doesNotMatch(render(),/Release notes for this version are unavailable/);
  assert.match(render({application:{...application,releaseNotes:[]}}),/Release notes for this version are unavailable/);
 });
+test('missing notes stop claiming loading, reset by target, and accept late data',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const calls=[];let root;
+ const mount=value=>React.createElement(UpdateSettings,{state:state({application:value}),act:(...args)=>calls.push(args)});
+ const text=()=>JSON.stringify(root.toJSON());
+ await renderAct(async()=>{root=create(mount(application))});
+ assert.match(text(),/Loading release notes/);
+ assert.doesNotMatch(text(),/No release notes are included/);
+ await renderAct(async()=>t.mock.timers.tick(5000));
+ assert.doesNotMatch(text(),/Loading release notes/);
+ assert.match(text(),/Release notes have not arrived/);
+ const next={...application,current:'0.6.4'};
+ await renderAct(async()=>root.update(mount(next)));
+ assert.match(text(),/Loading release notes/);
+ await renderAct(async()=>t.mock.timers.tick(5000));
+ assert.match(text(),/Release notes have not arrived/);
+ await renderAct(async()=>root.update(mount({...next,releaseNotes:[release]})));
+ assert.match(text(),/Workspace settings now apply/);
+ assert.doesNotMatch(text(),/not arrived|Loading release notes/);
+ await renderAct(async()=>root.update(mount(next)));
+ assert.match(text(),/Loading release notes/);
+ assert.doesNotMatch(text(),/not arrived/);
+ assert.deepEqual(calls,[]);
+ await renderAct(async()=>root.unmount());
+});
+test('malformed and warned release details are not loading or an empty history',()=>{
+ const warning='Release notes could not be refreshed. Showing saved release history.';
+ assert.match(render({application:{...application,releaseNotesWarning:warning}}),/Release notes could not be refreshed/);
+ assert.doesNotMatch(render({application:{...application,releaseNotesWarning:warning}}),/Loading release notes|No release notes are included/);
+ for(const releaseNotes of [{},'broken',[null],[{version:'0.6.3',title:'Invalid',changes:{},notices:[]}]]){
+  const html=render({application:{...application,releaseNotes}});
+  assert.match(html,/Release notes could not be read/);
+  assert.doesNotMatch(html,/Loading release notes|No release notes are included/);
+ }
+});
 test('release summary is before controls and outside disclosures without marking notices read',async()=>{
  const calls=[];let root;
  const initial=state({application:{...application,status:'update',latest:'v0.6.4',releaseNotes:[release]}});
@@ -553,7 +588,8 @@ test('authored constraint names the source check without claiming local edits',(
  const diagnostics={attemptId:'candidate',lastFailure:failure,events:[failure]};
  const html=render({phase:'error',diagnostics});
  assert.match(html,/amplifier-foundation/);
- assert.match(html,/could not be reconciled with the selected component/);
+ assert.match(html,/protected package source declaration conflicts with the checked update/);
+ assert.match(html,/Unchanged automatic attempts are paused/);
  assert.match(html,/does not establish local edits/);
  assert.doesNotMatch(html,/Local source changes or an explicit dependency override were preserved/);
  const receipt=JSON.parse(diagnosticReceipt(diagnostics));

@@ -240,6 +240,25 @@ attempt. An unchanged deterministic source/configuration conflict performs no
 duplicate copy, resolver or installer work. Changed source/configuration/application
 inputs or an explicit install request can re-evaluate; transient failures use a
 bounded backoff. Interrupted or unknown effects wait quietly on automatic ticks.
+Pinned and exact checked-revision mismatches retain a typed source-policy reason
+and sanitized package identity; they are not transient transport failures.
+The preparation witness includes the canonical source-configuration key, checked
+source rows, application version and active generation. It also includes complete
+module settings/identities, overrides, configurator choices, routing/decision
+configuration, effective active profile and the canonical offered-profile set
+consumed by qualification. Environment values do not affect unrelated source-policy
+holds. For an actual missing-environment failure, the qualification probe retains
+only the encountered reference in a private candidate receipt, bound to that
+candidate and attempt. This includes references authored inside bundles without
+loading/composing those bundles on every tick. Retry checks only whether that
+missing value is now available, using the same declared private path, key-file
+parser and fresh-worker precedence as qualification. Absent, stale or malformed
+evidence grants no retry; unknown outcomes still take precedence. No environment
+value is persisted in this receipt or public diagnostics, and checking never
+loads keys into the host process.
+The dependency graph key alone omits values that can repair a failed profile.
+It excludes the unrelated settings publication counter. Reading, ordinary rechecks and non-runtime preferences do not
+authorize another identical preparation. Explicit retry still runs every guard.
 A fresh install request can reconcile only a recorded, settled candidate-only
 snapshot copy with the same durable active pointer and no activation/rollback
 handoff. It creates a new candidate, never resumes the interrupted copy. Unknown
@@ -261,6 +280,13 @@ Rendering performs no source scans or installation checks. The update owner
 revalidates retained activation evidence on startup and relevant check/activation
 boundaries; an unavailable proof is labeled rather than inferred. Application
 readiness and pending replacement fences keep their existing exact-identity rules.
+
+Release-note presentation distinguishes absent details from an empty history or a
+failed refresh. A compact initial view has a five-second arrival grace, then says
+that details have not arrived and points to the exact published release or reopening
+Updates. It does not claim an outstanding network request, trigger an update, or
+infer transport failure. Late valid details render without reload; a new release
+target gets its own grace. Malformed detail and saved refresh warnings stay explicit.
 
 The main update card identifies the current component batch and shows successful
 configuration checks out of the total admitted for that attempt. Preparation and

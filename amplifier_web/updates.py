@@ -1012,10 +1012,12 @@ class UpdateManager:
             if not candidates:
                 await self.publish(detail='Check for updates before installing. No eligible updates are available.')
                 return
-            from .update_health import preparation_key, retry_decision
+            from .update_health import preparation_key, retry_decision, environment_repaired
             input_key = preparation_key(self, self.inventory)
             prior_retry = self.diagnostics.state.get('batch', {}).get('retry') or {}
-            if automatic and retry_decision(self.diagnostics.state.get('batch', {}), input_key):
+            batch = self.diagnostics.state.get('batch', {})
+            decision = retry_decision(batch, input_key)
+            if automatic and decision and not (decision == 'changed-inputs' and environment_repaired(self, batch)):
                 await self.publish()
                 return  # No candidate directory, copy, resolution or installation.
             release=uuid.uuid4().hex
@@ -1200,7 +1202,9 @@ class UpdateManager:
             await self.diagnostics.run('ecosystem-runtime-prepare', process, shutil.which('uv'), 'sync', '--locked',
                 '--project', str(project), '--python', '3.13', timeout=900)
         shared = store_environment(self.home) if worker_supports_shared(project) else {}
-        env={**os.environ,**shared,'AMPLIFIER_WEB_HOME':str(stage),'AMPLIFIER_HOME':str(stage/'shared-config'),'AMPLIFIER_UNIFIED_RELEASE':'','AMPLIFIER_INSTALL_PREPARATION':uuid.uuid4().hex}
+        from .host.config import worker_environment
+        env={**worker_environment(),**shared,'AMPLIFIER_WEB_HOME':str(stage),'AMPLIFIER_HOME':str(stage/'shared-config'),'AMPLIFIER_UNIFIED_RELEASE':'','AMPLIFIER_INSTALL_PREPARATION':uuid.uuid4().hex,
+             'AMPLIFIER_UPDATE_ATTEMPT':self.diagnostics.state.get('attemptId', '')}
         if not shared:
             env.pop('AMPLIFIER_SOURCE_STORE', None)  # Preserve pinned/older workers' legacy source contract.
         async def probe(project, *, refresh=False):

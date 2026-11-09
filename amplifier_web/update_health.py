@@ -99,14 +99,83 @@ def preparation_key(manager, rows):
     """Private witness for expensive work, not permission to install or a URL log."""
     from .updates import active_release
     from . import __version__
-    config, _ = configuration(manager)
+    source_key, config = configuration(manager)
     keys = ('id', 'kind', 'url', 'ref', 'current', 'latest', 'subdirectory', 'package',
             'status', 'eligible', 'policyOrigin', 'updateTier')
     selected = [{key: row[key] for key in keys if key in row} for row in rows]
     selected.sort(key=lambda row: json.dumps(row, sort_keys=True))
-    data = [__version__, active_release(manager.home).get('current'), config,
-            manager.service.state.get('configurationRevision'), selected]
+    # The dependency graph key deliberately omits module values/identities.
+    # Qualification consumes them through host.session._apply_settings; fixing
+    # those values (or disabling a failing module) must permit a new attempt.
+    # Hash only runtime configuration and the canonical offered-profile set,
+    # not unrelated preferences or the publication counter. Values stay private.
+    from .bundles import profile_candidates
+    qualification = {key: config.settings.get(key) for key in
+        ('config', 'modules', 'overrides', 'configurator', 'routing', 'decision_models')}
+    data = [__version__, active_release(manager.home).get('current'), source_key,
+            qualification, config.active_bundle, profile_candidates(config), selected]
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+
+def retain_environment_failure(error, stage, attempt):
+    """Private candidate evidence from the actual canonical expansion failure."""
+    from pathlib import Path
+    from .host.config import MissingConfiguredEnvironment, write_private
+    if not isinstance(error, MissingConfiguredEnvironment):
+        return
+    stage = Path(stage)
+    if not re.fullmatch('[a-f0-9]{32}', stage.name) or not re.fullmatch('[a-f0-9]{32}', attempt or ''):
+        return
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,255}', error.reference):
+        return
+    write_private(stage / 'missing-environment.json', json.dumps({
+        'candidate': stage.name, 'attemptId': attempt, 'reference': error.reference}),
+        owned_root=stage)
+
+
+def environment_repaired(manager, batch):
+    """Only the bound missing-environment failure can use this availability fact."""
+    import os
+    import stat
+    from .host.config import missing_environment_available
+    failure = manager.diagnostics.state.get('lastFailure') or {}
+    if ((batch.get('retry') or {}).get('mode') != 'changed-inputs'
+            or failure.get('attemptId') != batch.get('attemptId')
+            or (failure.get('reason') or failure.get('probe', {}).get('reason')) != 'missing-configured-environment'):
+        return False
+    proof = batch.get('preparation') or {}
+    candidate = proof.get('candidate')
+    if not isinstance(candidate, str) or not re.fullmatch('[a-f0-9]{32}', candidate):
+        return False
+    stage = manager.directory / 'releases' / candidate
+    try:
+        from .staged_sources import owned_path
+        path = owned_path(stage / 'missing-environment.json', manager.directory / 'releases')
+        if [stage.stat().st_dev, stage.stat().st_ino] != proof.get('directoryIdentity'):
+            return False
+        if pointer_witness(manager) != proof.get('activeBefore'):
+            return False
+        if os.name == 'nt':
+            from .windows_files import directory
+            with directory(stage, owned_root=manager.directory / 'releases') as pinned:
+                raw = pinned.read_private(path.name, limit=2048)
+        else:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, 'rb') as source:
+                info = os.fstat(source.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                        or info.st_nlink != 1 or info.st_mode & 0o077):
+                    return False
+                raw = source.read(2049)
+                if len(raw) > 2048:
+                    return False
+        evidence = json.loads(raw)
+        if (not isinstance(evidence, dict) or set(evidence) != {'candidate', 'attemptId', 'reference'}
+                or evidence['candidate'] != candidate or evidence['attemptId'] != batch.get('attemptId')):
+            return False
+        return missing_environment_available(evidence['reference'])
+    except (OSError, ValueError, TypeError, KeyError):
+        return False  # Absent/expired/malformed evidence never grants retry.
 
 
 def retry_decision(batch, key, *, now=None):

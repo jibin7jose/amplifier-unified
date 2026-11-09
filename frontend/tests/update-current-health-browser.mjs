@@ -24,6 +24,9 @@ try{
  await page.reload();await page.waitForSelector('#amp-one');if(!await status.isVisible())await openSettingsPage(page,'updates');await expect(status).toContainText('You’re up to date');
  const transition=async mode=>{const response=await page.request.post(boot.url+'/fixture/current-update',{data:{mode}});assert.ok(response.ok());return response.json()};
  const failed=await transition('failure');assert.equal(failed.historyPreserved,true);await expect(status).toContainText('Component source needs review');await expect(panel.getByRole('button',{name:'Review source details'})).toBeVisible();await expect(panel).not.toContainText('Open Updates to review');
+ await expect(status.locator('[data-part="confirmed-application-result"]')).toContainText('Application updated successfully');
+ await expect(status).toContainText('Unchanged automatic attempts are paused');
+ await expect(panel.locator('.a-update-current-action')).toContainText('amplifier-foundation');
  const advanced=panel.locator('[data-part="ecosystem-update-details"]'),review=panel.getByRole('button',{name:'Review source details',exact:true});
  for(const width of [390,1280]){
   await page.setViewportSize({width,height:950});
@@ -36,13 +39,36 @@ try{
    // This fixture's conflict is in the recorded graph receipt, not an invented
    // cached-source row. The action must reveal that existing evidence.
    await expect(advanced.locator('[data-part="update-diagnostics"] > .a-update-failure p')).toBeVisible();
-   await expect(advanced.locator('[data-part="update-diagnostics"] > .a-update-failure p')).toContainText('A package source declaration could not be reconciled');
+   await expect(advanced.locator('[data-part="update-diagnostics"] > .a-update-failure p')).toContainText('A protected package source declaration conflicts');
    await expect(panel.getByText('Source details opened below.',{exact:true})).toBeVisible();
   }
  }
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:output+'/blocked-mobile.png'});await page.setViewportSize({width:1280,height:950});await page.screenshot({path:output+'/blocked-desktop.png'});
  await transition('uncertain');await expect(status).toContainText('Installation needs verification');
  await transition('current');await expect(status).toContainText('You’re up to date');
- assert.deepEqual(errors,[]);Object.assign(result,{status:'passed',package:boot.package,currentDesktop:true,currentMobile:true,historyRetained:true,reload:true,currentFailureHasAction:true,sourceActionReopensAndReveals:true,uncertainPreserved:true});
+ const summary=panel.locator('[data-part="update-release-summary"]');
+ await transition('notes-ready');
+ await expect(summary).toContainText('Exact installed-version notes arrived.');
+ // Ordinary demand supplies notes over real HTTP/SSE. This does not diagnose
+ // the historical screenshot's missing data; missing/error states are injected.
+ await page.reload();await page.waitForSelector('#amp-one');if(!await status.isVisible())await openSettingsPage(page,'updates');
+ await expect(summary).toContainText('Exact installed-version notes arrived.');
+ await transition('notes-missing');
+ await expect(summary).toContainText('Loading release notes');
+ await expect(summary).toContainText('Release notes have not arrived',{timeout:8000});
+ await expect(summary.getByRole('link',{name:/View published release/})).toHaveAttribute('href',/\/v0\.60\.0$/);
+ await page.screenshot({path:output+'/notes-not-arrived.png'});
+ await transition('notes-next');await expect(summary).toContainText('Loading release notes');
+ await transition('notes-ready');await expect(summary).toContainText('Exact installed-version notes arrived.');
+ await expect(summary).toContainText('0.60.1');
+ await transition('notes-empty');await expect(summary).toContainText('Release notes for this version are unavailable.');
+ await transition('notes-error');await expect(summary).toContainText('Release notes could not be refreshed.');
+ await expect(summary).not.toContainText('Loading');
+ // Malformed wire values are covered at the consumer by component tests.
+ // Canonical server state does not admit that shape; do not corrupt its
+ // attention producer merely to inject a browser-only negative.
+ await transition('notes-ready');await expect(summary).toContainText('Exact installed-version notes arrived.');
+ await page.screenshot({path:output+'/notes-arrived.png'});
+ assert.deepEqual(errors,[]);Object.assign(result,{status:'passed',package:boot.package,currentDesktop:true,currentMobile:true,historyRetained:true,reload:true,currentFailureHasAction:true,sourceActionReopensAndReveals:true,uncertainPreserved:true,notesDemand:true,notesMissingBounded:true,notesLateArrival:true,notesVersionSwitch:true,notesEmptyAndError:true});
 } catch(error){Object.assign(result,{status:'failed',error:String(error),fixtureLog:log});throw error}
 finally{await writeFile(output+'/browser-result.json',JSON.stringify(result,null,2));await browser?.close();child.kill('SIGTERM');await new Promise(resolve=>{if(child.exitCode!==null)return resolve();child.once('exit',resolve);setTimeout(resolve,5000)})}

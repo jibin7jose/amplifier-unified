@@ -93,8 +93,8 @@ def merge(base, overlay):
     return copy.deepcopy(overlay)
 
 
-def _load_keys(path):
-    """Load keys.env from the caller's declared shared home, never create it."""
+def _read_keys(path):
+    """Read the shared key file with the same private-file/parser boundary."""
     values = {}
     if os.name == "nt":
         from ..windows_files import address, directory
@@ -125,6 +125,12 @@ def _load_keys(path):
             values[name] = " ".join(parsed)
     if os.name == "nt":
         validate_key_environment(values)
+    return values
+
+
+def _load_keys(path):
+    """Load keys.env from the caller's declared shared home, never create it."""
+    values = _read_keys(path)
     # Keep explicitly supplied process environment authoritative, while values
     # this loader previously installed are refreshed (or removed) on remount.
     for name, previous in tuple(_KEY_FILE_VALUES.items()):
@@ -170,6 +176,27 @@ def credential_environment_source(name):
     return "environment"
 
 
+_ENVIRONMENT_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
+
+
+class MissingConfiguredEnvironment(ValueError):
+    """Canonical missing reference; its name must never enter public receipts."""
+    def __init__(self, name):
+        super().__init__(f"Configured environment variable {name} is not set; update the shared Amplifier keys.env or environment.")
+        self.reference = name
+
+
+def missing_environment_available(name):
+    """Passive recovery check for one actually encountered missing reference."""
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,255}", name):
+        return False
+    values = _read_keys(declared_shared_home() / "keys.env")
+    if name in os.environ and (name not in _KEY_FILE_VALUES or os.environ[name] != _KEY_FILE_VALUES[name]):
+        values[name] = os.environ[name]
+    # A no-fallback ${NAME} accepts an empty but present value too.
+    return name in values
+
+
 def expand_environment(value, *, environment=None):
     values = os.environ if environment is None else environment
     if isinstance(value, dict):
@@ -186,8 +213,8 @@ def expand_environment(value, *, environment=None):
             return current
         if fallback is not None:
             return fallback[1:] if shell_default else fallback
-        raise ValueError(f"Configured environment variable {name} is not set; update the shared Amplifier keys.env or environment.")
-    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}", substitute, value)
+        raise MissingConfiguredEnvironment(name)
+    return _ENVIRONMENT_REFERENCE.sub(substitute, value)
 
 
 @dataclass
@@ -316,15 +343,19 @@ def configure_skill_cache(bundle, registry_home):
                 apply(child.get("tools", []), child.get("agents", {}))
     apply(getattr(bundle, "tools", []), getattr(bundle, "agents", {}))
 
-def load_config(workspace, *, home=None, legacy_home=None, session_id=None, global_only=False, owner_session_id=None):
-    workspace = Path(workspace).expanduser().resolve(strict=True)
+def declared_shared_home(legacy_home=None):
+    """Preserve the declared Windows spelling until private IO validates it."""
     if os.name == "nt":
         from ..windows_files import address
         # amplifier_home() resolves paths. Keep the declared shared-home spelling
         # for the private reader, so a junction/alias cannot disappear first.
-        shared = address(legacy_home or os.environ.get("AMPLIFIER_HOME") or Path.home() / ".amplifier")
-    else:
-        shared = Path(legacy_home or amplifier_home()).expanduser().resolve()
+        return address(legacy_home or os.environ.get("AMPLIFIER_HOME") or Path.home() / ".amplifier")
+    return Path(legacy_home or amplifier_home()).expanduser().resolve()
+
+
+def load_config(workspace, *, home=None, legacy_home=None, session_id=None, global_only=False, owner_session_id=None):
+    workspace = Path(workspace).expanduser().resolve(strict=True)
+    shared = declared_shared_home(legacy_home)
     _load_keys(shared / "keys.env")
     return read_config(workspace, home=home, shared_home=shared, session_id=session_id, global_only=global_only, owner_session_id=owner_session_id)
 

@@ -228,6 +228,11 @@ jobs:
           # fixtures' owned numeric endpoints are admitted; no blanket loopback.
           & "$env:TRIAL_BASE/env/Scripts/python.exe" -I -B $probe --run $wheel[0].FullName --receipt "$env:TRIAL_BASE/evidence/result.json"
           if ($LASTEXITCODE -ne 0) { throw 'Windows candidate journey failed; inspect the safe JSON stage/check facts.' }
+      - name: Check update recovery caller preserves declared private paths
+        shell: pwsh
+        run: |
+          & "$env:TRIAL_BASE/env/Scripts/python.exe" -B -m pytest -q -ra -p no:cacheprovider tests/test_host_config.py::NativeHomeBoundaryTests::test_update_recovery_private_read_rejects_declared_shared_home_junction
+          if ($LASTEXITCODE -ne 0) { throw 'Update recovery private-path caller check failed.' }
       - name: Upload only allowlisted public facts, never scratch or raw diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
