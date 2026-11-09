@@ -177,6 +177,44 @@ async def test_changed_durable_roots_are_parsed_then_revalidated_under_writer_ex
         await close(app)
 
 
+@pytest.mark.parametrize('change', ['durable', 'index'])
+async def test_stable_live_capture_still_rechecks_external_writes_before_pruning(tmp_path, monkeypatch, change):
+    app, keep, garbage = setup(tmp_path)
+    app._state['keep'] = keep
+    competitor = sqlite3.connect(tmp_path / 'app.sqlite3', timeout=0)
+    capture = resource_roots.capture
+    calls = 0
+
+    def capture_then_external_write(db):
+        nonlocal calls
+        snapshot = capture(db)
+        calls += 1
+        if calls == 2:
+            # An external writer can commit after the unchanged live capture
+            # but before this connection acquires its writer transaction.
+            if change == 'durable':
+                competitor.execute('INSERT INTO client_views VALUES(?,?)',
+                                   ('late', json.dumps({'keep': garbage})))
+            else:
+                competitor.execute('UPDATE state_resources SET value=? WHERE id=?',
+                                   (json.dumps({'keep': garbage}), keep['$resource']))
+            competitor.commit()
+        return snapshot
+
+    monkeypatch.setattr(resource_roots, 'capture', capture_then_external_write)
+    try:
+        await storage_migration._maintenance_async(app)
+        assert app._resource_scan_status['blocked']
+        assert app._resource_scan_status['reason'] == {
+            'durable': 'durable-roots-changed', 'index': 'resource-index-changed'}[change]
+        assert app.db.execute('SELECT COUNT(*) FROM state_resources').fetchone()[0] == 2
+        assert (files.root(app.db) / (garbage['$resource'] + '.json')).is_file()
+        assert not app.lock.locked() and not app.db.in_transaction
+    finally:
+        competitor.close()
+        await close(app)
+
+
 async def test_background_deletion_is_batched_and_repeated_saves_finish_backlog(tmp_path, monkeypatch):
     app, keep, _ = setup(tmp_path)
     app._state['keep'] = keep

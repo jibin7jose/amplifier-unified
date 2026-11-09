@@ -262,6 +262,39 @@ async def _maintenance_async(service):
     def unavailable():
         return service.closed or getattr(service, 'backup_in_progress', False)
 
+    async def finish(current):
+        # Caller retains app.lock from the current live-root capture, with no
+        # intervening await. Durable/index witnesses are checked in the writer
+        # transaction before pruning; file cleanup retains the same exclusion.
+        nonlocal valid, reason, stage, removed, deferred, outcome
+        service.db.execute('BEGIN IMMEDIATE')
+        try:
+            with measure(service, 'storage.gc.roots', synchronous=True):
+                if valid and current is None:
+                    valid, reason = False, 'presentation-recovery-pending'
+                if valid and not (current | saved) <= sources.keys():
+                    valid, reason = False, 'live-roots-changed'
+                if valid and resource_roots.capture(service.db) != snapshot:
+                    valid, reason = False, 'durable-roots-changed'
+            if valid:
+                try:
+                    valid = all(detach(service.db, key) == value for key, value in sources.items())
+                except ValueError:
+                    valid = False
+                if not valid:
+                    reason = 'resource-index-changed'
+            stage = 'file-cleanup-unavailable'
+            removed = await _finish_async(service, set(sources) if valid else None)
+            if not valid:
+                deferred = {'deferred': True, 'reason': reason}
+                service._resource_scan_status.update(deferred)
+            else:
+                service._storage_maintenance_error = None
+                outcome = 'completed'
+        except BaseException:
+            service.db.rollback()
+            raise
+
     try:
         async with service.lock:
             if unavailable():
@@ -309,6 +342,12 @@ async def _maintenance_async(service):
                     return
                 current = live_roots()
                 final_snapshot = resource_roots.capture(service.db)
+                if (current is not None and final_snapshot == snapshot
+                        and (current | saved) <= sources.keys()):
+                    # Nothing can mutate live roots before finish takes its
+                    # writer boundary. Rewalking the same graph adds no proof.
+                    await finish(current)
+                    return
             if current is None:
                 valid, reason = False, 'presentation-recovery-pending'
                 break
@@ -326,34 +365,8 @@ async def _maintenance_async(service):
         async with service.lock:
             if unavailable():
                 return
-            service.db.execute('BEGIN IMMEDIATE')
-            try:
-                with measure(service, 'storage.gc.roots', synchronous=True):
-                    current = live_roots() if valid else None
-                    if valid and current is None:
-                        valid, reason = False, 'presentation-recovery-pending'
-                    if valid and not (current | saved) <= sources.keys():
-                        valid, reason = False, 'live-roots-changed'
-                    if valid and resource_roots.capture(service.db) != snapshot:
-                        valid, reason = False, 'durable-roots-changed'
-                if valid:
-                    try:
-                        valid = all(detach(service.db, key) == value for key, value in sources.items())
-                    except ValueError:
-                        valid = False
-                    if not valid:
-                        reason = 'resource-index-changed'
-                stage = 'file-cleanup-unavailable'
-                removed = await _finish_async(service, set(sources) if valid else None)
-                if not valid:
-                    deferred = {'deferred': True, 'reason': reason}
-                    service._resource_scan_status.update(deferred)
-                else:
-                    service._storage_maintenance_error = None
-                    outcome = 'completed'
-            except BaseException:
-                service.db.rollback()
-                raise
+            current = live_roots() if valid else None
+            await finish(current)
     except asyncio.CancelledError:
         outcome = 'cancelled'
         raise  # Detached readers have settled; no writer boundary is retained.

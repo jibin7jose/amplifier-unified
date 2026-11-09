@@ -38,6 +38,35 @@ def test_distinct_container_limit_still_fails_closed():
         set(files.references([{} for _ in range(1_000_000)]))
 
 
+@pytest.mark.parametrize('count', [200, 70_000])
+async def test_stable_collection_reads_live_roots_only_for_mark_and_prune(count, tmp_path):
+    db = sqlite3.connect(tmp_path / 'app.sqlite3', timeout=0)
+    db.execute('CREATE TABLE state_resources (id TEXT PRIMARY KEY, value TEXT NOT NULL)')
+    child = files.put(db, {'retained': 'child'})
+    parent = files.put(db, {'child': child})
+    orphan = files.put(db, {'obsolete': True})
+    db.commit()
+    rows, views = projections(count)
+    rows[0]['keep'] = parent
+    app = SimpleNamespace(db=db, _state={'views': views}, closed=False, lock=asyncio.Lock())
+    try:
+        await storage_migration._maintenance_async(app)
+        assert {row[0] for row in db.execute('SELECT id FROM state_resources')} == {
+            parent['$resource'], child['$resource']}
+        assert storage_migration.resource(db, parent['$resource']) == {'child': child}
+        assert storage_migration.resource(db, child['$resource']) == {'retained': 'child'}
+        assert not (files.root(db) / (orphan['$resource'] + '.json')).exists()
+        assert not app._resource_scan_status['blocked']
+        assert not app.lock.locked() and not db.in_transaction
+        # Shared bodies need an initial mark and a fresh prune-boundary read.
+        # Rewalking without yielding between those final reads adds no witness.
+        assert sum(row.reads for row in rows) == 2 * count
+    finally:
+        if getattr(app, '_resource_scan', None):
+            app._resource_scan.close()
+        db.close()
+
+
 async def test_large_shared_live_graph_collects_while_nested_roots_change(tmp_path, monkeypatch):
     db = sqlite3.connect(tmp_path / 'app.sqlite3', timeout=0)
     db.execute('CREATE TABLE state_resources (id TEXT PRIMARY KEY, value TEXT NOT NULL)')

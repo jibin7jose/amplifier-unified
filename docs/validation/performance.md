@@ -23,6 +23,15 @@ plus per-job checks preserves the same recovery result. Trace reads, copies,
 serialization, hashing and comparisons before filtering the final result. A small
 response, unchanged file or quiet UI does not prove that its construction was cheap.
 
+Resource collection needs an initial live-root mark and a fresh read at pruning.
+Reuse that final capture while retaining its uninterrupted owner lock; scanning
+the same mutable graph again before any yield adds cost without new evidence.
+Keep durable-root and source-index checks inside the writer transaction, and
+recapture live roots after any intervening yield. The live-root and cleanup
+regressions pair traversal counts with retained-resource readback, concurrent
+changes and cancellation; this is not permission to cache mutable roots across
+collection passes.
+
 When a compatible file and immutable resource store the same presentation value,
 reuse one canonical encoding. Keep resource identity and transaction/rollback
 ownership unchanged. Qualify changed and unchanged saves, exact readback and
