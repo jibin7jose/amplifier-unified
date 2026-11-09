@@ -557,7 +557,7 @@ def test_manual_python_selection_is_fixed_and_preserves_full_and_core_modes():
     workflow = yaml.load((ROOT / '.github/workflows/python-checks.yml').read_text(), Loader=yaml.BaseLoader)
     selection = workflow['on']['workflow_dispatch']['inputs']['suite']
     assert selection['type'] == 'choice' and selection['default'] == 'full'
-    assert selection['options'] == ['full', 'inline-chat-card', 'queued-configuration', 'security-redaction', 'patch-placement-recovery', 'patch-placement-native', 'managed-removal-recovery', 'fresh-cleanup-native', 'shared-work-continuity', 'manager-exception-boundary', 'remote-test-origins', 'shared-work-native', 'cold-control-restore', 'goal-peer-publisher-0410', 'updater-omitted-ref', 'updater-public-selected-source', 'updater-synthetic-acquisition', 'updater-expanded-lock', 'native-child-fixtures']
+    assert selection['options'] == ['full', 'inline-chat-card', 'queued-configuration', 'security-redaction', 'patch-placement-recovery', 'patch-placement-native', 'managed-removal-recovery', 'fresh-cleanup-native', 'shared-work-continuity', 'manager-exception-boundary', 'remote-test-origins', 'shared-work-native', 'cold-control-restore', 'goal-peer-publisher-0410', 'updater-omitted-ref', 'updater-public-selected-source', 'updater-synthetic-acquisition', 'updater-expanded-lock', 'native-child-fixtures', 'question-answer-resume', 'question-answer-installed']
     assert workflow['on']['workflow_call']['inputs'] == {'revision': {'type': 'string', 'required': 'true'}}
     assert workflow['on']['workflow_call']['secrets'] == {'LOOP_LIVE_CI_READ_KEY': {'required': 'true'}}
     assert workflow['permissions'] == {'contents': 'read'}
@@ -600,7 +600,7 @@ def test_manual_python_selection_is_fixed_and_preserves_full_and_core_modes():
     complete = next(step for step in steps if step.get('name') == 'Run the complete Python suite')
     focused = next(step for step in steps if step.get('name') == 'Run the selected repair suite')
     assert complete['if'] == "${{ env.CHECK_SUITE == 'full' }}"
-    assert focused['if'] == "${{ env.CHECK_SUITE != 'full' && env.CHECK_SUITE != 'native-child-fixtures' }}" and focused['shell'] == 'bash'
+    assert focused['if'] == "${{ env.CHECK_SUITE != 'full' && env.CHECK_SUITE != 'native-child-fixtures' && env.CHECK_SUITE != 'question-answer-installed' }}" and focused['shell'] == 'bash'
     assert 'mapfile -t targets < output/python-checks/targets.txt' in focused['run']
     assert 'test "${#targets[@]}" -gt 0' in focused['run']
     assert '"${targets[@]}"' in focused['run'] and 'set -o pipefail' in focused['run']

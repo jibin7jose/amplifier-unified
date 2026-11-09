@@ -590,19 +590,19 @@ class Collaboration:
     def current_human_input(self, source):
         """Expose a bounded current-input identity, never a permission grant."""
         from .errors import AppError
-        from .schedule_handoff import latest_human
+        from .peer_resume import human_input
         try:
             binding, active = self.active_binding(source)
         except AppError:
             return None
-        human = latest_human(source)
+        human, question = human_input(self.service, source)
         admitted = set(active.get('inputIds', [])) & {
             row.get('inputId') for row in binding.get('_inputBindings', [])}
-        if (not human or human.get('questionId') or human.get('scheduledRunId')
-                or human.get('inputId') not in admitted):
+        if not human or human.get('inputId') not in admitted:
             return None
         return {'sourceMessageId': human['id'], 'sourceInputId': human['inputId'],
-                'createdAt': human.get('createdAt'), 'generationId': active['id']}
+                'createdAt': human.get('createdAt'), 'generationId': active['id'],
+                **({'questionAnswer': question} if question else {})}
 
     def validate_reply(self, source, args):
         binding, active = self.active_binding(source)

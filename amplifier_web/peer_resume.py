@@ -1,8 +1,91 @@
 """One fresh peer input backed by the commissioning owner's human request."""
 import copy
+import time
 
 from amplifier_operations.coordination import fingerprint
-from .schedule_handoff import latest_human
+
+
+def latest_intent(session):
+    """Include question answers as superseding input, not as implicit grants."""
+    return next((row for row in reversed(session.get('messages', []))
+                 if row.get('role') == 'user' and (row.get('questionId')
+                 or row.get('inputOrigin') in {'ui', 'user', 'voice'})), None)
+
+
+def human_input(app, session):
+    """Resolve a direct human answer from its canonical record, never peer prose.
+
+    Only the peer-resume path uses this resolver. In particular, a question
+    receipt does not acquire configuration, schedule or tool-approval authority.
+    Its exact input must still belong to the current transport-bound generation.
+    """
+    message = latest_intent(session)
+    if not message or message.get('scheduledRunId'):
+        return None, None
+    if not message.get('questionId'):
+        return message, None
+    record = app.questions.for_input(session['id'], message.get('inputId'))
+    if not record:
+        return None, None
+    answer = record['answer']
+    provenance = answer.get('provenance') or {}
+    prompt = f'Answer to “{record["prompt"]}”:\n{answer["text"]}\n\nFor: {record["dependency"]}'
+    if (message.get('via') != 'question'
+            or record['id'] != message['questionId']
+            or record['revision'] != answer.get('questionRevision', 0) + 1
+            or provenance.get('origin') not in {'ui', 'user'}
+            or provenance.get('via') != 'ui'
+            or provenance.get('messageId') or provenance.get('sourceRequestId')
+            or message.get('answerProvenance') != provenance
+            or message.get('text') != prompt
+            or record['delivery'].get('status') == 'rejected'):
+        return None, None
+    # Delivery acknowledgements may settle while native preparation runs. Bind
+    # immutable question/answer meaning, not mutable receipt projection fields.
+    proof = {'id': record['id'], 'revision': record['revision'],
+             'digest': fingerprint({key: record.get(key) for key in
+                 ('prompt', 'dependency', 'options', 'contentRevision', 'artifacts', 'answer')})}
+    return message, proof
+
+
+def next_message_state(row):
+    pending = row.get('pendingBundleSelection')
+    return {'revision': row.get('nextMessageRevision', 0),
+        'appliedRevision': row.get('appliedConfigurationRevision', -1),
+        'bundle': row.get('bundle'), 'desiredBundle': (pending or {}).get('bundle'),
+        'pendingBundle': fingerprint(pending) if pending else None,
+        'pendingModel': fingerprint(row['pendingModelSelection']) if row.get('pendingModelSelection') else None}
+
+
+def question_settings(app, source, target, captured=None):
+    """Use existing control/placement and access-policy revisions, not payloads."""
+    # AppService may run without a management adapter (including native clients).
+    # Snapshot only resident boundary fields; never prepare or inspect a runtime.
+    result = {'configurationRevision': app.state.get('configurationRevision', 0),
+        'sessions': {row['id']: {
+            'accessRevision': app.access_mode.snapshot(row)['revision'],
+            'task': {key: (row.get('task') or app.coordination.task(row['id'])).get(key)
+                     for key in ('id', 'revision', 'status', 'continuationEpoch')},
+            'boundary': fingerprint({key: row.get(key) for key in
+                ('workspace', 'workingDirectory', 'executionRevision', 'selection',
+                 'configurationPendingRevision', 'recoveryControlRevision')}),
+            'nextMessage': next_message_state(row),
+            'controls': fingerprint({key: app.state.get('runtimeControl', {}).get(row['id'], {}).get(key)
+                for key in ('configuration.apply', 'configuration.toggle', 'provider.select',
+                            'provider.reset', 'mode.set', 'mode.clear', 'budget.set', 'budget.clear')}),
+        } for row in (source, target)}}
+    for sid, value in result['sessions'].items():
+        old = (captured or {}).get('sessions', {}).get(sid, {}).get('nextMessage')
+        now = value['nextMessage']
+        if (old and old['revision'] > 0
+                and old['revision'] == now['revision'] == now['appliedRevision']
+                and old['appliedRevision'] < now['appliedRevision']
+                and not now['pendingBundle'] and not now['pendingModel']
+                and now['bundle'] == (old['desiredBundle'] or old['bundle'])):
+            # The real runtime acknowledgement consumed exactly the already-saved
+            # intent. A later edit, wrong bundle/revision or missing ack refuses.
+            value['nextMessage'] = old
+    return result
 
 
 def latest_root_generation(target):
@@ -44,9 +127,8 @@ def retained_terminal_evidence(target):
 
 
 def prepare(app, source, target, value, lineage, boundary):
-    human = latest_human(source)
+    human, question = human_input(app, source)
     if (not human or human['id'] != value['sourceMessageId']
-            or human.get('questionId') or human.get('scheduledRunId')
             or human.get('inputId') not in lineage.get('sourceInputIds', [])):
         raise ValueError('Resume requires the latest actual human request in the owner’s current admitted input.')
     assignment = app.assignments.current(source)
@@ -94,15 +176,25 @@ def prepare(app, source, target, value, lineage, boundary):
         'sourceMessageId': human['id'], 'sourceInputId': human['inputId'],
         'textDigest': fingerprint(human.get('text', '')),
         'assignmentId': assignment['id'], 'assignmentRevision': assignment['revision'],
-        'targetHumanMessageId': (latest_human(target) or {}).get('id'),
+        'targetHumanMessageId': (latest_intent(target) or {}).get('id'),
         'authorizationKey': key,
+        **({'questionAnswer': question,
+            'questionSettings': question_settings(app, source, target)}
+           if question else {}),
         **({('interruptedRecovery' if interrupted else 'failedRecovery'): recovery} if recovery else {}),
     }
 
 
 def guard(app, receipt, source, target):
     scope = receipt['humanResume']
-    human = latest_human(source)
+    human, question = human_input(app, source)
+    if scope.get('questionAnswer'):
+        # The queue claim is not input admission. Preparation may outlive its
+        # deadline; accepted/unknown operations never use this pending guard.
+        if receipt.get('expiresAt', float('inf')) <= time.time():
+            return 'The question-backed resume expired before input admission.'
+        if scope.get('questionSettings') != question_settings(app, source, target, scope.get('questionSettings')):
+            return 'The question-backed resume settings or placement changed.'
     recovered = scope.get('failedRecovery')
     interrupted = scope.get('interruptedRecovery')
     if reason := safety_halt(target):
@@ -124,10 +216,10 @@ def guard(app, receipt, source, target):
     assignment = app.assignments.current(source)
     if (not human or human['id'] != scope['sourceMessageId']
             or human.get('inputId') != scope['sourceInputId']
-            or human.get('questionId') or human.get('scheduledRunId')
+            or question != scope.get('questionAnswer')
             or fingerprint(human.get('text', '')) != scope['textDigest']
             or human.get('createdAt', 0) <= (target.get('lastInterruption') or {}).get('at', 0)
-            or (latest_human(target) or {}).get('id') != scope['targetHumanMessageId']):
+            or (latest_intent(target) or {}).get('id') != scope['targetHumanMessageId']):
         return 'The human resume instruction or recipient input changed.'
     if (not assignment or assignment['id'] != scope['assignmentId']
             or assignment['revision'] != scope['assignmentRevision']

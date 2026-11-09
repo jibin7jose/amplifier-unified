@@ -27,6 +27,8 @@ on:
           - updater-synthetic-acquisition
           - updater-expanded-lock
           - native-child-fixtures
+          - question-answer-resume
+          - question-answer-installed
       core_wheels:
         description: Qualify published Core wheels and real runtime on both Linux architectures
         type: boolean
@@ -76,6 +78,8 @@ jobs:
               'shared-work-native': ['tests/test_native_provider.py', 'tests/test_coordination_delivery.py', 'tests/test_work_native_effects.py', 'tests/test_work_origin.py', 'tests/test_capacity.py', 'tests/test_release_qualification.py'],
               'manager-exception-boundary': ['tests/test_manager_exception_boundary.py', 'tests/test_manager_failure_details.py', 'tests/test_session_health.py', 'tests/test_retained_failure_recovery.py', 'tests/test_runtime.py'],
               'native-child-fixtures': ['tests/test_child_app_assignment_capture.py', 'tests/test_history_scope_native.py', 'tests/test_file_source_native_children.py'],
+              'question-answer-resume': ['tests/test_question_peer_resume.py', 'tests/test_peer_resume.py', 'tests/test_peer_resume_native.py', 'tests/test_failed_peer_recovery.py', 'tests/test_retained_failure_recovery.py', 'tests/test_questions.py', 'tests/test_question_handoffs.py'],
+              'question-answer-installed': ['tests/test_question_peer_resume.py', 'tests/test_peer_resume_native.py'],
           }
           selection = os.environ['CHECK_SUITE']
           if selection not in suites:
@@ -187,7 +191,7 @@ jobs:
           print(json.dumps(result, indent=2))
           PY
       - name: Run the selected repair suite
-        if: ${{ env.CHECK_SUITE != 'full' && env.CHECK_SUITE != 'native-child-fixtures' }}
+        if: ${{ env.CHECK_SUITE != 'full' && env.CHECK_SUITE != 'native-child-fixtures' && env.CHECK_SUITE != 'question-answer-installed' }}
         shell: bash
         run: |
           mapfile -t targets < output/python-checks/targets.txt
@@ -209,6 +213,143 @@ jobs:
             grep -q '/original/amplifier_web/runtime_worker.py' output/python-checks/original-red.log
           fi
           uv run --no-sync pytest -v --tb=short --junitxml=output/python-checks/junit.xml "${targets[@]}" 2>&1 | tee output/python-checks/pytest.log
+      - name: Verify question-answer predecessor and exact runtime joins
+        if: ${{ env.CHECK_SUITE == 'question-answer-resume' }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin c184826828c27c058edbf4a1d03f0ec4cc03961c
+          mkdir -p "$RUNNER_TEMP/question-resume-before"
+          git archive c184826828c27c058edbf4a1d03f0ec4cc03961c | tar -x -C "$RUNNER_TEMP/question-resume-before"
+          cp tests/test_question_peer_resume.py "$RUNNER_TEMP/question-resume-before/tests/"
+          set +e
+          (cd "$RUNNER_TEMP/question-resume-before" && "$GITHUB_WORKSPACE/.venv/bin/python" -m pytest -s -v --tb=short \
+            tests/test_question_peer_resume.py::test_exact_ui_answer_drives_existing_resume_once) \
+            2>&1 | tee output/python-checks/predecessor.log
+          predecessor=${PIPESTATUS[0]}
+          set -e
+          test "$predecessor" -eq 1
+          grep -q 'A real UI answer must be exposed without another typed Resume' output/python-checks/predecessor.log
+          grep -q '/question-resume-before/amplifier_web/peer_resume.py' output/python-checks/predecessor.log
+          git fetch --no-tags --depth=1 origin b11bc51f29aecaa08bc96358d3129215886cd9de
+          mkdir -p "$RUNNER_TEMP/question-resume-before-next-message"
+          git archive b11bc51f29aecaa08bc96358d3129215886cd9de | tar -x -C "$RUNNER_TEMP/question-resume-before-next-message"
+          cp tests/test_question_peer_resume.py "$RUNNER_TEMP/question-resume-before-next-message/tests/"
+          set +e
+          (cd "$RUNNER_TEMP/question-resume-before-next-message" && "$GITHUB_WORKSPACE/.venv/bin/python" -m pytest -s -v --tb=short \
+            'tests/test_question_peer_resume.py::test_saved_next_message_transition_is_not_an_intervening_edit[unchanged]') \
+            2>&1 | tee output/python-checks/next-message-predecessor.log
+          predecessor=${PIPESTATUS[0]}
+          set -e
+          test "$predecessor" -eq 1
+          grep -q 'Applying the already-saved choice must not consume the answer as a failed resume' output/python-checks/next-message-predecessor.log
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          marker = 'NEXT_MESSAGE_OBSERVATION='
+          rows = [json.loads(line.split(marker, 1)[1]) for line in
+                  Path('output/python-checks/next-message-predecessor.log').read_text().splitlines()
+                  if marker in line and line.split(marker, 1)[1].startswith('{')]
+          row, = rows
+          assert row['change'] == 'unchanged' and row['started'] == ['next-report']
+          ack, = row['acknowledgements']
+          assert ack['revision'] == row['appliedRevision'] == 1
+          assert ack['bundle'] == row['bundle'] == 'next-report'
+          assert row['taskUnchanged'] and row['delivery'] == 'suppressed'
+          assert row['reason'] == 'The question-backed resume settings or placement changed.'
+          PY
+          uv run --no-sync python - <<'PY' > output/python-checks/question-resume-imports.json
+          import hashlib, importlib, json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          rows = list(ET.parse('output/python-checks/junit.xml').getroot().iter('testcase'))
+          assert rows and not any(row.find(kind) is not None for row in rows for kind in ('failure', 'error', 'skipped'))
+          native = [row for row in rows if 'test_peer_resume_native' in row.get('classname', '')]
+          assert len(native) == 9, 'Ordinary, question and negative question inputs must cross the real native bridge'
+          modules = {}
+          for name in ('amplifier_web.peer_resume', 'amplifier_web.collaboration',
+                       'amplifier_web.questions', 'amplifier_module_loop_live.orchestrator',
+                       'amplifier_module_context_simple'):
+              path = Path(importlib.import_module(name).__file__).resolve()
+              if name.startswith('amplifier_web.'): assert path.is_relative_to(root / 'amplifier_web')
+              modules[name] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+          print(json.dumps({'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'tree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+              'loop': subprocess.check_output(['git', '-C', '.ci/loop-live', 'rev-parse', 'HEAD'], text=True).strip(),
+              'tests': len(rows), 'nativeTests': len(native), 'modules': modules}, indent=2))
+          PY
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ env.CHECK_SUITE == 'question-answer-resume' || env.CHECK_SUITE == 'question-answer-installed' }}
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify rendered question-answer continuation and package bytes
+        if: ${{ env.CHECK_SUITE == 'question-answer-resume' || env.CHECK_SUITE == 'question-answer-installed' }}
+        run: |
+          set -euo pipefail
+          npm ci --prefix frontend
+          npm run build --prefix frontend
+          if [ "$CHECK_SUITE" = question-answer-resume ]; then
+            (cd frontend && npx playwright install --with-deps chromium)
+            AMPLIFIER_TEST_PYTHON="$GITHUB_WORKSPACE/.venv/bin/python" \
+              AMPLIFIER_TEST_ARTIFACTS="$GITHUB_WORKSPACE/output/python-checks/question-browser" \
+              node frontend/tests/question-resume-browser.mjs 2>&1 | tee output/python-checks/question-browser.log
+          fi
+          uv build --wheel --out-dir output/python-checks/dist
+          python - <<'PY' > output/python-checks/question-resume-wheel.json
+          import hashlib, json, zipfile
+          from pathlib import Path
+          wheel, = Path('output/python-checks/dist').glob('*.whl')
+          with zipfile.ZipFile(wheel) as package:
+              files = ['amplifier_web/peer_resume.py', 'amplifier_web/collaboration.py', 'amplifier_web/questions.py']
+              files += [str(p) for p in Path('amplifier_web/static').rglob('*') if p.is_file()]
+              for name in files:
+                  assert package.read(name) == Path(name).read_bytes(), name
+          print(json.dumps({'wheel': wheel.name, 'sha256': hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                            'sourceAndBuildFilesVerified': len(files)}, indent=2))
+          PY
+          uv pip freeze --python .venv/bin/python > output/python-checks/question-freeze.txt
+          python - <<'PY'
+          from pathlib import Path
+          rows = [r for r in Path('output/python-checks/question-freeze.txt').read_text().splitlines()
+                  if not r.startswith(('-e ', '#', 'amplifier-unified'))]
+          Path('output/python-checks/question-installed-requirements.txt').write_text('\n'.join(rows) + '\n')
+          PY
+          uv venv --python 3.13 "$RUNNER_TEMP/question-resume-installed"
+          uv pip install --python "$RUNNER_TEMP/question-resume-installed/bin/python" --no-deps \
+            -r output/python-checks/question-installed-requirements.txt
+          uv pip install --python "$RUNNER_TEMP/question-resume-installed/bin/python" --no-deps \
+            output/python-checks/dist/*.whl
+          uv pip check --python "$RUNNER_TEMP/question-resume-installed/bin/python"
+          mkdir -p "$RUNNER_TEMP/question-resume-package"
+          cp -a tests "$RUNNER_TEMP/question-resume-package/"
+          (
+            cd "$RUNNER_TEMP/question-resume-package"
+            unset PYTHONPATH
+            "$RUNNER_TEMP/question-resume-installed/bin/python" - <<'PY' > "$GITHUB_WORKSPACE/output/python-checks/installed-imports.json"
+          import hashlib, importlib, json, os
+          from pathlib import Path
+          root = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          expected = Path(os.environ['RUNNER_TEMP']) / 'question-resume-installed'
+          result = {}
+          for name in ('amplifier_web.peer_resume', 'amplifier_web.collaboration', 'amplifier_web.questions'):
+              path = Path(importlib.import_module(name).__file__).resolve()
+              assert path.is_relative_to(expected) and not path.is_relative_to(root), path
+              original = root / (name.replace('.', '/') + '.py')
+              assert path.read_bytes() == original.read_bytes()
+              result[name] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+          print(json.dumps(result, indent=2))
+          PY
+            "$RUNNER_TEMP/question-resume-installed/bin/python" -m pytest -c /dev/null -o asyncio_mode=auto --rootdir=. \
+              -v --tb=short tests/test_question_peer_resume.py tests/test_peer_resume_native.py \
+              --junitxml="$GITHUB_WORKSPACE/output/python-checks/installed-junit.xml"
+          ) 2>&1 | tee output/python-checks/installed-tests.log
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          rows = list(ET.parse('output/python-checks/installed-junit.xml').getroot().iter('testcase'))
+          assert rows and not any(row.find(kind) is not None for row in rows for kind in ('failure', 'error', 'skipped'))
+          assert len([row for row in rows if 'test_peer_resume_native' in row.get('classname', '')]) == 9
+          PY
       - name: Run and retain exact native child fixture evidence
         if: ${{ env.CHECK_SUITE == 'native-child-fixtures' }}
         timeout-minutes: 10

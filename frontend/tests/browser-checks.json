@@ -70,6 +70,7 @@
     {"id": "ready", "command": ["node", "tests/ready-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/ready", "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"}},
     {"id": "review-during-send", "command": ["node", "tests/review-during-send-browser.mjs"]},
     {"id": "question-transcript-fade", "command": ["node", "tests/question-transcript-fade-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/question-transcript-fade", "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"}},
+    {"id": "question-resume", "command": ["node", "tests/question-resume-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/question-resume", "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"}},
     {"id": "execution-observability", "command": ["node", "tests/execution-observability-browser.mjs"], "env": {"AMPLIFIER_TEST_OUTPUT_DIR": "{root}/output/browser-checks/execution-observability"}},
     {"id": "execution-inspection", "command": ["node", "tests/execution-inspection-browser.mjs"]},
     {"id": "execution-actions", "command": ["node", "tests/execution-actions-browser.mjs"]},
