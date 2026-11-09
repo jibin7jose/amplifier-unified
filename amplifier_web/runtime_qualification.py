@@ -31,6 +31,52 @@ def _installed_git_environment():
     return None
 
 
+def _installed_checkout_environment(root, env):
+    """Keep checkout EOL interpretation in anonymous local metadata reads.
+
+    Anonymous downloads must not inherit personal auth, rewrites or includes.
+    A local status read still needs the checkout's ordinary core.autocrlf
+    value. Read only that scalar, without includes, and pass only its validated
+    value to the already isolated metadata child. Never change Git configuration
+    or use this exception for fetching/installing sources.
+    """
+    if sys.platform != 'win32' or not env or env.get('AMPLIFIER_GITHUB_ACCESS') != 'anonymous':
+        return env
+    lookup = {key: value for key, value in env.items() if not key.startswith('GIT_CONFIG_')}
+    result = subprocess.run(
+        ['git', '--no-optional-locks', 'config', '--no-includes', '--get', 'core.autocrlf'],
+        cwd=root, env=lookup, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+    if result.returncode == 1 and not result.stdout:
+        return env  # Unset remains Git's default, not an invented Windows policy.
+    if result.returncode != 0:
+        raise ValueError('Cannot read the checkout line-ending policy')
+    value = result.stdout.strip().lower()
+    if value not in {b'true', b'false', b'input'}:
+        raise ValueError('Unsupported checkout line-ending policy')
+    child = dict(env)
+    count = int(child.get('GIT_CONFIG_COUNT', '0'))
+    child[f'GIT_CONFIG_KEY_{count}'] = 'core.autocrlf'
+    child[f'GIT_CONFIG_VALUE_{count}'] = value.decode('ascii')
+    child['GIT_CONFIG_COUNT'] = str(count + 1)
+    return child
+
+
+def _installed_checkout_dirty(root, env):
+    # A no-optional-locks status can retain a stat-only "modified" entry after
+    # changing EOL interpretation. Compare both index/worktree and HEAD/index;
+    # do not refresh/write the index or hide a staged edit restored in the tree.
+    for cached in (False, True):
+        result = subprocess.run(
+            ['git', '--no-optional-locks', 'diff', '--quiet', '--no-ext-diff',
+             '--no-textconv', *(['--cached'] if cached else []), '--'],
+            cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        if result.returncode == 1:
+            return True
+        if result.returncode != 0:
+            raise ValueError('Cannot verify the checkout content')
+    return False
+
+
 def installed_graph(project):
     """Read complete PEP 610 provenance, including Foundation's editable caches."""
     paths = list((Path(project) / '.venv').glob('lib/python*/site-packages'))
@@ -52,9 +98,12 @@ def installed_graph(project):
                     if meta.is_file() and (parent / '.git').exists():
                         if parent not in roots:
                             data = json.loads(meta.read_text())
-                            revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=parent, env=git_env, text=True).strip()
-                            dirty = subprocess.check_output(['git', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], cwd=parent, env=git_env, text=True).strip()
-                            tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=parent, env=git_env).split(b'\0')
+                            checkout_env = _installed_checkout_environment(parent, git_env)
+                            revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=parent, env=checkout_env, text=True).strip()
+                            dirty = subprocess.check_output(['git', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], cwd=parent, env=checkout_env, text=True).strip()
+                            if dirty and checkout_env is not git_env:
+                                dirty = _installed_checkout_dirty(parent, checkout_env)
+                            tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=parent, env=checkout_env).split(b'\0')
                             tree = hashlib.sha256()
                             for raw in sorted(item for item in tracked if item):
                                 file = parent / raw.decode()

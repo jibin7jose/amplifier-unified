@@ -116,6 +116,133 @@ def test_installed_git_metadata_policy_is_windows_only(monkeypatch, platform):
     assert calls == ([True] if platform == 'win32' else [])
 
 
+def _windows_eol_fixture(tmp_path, monkeypatch, *, setting='true'):
+    """A real CRLF checkout plus isolated personal config, without network."""
+    import os
+    import subprocess
+    from amplifier_web import reset
+    user = tmp_path / 'user'
+    user.mkdir()
+    config = (
+        '[core]\n autocrlf = true\n'
+        '[credential]\n helper = !DO_NOT_EXECUTE\n'
+        '[http]\n extraHeader = Authorization: fixture-secret\n'
+        '[url "ssh://DO_NOT_USE/"]\n insteadOf = https://example.invalid/\n'
+        '[include]\n path = include.gitconfig\n')
+    (user / '.gitconfig').write_text(config)
+    (user / 'include.gitconfig').write_text('[core]\n autocrlf = false\n')
+    monkeypatch.setenv('HOME', str(user))
+    monkeypatch.setenv('USERPROFILE', str(user))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(user))
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', str(user / '.gitconfig'))
+    monkeypatch.setenv('GIT_CONFIG_SYSTEM', os.devnull)
+    monkeypatch.setenv('AMPLIFIER_GITHUB_ACCESS', 'anonymous')
+    source = tmp_path / 'cache'
+    source.mkdir()
+    def git(*args):
+        return subprocess.check_output(['git', '-c', 'user.name=Fixture',
+            '-c', 'user.email=fixture@example.invalid', *args], cwd=source).strip()
+    git('init')
+    tracked = source / 'tracked.txt'
+    tracked.write_bytes(b'original\nsecond\n')
+    (source / 'binary.dat').write_bytes(b'\x00binary\n')
+    git('-c', 'core.autocrlf=false', 'add', '.')
+    git('commit', '-m', 'fixture')
+    tracked.write_bytes(b'original\r\nsecond\r\n')
+    revision = git('rev-parse', 'HEAD').decode()
+    (source / '.amplifier_cache_meta.json').write_text(json.dumps({
+        'git_url': 'https://example.invalid/fixture', 'ref': 'main', 'commit': revision}))
+    project = tmp_path / 'project'
+    for name in ('amplifier_fixture_a', 'amplifier_fixture_b'):
+        dist = project / '.venv/Lib/site-packages' / (name + '-1.0.dist-info')
+        dist.mkdir(parents=True)
+        (dist / 'METADATA').write_text(f'Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n')
+        (dist / 'direct_url.json').write_text(json.dumps({'url': source.as_uri(), 'dir_info': {}}))
+    (user / '.gitconfig').write_text(config.replace('autocrlf = true', 'autocrlf = ' + setting))
+    isolated = reset.repository_environment(anonymous=True)
+    monkeypatch.setattr(runtime_qualification, 'sys', SimpleNamespace(platform='win32'))
+    monkeypatch.setattr(runtime_qualification, '_installed_git_environment', lambda: isolated)
+    return source, project, isolated, git
+
+
+def test_anonymous_windows_metadata_preserves_eol_without_personal_auth(tmp_path, monkeypatch):
+    import hashlib
+    import os
+    import subprocess
+    source, project, isolated, git = _windows_eol_fixture(tmp_path, monkeypatch)
+    # Actual predecessor discriminator: the anonymous environment alone reports M.
+    assert subprocess.check_output(['git', '--no-optional-locks', 'status',
+        '--porcelain', '--untracked-files=no'], cwd=source, env=isolated).strip()
+    before_env = dict(os.environ)
+    before_index = hashlib.sha256((source / '.git/index').read_bytes()).hexdigest()
+    before_content = (source / 'tracked.txt').read_bytes()
+    original = runtime_qualification.subprocess.run
+    lookups = []
+    def observe(argv, **kwargs):
+        if 'config' in argv:
+            lookups.append(argv)
+            assert argv == ['git', '--no-optional-locks', 'config', '--no-includes',
+                            '--get', 'core.autocrlf']
+        return original(argv, **kwargs)
+    monkeypatch.setattr(runtime_qualification.subprocess, 'run', observe)
+    graph = runtime_qualification.installed_graph(project)
+    assert len(graph) == 2 and not any(row['cacheSource']['dirty'] for row in graph)
+    assert len(lookups) == 1  # One scalar lookup per distinct checkout, not distribution.
+    assert hashlib.sha256((source / '.git/index').read_bytes()).hexdigest() == before_index
+    assert (source / 'tracked.txt').read_bytes() == before_content
+    assert dict(os.environ) == before_env
+    monkeypatch.setattr(runtime_qualification.subprocess, 'run', original)
+    child = runtime_qualification._installed_checkout_environment(source, isolated)
+    assert child['GIT_CONFIG_GLOBAL'] == os.devnull and child['GIT_CONFIG_SYSTEM'] == os.devnull
+    pairs = {child[f'GIT_CONFIG_KEY_{i}']: child[f'GIT_CONFIG_VALUE_{i}']
+             for i in range(int(child['GIT_CONFIG_COUNT']))}
+    assert pairs['core.autocrlf'] == 'true'
+    assert pairs['credential.helper'] == '' and pairs['http.extraHeader'] == ''
+    assert not any(key.startswith(('url.', 'include.')) for key in pairs)
+    assert 'core.autocrlf' not in {isolated[f'GIT_CONFIG_KEY_{i}']
+                                  for i in range(int(isolated['GIT_CONFIG_COUNT']))}
+
+
+@pytest.mark.parametrize('change', ['text', 'binary', 'staged', 'staged-restored', 'local-false', 'local-input'])
+def test_windows_eol_metadata_keeps_real_changes_and_explicit_local_policy(tmp_path, monkeypatch, change):
+    source, project, isolated, git = _windows_eol_fixture(tmp_path, monkeypatch)
+    if change == 'text':
+        (source / 'tracked.txt').write_bytes(b'changed\r\nsecond\r\n')
+    elif change == 'binary':
+        (source / 'binary.dat').write_bytes(b'\x00binary\r\n')
+    elif change in {'staged', 'staged-restored'}:
+        (source / 'tracked.txt').write_bytes(b'changed\r\nsecond\r\n')
+        git('-c', 'core.autocrlf=true', 'add', 'tracked.txt')
+        if change == 'staged-restored':
+            (source / 'tracked.txt').write_bytes(b'original\r\nsecond\r\n')
+    else:
+        git('config', '--local', 'core.autocrlf', change.removeprefix('local-'))
+    graph = runtime_qualification.installed_graph(project)
+    expected_dirty = change != 'local-input'  # input also cleans CRLF on add.
+    assert all(row['cacheSource']['dirty'] is expected_dirty for row in graph)
+    assert all(bool(row.get('override')) is expected_dirty for row in
+               runtime_environment.installed_sources(project, graph=graph).values())
+    if change.startswith('local-'):
+        child = runtime_qualification._installed_checkout_environment(source, isolated)
+        last = int(child['GIT_CONFIG_COUNT']) - 1
+        assert child[f'GIT_CONFIG_VALUE_{last}'] == change.removeprefix('local-')
+
+
+def test_windows_eol_metadata_rejects_malformed_policy(tmp_path, monkeypatch):
+    source, project, isolated, git = _windows_eol_fixture(tmp_path, monkeypatch, setting='unexpected')
+    with pytest.raises(ValueError, match='line-ending policy'):
+        runtime_qualification.installed_graph(project)
+
+
+@pytest.mark.parametrize('platform', ['linux', 'darwin'])
+def test_checkout_eol_lookup_does_not_change_posix_policy(tmp_path, monkeypatch, platform):
+    monkeypatch.setattr(runtime_qualification, 'sys', SimpleNamespace(platform=platform))
+    monkeypatch.setattr(runtime_qualification.subprocess, 'run',
+                        lambda *a, **k: pytest.fail('POSIX metadata must not read Windows EOL policy'))
+    env = {'AMPLIFIER_GITHUB_ACCESS': 'anonymous'}
+    assert runtime_qualification._installed_checkout_environment(tmp_path, env) is env
+
+
 async def test_fresh_probe_freezes_then_uses_an_ordinary_resolver(tmp_path, monkeypatch):
     calls = []
     release = '2' * 32
