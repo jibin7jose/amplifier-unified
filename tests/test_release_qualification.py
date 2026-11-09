@@ -1156,7 +1156,7 @@ def test_native_child_ci_uses_existing_prerequisites_one_pytest_and_partial_uplo
                               for value in ast.literal_eval(parameters[0].args[1]))
             else:
                 actual.append(path + '::' + node.name)
-    assert len(actual) == 17 and set(actual) == set(expected)
+    assert len(actual) == 19 and set(actual) == set(expected)
 
 
 @pytest.mark.parametrize('change', ['none', 'suite', 'targets', 'target-file', 'revision', 'tree', 'runId', 'runAttempt'])
@@ -1189,7 +1189,7 @@ def test_native_child_ci_requires_exact_collection_and_successful_junit(change):
     ns = native_child_validation()
     collected = ns['expected_cases']()
     root = ET.Element('testsuites')
-    suite = ET.SubElement(root, 'testsuite', tests='17', failures='0', errors='0', skipped='0')
+    suite = ET.SubElement(root, 'testsuite', tests='19', failures='0', errors='0', skipped='0')
     for node in collected:
         path, name = node.split('::')
         ET.SubElement(suite, 'testcase', classname=path.removesuffix('.py').replace('/', '.'), name=name)
@@ -1202,7 +1202,7 @@ def test_native_child_ci_requires_exact_collection_and_successful_junit(change):
     elif change == 'case-duplicate': suite[-1].attrib.update(suite[0].attrib)
     elif change == 'case-foreign': suite[-1].set('classname', 'tests.test_other')
     elif change in {'failure', 'error', 'skipped'}: ET.SubElement(suite[0], change)
-    elif change == 'tests-counter': suite.set('tests', '18')
+    elif change == 'tests-counter': suite.set('tests', '20')
     elif change == 'failure-counter': suite.set('failures', '1')
     elif change == 'error-counter': suite.set('errors', '1')
     elif change == 'skip-counter': suite.set('skipped', '1')

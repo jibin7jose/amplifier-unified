@@ -18,7 +18,7 @@ from native_tool_helpers import execute_tool
 from test_collaborative_workspaces import app
 
 
-async def install_host_access(parent, app, monkeypatch, diagnostic):
+async def install_host_access(parent, app, monkeypatch, diagnostic, *, handles=None):
     """Keep the real worker and host Work checks around this file-policy probe."""
     from amplifier_web.app_guidance import install_app_access
     from amplifier_web.runtime_worker import Worker
@@ -41,6 +41,8 @@ async def install_host_access(parent, app, monkeypatch, diagnostic):
     manager.app_bridge = app.app_bridge
     owner = {'process': SimpleNamespace(returncode=None), 'runtimeOwnerId': uuid.uuid4().hex}
     manager.workers[sid] = owner
+    if handles is not None:
+        handles.update(worker=worker, manager=manager, owner=owner)
     monkeypatch.setattr(app.runtime, 'workers', manager.workers, raising=False)
     replies, checks = {}, []
 
@@ -51,6 +53,8 @@ async def install_host_access(parent, app, monkeypatch, diagnostic):
     manager._write = write
     async def bridge(operation, arguments):
         assert operation == 'work.effect.check'
+        if handles is not None:
+            handles['origins'].append(dict(arguments.get('_childOrigin') or {}))
         identity = str(uuid.uuid4())
         await manager._bridge(sid, owner, {'id': identity, 'operation': operation, 'args': arguments})
         reply = replies.pop(identity)
@@ -288,3 +292,214 @@ async def test_resumed_native_child_retains_saved_write_ceiling_after_parent_gra
         ('fresh-allowed', True, True, False),
         ('resumed-allowed', True, True, False),
     ]
+
+
+@pytest.mark.parametrize('placement', ['derived', 'pinned'])
+async def test_native_child_resume_follows_committed_worktree_handoff(tmp_path, tmp_path_factory, monkeypatch, app, placement):
+    """Real child checkpoint/remount across host placement, not a live worker drain."""
+    import asyncio
+    import copy
+    from amplifier_foundation.bundle import Bundle, BundleModuleResolver
+    from amplifier_module_loop_live.runtime import Runtime
+    from amplifier_web.host.approvals import Approvals
+    from amplifier_web.host.children import install_children
+    from amplifier_web.host.storage import SessionStore
+    from amplifier_worktrees.git import git
+    from amplifier_worktrees import GitWorktrees
+    from test_worktrees import settle
+
+    async def deny_network(*args, **kwargs):
+        raise AssertionError('Child handoff must not call a provider')
+    monkeypatch.setattr('httpx.AsyncClient.send', deny_network)
+    home = tmp_path.resolve()
+    # This app fixture keeps its data under workspace; real managed checkout
+    # storage must instead be outside the source repository.
+    monkeypatch.setattr(app.worktrees, 'git', GitWorktrees(tmp_path_factory.mktemp('handoff-checkouts')))
+    git(home, 'init', '-b', 'main')
+    git(home, 'config', 'user.name', 'Fixture')
+    git(home, 'config', 'user.email', 'fixture@example.invalid')
+    original = 'original\n'
+    (home / 'handoff.txt').write_text(original)
+    git(home, 'add', 'handoff.txt')
+    git(home, 'commit', '-m', 'fixture')
+    sid = app.state['sessions'][0]['id']
+    inspected = (await app.dispatch('worktree.inspect', {'sessionId': sid, 'mode': 'clean'}))['result']
+    checkout = (await app.dispatch('worktree.create', {
+        'sessionId': sid, 'mode': 'clean', 'expectedCommit': inspected['repository']['expectedCommit']},
+        command_id='child-handoff-checkout'))['result']
+    target = Path(checkout['path'])
+    # Authorize both exact files before spawn. Handoff cannot widen a saved
+    # A-only ceiling; unrelated old-home and sibling files remain forbidden.
+    allowed = [str(home / 'handoff.txt'), str(target / 'handoff.txt')]
+    forbidden = [home / 'old-home-private.txt', target.parent / 'sibling-private.txt']
+    for path in forbidden:
+        path.write_text('protected\n')
+    spec = importlib.util.spec_from_file_location('handoff_child_fixture',
+        Path(__file__).parent / 'fixtures/standalone_children_probe.py')
+    fixture = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, fixture)
+    spec.loader.exec_module(fixture)
+    paths = {name: Path(importlib.util.find_spec('amplifier_module_' + name.replace('-', '_')).origin).parent
+             for name in ('loop-live', 'context-simple', 'tool-filesystem', 'tool-apply-patch')}
+    store = SessionStore.for_app(app.data_dir, str(home))
+    approvals = Approvals(None, AsyncMock(return_value='deny'))
+    diagnostic, failures, guards, runs, invoked, access = {}, [], [], [], [], []
+    saved_messages = []
+    checkpoint_messages = []
+    parents = []
+
+    async def root():
+        cwd = Path(app._session(sid).get('workingDirectory') or home)
+        policy = {'allowed_write_paths': allowed + ([str(forbidden[0])] if cwd == target else [])}
+        config = {**policy, **({'working_dir': str(home)} if placement == 'pinned' else {})}
+        plan = {'session': {'orchestrator': {'module': 'loop-live'}, 'context': {'module': 'context-simple'}},
+                'tools': [{'module': 'tool-filesystem', 'config': copy.deepcopy(config)},
+                          {'module': 'tool-apply-patch', 'config': {**config, 'engine': 'native'}}],
+                'agents': {'worker': {'instruction': 'Inspect the assigned file'}}}
+        prepared = fixture.ProbePrepared(plan, BundleModuleResolver(paths),
+            Bundle(name='fixture', session=plan['session'], tools=plan['tools'], agents=plan['agents']))
+        parent = await prepared.create_session(session_id=sid, session_cwd=cwd, approval_system=approvals)
+        parents.append(parent)
+        parent.coordinator.register_capability('web.history_workspace', str(home))
+        handles = {'origins': []}
+        access.append(handles)
+        handles['checks'] = await install_host_access(parent, app, monkeypatch, diagnostic, handles=handles)
+        registry = await install_children(parent, prepared, Runtime(sid), store, approvals)
+        return parent, registry
+
+    async def execute(self, prompt, context, providers, tools, hooks, coordinator):
+        diagnostic.update(phase=prompt)
+        invoked.append(prompt)
+        resumed = prompt == 'after-handoff'
+        expected_cwd = target if resumed else home
+        expected_file = home / 'handoff.txt' if placement == 'pinned' else expected_cwd / 'handoff.txt'
+        assert coordinator.session_id == 'handoff-child'
+        assert Path(coordinator.get_capability('session.working_dir')) == expected_cwd
+        assert coordinator.get_capability('web.history_workspace') == str(home)
+        assert coordinator.get_capability('web.child.resumed') is resumed
+        guard = coordinator.get_capability('web.file_source_guard')
+        guards.append(guard)
+        runs.append(coordinator.get_capability('web.worker_run'))
+        assert guard is not parent.coordinator.get_capability('web.file_source_guard')
+        if resumed:
+            assert guard is not guards[0] and runs[-1] != runs[0]
+            assert await context.get_messages() == saved_messages
+        update = {'type': 'update_file', 'path': 'handoff.txt', 'diff': '@@\n-original\n+child'}
+        before = {path: path.read_bytes() for path in [home / 'handoff.txt', target / 'handoff.txt', *forbidden]}
+        unread = await execute_tool(coordinator, 'apply_patch', update)
+        assert not unread.success and unread.error['code'] == 'file_source_unread'
+        assert unread.error['effect'] == 'none'
+        assert {path: path.read_bytes() for path in before} == before
+        read = await execute_tool(coordinator, 'read_file', {'file_path': 'handoff.txt'})
+        assert read.success and 'original' in str(read.output)
+        # A spawn read is checkpointed but must not authorize the resumed patch.
+        if resumed:
+            patched = await execute_tool(coordinator, 'apply_patch', update)
+            assert patched.success
+            assert expected_file.read_text() == 'child\n'
+            untouched = target if placement == 'pinned' else home
+            assert (untouched / 'handoff.txt').read_text() == original
+        for path in forbidden:
+            assert (await execute_tool(coordinator, 'read_file', {'file_path': str(path)})).success
+            refused_patch = await execute_tool(coordinator, 'apply_patch', {
+                'type': 'update_file', 'path': str(path), 'diff': '@@\n-protected\n+escape'})
+            assert not refused_patch.success and refused_patch.error['code'] == 'file_source_access'
+            assert refused_patch.error['effect'] == 'none' and path.read_text() == 'protected\n'
+            refused = await execute_tool(coordinator, 'write_file', {'file_path': str(path), 'content': 'escape'})
+            assert not refused.success and refused.error['code'] == 'file_source_access'
+            assert refused.error['effect'] == 'none' and path.read_text() == 'protected\n'
+        origin = access[-1]['origins'][-1]
+        assert origin['runtimeSessionId'] == 'handoff-child' and origin['rootSessionId'] == sid
+        assert origin['runId'] == runs[-1]
+        assert origin['executionRevision'] == int(resumed)
+        assert origin['interruptionRevision'] == stop_epoch
+        if resumed:
+            from amplifier_web.child_execution import current
+            from amplifier_web.collaboration import BINDING, PRINCIPAL
+            principal = PRINCIPAL.set('handoff-child')
+            binding = BINDING.set({'_childOrigin': origin, '_generationId': origin['generationId'],
+                                  '_runtimeOwnerId': access[-1]['owner']['runtimeOwnerId']})
+            try:
+                assert current(app, app._session(sid)) == origin
+                # Same current owner, but the exact captured A execution envelope
+                # cannot authorize the moved session.
+                BINDING.set({**BINDING.get(), '_childOrigin': access[0]['origins'][-1]})
+                assert current(app, app._session(sid)) is None
+            finally:
+                BINDING.reset(binding)
+                PRINCIPAL.reset(principal)
+            before_stop = {path: path.read_bytes() for path in before}
+            positive_checks = len(access[-1]['checks'])
+            await app.dispatch('conversation.stop', {'sessionId': sid}, command_id='stop-resumed-child')
+            assert app._session(sid)['interruptionRevision'] == stop_epoch + 1
+            stopped = await execute_tool(coordinator, 'apply_patch', {
+                'type': 'update_file', 'path': 'handoff.txt', 'diff': '@@\n-child\n+after-stop'})
+            assert not stopped.success and stopped.error['code'] == 'work_precondition_unavailable'
+            assert len(access[-1]['checks']) > positive_checks
+            assert access[-1]['checks'][-1]['allowed'] is False
+            assert access[-1]['checks'][-1]['effectAuthorized'] is False
+            assert {path: path.read_bytes() for path in before_stop} == before_stop
+            access[-1]['positive_checks'] = positive_checks
+        await context.add_message({'role': 'user', 'content': prompt})
+        await context.add_message({'role': 'assistant', 'content': 'observed'})
+        await coordinator.get_capability('live.checkpoint')()
+        checkpoint_messages.append(copy.deepcopy(await context.get_messages()))
+        assert store.load('handoff-child')[0] == checkpoint_messages[-1]
+        return 'observed'
+
+    monkeypatch.setattr(fixture.FiniteOrchestrator, 'execute',
+        retain_native_failures(execute, failures, diagnostic))
+    stop_epoch = app._session(sid).get('interruptionRevision', 0)
+    try:
+        parent, registry = await root()
+        first = await registry.spawn('worker', 'before-handoff', parent, sub_session_id='handoff-child')
+        assert first['session_id'] == 'handoff-child'
+        saved_messages, saved_metadata = copy.deepcopy(store.load('handoff-child'))
+        assert saved_metadata['parent_id'] == sid
+        saved_files = {name: (store.directory('handoff-child') / name).read_bytes()
+                       for name in ('transcript.jsonl', 'metadata.json')}
+        await parent.cleanup()
+        parents.remove(parent)
+        # The native mount settled. Use the real no-live-worker ownership proof,
+        # not a synthetic release receipt or a direct workingDirectory mutation.
+        manager = access[-1]['manager']
+        manager.workers.pop(sid)
+        monkeypatch.setattr(app.runtime, 'quiesce_for_handoff', manager.quiesce_for_handoff, raising=False)
+        pending = (await app.dispatch('worktree.handoff', {
+            'sessionId': sid, 'id': checkout['id'], 'expectedExecutionRevision': 0},
+            command_id='child-handoff-a-b'))['result']
+        await asyncio.wait_for(settle(app), 10)
+        receipt = app.worktrees.read(sid, pending['id'])
+        assert receipt['phase'] == 'applied' and receipt['inputsReplayed'] is False
+        assert receipt['release']['quiesced'] and receipt['release']['nativeSessionId'] == sid
+        assert receipt['release']['historyHome'] == str(home)
+        source = app._session(sid)
+        assert source['workspace'] == str(home) and source['workingDirectory'] == str(target)
+        assert source['executionRevision'] == 1 and source.get('interruptionRevision', 0) == stop_epoch
+        assert {name: (store.directory('handoff-child') / name).read_bytes() for name in saved_files} == saved_files
+        parent, registry = await root()
+        result = await registry.resume('handoff-child', 'after-handoff', parent)
+        assert result['session_id'] == 'handoff-child' and result['output'] == 'observed'
+        messages, metadata = store.load('handoff-child')
+        assert messages == checkpoint_messages[-1]
+        assert messages[:len(saved_messages)] == saved_messages
+        assert [{key: message[key] for key in ('role', 'content')}
+                for message in messages[len(saved_messages):]] == [
+            {'role': 'user', 'content': 'after-handoff'}, {'role': 'assistant', 'content': 'observed'}]
+        assert metadata['parent_id'] == sid and metadata['mount_plan']['tools'] == saved_metadata['mount_plan']['tools']
+        assert [row['resumed'] for row in fixture.created if row['id'] == 'handoff-child'] == [False, True]
+        assert invoked == ['before-handoff', 'after-handoff']
+        assert all(handle['checks'] and all(row == {'applicable': False, 'allowed': True, 'effectAuthorized': False}
+                   for row in handle['checks'][:handle.get('positive_checks')]) for handle in access)
+        assert app._session(sid)['executionRevision'] == 1
+    except Exception:
+        if failures:
+            raise failures[0] from None
+        raise
+    finally:
+        for mounted in reversed(parents):
+            await mounted.cleanup()
+        for handle in access:
+            if 'manager' in handle:
+                handle['manager'].workers.pop(sid, None)
+                await handle['manager'].retention.close()

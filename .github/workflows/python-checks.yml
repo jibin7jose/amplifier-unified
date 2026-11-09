@@ -374,6 +374,8 @@ jobs:
               rows[TARGETS[2]] = ['test_native_child_file_reads_are_not_inherited[' + value + ']'
                   for value in ('finite', 'resumed', 'persistent', 'nested')]
               rows[TARGETS[2]].append('test_resumed_native_child_retains_saved_write_ceiling_after_parent_grant')
+              rows[TARGETS[2]].extend('test_native_child_resume_follows_committed_worktree_handoff[' + value + ']'
+                  for value in ('derived', 'pinned'))
               return [path + '::' + name for path, names in rows.items() for name in names]
 
           def validate_selection(selection, targets, revision, tree, run_id, attempt):
@@ -425,22 +427,22 @@ jobs:
 
           def validate_results(collected, document, exit_code):
               expected = expected_cases()
-              assert len(collected) == len(set(collected)) == 17 and set(collected) == set(expected)
+              assert len(collected) == len(set(collected)) == 19 and set(collected) == set(expected)
               assert exit_code == 0
               assert document.tag == 'testsuites'
-              counts = {'tests': '17', 'failures': '0', 'errors': '0', 'skipped': '0'}
+              counts = {'tests': '19', 'failures': '0', 'errors': '0', 'skipped': '0'}
               assert all(document.get(key) in (None, value) for key, value in counts.items())
               suites = list(document)
               assert len(suites) == 1 and suites[0].tag == 'testsuite'
               suite = suites[0]
               assert {key: suite.get(key) for key in ('tests', 'failures', 'errors', 'skipped')} == {
-                  'tests': '17', 'failures': '0', 'errors': '0', 'skipped': '0'}
+                  'tests': '19', 'failures': '0', 'errors': '0', 'skipped': '0'}
               cases = suite.findall('testcase')
-              assert len(cases) == 17 and len(document.findall('.//testcase')) == 17
+              assert len(cases) == 19 and len(document.findall('.//testcase')) == 19
               identities = [(case.get('classname'), case.get('name')) for case in cases]
               wanted = [(path.removesuffix('.py').replace('/', '.'), name)
                         for path, name in (node.split('::') for node in expected)]
-              assert len(set(identities)) == 17 and set(identities) == set(wanted)
+              assert len(set(identities)) == 19 and set(identities) == set(wanted)
               assert all(not any(case.find(kind) is not None for kind in ('failure', 'error', 'skipped')) for case in cases)
               assert all(child.tag in {'testcase', 'properties', 'system-out', 'system-err'} for child in suite)
 
@@ -508,8 +510,8 @@ jobs:
                       record['phase'] = 'collected'
                       save()
                       actual = record['collected']
-                      if len(actual) != 17 or len(set(actual)) != 17 or set(actual) != set(expected_cases()):
-                          raise pytest.UsageError('Native fixture collection does not match the fixed 17 cases')
+                      if len(actual) != 19 or len(set(actual)) != 19 or set(actual) != set(expected_cases()):
+                          raise pytest.UsageError('Native fixture collection does not match the fixed 19 cases')
 
               # Exactly one normal pytest session; no collection-only or retry run.
               code = int(pytest.main(['-v', '--tb=short', '--junitxml=output/python-checks/junit.xml', *TARGETS],
