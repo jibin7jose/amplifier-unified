@@ -323,6 +323,22 @@ test('actual Canvas report adapters preserve both promises, latest-only backpres
  assert.ok(posts.every(row=>row.action!=='outputs.mediaReport'));
 });
 
+test('late Canvas report callbacks retain their old target while same-view adapters refresh',async()=>{
+ const source=readFileSync(new URL('../src/canvas-viewer.jsx',import.meta.url),'utf8');
+ const begin=source.indexOf('function useReport('),end=source.indexOf('export function GifCanvasViewer',begin);
+ const hooks=hookSlots(),hook=runInNewContext(`${source.slice(begin,end)}\nuseReport`,hooks),calls=[];
+ const render=(canvas,act)=>{hooks.begin();return hook(canvas,act)};
+ const first={id:'saved',viewId:'primary',resourceRevision:'one',generation:1};
+ const old=render(first,(...args)=>calls.push(['old',...args]));
+ const refreshed=render(first,(...args)=>calls.push(['refreshed',...args]));
+ assert.equal(old,refreshed);
+ const next=render({...first,resourceRevision:'two',generation:2},(...args)=>calls.push(['next',...args]));
+ assert.notEqual(old,next);
+ old('error','Old parse failure');next('ready','New preview');
+ assert.deepEqual(calls.map(row=>row[0]),['refreshed','next']);
+ assert.equal(calls[0][2].message,'Old parse failure');
+});
+
 function openGifClosure(dispatch){
  const source=readFileSync(new URL('../src/inline-media.jsx',import.meta.url),'utf8');
  const start=source.indexOf('export function MediaFigure('),end=source.indexOf(' useEffect(()=>{\n  let disposed=',start);

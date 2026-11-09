@@ -147,7 +147,7 @@ def assert_clean(service, identity):
 def definitions(schema, string):
     identity = {'id': string(100), 'sessionId': string(200), 'clientId': string(100)}
     return {
-        'canvas.versions.inspect': ('Inspect saved artifact definitions, file paths and exact-version download links without selecting or executing them.',
+        'canvas.versions.inspect': ('Inspect saved definitions, exact-version links and bounded same-client quality feedback without selecting or executing them. saved is not rendered; quality not_checked/pending never means success.',
             schema({**identity, 'includeSource': {'type': 'boolean'}, 'version': {'type': 'integer', 'minimum': 1}}, ['id'])),
         'canvas.versions.revise': ('Save a new document definition in the same tab. Inspect first and supply its expectedRevision; never rewrites earlier versions. Use canvas.apps.revise for interactive surfaces.',
             schema({**identity, 'expectedRevision': {'type': 'integer', 'minimum': 1}, 'content': string(7000000), 'surface': {'type': 'object'}, 'title': string(200)}, ['id', 'expectedRevision'])),
@@ -180,6 +180,8 @@ def command(service, action, args, origin):
                                   'filename': filename(selected)}
         if args.get('includeSource'):
             result['source'] = resource(service.db, selected['body']['$resource'])
+        from .canvas_feedback import saved
+        result.update(saved(service, selected, version))
         return result
     if owner.get('historyReadOnlyReason') or owner.get('ownership', {}).get('status') in {'blocked', 'yielding', 'yielded', 'yield-failed', 'taking-over'}:
         raise AppError('This conversation is read-only here.', 409)
@@ -213,7 +215,9 @@ def command(service, action, args, origin):
             and not ordinary_preview(state['canvas'])
             and (state['canvas'].get('selectedVersion') is None or action == 'canvas.versions.restore')):
         load(state, service.db, row['id'], open_panel=state['canvas'].get('open', False))
-    return {'id': row['id'], 'revision': row['revision'], 'version': row['revision'], 'reference': reference(row)}
+    from .canvas_feedback import saved
+    return {'id': row['id'], 'revision': row['revision'], 'version': row['revision'],
+            'reference': reference(row), **saved(service, row, row['revision'])}
 
 
 def sync(service):

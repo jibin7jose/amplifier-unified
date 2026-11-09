@@ -43,6 +43,11 @@ on:
         description: Only fixed Canvas source and installed-wheel qualification
         type: boolean
         default: false
+      canvas_scope:
+        description: Scope within canvas_qualification only; full preserves all existing coverage
+        type: choice
+        options: [full, artifact-feedback]
+        default: full
       multi_quote:
         description: Only fixed multi-quote source, negative-control and installed-wheel checks
         type: boolean
@@ -463,6 +468,8 @@ jobs:
     if: ${{ !inputs.permissions_history && !inputs.readiness_trio && github.event_name == 'workflow_dispatch' && inputs.canvas_qualification }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CANVAS_QUALIFICATION_SCOPE: ${{ inputs.canvas_scope || 'full' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

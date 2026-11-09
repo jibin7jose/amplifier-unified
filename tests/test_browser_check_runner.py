@@ -333,7 +333,7 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     original = [row for row in historical_rows if row['id'] not in additions and row['id'] not in recovery_ids]
     assert len(original) == 65 and len(historical_rows) == 132
     # Preserve the preceding total after validating all exact additive owners.
-    assert len([row for row in rows if row['id'] not in {'context-inspector-layout', 'delivery-warning', 'navigation-waiting'}]) == 138
+    assert len([row for row in rows if row['id'] not in {'context-inspector-layout', 'delivery-warning', 'navigation-waiting', 'canvas-versions'}]) == 138
     # Existing scenarios retain their commands; only evidence ownership changes.
     evidence = {
         'bundle': {'AMPLIFIER_BUNDLE_SCREENSHOT': '{root}/output/browser-checks/bundle-mobile.png'},
@@ -641,7 +641,7 @@ def test_delivery_warning_browser_owner_is_exact(fault):
 def canvas_browser_additions(rows, readiness_scripts):
     """Validate new Canvas owners before excluding them from frozen inventories."""
     scripts = set()
-    for name in ('canvas-refresh', 'canvas-refresh-catchup'):
+    for name in ('canvas-refresh', 'canvas-refresh-catchup', 'canvas-versions'):
         script = f'tests/{name}-browser.mjs'
         owners = [row for row in rows if row['id'] == name or script in row['command']]
         expected = {'id': name, 'command': ['node', script],

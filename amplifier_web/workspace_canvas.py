@@ -292,7 +292,12 @@ def canvas_command(state, action, args, origin, *, file_root=None):
             reports = canvas.setdefault('renderReports', {})
             if len(reports) >= 100 and args['part'] not in reports:
                 _error('Too many canvas render reports.')
-            reports[args['part']] = {'status':args['status'], 'message':args.get('message',''), 'at':time.time()}
+            from .worker_diagnostics import redact_diagnostic
+            reports[args['part']] = {
+                'status': args['status'], 'message': redact_diagnostic(args.get('message', ''))[:2000],
+                'at': time.time(),
+                **{key: copy.deepcopy(args[key]) for key in ('parts', 'partsComplete', 'sourceLine') if key in args},
+            }
         return
     if action == "canvas.event":
         canvas = state["canvas"]

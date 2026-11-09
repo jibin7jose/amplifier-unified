@@ -21,6 +21,8 @@ frontend/public/sw.js
 # Local artifacts from modular shell browser acceptance.
 /output/shell-proof/
 /output/canvas-proof/
+/output/canvas-qualification/
+/output/canvas-qualification-public/
 
 /output/conversation-details-proof/
 /output/shell-components-proof/

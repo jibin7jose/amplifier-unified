@@ -112,6 +112,7 @@
     {"id": "live-clients", "command": ["node", "tests/live-clients-browser.mjs"]},
     {"id": "ownership", "command": ["node", "tests/ownership-browser.mjs"]},
     {"id": "canvas-dirty", "command": ["node", "tests/canvas-dirty-browser.mjs"]},
+    {"id": "canvas-versions", "command": ["node", "tests/canvas-versions-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canvas-versions"}},
     {"id": "canvas-refresh", "command": ["node", "tests/canvas-refresh-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canvas-refresh"}},
     {"id": "canvas-refresh-catchup", "command": ["node", "tests/canvas-refresh-catchup-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canvas-refresh-catchup"}},
     {"id": "canvas-apps", "command": ["node", "tests/canvas-apps-browser.mjs"]},

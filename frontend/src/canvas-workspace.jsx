@@ -89,7 +89,7 @@ function ResourceView({view,state,dispatch,recovery}){
  const {state:[load,setLoad],pending:loadPending}=useCanvasVersionLoad();
  const selection=canvasLoadSelection(view),binding=canvasLoadBinding(view);
  const unresolved=load?.selection===selection&&load.needsCheck;
- const canvas=useMemo(()=>state.canvas?{...state.canvas,...(view.app?{app:view.app}:{}),...targetOf(view),renderIdentity:view.renderIdentity,view:view.view||state.canvas.view,renderReports:view.renderReports}:null,[state.canvas,view]);
+ const canvas=useMemo(()=>state.canvas?{...state.canvas,...(view.app?{app:view.app}:{}),...targetOf(view),renderIdentity:view.renderIdentity,view:view.view||state.canvas.view,renderReports:view.renderReports,quality:view.quality}:null,[state.canvas,view]);
  const server=state.smartTools?.servers?.find(row=>row.id===canvas?.mcp?.serverId);
  const connectionKey=JSON.stringify([server?.status,server?.catalogState,server?.catalogRevision,server?.account,server?.accountBinding,canvas?.mcp?.catalogRevision,canvas?.mcp?.contractFingerprint]);
  const run=async(action,args)=>{try{const result=await dispatch(action,args);setError(result?.result?.status==='deferred'?result.result.reason:'')}catch(error){setError(error.message)}};

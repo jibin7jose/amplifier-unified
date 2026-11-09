@@ -1412,12 +1412,62 @@ def test_canvas_qualification_is_fixed_manual_and_installed_not_a_release_gate()
     assert 'from browser_check_runner import run_scenarios' in source
     assert "BROWSERS = ('canvas-chrome-browser.mjs', 'canvas-dirty-browser.mjs'," in source
     assert "'destination-history-browser.mjs', 'automation-hub-browser.mjs'," in source
+    assert "'canvas-versions-browser.mjs'" in source
+    assert "'tests/test_canvas_feedback.py'" in source
+    assert "'canvas-reference.test.mjs'" in source
+    assert "from frontend_build_artifact import create" in source
     assert job['steps'][1]['env']['MIXED'] == (
         '${{ inputs.attachment_experience || inputs.multi_quote || inputs.peer_messages || inputs.compact_composer || inputs.mcp_boundary || inputs.app004_qualification || inputs.attachment_consumption '
         '|| inputs.destination_history || inputs.settings_close_diagnostic }}')
     assert "raise ValueError('Qualification already started; no replay')" in source
     assert "'installed-harness'" in source and "'installed-identity.json'" in source
     assert "assert static == json.loads((OUT / 'static.json').read_text())" in source
+
+
+def test_canvas_feedback_scope_is_fixed_and_preserves_full_coverage(tmp_path):
+    import ast
+    workflow = yaml.load((ROOT / '.github/workflows/browser-checks.yml').read_text(), Loader=yaml.BaseLoader)
+    scope = workflow['on']['workflow_dispatch']['inputs']['canvas_scope']
+    assert scope['type'] == 'choice' and scope['default'] == 'full'
+    assert scope['options'] == ['full', 'artifact-feedback']
+    assert workflow['jobs']['canvas-qualification']['env'] == {
+        'CANVAS_QUALIFICATION_SCOPE': "${{ inputs.canvas_scope || 'full' }}"}
+    source = (ROOT / 'scripts/canvas_qualification.py').read_text()
+    tree = ast.parse(source)
+    definitions = [node for node in tree.body
+                   if (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {'BROWSERS', 'UNITS'} for t in node.targets))
+                   or (isinstance(node, ast.FunctionDef) and node.name in {'selection', 'run', 'write'})]
+    namespace = {'ROOT': tmp_path, 'OUT': tmp_path / 'evidence', 'json': json}
+    exec(compile(ast.Module(body=definitions, type_ignores=[]), '<fixed-selection>', 'exec'), namespace)
+    full = namespace['selection']('full')
+    focused = namespace['selection']('artifact-feedback')
+    assert full['browsers'] == list(namespace['BROWSERS']) and len(full['browsers']) == 8
+    assert full['units'] == list(namespace['UNITS']) and full['omittedBrowsers'] == []
+    assert focused['browsers'] == ['canvas-versions-browser.mjs']
+    assert focused['units'] == ['canvas-reference.test.mjs', 'inline-media.test.mjs']
+    assert set(focused['browsers'] + focused['omittedBrowsers']) == set(full['browsers'])
+    assert 'not requalified' in focused['coverageNote']
+    with pytest.raises(ValueError):
+        namespace['selection']('arbitrary-command')
+    assert "selected = selection(identity['selection']['scope'])" in source
+    assert "assert selected == identity['selection'] == record['selection']" in source
+    assert source.count("for name in selected['browsers']:") == 2
+    assert "CANVAS_QUALIFICATION_SCOPE', 'full'" in source
+    # A corrupt saved selection must fail before any command, settle the
+    # retained receipt, and retain the no-replay guard.
+    output = namespace['OUT']
+    for corrupt, expected_error in (
+        ({**focused, 'units': ['untrusted-command']}, 'Canvas qualification selection changed'),
+        ({**focused, 'scope': 'unknown'}, 'Unknown Canvas qualification scope'),
+    ):
+        namespace['write'](output / 'summary.json',
+                           {'status': 'not_started', 'stages': [], 'selection': focused})
+        namespace['write'](output / 'identity.json', {'selection': corrupt})
+        assert namespace['run']() == 1
+        result = json.loads((output / 'summary.json').read_text())
+        assert result['status'] == 'failed' and result['error'] == expected_error and result['stages'] == []
+        with pytest.raises(ValueError, match='no replay'):
+            namespace['run']()
 
 
 def test_app004_opt_in_is_fixed_manual_only_and_keeps_default_browser_budget():
@@ -1427,7 +1477,7 @@ def test_app004_opt_in_is_fixed_manual_only_and_keeps_default_browser_budget():
     assert set(inputs) == {'app004_qualification', 'mcp_boundary', 'attachment_consumption',
                            'canvas_qualification', 'destination_history', 'settings_close_diagnostic',
                            'multi_quote', 'attachment_experience', 'compact_composer', 'peer_messages',
-                           'readiness_trio', 'permissions_history'}
+                           'readiness_trio', 'permissions_history', 'canvas_scope'}
     assert inputs['canvas_qualification']['type'] == 'boolean'
     assert inputs['canvas_qualification']['default'] == 'false'
     assert inputs['multi_quote']['type'] == 'boolean'
@@ -1578,7 +1628,7 @@ def test_readiness_trio_is_exclusive_manual_fixed_and_not_a_default_gate():
     mixed = ('attachment_experience', 'peer_messages', 'destination_history', 'settings_close_diagnostic',
              'mcp_boundary', 'app004_qualification', 'attachment_consumption', 'canvas_qualification',
              'multi_quote', 'compact_composer')
-    assert set(inputs) == {'readiness_trio', 'permissions_history', *mixed}
+    assert set(inputs) == {'readiness_trio', 'permissions_history', 'canvas_scope', *mixed}
     assert steps[0] == {
         'name': 'Reject mixed readiness trio selections before setup',
         'if': '${{ ' + ' || '.join('inputs.' + name for name in mixed) + ' }}',
@@ -1641,7 +1691,7 @@ def test_permissions_history_is_exclusive_manual_fixed_and_preserves_default_job
             assert other['if'].startswith('${{ !inputs.permissions_history && ')
             assert 'needs' not in other
     steps = job['steps']
-    assert set(re.findall(r'inputs\.([a-z_0-9]+)', steps[0]['if'])) == set(inputs) - {'permissions_history'}
+    assert set(re.findall(r'inputs\.([a-z_0-9]+)', steps[0]['if'])) == set(inputs) - {'permissions_history', 'canvas_scope'}
     assert steps[0]['run'].endswith('exit 1\n')
     assert steps[1]['with'] == {'ref': '${{ github.sha }}', 'persist-credentials': 'false'}
     assert steps[2]['run'].startswith('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"\n')

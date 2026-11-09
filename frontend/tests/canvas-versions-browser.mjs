@@ -1,16 +1,17 @@
 import {spawn} from 'node:child_process';
-import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {chromium,expect} from '@playwright/test';
 import assert from 'node:assert/strict';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
+import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const output=process.env.AMPLIFIER_TEST_ARTIFACTS;
 if(output)await mkdir(output,{recursive:true});
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',[root+'tests/fixtures/empty_host_ui_server.py','--canvas-versions'],{stdio:['ignore','pipe','inherit']});
-let browser;
+const stop=ownFixture(fixture);
+let browser,originalError,releaseMermaid;
 try{
  const url=await new Promise((resolve,reject)=>{
   let output='';const timer=setTimeout(()=>reject(Error('Fixture startup timed out')),15000);
@@ -89,6 +90,68 @@ try{
     await page.getByRole('group',{name:'Confirm saved preview version',exact:true}).getByRole('button',{name:'Load v2 — resets preview and runs its code',exact:true}).click();
  await expect(frame().getByRole('heading',{name:'Large second',exact:true})).toBeVisible();
  assert.equal((await state()).view.draft,'Keep this unsent draft');
+ // A saved definition and its asynchronous browser feedback are independent.
+ let delayedImports=0;
+ const importGate=new Promise(resolve=>{releaseMermaid=resolve});
+ await page.route('**/assets/mermaid.core-*.js',async route=>{delayedImports++;await importGate;await route.continue()});
+ const badSource='# Valid Markdown\n\n```mermaid\nflowchart LR\n  A[Unclosed label\n```\n\nProse survives.';
+ const bad=(await action('canvas.show',{kind:'markdown',title:'Quality feedback',content:badSource})).result;
+ assert.equal(bad.saved,true);
+ assert.equal(bad.quality.status,'not_checked','Save receipt never claims a render before browser work');
+ const quality=async(version=1)=>(await action('canvas.versions.inspect',{id:bad.id,version})).result;
+ await expect.poll(()=>delayedImports).toBeGreaterThan(0);
+ await expect.poll(async()=>(await quality()).quality.status).toBe('pending');
+ await expect(page.getByRole('status',{name:'Artifact quality feedback',exact:true})).toContainText('Saved; rendering is pending.');
+ releaseMermaid();
+ await expect.poll(async()=>(await quality()).quality.status).toBe('issues');
+ await expect(page.getByRole('heading',{name:'Valid Markdown',exact:true})).toBeVisible();
+ await expect(page.getByText('Prose survives.',{exact:true})).toBeVisible();
+ const feedback=page.getByRole('status',{name:'Artifact quality feedback',exact:true});
+ await expect(feedback).toContainText('Saved; the preview needs attention.');
+ await expect(feedback).toContainText('Source line 3:');
+ const failed=await quality();
+ assert.equal(failed.reference,bad.reference);
+ assert.match(failed.quality.diagnostics[0].message,/parse|syntax/i);
+ assert.equal((await action('canvas.versions.inspect',{id:bad.id,version:1,includeSource:true})).result.source.content,badSource);
+ const sameErrorTarget=(await state()).canvasWorkspace.views.find(v=>v.viewId==='primary');
+ await action('canvas.select',{id:bad.id});
+ assert.equal((await quality()).quality.status,'issues','Reselecting the same definition preserves its failure');
+ assert.equal((await state()).canvasWorkspace.views.find(v=>v.viewId==='primary').generation,sameErrorTarget.generation);
+ if(output)await page.screenshot({path:output+'/canvas-quality-error.png',fullPage:true});
+ const prior=(await state()).canvasWorkspace.views.find(v=>v.viewId==='primary');
+ const stale=Object.fromEntries(['viewId','resourceId','resourceRevision','generation'].map(key=>[key,prior[key]]));
+ const corrected=(await action('canvas.versions.revise',{id:bad.id,expectedRevision:1,content:'# Corrected Markdown\n\n```mermaid\nflowchart LR\n A["Closed label"] --> B["Next"]\n```'})).result;
+ assert.equal(corrected.saved,true);assert.equal(corrected.revision,2);
+ assert.equal(corrected.quality.status,'not_checked');
+ await assert.rejects(()=>action('canvas.views.command',{...stale,action:'canvas.report',args:{status:'error',part:'preview',message:'Late old error'}}),/changed/i);
+ await expect.poll(async()=>(await quality(2)).quality.status).toBe('rendered');
+ await expect(feedback).toContainText('Saved; the browser reported rendering.');
+ await expect(page.locator('[data-canvas-view="primary"] .a-diagram-stage img')).toHaveCount(1);
+ assert.deepEqual((await quality(2)).quality.diagnostics,[]);
+ const renderedCorrection=await quality(2);
+ assert.equal((await quality(1)).quality.status,'not_checked');
+ const onlySaved=(await action('canvas.show',{kind:'markdown',title:'Not opened',content:badSource,presentation:'saved'})).result;
+ assert.equal(onlySaved.saved,true);assert.equal(onlySaved.quality.status,'not_checked');
+ assert.equal((await action('canvas.versions.inspect',{id:onlySaved.id})).result.quality.status,'not_checked');
+ await expect(page.getByRole('heading',{name:'Corrected Markdown',exact:true})).toBeVisible();
+ // A local writing copy renders without claiming its changed bytes are saved.
+ const writing=(await action('canvas.show',{kind:'markdown',title:'Local writing copy',content:':::writing{variant="document" id="12345"}\n```mermaid\nflowchart LR\n A-->B\n```\n:::\n'})).result;
+ const writingQuality=async()=>(await action('canvas.versions.inspect',{id:writing.id})).result.quality;
+ await expect.poll(async()=>(await writingQuality()).status).toBe('rendered');
+ const beforeEdit=await writingQuality();
+ await page.getByRole('button',{name:'Edit copy',exact:true}).click();
+ await page.getByRole('textbox',{name:'Edit writing copy',exact:true}).fill('```mermaid\nflowchart LR\n C["Local change"]-->D\n```');
+ await page.getByRole('button',{name:'Preview copy',exact:true}).click();
+ await expect(page.locator('[data-canvas-view="primary"] .a-diagram-stage img')).toHaveCount(1);
+ assert.deepEqual(await writingQuality(),beforeEdit,'Local-copy rendering is not saved-version evidence');
+ await page.getByRole('button',{name:'Edit copy',exact:true}).click();
+ await page.getByRole('textbox',{name:'Edit writing copy',exact:true}).fill('```mermaid\nflowchart LR\n C[Unclosed local label\n```');
+ await page.getByRole('button',{name:'Preview copy',exact:true}).click();
+ await expect(page.getByRole('alert').filter({hasText:'This local preview could not be rendered.'})).toBeVisible();
+ assert.deepEqual(await writingQuality(),beforeEdit,'A failed local copy must not change saved-version feedback');
+ const feedbackCommands=commands.filter(row=>row.action==='canvas.views.command'&&row.args?.action==='canvas.report');
+ assert.ok(feedbackCommands.length<80,`Render reporting must settle, got ${feedbackCommands.length}`);
+ if(output)await writeFile(output+'/quality-observations.json',JSON.stringify({bad,failed,corrected,rendered:renderedCorrection,onlySaved,limits:['Browser reports are not pixel review or source-only validation.']},null,2)+'\n');
  const sentAfterVersions=(await(await page.request.get(url+'/fixture')).json()).sent;
  assert.deepEqual(sentAfterVersions,sentBeforeVersions,'Browsing, reloading and explicitly restoring saved versions never replay model input');
  const versionCommands=commands.slice(commandsBeforeVersions);
@@ -97,5 +160,6 @@ try{
  assert.deepEqual(errors,[]);
  await page.screenshot({path:output?output+'/canvas-versions-browser.png':'/tmp/canvas-versions-browser.png',fullPage:true});
  if(output)await writeFile(output+'/observations.json',JSON.stringify({passed:true,setupInputs:sentBeforeVersions,afterInputs:sentAfterVersions,explicitRestores:1,checks:['Public saved-version selection, original-turn link, reload and explicit restore preserve exact runtime input receipts and private draft.','Only one deliberate Restore gesture produces a restore command; version browsing produces no model sends.'],limits:['Synthetic runtime and artifacts; does not claim exactly-once external tool execution.']},null,2)+'\n');
- console.log('Canvas saved versions: exact Markdown/turn links, single tab, Latest, reload, restore, small/large HTML transitions and unsent draft passed');
-}finally{await browser?.close();if(fixture.exitCode===null){const exited=once(fixture,'exit');fixture.kill('SIGTERM');const timer=setTimeout(()=>fixture.kill('SIGKILL'),5000);try{const [code,signal]=await exited;assert.equal(code,0,'Fixture exits cleanly');assert.equal(signal,null)}finally{clearTimeout(timer)}}}
+ console.log('Canvas saved versions and quality: saved/not-checked, real Mermaid error/correction, exact-version readback, stale report rejection, saved-only no-render and retained drafts passed');
+}catch(error){originalError=error;throw error}
+finally{releaseMermaid?.();await finishFixture({stop,originalError,close:[['browser',()=>browser?.close()]]})}

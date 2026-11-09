@@ -361,8 +361,58 @@ class CanvasViews:
                 'activation': preference.get('activation'),
                 **({'app': copy.deepcopy(row['app'])} if row.get('app') else {}),
                 'view': copy.deepcopy(self.service.state['canvas'].get('view', {})) if view_id == 'primary' else copy.deepcopy(preference['view']),
-                'renderReports': copy.deepcopy(self.service.state['canvas'].get('renderReports', {})) if view_id == 'primary' else copy.deepcopy(preference['renderReports']),
+                'renderReports': self.view_reports(view_id, row, preference),
+                'quality': self.view_feedback(view_id, row, preference),
                 **{key: copy.deepcopy(preference[key]) for key in ('document', 'interaction', 'events') if key in preference}}
+
+    def report_binding(self, view_id, row, preference):
+        return {'viewId': view_id, 'resourceId': row['id'],
+                'resourceRevision': self.revision(row), 'generation': preference['generation'],
+                'renderer': preference['renderer'], 'clientId': self.service.clients.current.get()}
+
+    def view_reports(self, view_id, row, preference):
+        # Reselecting the same definition may reload its body without remounting
+        # the renderer. Reuse only reports from that still-identical mount.
+        binding = self.report_binding(view_id, row, preference)
+        reports = {part: copy.deepcopy(report) for part, report in preference.get('renderReports', {}).items()
+                   if report.get('binding') == binding}
+        if view_id == 'primary':
+            reports.update(copy.deepcopy(self.service.state.get('canvas', {}).get('renderReports', {})))
+        return reports
+
+    def view_feedback(self, view_id, row, preference):
+        from .canvas_feedback import summary
+        reports = self.view_reports(view_id, row, preference)
+        source_error = (self.service.state.get('canvas', {}).get('renderReports', {}).get('stored-source')
+                        if view_id == 'primary' else None)
+        tool_state_error = (self.service.state.get('canvas', {}).get('renderReports', {}).get('stored-tool-state')
+                            if view_id == 'primary' else None)
+        return summary(row['kind'], reports, binding=self.report_binding(view_id, row, preference),
+                       source_error=source_error, tool_state_error=tool_state_error)
+
+    def feedback(self, saved, version):
+        """Inspect at most this client's primary and eight inline leases."""
+        from .canvas_feedback import summary
+        from .errors import AppError
+        client = self.service.clients.record()
+        if client is not None:
+            views = client.get('canvasViews', {})
+            candidates = [('primary', self.service.state.get('canvas', {})),
+                          *list(views.get('inline', {}).items())[:8]]
+            for view_id, current in candidates:
+                if (current.get('resourceId', current.get('id')) != saved['id']
+                        or current.get('_presentationDisposed')):
+                    continue
+                try:
+                    row, preference = self.resolve(view_id)
+                except AppError:
+                    continue
+                actual = row.get('runningVersion') or row.get('selectedVersion') or row.get('revision', 1)
+                if row.get('sessionId') == saved.get('sessionId') and actual == version:
+                    result = self.view_feedback(view_id, row, preference)
+                    return {**result, 'version': version,
+                            'view': self.report_binding(view_id, row, preference)}
+        return {**summary(saved['kind']), 'version': version}
 
     def project(self):
         from .errors import AppError
@@ -443,6 +493,7 @@ class CanvasViews:
             canvas.pop('content', None)
         else:
             canvas.pop('contentResource', None)
+        canvas['renderReports'] = self.view_reports(view_id, row, preference)
         return canvas
 
     def command(self, action, args, origin):
@@ -598,6 +649,10 @@ class CanvasViews:
         else:
             scoped = {**self.service.state, 'canvas': canvas}
             canvas_command(scoped, action, args, origin)
+            if action == 'canvas.report':
+                # Unfenced legacy reports remain readable but cannot qualify a
+                # new revision or renderer. Stamp only after target validation.
+                canvas['renderReports'][args['part']]['binding'] = self.report_binding(target['viewId'], row, preference)
             for key in ('view', 'renderReports', 'document', 'interaction', 'events'):
                 if key in canvas:
                     preference[key] = copy.deepcopy(canvas[key])
