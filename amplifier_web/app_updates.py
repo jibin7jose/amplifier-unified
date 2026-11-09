@@ -472,12 +472,17 @@ async def _activate_serialized(manager, *, force=None):
 async def installed_target():
     """Only replace the uv tool environment that owns this running host."""
     uv=shutil.which('uv')
-    executable=shutil.which('amplifier-unified')
+    # Avoid PATHEXT manufacturing ".EXE" in an otherwise canonical pathname.
+    # The native owner deliberately compares exact component spellings.
+    executable=shutil.which('amplifier-unified.exe' if os.name=='nt' else 'amplifier-unified')
     if not uv or not executable:
         raise ValueError('Install and launch this app with uv tool before applying application updates')
     env=git_environment()
-    tool_root=Path(await process(uv,'tool','dir',env=env,timeout=10)).expanduser().resolve()
-    bin_root=Path(await process(uv,'tool','dir','--bin',env=env,timeout=10)).expanduser().resolve()
+    tool_root=Path(await process(uv,'tool','dir',env=env,timeout=10)).expanduser()
+    bin_root=Path(await process(uv,'tool','dir','--bin',env=env,timeout=10)).expanduser()
+    # Retain lexical Windows components for the native reparse/ACL boundary.
+    if os.name!='nt':
+        tool_root,bin_root=tool_root.resolve(),bin_root.resolve()
     prefix=tool_root/'amplifier-unified'
     launcher=prefix/('Scripts/amplifier-unified.exe' if os.name=='nt' else 'bin/amplifier-unified')
     public_launcher=bin_root/('amplifier-unified.exe' if os.name=='nt' else 'amplifier-unified')
@@ -487,7 +492,12 @@ async def installed_target():
     owns_prefix = Path(sys.prefix).resolve() == prefix.resolve()
     if generation and supports(prefix):
         owns_prefix = owns_prefix or Path(sys.prefix).resolve() == generation['prefix'].resolve()
-    if not owns_prefix or Path(executable).resolve()!=launcher.resolve() or public_launcher.resolve()!=launcher.resolve():
+    if not owns_prefix:
+        raise ValueError('This host is not running from the active uv tool installation. Restart it using that installation before updating; no global tool was changed.')
+    if os.name=='nt':
+        from .windows_uv_tool import validate_launcher
+        validate_launcher(prefix,bin_root,executable)
+    elif Path(executable).resolve()!=launcher.resolve() or public_launcher.resolve()!=launcher.resolve():
         raise ValueError('This host is not running from the active uv tool installation. Restart it using that installation before updating; no global tool was changed.')
     python=Path(sys.prefix)/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
     previous={'version':__version__,'installation':str(prefix),'source':None}
@@ -510,6 +520,33 @@ async def _activate(manager, *, force=None):
     generation=release.get('generation')
     if generation is not None and (not isinstance(generation,str) or not re.fullmatch('[0-9a-f]{32}',generation)):
         raise ValueError('Invalid staged application generation')
+    if sys.platform=='win32':
+        # Recognizing a real uv installation does not qualify host replacement.
+        # The fallback below uses POSIX liveness/signalling and cannot provide
+        # a graceful, exact-owner Windows handoff. Refuse BEFORE drain admission,
+        # promotion, reinstall, runtime cancellation or any restart helper.
+        # A retained replacement/restart marker can describe an older UNKNOWN
+        # effect. Never replace that account with a claim of "unchanged".
+        if manager.service.state['updates'].get('pendingReplacement') or manager.service.state['updates'].get('pendingRestart'):
+            if force is not None:
+                from .update_restart import RestartRejected
+                raise RestartRejected('The earlier application handoff still needs verification. Its outcome and work gate were preserved.')
+            return
+        message=('Automatic Windows application replacement is not available. '
+                 'The running host and prepared candidate are unchanged. '
+                 'Use a qualified manual installation handoff; restarting the '
+                 'current launcher alone does not install this candidate.')
+        manager.diagnostics.begin('application',revision,release.get('attemptId'),
+                                  application_extras=release.get('extras'))
+        manager.diagnostics.record('restart-capability','failed',
+                                   errorType='RuntimeError')
+        await manager.publish(phase='error',error=message,
+            detail='No application pointer, installed package, worker or process was replaced. '
+                   'The staged receipt is retained; automatic activation will not retry it.')
+        if force is not None:
+            from .update_restart import RestartRejected
+            raise RestartRejected(message)
+        return
     folder=manager.directory/'applications'/revision
     if generation:folder=folder/generation
     marker=folder/'validated.json'

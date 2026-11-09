@@ -33,6 +33,7 @@ on:
       - amplifier_web/worker_input.py
       - amplifier_web/message_delivery.py
       - amplifier_web/windows_files.py
+      - amplifier_web/windows_uv_tool.py
       - amplifier_web/windows_proactor.py
       - amplifier_web/CPYTHON-LICENSE.txt
       - amplifier_web/voice_diagnostics.py
@@ -62,6 +63,8 @@ on:
       - tests/test_repair_lock_platform.py
       - tests/test_worker_platform_io.py
       - tests/test_windows_files.py
+      - tests/test_windows_uv_tool.py
+      - tests/test_windows_app_activation.py
       - tests/test_windows_proactor.py
       - tests/test_windows_owned_process.py
       - tests/test_windows_installer.py
@@ -124,7 +127,7 @@ jobs:
           suite = unittest.TestSuite(unittest.defaultTestLoader.discover('tests', pattern=pattern)
           for pattern in ('test_generation_leases.py', 'test_installation_guidance.py',
           'test_repair_lock_platform.py', 'test_worker_platform_io.py',
-          'test_windows_files.py', 'test_windows_owned_process.py',
+          'test_windows_files.py', 'test_windows_uv_tool.py', 'test_windows_app_activation.py', 'test_windows_owned_process.py',
           'test_windows_installer.py'));
           result = unittest.TextTestRunner(verbosity=2).run(suite);
           sys.exit(not result.wasSuccessful())"

@@ -335,6 +335,45 @@ async def test_manually_launched_host_with_installed_unit_uses_helper_and_termin
     await service.close()
 
 
+@pytest.mark.parametrize("generation", [None, "b"*32])
+async def test_windows_activation_keeps_host_and_candidate_before_replacement(tmp_path,monkeypatch,generation):
+    service,manager,_=await prepared_activation(tmp_path,monkeypatch)
+    await service.dispatch('session.create', {})
+    if generation:
+        service.state['updates']['pendingApp']['generation']=generation
+    pending=dict(service.state['updates']['pendingApp'])
+    before={str(path.relative_to(tmp_path)):path.read_bytes()
+            for path in tmp_path.rglob('*') if path.is_file()
+            and any(part in {'applications','config'} for part in path.relative_to(tmp_path).parts)}
+    target=AsyncMock(side_effect=AssertionError('No target probe, install, promotion or restart is admitted'))
+    monkeypatch.setattr(app_updates,'sys',SimpleNamespace(platform='win32'))
+    monkeypatch.setattr(app_updates,'installed_target',target)
+    monkeypatch.setattr(app_updates,'process',target)
+    monkeypatch.setattr(app_updates.asyncio,'create_subprocess_exec',target)
+    monkeypatch.setattr(app_updates.os,'kill',lambda *args: pytest.fail('No Windows signalling'))
+    try:
+        await app_updates.activate(manager)
+        state=service.state['updates']
+        assert state['phase']=='error' and state['pendingApp']==pending
+        assert 'qualified manual installation handoff' in state['error']
+        assert not state.get('pendingRestart') and not state.get('pendingReplacement')
+        assert not (manager.directory/'previous-app.json').exists()
+        assert not (manager.directory/'restart.py').exists()
+        assert not (manager.directory/'application-active.json').exists()
+        assert before=={str(path.relative_to(tmp_path)):path.read_bytes()
+                       for path in tmp_path.rglob('*') if path.is_file()
+                       and any(part in {'applications','config'} for part in path.relative_to(tmp_path).parts)}
+        assert manager.diagnostics.state['latest']['phase']=='restart-capability'
+        assert manager.diagnostics.state['latest']['errorType']=='RuntimeError'
+        assert manager.diagnostics.state['latest']['attemptId']==pending['attemptId']
+        target.assert_not_awaited()
+        # Failure is a refused activation, not a host shutdown or a new-work gate.
+        result=await service.dispatch('conversation.send',{'text':'Current host remains usable'})
+        assert service.runtime.sent and result.get('delivery')!='queued_for_update'
+    finally:
+        await service.close()
+
+
 async def test_managed_service_restart_does_not_spawn_a_second_host(tmp_path,monkeypatch):
     service,manager,_=await prepared_activation(tmp_path,monkeypatch)
     calls=[]
