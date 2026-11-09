@@ -31,7 +31,8 @@ async def stage_replacement(managed, kind):
     await app_updates.stage(managed.manager)
     pending = managed.service.state['updates']['pendingApp']
     folder = managed.manager.directory / 'applications' / pending['revision'] / pending['generation']
-    return json.loads((folder / 'validated.json').read_text())['componentGraph'], ["tui"]
+    validated = json.loads((folder / 'validated.json').read_text())
+    return validated['componentGraph'], validated['extras']
 
 
 def replacement_install(args, kwargs):
@@ -77,6 +78,12 @@ async def test_replacement_marker_is_durable_before_install_and_atomically_hande
             assert saved_updates(managed.service)["pendingReplacement"] == marker
             assert not state.get("pendingRestart")
             assert work_paused(managed.service.state) and managed.manager.awaiting_restart()
+            # An override constrains a dependency only if it is requested.
+            # Reinstall the complete qualified graph, including dependencies of
+            # optional transitive extras, for both app and feature replacements.
+            requirements = args[args.index("--with-requirements") + 1]
+            assert requirements == args[args.index("--overrides") + 1]
+            assert str(requirements).endswith("/components.txt")
             entered.append(marker)
         return await original_process(*args, **kwargs)
 
@@ -344,16 +351,63 @@ async def test_incomplete_qualified_marker_cannot_prove_new_host_or_installation
     assert work_paused(managed.service.state)
 
 
-async def recovering_host(managed, monkeypatch):
-    graph, extras = await fail_replacement(managed, monkeypatch, "feature")
+async def recovering_host(managed, monkeypatch, kind="feature"):
+    graph, extras = await fail_replacement(managed, monkeypatch, kind)
     successor = UpdateManager(managed.service)
     managed.service.update_manager = successor
     successor.running_identity = {"version": HOST_APP["version"], "revision": REVISION, "instanceId": "new-process"}
     dependencies = [row for row in graph if row["name"] != "amplifier-unified"]
     monkeypatch.setattr(app_updates, "installed_extras", lambda: extras)
     monkeypatch.setattr(app_updates.components, "installed_graph", lambda: dependencies)
+    managed.capture(successor)
     health = {"ok": True, "app": "amplifier-unified", "dataIdentity": data_identity(successor.home), **successor.running_identity}
     return successor, health, dependencies
+
+
+@pytest.mark.parametrize("inherited_cache", [None, "/unrelated-browser-cache"])
+@pytest.mark.parametrize("cache_usable", [True, False])
+async def test_browser_recovery_uses_prepared_cache_and_retains_failed_probe_fence(
+        managed, monkeypatch, inherited_cache, cache_usable):
+    monkeypatch.setattr(app_updates, "installed_extras", lambda: ["managed-browser", "tui"])
+    browser = {"blankLaunchVerified": True, "selection": "owned",
+               "ownedExecutable": "/prepared/chromium", "selectedExecutable": "/prepared/chromium", "launchArgs": []}
+    monkeypatch.setattr(app_updates, "prepare_browser", AsyncMock(return_value=browser))
+    monkeypatch.setattr(app_updates, "qualify_browser", AsyncMock(return_value=browser))
+    successor, health, _ = await recovering_host(managed, monkeypatch, "app")
+    marker = copy.deepcopy(managed.service.state["updates"]["pendingReplacement"])
+    if inherited_cache is None:
+        monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    else:
+        monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", inherited_cache)
+    probes = []
+
+    async def probe(*args, **kwargs):
+        assert tuple(map(str, args)) == (sys.executable, "-I", "-c", app_updates.PROBE, "managed-browser", "tui")
+        probes.append(kwargs)
+        # A service restart need not inherit the environment of the process
+        # that downloaded and qualified the browser. Recovery uses that cache.
+        if kwargs.get("env", {}).get("PLAYWRIGHT_BROWSERS_PATH") != str(app_features.managed_browser_cache(successor.home)):
+            raise RuntimeError("Browser absent from inherited cache")
+        if not cache_usable:
+            raise RuntimeError("Prepared browser is no longer usable")
+        return successful_probe()
+
+    monkeypatch.setattr(app_updates, "process", probe)
+    await save_held_input(managed.service, "held-browser-recovery")
+    assert await successor.confirm_readiness(health) is cache_usable
+    assert len(probes) == 1
+    state = managed.service.state["updates"]
+    assert work_paused(managed.service.state) is (not cache_usable)
+    if not cache_usable:
+        assert saved_updates(managed.service)["pendingReplacement"] == marker
+        assert not managed.service.runtime.sent
+    else:
+        assert not state.get("pendingReplacement") and not state.get("pendingRestart")
+        successor.check = AsyncMock()
+        await successor.tick()
+        await successor.tick()
+        assert state["drain"]["phase"] == "released"
+        assert [row[2] for row in managed.service.runtime.sent] == ["held-browser-recovery"]
 
 
 @pytest.mark.parametrize("failure", ["import-error", "failed-structured", "unstructured", "wrong-version", "not-isolated", "incomplete"])

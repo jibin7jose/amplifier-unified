@@ -180,6 +180,11 @@ Application activation also verifies that the running host and the executable on
 
 ## Optional app features
 
+When an older bootstrap requires reinstallation, the updater requests every
+package in the qualified graph as well as constraining its source/version.
+Constraints alone do not retain dependencies introduced by optional transitive
+extras. Installed-graph verification still checks the exact qualified result.
+
 Before replacing an active app installation, the updater durably records
 `pendingReplacement`: the source process identity and exact qualified app,
 optional extras and dependency digest. This marker closes admission independently
@@ -192,7 +197,10 @@ Successful replacement verification atomically converts the marker to the normal
 pending restart. If the process exits earlier, a healthy new host can reconcile a
 complete marker only by proving the exact app source/revision, extras, dependency
 graph and authenticated listener/data identity, and repeating the isolated
-package/import verification in that new host's interpreter. The receipt and
+package/import verification in that new host's interpreter. Managed-browser
+recovery uses the same prepared browser cache as candidate and activation checks,
+even when the restarted service has no browser-cache environment setting. A
+failed browser probe retains the admission fence. The receipt and
 installed inventory are rechecked after the probe before work resumes. This
 verification does not install packages or capture desktop content. The original process cannot
 acknowledge its own in-place replacement. Repair a damaged installation to the

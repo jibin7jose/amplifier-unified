@@ -50,7 +50,8 @@ async def verify_running(manager, target):
     manager.diagnostics.begin('application', target['revision'], target['attemptId'],
                               application_extras=target['qualification']['extras'])
     output = await manager.diagnostics.run('replacement-recovery-probe', app_updates.process,
-        sys.executable, '-I', '-c', app_updates.PROBE, *target['qualification']['extras'], timeout=30)
+        sys.executable, '-I', '-c', app_updates.PROBE, *target['qualification']['extras'],
+        **app_updates.browser_process_options(manager, target['qualification']['extras']), timeout=30)
     report = probe_record(output)
     if (not report or report.get('ok') is not True or report.get('isolated') is not True
             or report.get('stage') != 'complete'):

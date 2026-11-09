@@ -700,9 +700,8 @@ async def _activate(manager, *, force=None):
             from .app_features import record
             await record(manager, selected['requestId'], 'activating', detail='Installing the qualified same-app feature addition.')
         manager.diagnostics.sync('recovery-record',write_private,manager.directory/'previous-app.json',json.dumps(previous))
-        resolution_args=['--overrides',str(folder/'components.txt')] if graph is not None else []
-        if selected:
-            resolution_args.extend(['--with-requirements',str(folder/'components.txt')])
+        resolution_args=['--overrides',str(folder/'components.txt'),
+                         '--with-requirements',str(folder/'components.txt')] if graph is not None else []
         from .application_generations import promote
         # Upgrade older bootstraps once through uv. Thereafter this tested app
         # environment is itself the live target: no second install or relocation.
