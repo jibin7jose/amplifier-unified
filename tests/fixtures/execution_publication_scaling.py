@@ -20,13 +20,15 @@ import uuid
 
 
 async def measure(root, output, source, owner_count=3, reservation_bytes=0,
-                  size='large', cycles=1, profile=False):
+                  size='large', cycles=1, profile=False, operation='publication'):
     sys.path[:0] = [str(source), str(source / 'tests')]
     from amplifier_web.cold_display import load
     from amplifier_web.service import AppService
     from amplifier_web.state_records import load_owner
     from amplifier_web.session_projection import stored_execution
     from test_service import Runtime
+    from test_automatic_history import native_session
+    from amplifier_web.session_files import project_slug
 
     workers, receipts_count, live_count, tools, turns_count = (
         (700, 20000, 5000, 10000, 200) if size == 'large' else (2, 4, 4, 6, 1))
@@ -38,7 +40,7 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
     records = []
     profiler = cProfile.Profile() if profile else None
     try:
-        owners = []
+        owners, transcripts = [], {}
         for number in range(owner_count):
             row = app._new_session({'title': f'Concurrent retained owner {number}'})
             row['id'] = str(uuid.uuid5(uuid.NAMESPACE_URL, f'publication-owner-{number}'))
@@ -71,7 +73,20 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
                     for i in range(tools)])
             owners.append(row)
             app._state['sessions'].append(row)
-        phases = ('cold',) + ('scalar', 'current', 'current', 'nested', 'current', 'report', 'scalar') * cycles
+            if operation == 'history-load':
+                directory = native_session(root, sid, [{'role': 'user', 'content': 'Current task'}])
+                transcripts[sid] = directory / 'transcript.jsonl'
+                row.update(nativeProject=project_slug(root), nativeIdentity=sid, runtimeSessionId=sid,
+                           historyManaged=False, historyLoaded=False)
+        publications = 0
+        original_publish = app._publish_changes
+        def publish(*args, **kwargs):
+            nonlocal publications
+            publications += 1
+            return original_publish(*args, **kwargs)
+        app._publish_changes = publish
+        phases = ('cold',) + (('refresh',) if operation == 'history-load' else
+                             ('scalar', 'current', 'current', 'nested', 'current', 'report', 'scalar')) * cycles
         before_io = io_bytes()
         for phase in phases:
             for number, row in enumerate(owners):
@@ -83,10 +98,17 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
                     row['execution']['nodes'][-1]['revision'] += 1
                 if phase == 'report':
                     row['workers'][-1]['reportReceipts'][-1]['text'] = f'Fresh report {len(records)}'
+                if phase == 'refresh':
+                    with transcripts[row['id']].open('a') as stream:
+                        stream.write(json.dumps({'role': 'assistant', 'content': f'Fresh response {len(records)}'}) + '\n')
                 if profiler:
                     profiler.enable()
                 started, cpu = time.perf_counter(), time.process_time()
-                app._publish_changes(sessions={row['id']}, detail_only=True)
+                if operation == 'history-load':
+                    await app.history.ensure_loaded(row['id'])
+                    assert row['historyLoaded'] and not row['historyLoading'] and not row['historyError']
+                else:
+                    app._publish_changes(sessions={row['id']}, detail_only=True)
                 records.append(dict(owner=number, phase=phase, wallSeconds=time.perf_counter()-started,
                     cpuSeconds=time.process_time()-cpu))
                 if profiler:
@@ -97,6 +119,12 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
             descriptor, _ = load_owner(app.db, row['id'])
             saved = load(app.db, descriptor['$viewPayload'])
             assert saved['workers'] == row['workers']
+            if operation == 'history-load':
+                assert saved['messages'] == row['messages']
+                assert len(saved['messages']) == cycles + 1
+                assert saved['historyLoaded'] and not saved['historyLoading'] and not saved['historyError']
+                assert [message['text'] for message in saved['messages']] == [
+                    json.loads(line)['content'] for line in transcripts[row['id']].read_text().splitlines()]
             execution = (load(app.db, saved['_coldFields']['execution'])
                          if 'execution' in saved.get('_coldFields', {}) else saved['execution'])
             assert execution == stored_execution(row['execution'])
@@ -112,17 +140,17 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
         assert cache._reserved({}) <= cache.MAX_BYTES
         receipt = dict(records=records, owners=owner_count, placementsPerOwner=live_count + tools,
             receiptsPerOwner=receipts_count, turnsPerOwner=turns_count + 1,
-            size=size, cycles=cycles, profiled=profile,
-            warmup='First publication per owner is separately labelled cold; subsequent events reuse that service.',
+            size=size, cycles=cycles, profiled=profile, operation=operation,
+            warmup='First operation per owner is separately labelled cold; subsequent events reuse that service.',
             totalWallSeconds=sum(row['wallSeconds'] for row in records),
             steadyWallSeconds=sum(row['wallSeconds'] for row in records if row['phase'] != 'cold'),
-            executionSha256=execution_hashes, publicationCount=len(records),
+            executionSha256=execution_hashes, publicationCount=publications, operationCount=len(records),
             processIoDelta={key: after_io[key] - before_io[key] for key in before_io},
             peakRssKiB=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
             python=sys.version, platform=platform.platform(),
             sourceFiles={name: hashlib.sha256((source / name).read_bytes()).hexdigest() for name in (
                 'amplifier_web/session_projection.py', 'amplifier_web/execution_preparation.py',
-                'amplifier_web/service.py', 'uv.lock')},
+                'amplifier_web/service.py', 'amplifier_web/automatic_history.py', 'uv.lock')},
             loadedServiceModule=sys.modules[AppService.__module__].__file__,
             syntheticReservationPaddingBytes=reservation_bytes,
             retainedWorkersPerOwner=workers, providerCalls=0, exactReadback=True,
@@ -149,6 +177,7 @@ if __name__ == '__main__':
     parser.add_argument('--size', choices=('small', 'large'), default='large')
     parser.add_argument('--cycles', type=int, default=1)
     parser.add_argument('--profile', action='store_true')
+    parser.add_argument('--operation', choices=('publication', 'history-load'), default='publication')
     args = parser.parse_args()
     output = args.output.resolve(); output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='publication-scaling-', dir=output) as temporary:
@@ -156,4 +185,4 @@ if __name__ == '__main__':
         os.environ.update(HOME=str(root/'home'), AMPLIFIER_HOME=str(root/'amplifier'),
                           AMPLIFIER_WEB_HOME=str(root/'web'))
         asyncio.run(measure(root, output, args.source.resolve(), args.owners, args.reservation_bytes,
-                            args.size, args.cycles, args.profile))
+                            args.size, args.cycles, args.profile, args.operation))

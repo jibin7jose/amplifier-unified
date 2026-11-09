@@ -1012,7 +1012,8 @@ class AutomaticHistory:
         await self.load(session_id, only_if_changed=True)
 
     @measured('history.load', session=True)
-    async def load(self, session_id, *, before=None, limit=100, only_if_changed=False, display=False, canonical=False):
+    async def load(self, session_id, *, before=None, limit=100, only_if_changed=False, display=False,
+                   canonical=False, publish_loading=True):
         paging = before is not None
         async with self.loads.setdefault(session_id, TimedLock(self.service, 'history.lock.wait')):
             if not canonical and not paging and (display or self.windows.bound_web()):
@@ -1057,7 +1058,8 @@ class AutomaticHistory:
                         for message in session.get('messages', [])]
                 window = (max(limit, len(session.get('messages', [])))
                           if session.get('historyManaged') else None) if not paging else limit
-                self.service._publish_changes(sessions={session_id}, detail_only=True)
+                if publish_loading:
+                    self.service._publish_changes(sessions={session_id}, detail_only=True)
             try:
                 with measure(self.service, 'history.reader.wait', session_id=session_id):
                     result = await asyncio.to_thread(read_transcript, source, before=before, limit=window, diagnostics=getattr(self.service, 'performance_diagnostics', None))
@@ -1130,7 +1132,10 @@ class AutomaticHistory:
                       if key in session}
             current_revision = await asyncio.to_thread(revision, source)
             if not session.get('historyLoaded', True) or session.get('historyLoading') or current_revision != session.get('nativeRevision'):
-                await self.load(session_id, only_if_changed=True, canonical=True)
+                # Admission needs the completed read, not a durable intermediate
+                # loading notice that serializes the same retained execution twice.
+                # Keep the in-memory loading fence and publish success/errors below.
+                await self.load(session_id, only_if_changed=True, canonical=True, publish_loading=False)
                 session = self.service._session(session_id, hydrate=hydrate)
             if session.get('historyError'):
                 raise ValueError(session['historyError'])

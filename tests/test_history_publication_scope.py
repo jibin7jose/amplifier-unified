@@ -1,6 +1,8 @@
 """Native progress commits its owners without encoding unchanged global registries."""
 import copy
+import asyncio
 import json
+import threading
 import time
 
 import pytest
@@ -10,6 +12,86 @@ from amplifier_web.session_files import project_slug
 from amplifier_web.state_records import load as load_saved_state
 from amplifier_web.storage_migration import close_maintenance
 from test_automatic_history import app_factory, native_session
+
+
+@pytest.mark.parametrize('admission', [True, False])
+@pytest.mark.parametrize('outcome', ['success', 'error', 'cancel'])
+async def test_admission_history_commits_result_without_an_intermediate_full_save(
+        tmp_path, app_factory, monkeypatch, admission, outcome):
+    from amplifier_web import automatic_history
+    from amplifier_web.cold_display import load
+    from amplifier_web.state_records import load_owner
+
+    directory = native_session(tmp_path / 'native', 'history-commit')
+    app = app_factory()
+    await app.history.refresh()
+    row = app._session('history-commit')
+    row.update(historyManaged=False, draft='Unsent draft')
+    app._publish_changes(sessions={row['id']}, detail_only=True)
+    await close_maintenance(app)
+
+    def saved():
+        descriptor, _ = load_owner(app.db, row['id'])
+        return load(app.db, descriptor['$viewPayload'])
+
+    before = saved()
+    source_before = (directory / 'transcript.jsonl').read_bytes()
+    entered, release = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    original_read, original_save = automatic_history.read_transcript, app._save
+    commits = []
+
+    def read(*args, **kwargs):
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(5)
+        if outcome == 'error':
+            raise OSError('Unreadable saved history')
+        return original_read(*args, **kwargs)
+
+    def save(*args, **kwargs):
+        result = original_save(*args, **kwargs)
+        commits.append(saved())
+        return result
+
+    monkeypatch.setattr(automatic_history, 'read_transcript', read)
+    monkeypatch.setattr(app, '_save', save)
+    pending = asyncio.create_task(app.history.ensure_loaded(row['id']) if admission
+                                  else app.history.load(row['id'], canonical=True))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        assert row['historyLoading'] and app.history.loads[row['id']].locked()
+        assert len(commits) == (0 if admission else 1)
+        assert saved() == (before if admission else commits[0])
+        if not admission:
+            assert saved()['historyLoading']
+        row['draft'] = 'Changed while reading'
+        if outcome == 'cancel':
+            pending.cancel()
+    finally:
+        release.set()
+        result = (await asyncio.gather(pending, return_exceptions=True))[0]
+
+    if outcome == 'cancel':
+        assert isinstance(result, asyncio.CancelledError)
+        assert len(commits) == (0 if admission else 1)
+        assert not app.history.loads[row['id']].locked()
+        # Cancellation is not success. A subsequent admission must still read
+        # and durably settle the same source without running conversation work.
+        monkeypatch.setattr(automatic_history, 'read_transcript', original_read)
+        await app.history.ensure_loaded(row['id'])
+    elif outcome == 'error':
+        assert isinstance(result, ValueError) if admission else result is None
+        assert saved()['historyError'] and not saved()['historyLoaded']
+    else:
+        assert result is None
+    assert len(commits) == (1 if admission else 2)
+    after = saved()
+    assert after['draft'] == 'Changed while reading' and not after['historyLoading']
+    if outcome != 'error':
+        assert after['historyLoaded'] and not after['historyError']
+        assert [message['text'] for message in after['messages']] == ['Saved CLI question', 'Saved CLI answer']
+    assert (directory / 'transcript.jsonl').read_bytes() == source_before
+    assert not app.runtime.started and not app.runtime.sent
 
 
 async def prepared(tmp_path, app_factory, monkeypatch):

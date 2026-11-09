@@ -199,6 +199,15 @@ dormant catalog and workspace membership changes retain their broader scope.
 This avoids multiplying publication by unrelated viewers without changing history
 authority or claiming that the affected owner's save is history-independent.
 
+Internal admission reads keep their loading fence in memory and commit the final
+history or error once. They must not serialize the same retained execution merely
+to announce that the read has started. Explicit client history loads keep their
+loading publication. The same regression covers cancellation and a later read,
+draft edits during the read, and unchanged canonical history without starting or
+sending conversation work. Use the scaling fixture's `--operation history-load`
+mode to compare cold admission and changed-history refresh across several owners;
+check publication counts and exact durable history/execution as well as timings.
+
 `tests/fixtures/execution_publication_scaling.py` keeps up to six large owners active
 in one actual service. It distinguishes cold saves, scalar/token saves, nested
 execution changes, current-placement changes with unchanged retired accounting,
