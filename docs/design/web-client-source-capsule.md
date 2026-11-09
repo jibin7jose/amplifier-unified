@@ -62,3 +62,44 @@ It does not establish actual-server parity, native runtime/model behavior,
 authority/cancellation parity, device support, or release adoption. A package
 build and this fixture are the first bounded proof; qualification with the exact
 paired server and ownership/distribution decisions remain before extraction.
+
+## Qualify the actual paired server
+
+The next integration check uses the real server's auth, actions, history and SSE,
+with the existing synthetic chat runtime and provider fixtures. Install the static
+npm archive in a separate consumer. In an owned copy of its exact paired server
+revision, replace `amplifier_web/static` with those installed static bytes before
+starting the server. This preserves the single path used by HTTP serving,
+installed build identity and shell validation; no runtime asset-directory option
+or compatibility registry is introduced. It is a composed source server, not an
+unmodified published wheel or release qualification.
+
+Capture a finite assembly record outside the source tree:
+
+- `server`: exact `revision`, actual `version`, and `files` mapping relative
+  server/resource/fixture paths to `{sha256, bytes}`, captured from that source
+  revision before composition; exclude `amplifier_web/static`.
+- `client`: the installed archive's SHA-256 in `archiveSha256` and its unchanged
+  `component.json` in `manifest`.
+
+The record is evidence supplied by the integration owner, not application state.
+The fixture checks source and installed static bytes before startup and after
+shutdown, and verifies the actual imported server/version and declared pairing.
+Keep the independent artifact and previous qualification records immutable.
+
+```sh
+AMPLIFIER_TEST_PYTHON=/path/to/owned/python \
+node frontend/tests/client-paired-server-browser.mjs \
+  /path/to/owned/server-source /path/to/assembly.json /path/to/owned/state-parent
+```
+
+The test rejects missing/invalid credentials, checks served entry/build bytes,
+sends two messages through real admission, reloads saved history, preserves an
+unfinished draft, and checks that reconnect/reload do not repeat accepted work.
+Its authenticated, loopback-only fixture endpoint closes the selected client's
+actual SSE transport. Native EventSource retry can reuse its JavaScript object,
+so the check observes a new open event, fresh baseline and subsequent delta.
+Only the transport advertisement is narrowed to select SSE; build and server
+identity responses are unchanged. Providers/runtime remain synthetic, and
+background updates/work and provider preloading are disabled. This does not
+qualify native execution, model accounts, devices, other versions or AHP.
