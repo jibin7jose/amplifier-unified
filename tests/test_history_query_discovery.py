@@ -19,7 +19,7 @@ async def test_discovery_samples_are_explicit_and_do_not_change_history(action, 
         async def refreshed(*, force=False):
             assert force is False
 
-        monkeypatch.setattr(app.history, "refresh", refreshed)
+        monkeypatch.setattr(app.history, "refresh_catalog", refreshed)
         discovery = {
             "loading": False, "error": None, "issueCount": 838,
             "reconciliation": {"phase": "complete", "completedAt": 123},
@@ -73,7 +73,7 @@ async def test_coverage_and_errors_survive_without_samples(diagnostics, complete
         async def refreshed(*, force=False):
             pass
 
-        monkeypatch.setattr(app.history, "refresh", refreshed)
+        monkeypatch.setattr(app.history, "refresh_catalog", refreshed)
         app.state["sharedHistory"] = copy.deepcopy(diagnostics)
         result = await app.app_bridge("history", {"action": "list"}, root["id"])
         assert result["complete"] is complete
@@ -105,7 +105,7 @@ async def alias_history(tmp_path, monkeypatch):
         async def refreshed(*, force=False):
             assert force is False
 
-        monkeypatch.setattr(app.history, "refresh", refreshed)
+        monkeypatch.setattr(app.history, "refresh_catalog", refreshed)
         app.state["sharedHistory"] = {"loading": False, "error": None, "issueCount": 838,
             "reconciliation": {"phase": "complete"},
             "issues": [{"path": f"synthetic/{i}", "error": "Unavailable metadata"} for i in range(100)]}

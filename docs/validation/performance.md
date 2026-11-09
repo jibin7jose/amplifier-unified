@@ -209,6 +209,15 @@ dormant catalog and workspace membership changes retain their broader scope.
 This avoids multiplying publication by unrelated viewers without changing history
 authority or claiming that the affected owner's save is history-independent.
 
+Agent history reads refresh catalog metadata without refreshing transcripts open
+in browsers. Catalog discovery releases its lock before those display reads;
+per-conversation load locks still protect transcript consistency. The maintained
+automatic-history regression holds a real browser transcript reader open while
+agent list/read requests finish for another chat, across both incremental and
+forced refreshes. It also checks exact returned history, the selected draft and
+the absence of runtime starts or sends. Growing or refreshing one conversation
+must not serialize unrelated history queries behind its display work.
+
 Internal admission reads keep their loading fence in memory and commit the final
 history or error once. They must not serialize the same retained execution merely
 to announce that the read has started. Explicit client history loads keep their

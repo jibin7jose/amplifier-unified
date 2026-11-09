@@ -92,7 +92,7 @@ async def test_history_does_not_copy_unrelated_execution_or_workers(tmp_path, mo
     try:
         app._publish()
         with monkeypatch.context() as patch:
-            patch.setattr(app.history, 'refresh', AsyncMock())
+            patch.setattr(app.history, 'refresh_catalog', AsyncMock())
             if not indexed:
                 patch.setattr(app, 'directory', None)
             root['execution'] = {'unrelated': Unrelated()}
@@ -135,7 +135,7 @@ async def test_history_snapshot_loads_only_required_cold_fields(tmp_path):
 
 def _query_service(rows, *, attribution=None):
     return SimpleNamespace(state={'sessions': rows}, directory=None, lock=asyncio.Lock(),
-        history=SimpleNamespace(refresh=AsyncMock()), peer_attribution=attribution,
+        history=SimpleNamespace(refresh_catalog=AsyncMock()), peer_attribution=attribution,
         _session=lambda identity, **kwargs: next(row for row in rows if row['id'] == identity))
 
 

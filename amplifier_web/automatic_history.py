@@ -482,6 +482,19 @@ class AutomaticHistory:
 
     @measured('catalog.refresh')
     async def refresh(self, *, force=True):
+        if await self.refresh_catalog(force=force):
+            try:
+                # Catalog metadata is independent of connected clients' bodies.
+                # Empty metadata is not proof of an unchanged open transcript;
+                # keep probing it, under its own per-session load lock.
+                await self._refresh_selected_history()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await self._refresh_error()
+
+    @measured('catalog.refresh.metadata')
+    async def refresh_catalog(self, *, force=True):
         async with self.lock:
             try:
                 known = workspace_inputs(self.service.state)
@@ -592,10 +605,7 @@ class AutomaticHistory:
                                 skipped = True
                         if skipped:
                             count(self.service, 'catalog.merge.skipped')
-                            # Empty metadata is not proof of an unchanged open
-                            # transcript: watchers are hints, including on loss.
-                            await self._refresh_selected_history()
-                            return
+                            return True
                 # Reconcile local changes even when native files are unchanged:
                 # hidden rows, tombstones, managed markers and selected views
                 # have independent invalidation. Filtering must not alter the
@@ -929,20 +939,23 @@ class AutomaticHistory:
                         # Advance only after the durable publication succeeded.
                         self._native_revision = revision_token
                         self._local_revision = self.service._history_local_revision
-                await self._refresh_selected_history()
+                return True
             except asyncio.CancelledError:
                 raise
             except Exception:
-                if not self.service.closed:
-                    async with self.service.lock:
-                        self.service.state['sharedHistory'].update(loading=False, error='Could not refresh shared chat history. Existing chats are kept; try Refresh.')
-                        try:
-                            self.service._publish_changes(globals={'sharedHistory'})
-                        except (OSError, ValueError, sqlite3.Error):
-                            # The error report shares the failed persistence
-                            # boundary. Keep the error and dirty union for retry;
-                            # a second disk error must not kill discovery.
-                            pass
+                await self._refresh_error()
+
+    async def _refresh_error(self):
+        if not self.service.closed:
+            async with self.service.lock:
+                self.service.state['sharedHistory'].update(loading=False, error='Could not refresh shared chat history. Existing chats are kept; try Refresh.')
+                try:
+                    self.service._publish_changes(globals={'sharedHistory'})
+                except (OSError, ValueError, sqlite3.Error):
+                    # The error report shares the failed persistence boundary.
+                    # Keep the error and dirty union for retry; a second disk
+                    # error must not kill discovery.
+                    pass
 
     def _public_catalog_counts(self, incoming, deleted):
         counts = {key: incoming[key] for key in

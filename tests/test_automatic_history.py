@@ -95,6 +95,69 @@ async def finish_actions(app):
         await asyncio.wait_for(asyncio.gather(*list(app.tasks)), timeout=5)
 
 
+@pytest.mark.parametrize('force', [False, True])
+@pytest.mark.parametrize('action', ['list', 'read'])
+async def test_history_tool_does_not_wait_for_unrelated_browser_history(
+        tmp_path, app_factory, monkeypatch, force, action):
+    import threading
+    from amplifier_web import automatic_history
+
+    workspace = tmp_path / 'cli'
+    native_session(workspace, 'browser-history')
+    native_session(workspace, 'requested-history')
+    app = app_factory(workspace=workspace)
+    await app.history.refresh()
+    selected = app._session('browser-history', hydrate=False)
+    caller = app._session('requested-history', hydrate=False)
+    app.state['selectedSessionId'] = selected['id']
+    selected['draft'] = 'Keep this unsent draft'
+    entered, release = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    original = automatic_history.read_transcript
+    reads = []
+
+    def read(source, **kwargs):
+        reads.append(source['id'])
+        if source['id'] == selected['id']:
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(10), 'Test did not release the browser history read'
+        return original(source, **kwargs)
+
+    monkeypatch.setattr(automatic_history, 'read_transcript', read)
+    refreshing = asyncio.create_task(app.history.refresh(force=force))
+    query = None
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        # Metadata discovered after the browser read began must still arrive:
+        # skipping catalog freshness would also evade the original contention.
+        native_session(workspace, 'new-history')
+        monkeypatch.setattr(app.history.index, '_invalidations',
+                            lambda: (True, {project_slug(workspace)}))
+        args = {'action': action}
+        if action == 'read':
+            args['session_id'] = caller['id']
+        query = asyncio.create_task(app.app_bridge('history', args, caller['id']))
+        done, _ = await asyncio.wait({query}, timeout=2)
+        assert query in done, 'History tool waited for an unrelated browser transcript'
+        result = query.result()
+        assert not refreshing.done()
+        if action == 'read':
+            assert [row['text'] for row in result['messages']] == [
+                'Saved CLI question', 'Saved CLI answer']
+        else:
+            assert {row['id'] for row in result['items']} == {
+                selected['id'], caller['id'], 'new-history'}
+        assert app.directory.resolve('new-history')['id'] == 'new-history'
+        assert reads.count(selected['id']) == 1
+        assert app.state['selectedSessionId'] == selected['id']
+        assert selected['draft'] == 'Keep this unsent draft'
+    finally:
+        release.set()
+        await asyncio.wait_for(asyncio.gather(refreshing, *([query] if query else [])), 5)
+    assert selected['historyLoaded'] and not selected['historyError']
+    assert not app.runtime.started and not app.runtime.sent and not app.runtime.stopped
+
+
 @pytest.mark.parametrize('change', [None, 'append', 'replace'])
 async def test_selected_refresh_rechecks_source_after_waiting_for_initial_read(
         tmp_path, app_factory, monkeypatch, change):

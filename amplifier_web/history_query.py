@@ -115,7 +115,7 @@ async def query_history(service, args, caller_id):
     # bodies. Presentation records and uncheckpointed voice stay intact.
     mark(timing, 'history.refresh.start')
     try:
-        await service.history.refresh(force=False)
+        await service.history.refresh_catalog(force=False)
     finally:
         mark(timing, 'history.refresh.end')
     mark(timing, 'lock.start')

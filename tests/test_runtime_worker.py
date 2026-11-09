@@ -33,7 +33,7 @@ async def worker_bridge(tmp_path, monkeypatch):
     app.state['selectedSessionId'] = root['id']
     for client in ('old-browser', 'input-browser'):
         app.clients.attach(client)
-    monkeypatch.setattr(app.history, 'refresh', AsyncMock())
+    monkeypatch.setattr(app.history, 'refresh_catalog', AsyncMock())
     worker = Worker()
     worker.session = SimpleNamespace(coordinator=coordinator('native-root'))
     worker.runtime = SimpleNamespace(generation={'id': 'generation-root', 'input_ids': ['input-1']},
