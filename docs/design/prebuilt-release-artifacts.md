@@ -57,9 +57,10 @@ identity but has its own delivery bytes; define its update/feature eligibility
 explicitly rather than equating its hash with the published wheel. Neither case
 justifies accepting arbitrary local sources or a source stamp alone as proof.
 
-Use the existing installer and resolver. A verified official release wheel URL
-with its SHA-256 requirement lets uv download, cache and install the exact bytes.
-Do not introduce another download cache, application registry or activation owner.
+Use the existing installer and resolver. Preserve explicit verification of the
+downloaded wheel before installation; a hash in a URL is not sufficient evidence
+that the selected installer checks it. Do not introduce another download cache,
+application registry or activation owner.
 Resolve the selected release tag to its exact source commit and bind the official
 asset name, version, URL and digest before staging. Keep the artifact identity
 with the qualified generation so activation and recovery do not select a newer
@@ -77,6 +78,29 @@ release identity, not the latest available release, and preserve its baseline
 components and transitive extras through the existing qualification checks.
 
 ## Reviewable delivery sequence
+
+### Observed installer limitation
+
+An isolated Linux ARM64 check of uv 0.13.6 rejected the initial assumption above:
+ordinary `uv tool install` accepted a deliberately incorrect SHA-256 URL fragment
+with a fresh tool directory and cache. Its installed `direct_url.json` retained
+the URL but an empty `archive_info`. `uv pip install` rejected the incorrect
+fragment, but also omitted the installed archive hash, including for the official
+0.68.5 wheel. That real-package check used no dependencies or application startup;
+it establishes metadata behavior, not a qualified application update.
+
+The [tagged tool implementation](https://github.com/astral-sh/uv/blob/0.13.6/crates/uv-tool-commands/src/install.rs#L1026)
+uses the default hash strategy on its ordinary path. Experimental tool locks and
+the separate pip hash-verification path do not establish the needed maintained
+tool-install behavior.
+
+Keep the current verified local-wheel installation until A/B has a qualified
+delivery/provenance design. Do not fabricate installed hash metadata, infer it
+from the source stamp, or add a parallel installation registry. The source record
+can ship independently; graph schema, archive feature eligibility and readiness
+must follow the supported delivery path. Preserve exact existing Git receipts.
+
+### Batches
 
 | Batch | Change | Evidence before the next batch |
 | --- | --- | --- |
