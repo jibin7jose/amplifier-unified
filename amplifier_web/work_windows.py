@@ -231,6 +231,8 @@ class WorkWindows:
 
     async def read(self, identity, before=None, *, _initial=False, _capture=None):
         owner = self._owner(identity)
+        if isinstance(before, str) and before.startswith('resident-groups:'):
+            return self.live_pages.read_groups(owner, before)
         canonical = owner['id']
         source, fence = source_identity(owner), self._fence(canonical)
         # Older pages must not replace the current projection's diagnostic.
@@ -446,7 +448,7 @@ class WorkWindows:
             return page.get('savedExecution', {})
         return {}
 
-    def live_view(self, session):
+    def live_view(self, session, *, include_nodes=True):
         """Bounded current host evidence; never scan historical native nodes."""
         from .cold_display import raw
         resident = raw(session)
@@ -460,7 +462,7 @@ class WorkWindows:
                 source['messages'] = transcript.project(session).get('messages', [])
         source.update({
             'execution': {**{key: tree[key] for key in ('aggregateUsage', 'usage', 'plan', 'currentTurnId') if key in tree},
-                'nodes': [self.live_node(session, row) for row in tree.get('nodes', [])[-100:]
+                'nodes': [self.live_node(session, row) for row in (tree.get('nodes', [])[-100:] if include_nodes else [])
                 if row.get('liveObservation') or not row.get('canonicalHistory') and not row.get('nativeHistory')],
                 'turns': tree.get('turns', [])[-20:], 'currentTurnId': tree.get('currentTurnId')}})
         return source
@@ -494,6 +496,7 @@ class WorkWindows:
         from .browser_detail import page as detail_page
         live_source = self.live_view(session)
         live = detail_page(live_source, 'groups')
+        self.live_pages.observe_tail(session, live)
         from .cold_display import raw
         if len(self.resident_tree(session).get('nodes', [])) > 100:
             # The tail is display evidence, not a complete current-turn count.
@@ -509,7 +512,8 @@ class WorkWindows:
                              'nodes': [], 'turns': [*live['turns'], *groups['turns']],
                              'segments': [*live['items'], *groups['items']],
                              'detailsDeferred': True},
-                'executionWindow': {'part': 'groups', **{key: value for key, value in groups.items() if key not in {'items', 'turns'}}},
+                'executionWindow': {'part': 'groups', **{key: value for key, value in groups.items() if key not in {'items', 'turns'}},
+                    **self.live_pages.group_navigation(session, page, live)},
                 'workProjection': self.status.get(session['id'], {'status': 'loading', 'current': False})
                     if not rebound else {'status': 'loading', 'current': False}}
 
@@ -645,6 +649,8 @@ class WorkWindows:
         if self.projector is not None:
             await self.projector.close()
         self.live_pages.groups.clear()
+        self.live_pages.discovery.clear()
+        self.live_pages.tails.clear()
         self.pages.clear(); self.current.clear(); self.status.clear()
         self.epochs.clear(); self.retry_at.clear()
         self.diagnostics.records.clear()

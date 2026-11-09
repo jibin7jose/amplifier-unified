@@ -317,7 +317,8 @@ async def create_app(data_dir, workspace=None, runtime=None, voice=True, backgro
             known = args.get('known')
             if not isinstance(known, dict) or len(known) > 100 or not all(isinstance(k, str) and isinstance(v, str) for k, v in known.items()):
                 raise ValueError('Work versions must map at most100 step IDs to strings.')
-            return web.json_response(service.event_log_view.windows.nodes(args.get('sessionId'), args['group'], known=known))
+            session = service._session(args.get('sessionId'), hydrate=False)
+            return web.json_response(service.event_log_view.windows.nodes(session['id'], args['group'], known=known))
         session = service._session(args.get('sessionId'), hydrate=False)
         from .work_windows import web_context
         if web_context(service):

@@ -489,8 +489,16 @@ def read_field(session, reference, *, offset=0, limit=4096, check_budget=None):
             total += len(chunk)
         current = _stamp(os.fstat(stream.fileno()))
         named = path.lstat()
-        if not stat.S_ISREG(named.st_mode) or _stamp(named) != current or current[:2] != stamp[:2]:
+        named_stamp = _stamp(named)
+        if not stat.S_ISREG(named.st_mode) or named_stamp[:2] != stamp[:2] or current[:2] != stamp[:2]:
             raise StaleWindow('The event field source changed during its read')
+        if named_stamp != current:
+            # Descriptor and pathname stats are separate syscalls. Reconcile an
+            # append in that gap before the existing exact-record revalidation;
+            # matching inode/size alone never accepts the formatted snapshot.
+            if named_stamp[2] <= current[2]:
+                raise StaleWindow('The event field source changed during its read')
+            current = named_stamp
         if current != stamp:
             # Other calls may append while a large accepted field is formatted.
             # A growing same-inode log is safe only after rechecking this exact
