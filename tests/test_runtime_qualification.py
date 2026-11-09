@@ -10,6 +10,22 @@ from amplifier_web import runtime_environment, runtime_qualification, updates
 from amplifier_web.updates import UpdateManager
 
 
+@pytest.mark.parametrize('platform', ['windows', 'posix'])
+@pytest.mark.parametrize('relative', ['modules/fixture', '.', 'modules/with % and \u03bb'])
+def test_cache_subdirectory_uses_uri_separators(platform, relative):
+    from pathlib import PurePosixPath, PureWindowsPath
+    path_type = PureWindowsPath if platform == 'windows' else PurePosixPath
+    root = path_type('C:/fixture/cache' if platform == 'windows' else '/fixture/cache')
+    assert runtime_qualification._cache_subdirectory(root / relative, root) == relative
+
+
+def test_cache_subdirectory_does_not_accept_an_external_path():
+    from pathlib import PureWindowsPath
+    with pytest.raises(ValueError):
+        runtime_qualification._cache_subdirectory(
+            PureWindowsPath('C:/outside/module'), PureWindowsPath('C:/fixture/cache'))
+
+
 @pytest.mark.parametrize('authority', ['', 'localhost', 'fixture-server'])
 def test_installed_graph_decodes_file_uri_with_platform_path_rules(tmp_path, monkeypatch, authority):
     """PEP 610 file URLs must not become /C:/ paths relative to a UNC cwd."""

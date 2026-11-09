@@ -77,6 +77,11 @@ def _installed_checkout_dirty(root, env):
     return False
 
 
+def _cache_subdirectory(path, root):
+    """A Git requirement uses URI separators, not the host filesystem spelling."""
+    return path.relative_to(root).as_posix()
+
+
 def installed_graph(project):
     """Read complete PEP 610 provenance, including Foundation's editable caches."""
     paths = list((Path(project) / '.venv').glob('lib/python*/site-packages'))
@@ -111,7 +116,7 @@ def installed_graph(project):
                                 tree.update(file.read_bytes() if file.is_file() and not file.is_symlink() else b'<non-regular>')
                             roots[parent] = {'url': data['git_url'], 'ref': data.get('ref') or 'HEAD',
                                              'revision': revision, 'dirty': bool(dirty), 'trackedContentSha256': tree.hexdigest()}
-                        row['cacheSource'] = {**roots[parent], 'subdirectory': str(path.relative_to(parent))}
+                        row['cacheSource'] = {**roots[parent], 'subdirectory': _cache_subdirectory(path, parent)}
                         break
         rows.append(row)
     names = [row['name'] for row in rows]
