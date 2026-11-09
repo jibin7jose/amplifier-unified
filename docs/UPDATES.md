@@ -1,5 +1,70 @@
 # Updates
 
+## Update policy contract — accepted direction
+
+**Status:** user-directed product requirements, accepted November 9, 2026.
+This section owns the intended update behavior for Amplifier Unified, not a
+system-wide agent preference. It is not a claim that every requirement is
+implemented or qualified. The implementation descriptions below retain their
+existing evidence boundaries; in particular, shared dependency batches and host
+restart coordination do not yet establish all of the failure-isolation and
+minimal-interruption promises here.
+
+For example, if Unified is already current, two providers have newer commits on
+`main`, and one provider fails installation, Update must still adopt the other
+provider where compatible. It retains the failed provider's working version and
+reports the partial result. A session already using the older provider may
+finish its turn before adopting the new one.
+
+### Independent application and component updates
+
+- Update brings the application to the latest published Unified release when
+  needed, and independently checks and advances managed components even when
+  the application version is already current. Routine component advances must
+  not require a change or release in the Unified repository.
+- Git components default to `@main` unless installation or configuration selects
+  another source or ref. A selected moving branch follows that branch; an
+  explicit SHA or tag stays selected. Never silently replace a custom source,
+  branch or pin with upstream `main`. Registry-distributed components retain
+  their declared package channel and platform constraints.
+- Locks and exact candidate revisions record what was installed for verification
+  and rollback. They do not turn a configured moving ref into a permanent pin
+  for later updates.
+
+### Partial failure does not abort independent progress
+
+- A failed component update retains its last working version. Continue unrelated
+  component updates, compatible application updates and their necessary restarts.
+- Hold back only the components that actually require the failed component or
+  must change together for compatibility. Do not activate an incompatible mixture
+  or make one dependency conflict a global failure.
+- Report updated, failed, dependency-held and awaiting-adoption components
+  separately, including useful failure guidance. A partial result is not
+  "everything is up to date"; successfully completed work is not rolled back
+  merely because an independent component failed.
+
+### Interrupt only the affected lifetime
+
+- Fetching, resolving and preparing updates must not require all sessions or the
+  main service to be idle. Wait only where replacing an affected process or
+  resource actually requires it.
+- Component-only updates do not restart the main service unless its loaded code
+  changes. Unrelated UX or service changes must not wait for unrelated sessions
+  solely because they share an installation.
+- Running sessions may retain their older component generation through the
+  current turn. At a safe end-of-turn boundary, retire and restart the affected
+  session worker to adopt the update while preserving its native history. New
+  work can use the updated generation without waiting for every older worker.
+- If the main service really needs replacement, coordinate only its affected
+  lifetime and preserve unaffected work. Process-lifetime coupling that currently
+  prevents this is an implementation gap, not permission to terminate active
+  tools, ignore Stop, discard uncertain outcomes or replay input.
+- Show preparation, pending adoption and verified running adoption distinctly.
+  Downloaded or installed files alone do not establish that a session is using
+  the new components.
+
+## Current implementation and operational behavior
+
 Available updates are listed immediately at the top of Settings. The application has its own card showing the installed version even before the first check, plus the latest published release after a successful check. The complete source inventory is behind **Show all sources**; failed checks are called out separately. Successfully installed application releases are removed from the pending count on restart. An installation newer than the published release is identified explicitly; application updates follow stable GitHub Releases, not every commit on main.
 
 Automatic update checks default to every **4 hours**. Under **Update preferences**, choose every **1 hour**, **4 hours**, **8 hours**, or **daily**. Existing saved schedules remain unchanged on upgrade, including the previous daily default and older 6-hour or weekly choices. Older choices are shown with an explanation until replaced. Resetting app settings restores the 4-hour check interval while leaving automatic installation off.
