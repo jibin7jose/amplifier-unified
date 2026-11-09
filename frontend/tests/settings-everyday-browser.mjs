@@ -2,7 +2,7 @@ import './composer-test-helpers.mjs';
 import {openSettingsPage,openSettingsDialog} from './browser-settings.mjs';
 import {settingsSections} from '../src/settings-navigation.js';
 import {spawn} from 'node:child_process';
-import {mkdir} from 'node:fs/promises';
+import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
@@ -15,6 +15,22 @@ try{
  const base=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error(stderr||'Fixture timeout')),60000);fixture.stdout.on('data',data=>{const match=String(data).match(/http:\/\/127\.0\.0\.1:\d+/);if(match){clearTimeout(timer);resolve(match[0])}});fixture.on('exit',code=>reject(Error('Fixture exited '+code+stderr)))});
  browser=await chromium.launch({headless:true,...(process.env.DTU_CHROMIUM_SINGLE_PROCESS?{args:['--no-zygote','--single-process','--disable-gpu']}:{})});page=await browser.newPage({viewport:{width:1280,height:920},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const preferenceLayouts=[];
+ async function checkPreferenceLayout(surface){
+  const control=page.locator('.a-settings-page-content:not([hidden])').getByLabel('Preferred chat connection',{exact:true});
+  await expect(control).toBeVisible();
+  const geometry=await control.evaluate(select=>{
+   const row=select.closest('.a-connection-capability'),label=row.querySelector('label'),copy=label.parentElement;
+   const box=element=>{const {x,y,width,height}=element.getBoundingClientRect();return {x,y,width,height}};
+   return {row:box(row),copy:box(copy),label:box(label),select:box(select),lineHeight:parseFloat(getComputedStyle(label).lineHeight)};
+  });
+  preferenceLayouts.push({surface,width:page.viewportSize().width,...geometry});
+  await writeFile(join(evidence,'preferred-connection-layouts.json'),JSON.stringify(preferenceLayouts,null,2));
+  assert.ok(geometry.copy.width>=geometry.row.width*.6,`${surface}: preference explanation collapsed: ${JSON.stringify(geometry)}`);
+  assert.ok(geometry.label.height<=geometry.lineHeight*3,`${surface}: preference label wraps excessively`);
+  assert.ok(geometry.select.width>=Math.min(180,geometry.row.width-2),`${surface}: picker is too narrow`);
+  assert.ok(geometry.select.x>=geometry.row.x-1&&geometry.select.x+geometry.select.width<=geometry.row.x+geometry.row.width+1,`${surface}: picker overflows its row`);
+ }
  const state=()=>page.evaluate(()=>window.amplifier.getState());
  await page.goto(base);await page.waitForSelector('#amp-one');
  // A fresh browser starts on Home. This journey checks an existing chat's
@@ -29,7 +45,7 @@ try{
  assert.equal(await page.locator('.a-settings-sidebar>button').count(),settingsSections.length);
  await expect(page.locator('.a-settings-sidebar').getByRole('button',{name:'Workspaces',exact:true})).toBeVisible();
  assert.equal(await page.locator('.a-settings-sidebar').getByText('Bundles & modules',{exact:true}).count(),0);
- const preferred=page.getByLabel('Preferred chat connection',{exact:true});
+ const preferred=page.locator('.a-settings-page-content:not([hidden])').getByLabel('Preferred chat connection',{exact:true});
  await expect(preferred).toBeVisible();
  const originalPreference=await preferred.inputValue();
  const alternatePreference=await preferred.locator('option').evaluateAll((rows,current)=>rows.find(row=>row.value!==current).value,originalPreference);
@@ -112,6 +128,21 @@ try{
  await page.setViewportSize({width:390,height:844});await openSettingsPage(page,'ai-connections');
  await page.locator('.a-settings-mobile-head button').first().click();await page.screenshot({path:join(evidence,'settings-everyday-mobile-index.png')});
  await page.locator('[data-settings-section=privacy]').click();await page.screenshot({path:join(evidence,'settings-everyday-mobile-privacy.png')});
- assert.deepEqual(errors,[]);console.log(JSON.stringify({guidedProvider:true,privateDrafts:true,routingPreserved:true,catalogReviewAndRetry:true,installedVsReady:true,layouts,browserErrors:0}));
+ // Exercise both entry points after the existing behavior journey so mounting
+ // the retained advanced editor cannot add hidden duplicates to its locators.
+ for(const destination of ['ai-connections','providers']){
+  for(const width of [320,390,600,601,736,960,1280,1920]){
+   await page.setViewportSize({width,height:920});
+   await openSettingsPage(page,destination);
+   if(destination==='providers'&&!await page.locator('#advanced-preferred-chat-connection').isVisible()){
+    await page.getByRole('button',{name:'one fixture-model · credentials ready',exact:true}).click();
+   }
+   await checkPreferenceLayout(destination);
+  }
+ }
+ await page.emulateMedia({forcedColors:'active'});
+ await checkPreferenceLayout('providers-forced-colors');
+ await page.emulateMedia({forcedColors:'none'});
+ assert.deepEqual(errors,[]);console.log(JSON.stringify({guidedProvider:true,privateDrafts:true,routingPreserved:true,catalogReviewAndRetry:true,installedVsReady:true,layouts,preferenceLayouts:preferenceLayouts.length,browserErrors:0}));
 }catch(error){if(page)await page.screenshot({path:join(evidence,'settings-everyday-failure.png')});throw error}
 finally{await browser?.close();fixture.kill('SIGTERM')}

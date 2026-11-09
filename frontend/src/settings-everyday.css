@@ -215,5 +215,9 @@
 #amp-one .a-connection-capability p{margin:5px 0;overflow-wrap:anywhere}
 #amp-one .a-connection-capability small{display:block;color:var(--a-muted);font-size:var(--a-text-sm,12px)}
 #amp-one .a-connection-capability>button{flex-shrink:0;white-space:nowrap}
+#amp-one .a-connection-preference{flex-direction:column;align-items:stretch;gap:8px}
+#amp-one .a-connection-preference>div{flex:none}
+#amp-one .a-connection-preference label{margin-top:0}
+#amp-one .a-connection-preference>select{width:100%;min-width:0;max-width:100%;margin-top:0}
 #amp-one .a-connection-secondary-actions button{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
 @media(max-width:600px){#amp-one .a-connection-capability{align-items:flex-start;flex-direction:column;gap:10px}}

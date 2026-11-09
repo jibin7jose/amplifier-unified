@@ -9,7 +9,7 @@ export function ConnectionPreference({id,providers,labels,busy,onChange}){
  const flight=useRef(false),[saving,setSaving]=useState(false),[error,setError]=useState('');
  const enabled=providers.filter(row=>row.enabled!==false),chat=enabled.filter(row=>row.config?.chat_enabled!==false);
  if(chat.length<2)return null;
- return <div className="a-connection-capability"><div><label htmlFor={id}>Preferred chat connection</label><p className="a-caption">Used when model rules do not choose another connection. Existing chats keep their choices.</p>{error&&<p role="alert">{error}</p>}</div><select id={id} disabled={busy||saving} data-action="providers.reorder" value={chat[0].id} onChange={async event=>{
+ return <div className="a-connection-capability a-connection-preference"><div><label htmlFor={id}>Preferred chat connection</label><p className="a-caption">Used when model rules do not choose another connection. Existing chats keep their choices.</p>{error&&<p role="alert">{error}</p>}</div><select id={id} disabled={busy||saving} data-action="providers.reorder" value={chat[0].id} onChange={async event=>{
   const chosen=event.target.value;
   if(busy||flight.current||!chat.some(row=>row.id===chosen)||chosen===chat[0].id)return;
   flight.current=true;setSaving(true);setError('');
