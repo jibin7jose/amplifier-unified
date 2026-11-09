@@ -152,7 +152,7 @@ class Collector:
         for path in cache.glob('.source-bindings/*.json'):
             owned_path(path, stage)
             data = json.loads(path.read_text())
-            bindings.setdefault((data['git_url'], data['commit']), set()).add(data['ref'])
+            bindings.setdefault((source_key(data['git_url'], 'HEAD')[0], data['commit']), set()).add(data['ref'])
         inspected, packages, constraints, manifests = {}, {}, {}, {}
         constraint_origins = {}
         for name, source in sorted(batch.names.items()):
@@ -223,7 +223,7 @@ class Collector:
             from .updates import pinned
             unbound_status = 'explicit-pin' if pinned(ref) else 'unbound'
             if allowed == store:
-                if ref not in bindings.get((data['git_url'], data['commit']), set()):
+                if ref not in bindings.get((url, data['commit']), set()):
                     package['status'] = unbound_status
                     continue
             elif source_key(data['git_url'], data.get('ref') or 'HEAD')[1] != ref:

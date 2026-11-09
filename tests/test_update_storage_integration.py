@@ -105,5 +105,8 @@ async def test_imports_preserve_shared_object_and_worker_policy(tmp_path, monkey
     obj.chmod(obj.stat().st_mode | 0o200)
     subprocess.run([sys.executable, '-c', 'import fixture_module'], cwd=obj, env=environment, check=True)
     assert list(obj.rglob('*.pyc'))
+    # Restore publication's seal so verification reaches the dirty-content
+    # guard rather than stopping at the deliberately writable fixture root.
+    obj.chmod(obj.stat().st_mode & ~0o222)
     with pytest.raises(ValueError, match='contents changed'):
         store.verify(url, revision)

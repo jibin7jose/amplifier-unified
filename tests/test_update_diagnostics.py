@@ -505,6 +505,8 @@ async def test_authored_constraint_has_specific_sanitized_guidance(tmp_path):
 async def test_real_freeze_mismatch_reaches_install_error_and_sanitized_report(normalized_runtime, monkeypatch):
     """Exercise install/validate/stage/freeze; only external resolver/probe is controlled."""
     from amplifier_web import updates, runtime_environment as environments
+    from amplifier_web.host.config import read_config
+    from amplifier_web.runtime_policy_reconciliation import VERSION, configuration
     from amplifier_web.update_report import event
     from test_runtime_ref_identity import ROW
 
@@ -521,7 +523,12 @@ async def test_real_freeze_mismatch_reaches_install_error_and_sanitized_report(n
 
     async def process(*args, **kwargs):
         if '--source-policy-only' in args:
+            # Full installed inventory also reaches reconciliation. The controlled
+            # policy probe must carry its real configuration witness, not fail
+            # that earlier guard before the intended installed-payload mismatch.
             Path(args[args.index('--source-policy-only') + 1]).write_text(json.dumps({
+                'version': VERSION,
+                'configuration': configuration(read_config(manager.home, home=manager.home, global_only=True)),
                 'packages': {}, 'batchPaths': {}, 'protectedPaths': []}))
         elif '--profiles' in args:
             preparation_probes.append(args)
