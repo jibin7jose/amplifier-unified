@@ -69,6 +69,23 @@ try{
  // attention producer merely to inject a browser-only negative.
  await transition('notes-ready');await expect(summary).toContainText('Exact installed-version notes arrived.');
  await page.screenshot({path:output+'/notes-arrived.png'});
- assert.deepEqual(errors,[]);Object.assign(result,{status:'passed',package:boot.package,currentDesktop:true,currentMobile:true,historyRetained:true,reload:true,currentFailureHasAction:true,sourceActionReopensAndReveals:true,uncertainPreserved:true,notesDemand:true,notesMissingBounded:true,notesLateArrival:true,notesVersionSwitch:true,notesEmptyAndError:true});
+ await transition('partial');
+ const outcomes=panel.locator('[data-part="component-update-results"]');
+ await expect(status).toContainText('Some components kept their working versions');
+ await expect(outcomes).toContainText('Fixture A');
+ await expect(outcomes).toContainText('Failed — working version retained');
+ await expect(outcomes).toContainText('Fixture B');
+ await expect(outcomes).toContainText('Updated');
+ await expect(outcomes).toContainText('Fixture C');
+ await expect(outcomes).toContainText('Dependency-held — working version retained');
+ for(const width of [390,1280]){
+  await page.setViewportSize({width,height:950});
+  await expect(status).not.toContainText('You’re up to date');
+  await page.screenshot({path:output+`/partial-${width}.png`});
+ }
+ await page.reload();await page.waitForSelector('#amp-one');
+ if(!await status.isVisible())await openSettingsPage(page,'updates');
+ await expect(outcomes).toContainText('Dependency-held — working version retained');
+ assert.deepEqual(errors,[]);Object.assign(result,{status:'passed',package:boot.package,currentDesktop:true,currentMobile:true,historyRetained:true,reload:true,currentFailureHasAction:true,sourceActionReopensAndReveals:true,uncertainPreserved:true,notesDemand:true,notesMissingBounded:true,notesLateArrival:true,notesVersionSwitch:true,notesEmptyAndError:true,partialResults:true,partialReload:true});
 } catch(error){Object.assign(result,{status:'failed',error:String(error),fixtureLog:log});throw error}
 finally{await writeFile(output+'/browser-result.json',JSON.stringify(result,null,2));await browser?.close();child.kill('SIGTERM');await new Promise(resolve=>{if(child.exitCode!==null)return resolve();child.once('exit',resolve);setTimeout(resolve,5000)})}

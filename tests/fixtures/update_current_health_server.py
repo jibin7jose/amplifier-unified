@@ -53,6 +53,16 @@ async def main(home):
         elif mode=='current':
             state['diagnostics']['activeFailures']=copy.deepcopy(original);state['diagnostics'].pop('lastFailure',None)
             await manager.publish(phase='checked',error=None,pendingReplacement=None)
+        elif mode == 'partial':
+            from amplifier_web.update_partial import adopted_items, public_results
+            rows = [{'id': name, 'label': 'Fixture ' + name.upper(), 'kind': 'bundle / module',
+                     'status': 'update', 'current': 'a'*40, 'latest': 'b'*40, 'ref': 'main',
+                     'usage': 'configured', 'updateTier': 'included'} for name in 'abc']
+            receipt = {'results': {name: {'status': status, 'revision': ('b' if name == 'b' else 'a')*40}
+                       for name, status in {'a': 'failed', 'b': 'awaiting-adoption', 'c': 'dependency-held'}.items()}}
+            await manager.publish(phase='installed', error=None, available=0,
+                sequence={'stage': 'complete', 'install': False, 'included': {'status': 'attention', 'issues': 2}},
+                items=adopted_items(rows, receipt), componentResults=public_results(receipt, adopted=True))
         elif mode.startswith('notes-'):
             application = dict(state['application'])
             application.pop('releaseNotesWarning', None)

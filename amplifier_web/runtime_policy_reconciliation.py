@@ -262,6 +262,16 @@ class Collector:
         for name, package in dependencies.items():
             packages.setdefault(name, package)
         return {'version': VERSION, 'configuration': configuration(config), 'packages': packages,
+                # Private selected-root evidence. Keep the requiring package
+                # even when its constraint makes a dependency row protective.
+                # Partial acquisition uses this before any installer, not an
+                # inventory-wide scan of unrelated cached project files.
+                'runtimeRequirements': {name: {
+                    'manifestSha256': hashlib.sha256(content).hexdigest(),
+                    'project': {key: value for key, value in tomllib.loads(content.decode()).get('project', {}).items()
+                                if key in {'name', 'version', 'dependencies', 'optional-dependencies', 'dynamic'}},
+                    'constraints': constraint_declarations(content, runtime_batch=True)}
+                    for name, content in manifests.items()},
                 # Private preparation evidence, never copied into update diagnostics.
                 'batchPaths': {name: str(path) for name, path in batch.names.items()},
                 'protectedPaths': sorted(str(path) for path in self.local_sources | self.local_manifests),

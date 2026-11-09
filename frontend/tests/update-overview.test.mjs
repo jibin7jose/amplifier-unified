@@ -60,6 +60,46 @@ test('protected edits and failed required components never claim completion',()=
  assert.equal(updateOverview({pendingReplacement:{},sequence:{stage:'complete'}}).tone,'error');
  assert.equal(updateOverview({application:{status:'check_failed'},sequence:{stage:'complete'}}).tone,'error');
 });
+test('included source issues allow independent updates only with the host proceed decision',()=>{
+ const updates={phase:'available',sequence:{stage:'included',included:{issues:1,available:1}},
+  items:[{id:'a',status:'check_failed'},{id:'b',status:'update'}]};
+ for(const includedCanProceed of [undefined,false]){
+  const result=updateOverview({...updates,includedCanProceed},{autoInstall:false});
+  assert.equal(result.blocked,true);assert.equal(result.tone,'error');
+ }
+ const result=updateOverview({...updates,includedCanProceed:true},{autoInstall:false});
+ assert.equal(result.blocked,false);assert.equal(result.busy,false);
+ assert.equal(result.installable,true);assert.equal(result.title,'Updates available');
+ const preparing=updateOverview({...updates,includedCanProceed:true,phase:'validating'});
+ assert.equal(preparing.active,true);assert.equal(preparing.tone,'working');
+ assert.equal(updateOverview({...updates,includedCanProceed:true,error:'Qualification failed'}).tone,'error');
+});
+test('partial source results never turn a retained or awaiting component into all-current',()=>{
+ const base={phase:'installed',sequence:{stage:'complete'},application:{status:'current'}};
+ for(const status of ['failed','dependency-held']){
+  const result=updateOverview({...base,componentResults:[{id:'a',status,revision:'a'.repeat(40)},{id:'b',status:'updated',revision:'b'.repeat(40)}]});
+  assert.equal(result.title,'Some components kept their working versions');
+  assert.equal(result.tone,'error');assert.equal(result.busy,false);
+  assert.equal(result.application.state,'current');
+ }
+ const awaiting=updateOverview({...base,componentResults:[{id:'b',status:'awaiting-adoption'}]});
+ assert.equal(awaiting.title,'Components awaiting adoption');assert.equal(awaiting.tone,'working');
+ assert.equal(updateOverview({...base,componentResults:[{id:'b',status:'updated'}]}).title,'You’re up to date');
+});
+test('partial source permission preserves pending adoption and unknown app boundaries',()=>{
+ const updates={includedCanProceed:true,sequence:{stage:'included',included:{issues:1,available:1}},
+  componentResults:[{id:'a',status:'failed'},{id:'b',status:'awaiting-adoption'}]};
+ const staged=updateOverview({...updates,phase:'staged',pendingRelease:'candidate',plan:{activation:'per-worker'}});
+ assert.equal(staged.title,'Finishing your update');assert.equal(staged.busy,true);assert.equal(staged.pending,true);
+ for(const pending of [{pendingReplacement:{}},{pendingRestart:{requestStatus:'uncertain'}}]){
+  const result=updateOverview({...updates,...pending});
+  assert.equal(result.blocked,true);assert.equal(result.busy,true);
+  assert.notEqual(result.title,'You’re up to date');
+  assert.notEqual(result.title,'Some components kept their working versions');
+ }
+ const interrupted=updateOverview({...updates,phase:'interrupted',error:'Source operation outcome is unknown'});
+ assert.equal(interrupted.tone,'error');assert.notEqual(interrupted.title,'Updates available');
+});
 test('an install failure with continuation intent remains visibly actionable',()=>{
  const result=updateOverview({pendingApp:{},phase:'error',error:'Restart failed',sequence:{stage:'application',install:true}});
  assert.equal(result.tone,'error');assert.equal(result.installable,true);assert.equal(result.blocked,false);

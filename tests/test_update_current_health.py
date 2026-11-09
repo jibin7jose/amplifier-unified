@@ -114,17 +114,22 @@ async def test_automatic_unchanged_conflict_does_zero_duplicate_stage_work(tmp_p
     from amplifier_web.updates import UpdateManager
     from amplifier_web.runtime_environment import ProtectedRuntimeSource
     from amplifier_web import update_plan
+    from amplifier_web.update_sequence import app_selection
+    from amplifier_web.host import config as host_config
     m,_,_,_=mounted_fixture(tmp_path,monkeypatch)
     m.lock=asyncio.Lock();m.closed=False;m.awaiting_restart=lambda:False
     m.independent_tool_results=lambda s:False
     m.inventory=[{'id':'fixture','kind':'runtime environment','status':'update','eligible':True,'latest':'A'}]
     m.service.lock=asyncio.Lock();u=m.service.state['updates'];u['sequence']={'stage':'included'}
-    calls={'stage':0,'validate':0}
+    calls={'validate':0}
+    releases=m.directory/'releases';existing=set(releases.iterdir())
     async def publish(**kw):u.update(kw)
-    async def stage(*a):calls['stage']+=1
     async def build(*a):return {'mode':'worker','reason':'fixture','activation':'per-worker'}
-    async def validate(*a):calls['validate']+=1;raise ProtectedRuntimeSource('amplifier-foundation','runtime-source-constraint')
-    m.publish=publish;m.stage_cache_sources=stage;m.validate=validate
+    async def validate(stage,release):
+        assert stage.is_dir() and stage.name==release
+        calls['validate']+=1
+        raise ProtectedRuntimeSource('amplifier-foundation','runtime-source-constraint')
+    m.publish=publish;m.validate=validate
     monkeypatch.setattr(update_plan,'build',build)
     monkeypatch.setattr(health,'preparation_key',lambda m,rows:rows[0]['latest'])
     # Avoid any real shared configuration; the full install orchestration owns
@@ -132,17 +137,26 @@ async def test_automatic_unchanged_conflict_does_zero_duplicate_stage_work(tmp_p
     from amplifier_web import updates,session_files
     monkeypatch.setattr(updates,'foundation_home',lambda h:tmp_path/'absent')
     monkeypatch.setattr(session_files,'amplifier_home',lambda:tmp_path/'empty-shared')
+    monkeypatch.setattr(host_config,'amplifier_home',lambda:tmp_path/'empty-shared')
+    # Supply the real checked witness after isolating configuration. Live and
+    # staged selection verification still run in UpdateManager.install.
+    m.inventory[0]['appSelection']=app_selection(m.home)['witness']
     await UpdateManager.install(m,automatic=True)
-    assert calls=={'stage':1,'validate':1}
+    assert calls=={'validate':1}
+    first=set(releases.iterdir())
+    assert len(first-existing)==1
     for _ in range(10):
         u['phase']='available'
         await UpdateManager.install(m,automatic=True)
-    assert calls=={'stage':1,'validate':1}
+    assert calls=={'validate':1}
+    assert set(releases.iterdir())==first
     m.inventory[0]['latest']='B'
     await UpdateManager.install(m,automatic=True)
-    assert calls=={'stage':2,'validate':2}
+    assert calls=={'validate':2}
+    assert len(set(releases.iterdir())-existing)==2
     await UpdateManager.install(m)  # Deliberate fresh install intent.
-    assert calls=={'stage':3,'validate':3}
+    assert calls=={'validate':3}
+    assert len(set(releases.iterdir())-existing)==3
 
 
 @pytest.mark.parametrize('reason',[None,'disk-full','bundle-load-failed','runtime-source-constraint'])
@@ -287,21 +301,31 @@ async def test_inspection_fence_quietly_waits_through_ten_actual_automatic_ticks
 async def interrupted_copy_fixture(tmp_path,monkeypatch):
     """Cancel a real copy thread in the actual install orchestration."""
     import threading
-    from amplifier_web import updates, update_storage, session_files
+    from amplifier_web import updates, update_storage, update_plan, session_files
+    from amplifier_web.update_sequence import app_selection
+    from amplifier_web.host import config as host_config
     m,_,_,_=mounted_fixture(tmp_path,monkeypatch)
     m.lock=asyncio.Lock();m.closed=False;m.awaiting_restart=lambda:False
     m.independent_tool_results=lambda s:False
     m.service.lock=asyncio.Lock()
     u=m.service.state['updates'];u.update(phase='available',available=1,sequence={'stage':'included'})
     m.inventory=[{'id':'fixture','kind':'runtime environment','status':'update','eligible':True,'latest':'A'}]
-    calls={'stage':0}
+    calls={'validate':0}
     async def publish(**kw):u.update(kw)
-    async def stage(*a):calls['stage']+=1;raise RuntimeError('fresh candidate stopped before validation')
-    m.publish=publish;m.stage_cache_sources=stage
+    async def build(*a):return {'mode':'worker','reason':'fixture','activation':'per-worker'}
+    async def validate(stage,release):
+        assert stage.is_dir() and stage.name==release
+        calls['validate']+=1
+        raise RuntimeError('fresh candidate stopped during validation')
+    m.publish=publish;m.validate=validate
+    monkeypatch.setattr(update_plan,'build',build)
     monkeypatch.setattr(health,'preparation_key',lambda m,rows:'A')
     source=tmp_path/'copy-source';source.mkdir();(source/'keep').write_text('unchanged')
     monkeypatch.setattr(updates,'foundation_home',lambda h:source)
     monkeypatch.setattr(session_files,'amplifier_home',lambda:tmp_path/'empty-shared')
+    monkeypatch.setattr(host_config,'amplifier_home',lambda:tmp_path/'empty-shared')
+    m.inventory[0]['appSelection']=app_selection(m.home)['witness']
+    releases=m.directory/'releases';existing=set(releases.iterdir())
     started=threading.Event();release=threading.Event();finished=threading.Event()
     copy_snapshot=update_storage.copy_snapshot
     def copy_with_gate(source,target):
@@ -318,9 +342,10 @@ async def interrupted_copy_fixture(tmp_path,monkeypatch):
     release.set()
     with pytest.raises(asyncio.CancelledError):await task
     assert finished.is_set()
-    assert calls=={'stage':0}
+    assert calls=={'validate':0}
     proof=m.diagnostics.state['batch']['preparation']
     assert proof['boundary']=='copy-only' and proof['copySettled']
+    assert set(releases.iterdir())-existing=={releases/proof['candidate']}
     assert (source/'keep').read_text()=='unchanged'
     return m,calls,copy.deepcopy(proof),copy.deepcopy(m.diagnostics.state['lastFailure'])
 
@@ -329,6 +354,7 @@ async def interrupted_copy_fixture(tmp_path,monkeypatch):
 async def test_manual_fresh_candidate_requires_actual_settled_copy_and_unchanged_pointer(tmp_path,monkeypatch,case):
     from amplifier_web.updates import UpdateManager
     m,calls,proof,failure=await interrupted_copy_fixture(tmp_path,monkeypatch)
+    releases=m.directory/'releases';existing=set(releases.iterdir())
     u=m.service.state['updates'];batch=m.diagnostics.state.get('componentPreparation',m.diagnostics.state['batch']);old=m.diagnostics.state['attemptId']
     if case=='pointer-drift':
         (m.directory/'active.json').write_text(json.dumps({'current':'b'*32}))
@@ -340,16 +366,18 @@ async def test_manual_fresh_candidate_requires_actual_settled_copy_and_unchanged
     elif case=='stage-replaced':batch['preparation']['directoryIdentity']=[0,0]
     if case=='safe':
         await UpdateManager.install(m)
-        assert calls=={'stage':1}
+        assert calls=={'validate':1}
         assert m.diagnostics.state['attemptId']!=old
         assert m.diagnostics.state['revision']!=proof['candidate']
+        assert set(releases.iterdir())-existing=={releases/m.diagnostics.state['revision']}
         assert any(row['phase']=='ecosystem-preparation-reconciled' for row in m.diagnostics.state['events'])
         assert any(group.get('latest')==failure for group in m.diagnostics.state['activeFailures'].values())
     else:
         before=copy.deepcopy(m.diagnostics.state)
         with pytest.raises(ValueError,match='no proof'):await UpdateManager.install(m)
         assert m.diagnostics.state==before
-        assert calls=={'stage':0}
+        assert calls=={'validate':0}
+        assert set(releases.iterdir())==existing
 
 
 @pytest.mark.parametrize('kind',['application','smart-tools','rollback'])
@@ -357,6 +385,7 @@ async def test_manual_fresh_candidate_requires_actual_settled_copy_and_unchanged
 async def test_unrelated_batch_preserves_exact_component_fence_and_copy_recovery(tmp_path,monkeypatch,kind,safe):
     from amplifier_web.updates import UpdateManager
     m,calls,proof,_=await interrupted_copy_fixture(tmp_path,monkeypatch)
+    releases=m.directory/'releases';existing=set(releases.iterdir())
     if not safe:
         m.diagnostics.state.get('componentPreparation',m.diagnostics.state['batch'])['preparation']['boundary']='preparing'
     m.diagnostics.begin(kind,'d'*40 if kind=='application' else 'd'*32)
@@ -366,12 +395,14 @@ async def test_unrelated_batch_preserves_exact_component_fence_and_copy_recovery
     m.diagnostics=UpdateDiagnostics(m)
     if safe:
         await UpdateManager.install(m)
-        assert calls['stage']==1
+        assert calls['validate']==1
         assert m.diagnostics.state['revision']!=proof['candidate']
+        assert set(releases.iterdir())-existing=={releases/m.diagnostics.state['revision']}
         assert not health.pending_preparation(m.diagnostics.state)
     else:
         with pytest.raises(ValueError,match='interrupted'):await UpdateManager.install(m)
-        assert calls['stage']==0
+        assert calls['validate']==0
+        assert set(releases.iterdir())==existing
         assert health.pending_preparation(m.diagnostics.state)
 
 

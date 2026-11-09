@@ -483,6 +483,82 @@ test('component check failures and explicit source policies remain visible in th
  assert.match(html,/1 kept as configured/);
 });
 
+const partialItems=[
+ {id:'a',label:'Source A',status:'check_failed',sourceUpdate:'failed',current:'a'.repeat(40),updateTier:'included',
+  detail:'The working version was retained because its source download failed.'},
+ {id:'c',label:'Source C',status:'check_failed',sourceUpdate:'dependency-held',current:'c'.repeat(40),updateTier:'included',
+  detail:'The working version was retained because a required source could not update.'},
+ {id:'b',label:'Source B',status:'current',sourceUpdate:'updated',current:'b'.repeat(40),updateTier:'included'},
+];
+const partialResults=partialItems.map(row=>({id:row.id,status:row.sourceUpdate,revision:row.current}));
+test('partial results name failed, dependency-held and promoted sources with the inventory closed',()=>{
+ const html=render({phase:'installed',lastCheck:100,items:partialItems,componentResults:partialResults,
+  sequence:{stage:'complete',included:{status:'failed',issues:2},other:{status:'waiting'}}});
+ const results=html.slice(html.indexOf('data-part="component-update-results"'),html.indexOf('data-part="update-controls"'));
+ assert.match(results,/Source A<\/strong> · Failed — working version retained/);
+ assert.match(results,/Source C<\/strong> · Dependency-held — working version retained/);
+ assert.match(results,/Source B<\/strong> · Updated/);
+ assert.match(results,/a{7}/);assert.match(results,/b{7}/);assert.match(results,/c{7}/);
+ assert.match(results,/not that every running conversation has switched/);
+ assert.match(html,/aria-label="Failed — working version retained"/);
+ assert.match(html,/aria-label="Dependency-held — working version retained"/);
+ assert.match(html,/source download failed/);assert.match(html,/a required source could not update/);
+ assert.match(html,/Some components kept their working versions/);
+ assert.doesNotMatch(html,/You’re up to date|Up to date/);
+ assert.match(html,/Latest release installed/);
+});
+test('component result names resolve grouped members without exposing private receipt fields',()=>{
+ const privateUrl='https://credential@private.example/repo';
+ const html=render({items:[{id:'group',label:'Safe grouped source',status:'check_failed',updateTier:'included',
+  members:[{id:'member',package:'amplifier-provider-a',status:'check_failed',sourceUpdate:'failed'}]}],
+  componentResults:[{id:'member',status:'failed',revision:'a'.repeat(40),url:privateUrl,detail:privateUrl},
+   {id:privateUrl,status:'dependency-held',revision:privateUrl}]});
+ assert.match(html,/amplifier-provider-a<\/strong> · Failed/);
+ assert.match(html,/Component no longer listed<\/strong> · Dependency-held/);
+ assert.doesNotMatch(html,/credential@|private\.example/);
+});
+test('staged partial results say awaiting adoption and keep duplicate installation hidden',()=>{
+ const html=render({phase:'staged',includedCanProceed:true,pendingRelease:'candidate',plan:{activation:'per-worker'},
+  items:partialItems.map(row=>row.id==='b'?{...row,status:'update',sourceUpdate:undefined}:row),
+  componentResults:partialResults.map(row=>row.id==='b'?{...row,status:'awaiting-adoption'}:row),
+  sequence:{stage:'included',included:{status:'available',issues:2,available:1},other:{status:'waiting'}}});
+ assert.match(html,/Finishing your update/);
+ assert.match(html,/Source B<\/strong> · Awaiting adoption/);
+ assert.match(html,/1 awaiting adoption · 2 need attention/);
+ assert.doesNotMatch(html,/Source B<\/strong> · Updated|Up to date|data-action="updates.install"/);
+});
+test('failed tier and retained rows cannot fall through to an up-to-date tier summary',()=>{
+ for(const included of [{status:'failed'},{status:'attention',issues:0},{status:'check_failed'}]){
+  const html=render({sequence:{stage:'included',included,other:{status:'waiting'}}});
+  const summary=html.slice(html.indexOf('aria-label="Component update summary"'),html.indexOf('class="a-app-update-heading"'));
+  assert.match(summary,/Needs attention/);assert.doesNotMatch(summary,/Up to date/);
+ }
+ const html=render({items:partialItems,sequence:{stage:'complete',included:{status:'current',issues:0},other:{status:'waiting'}}});
+ assert.match(html,/2 need attention/);assert.doesNotMatch(html,/Up to date/);
+});
+test('host proceed decision enables independent install but never bypasses unknown app markers',async()=>{
+ const base={phase:'available',includedCanProceed:true,items:[partialItems[0],{...partialItems[2],status:'update',sourceUpdate:undefined}],
+  sequence:{stage:'included',included:{status:'available',issues:1,available:1}}};
+ const calls=[];let root;
+ try{
+  await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state(base),act:(name,args)=>calls.push({name,args})}))});
+  assert.deepEqual(calls,[]);
+  const install=root.root.findByProps({'data-action':'updates.install'});
+  assert.equal(install.props.disabled,false);
+  await renderAct(async()=>install.props.onClick());
+  assert.deepEqual(calls,[{name:'updates.install',args:undefined}]);
+  await renderAct(async()=>root.update(React.createElement(UpdateSettings,{state:state({...base,includedCanProceed:false}),act:()=>{}})));
+  assert.equal(root.root.findByProps({'data-action':'updates.install'}).props.disabled,true);
+  for(const marker of [{pendingReplacement:{}},{pendingRestart:{requestStatus:'uncertain'}}]){
+   await renderAct(async()=>root.update(React.createElement(UpdateSettings,{state:state({...base,...marker,componentResults:partialResults}),act:()=>{}})));
+   const buttons=root.root.findAllByProps({'data-action':'updates.install'});
+   assert.ok(buttons.length===0||buttons.every(button=>button.props.disabled));
+   assert.equal(root.root.findByProps({'data-action':'updates.check'}).props.disabled,true);
+   assert.doesNotMatch(root.root.findByProps({'data-part':'application-update'}).findByType('h4').children.join(''),/up to date/);
+  }
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
 
 test('disabled update controls explain active component work without expanding details',()=>{
  const html=render({phase:'checking',detail:'Checking included components…',sequence:{stage:'included',nextStage:'included',install:true}});

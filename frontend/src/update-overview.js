@@ -15,8 +15,8 @@ function sequenceOverview(updates={},options={}){
  const issues=rows.filter(i=>['check_failed','local_changes'].includes(i.status));
  const components=Math.max(rows.filter(i=>i.status==='update').length,(seq.included?.available||0)+(seq.other?.available||0));
  const appAvailable=app.status==='update',installable=appAvailable||components>0||!!updates.pendingApp||!!updates.pendingRelease;
- const blocked=appAvailable&&app.canInstall===false||updates.pendingReplacement!=null||!!updates.pendingRestart||!!(seq.stage==='included'&&seq.included?.issues);
- const failed=updates.pendingReplacement!=null||!!updates.error||['error','interrupted'].includes(updates.phase)||updates.pendingRestart?.requestStatus==='rejected'||app.status==='check_failed'||!!(seq.stage==='included'&&seq.included?.issues);
+ const blocked=appAvailable&&app.canInstall===false||updates.pendingReplacement!=null||!!updates.pendingRestart||!!(seq.stage==='included'&&seq.included?.issues&&!updates.includedCanProceed);
+ const failed=updates.pendingReplacement!=null||!!updates.error||['error','interrupted'].includes(updates.phase)||updates.pendingRestart?.requestStatus==='rejected'||app.status==='check_failed'||!!(seq.stage==='included'&&seq.included?.issues&&!updates.includedCanProceed);
  const active=['checking','staging','validating','activating'].includes(updates.phase);
  // Failed optional attempts retain their recovery controls, not an activation wait.
  const toolRows=updates.pendingSmartTools||[],unfinishedTools=toolRows.filter(row=>!row.failure);
@@ -63,7 +63,9 @@ function sequenceOverview(updates={},options={}){
  if(seq.nextStage||seq.install&&installable)return {...result,title:'Updating Amplifier',detail:stage==='included'?'Continuing with included components…':'Continuing with other components…',tone:'working'};
  if(installable)return {...result,title:'Updates available',detail:(appAvailable?(String(app.current||'').replace(/^v/,'')===String(app.latest||'').replace(/^v/,'')?'App component updates are ready. ':'A new app version is ready. '):'')+(components?`${components} component ${components===1?'update is':'updates are'} ${appAvailable?'also ':''}ready. `:'')+(options.autoInstall!==false?'Component updates prepare automatically. App restarts wait for work to finish.':'One update request handles the app and all eligible components.'),tone:'available'};
  if(toolRows.some(row=>row.failure))return {...result,title:'Some tools were not updated',detail:'Their current versions remain installed. Review each failed tool below to retry or skip it; other updates can continue.',tone:'error'};
+ if((updates.componentResults||[]).some(row=>['failed','dependency-held'].includes(row.status)))return {...result,title:'Some components kept their working versions',detail:'Review the failed and dependency-held sources below. Independent updates have separate results; a retained version is not an up-to-date check.',tone:'error'};
  if(issues.length||seq.included?.issues||seq.other?.issues)return {...result,title:'Some updates need attention',detail:'No installable updates remain, but some checks or local changes need review.',tone:'error'};
+ if((updates.componentResults||[]).some(row=>row.status==='awaiting-adoption'))return {...result,title:'Components awaiting adoption',detail:'The prepared components have not been confirmed active. Review their results below.',tone:'working'};
  if(seq.stage==='complete')return {...result,title:updates.adoption?.pendingWorkers>0?'Ready for new work':'You’re up to date',detail:updates.adoption?.pendingWorkers>0?'New work uses the updated components. Running conversations switch after their current work finishes. No app restart is needed.':'Amplifier and its eligible components are up to date.',tone:'ready'};
  if(app.status==='release_channel_needed')return {...result,title:'Automatic app updates aren’t configured',detail:'This installation needs a release channel. Component updates and technical details are available below.'};
  if(updates.lastCheck)return {...result,title:'App checked · components not fully checked',detail:'Run a check to confirm the full update status.'};

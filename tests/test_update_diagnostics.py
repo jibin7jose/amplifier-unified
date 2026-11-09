@@ -516,7 +516,7 @@ async def test_real_freeze_mismatch_reaches_install_error_and_sanitized_report(n
     manager = UpdateManager(service)
     service.update_manager = manager
     from amplifier_web.update_sequence import app_selection
-    manager.inventory = [{**ROW, 'status': 'update', 'label': 'Fixture component',
+    manager.inventory = [{**ROW, 'id': 'runtime:' + ROW['package'], 'status': 'update', 'label': 'Fixture component',
                           'appSelection': app_selection(manager.home)['witness']}]
     resolver = updates.process
     preparation_probes = []
@@ -541,7 +541,7 @@ async def test_real_freeze_mismatch_reaches_install_error_and_sanitized_report(n
     before = json.loads(json.dumps(service.state['sessions']))
     try:
         await manager.install()
-        assert len(preparation_probes) == 1
+        assert len(preparation_probes) == 1, manager.diagnostics.state.get('lastFailure')
         state = service.state['updates']
         failure = state['diagnostics']['lastFailure']
         assert state['phase'] == 'error' and state['pendingRelease'] is None

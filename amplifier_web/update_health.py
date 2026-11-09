@@ -102,7 +102,18 @@ def preparation_key(manager, rows):
     source_key, config = configuration(manager)
     keys = ('id', 'kind', 'url', 'ref', 'current', 'latest', 'subdirectory', 'package',
             'status', 'eligible', 'policyOrigin', 'updateTier')
-    selected = [{key: row[key] for key in keys if key in row} for row in rows]
+    selected = []
+    for row in rows:
+        value = {key: row[key] for key in keys if key in row}
+        if (row.get('status') == 'check_failed' and row.get('availabilityFailure') is True
+                and row.get('sourceUpdate') in {'failed', 'dependency-held'}
+                and isinstance(row.get('latest'), str) and re.fullmatch('[a-f0-9]{40}', row['latest'])
+                and row.get('current') != row['latest']):
+            # A receipt-derived retained presentation is the same desired graph
+            # as its pre-suppression update row, not a new qualification input.
+            # Unknown fresh failures never receive this classification.
+            value['status'] = 'update'
+        selected.append(value)
     selected.sort(key=lambda row: json.dumps(row, sort_keys=True))
     # The dependency graph key deliberately omits module values/identities.
     # Qualification consumes them through host.session._apply_settings; fixing
@@ -356,6 +367,14 @@ def current(state, evidence=None):
         return result('action-required', 'Component preparation was interrupted',
                       'Automatic component work is paused. A deliberate update can start a new candidate only after settled copy-only preparation is verified; other uncertain effects require diagnostic review.',
                       action='diagnostics')
+    outcomes = state.get('componentResults') or []
+    retained = [row for row in outcomes if row.get('status') in {'failed', 'dependency-held'}]
+    if retained and not state.get('available'):
+        updated = sum(row.get('status') == 'updated' for row in outcomes)
+        return result('action-required', 'Some components kept their working versions',
+                      f'{updated} source records updated; {len(retained)} retained after a source failure or dependency hold. '
+                      'New work uses the qualified combination. Check manually to retry; prior failures remain in history.',
+                      action='sources')
     local_changes = [r for r in state.get('items', []) if r.get('status') == 'local_changes']
     issues = [r for r in state.get('items', []) if r.get('status') == 'check_failed']
     if issues:

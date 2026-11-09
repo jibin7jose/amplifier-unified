@@ -535,6 +535,14 @@ async def stage(manager, generation, candidates, *, finalize=True):
     from .runtime_registry_updates import prepare_manifest, verify_candidate, RECEIPT as registry_receipt
     selected = [] if receipt.exists() else candidates
     content, registry_policy = prepare_manifest(content, observed, selected) if not receipt.exists() else (content, {})
+    from .update_partial import read as partial_read, pin_manifest, verify_pointer
+    partial = partial_read(receipt.parent) if not receipt.exists() else None
+    if partial:
+        verify_pointer(manager, partial)
+        retained = partial['retained']
+        selected = [row for row in selected if row.get('id') not in partial['results']
+                    or partial['results'][row['id']]['status'] == 'awaiting-adoption']
+        content = pin_manifest(content, retained)
     project = prepare_project(manager.home, generation, content=content)
     baseline = receipt if receipt.exists() else previous_receipt if previous_receipt.exists() else current / 'uv.lock'
     if baseline.exists():
@@ -543,7 +551,8 @@ async def stage(manager, generation, candidates, *, finalize=True):
     if not uv:
         raise RuntimeError('Install uv to prepare the Amplifier runtime.')
     # Revalidating a rollback or an older staged generation must not upgrade it.
-    selected = [] if receipt.exists() else candidates
+    if not partial:
+        selected = [] if receipt.exists() else candidates
     baseline_sources = {row['package']: row for row in observed if row.get('kind') == 'runtime dependency'}
     for row in selected:
         if row.get('kind') == 'runtime dependency':
@@ -575,6 +584,12 @@ async def stage(manager, generation, candidates, *, finalize=True):
         if row.get('kind') == 'runtime dependency' and not row.get('registryManaged'):
             installed = locked.get(row['package'])
             policies[row['package']] = verify_resolution(installed, row)
+    if partial:
+        for name, policy in partial['retained'].items():
+            verify_resolution(locked.get(name), {'package': name, 'url': policy['url'],
+                'ref': policy['ref'], 'subdirectory': policy.get('subdirectory', ''),
+                'latest': policy['revision']})
+            policies[name] = policy  # Keep authored moving policy separate from candidate constraint.
     declared = {package_name(name): source for name, source in declared.items()}
     for row in observed:
         if (row.get('kind') != 'runtime dependency' or row['package'] in policies
