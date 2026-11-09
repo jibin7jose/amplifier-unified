@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from amplifier_web import directory_attention
 from amplifier_web.session_files import project_slug
 from amplifier_web.state_records import load as load_saved_state
 from amplifier_web.storage_migration import close_maintenance
@@ -84,7 +85,7 @@ async def test_native_progress_does_not_serialize_unchanged_globals(
     assert len(publications) == 1
     assert publications[0]['session_ids'] == {owners[kind]['id']}
     assert publications[0]['global_keys'] == set()
-    assert publications[0]['detail_only'] is (kind == 'worker')
+    assert publications[0]['detail_only'] is True
     assert encoded == []
     assert all(app.state[key] == value for key, value in prior.items())
     saved = load_saved_state(app.db)
@@ -159,33 +160,69 @@ async def test_dormant_root_change_still_publishes_directory_and_cannot_be_worke
     assert app.runtime.started == [] and app.runtime.sent == []
 
 
-async def test_live_child_progress_uses_existing_detail_guard_and_real_metadata_broadens(
-        tmp_path, app_factory, monkeypatch):
+@pytest.mark.parametrize('kind', ['root', 'worker'])
+async def test_live_progress_uses_existing_detail_guard_and_real_metadata_broadens(
+        tmp_path, app_factory, monkeypatch, kind):
     app, workspace, paths, owners = await prepared(tmp_path, app_factory, monkeypatch)
-    child = owners['worker']
-    # A mounted native child keeps its settled navigation position during work.
-    child.update(historyManaged=False, status='working')
-    app._publish_changes(sessions={child['id']})
+    owner = owners[kind]
+    # Mounted chats keep their settled navigation position during work.
+    owner.update(historyManaged=False, status='working')
+    app._publish_changes(sessions={owner['id']})
     await app.history.refresh()  # Reconcile the adopted runtime's title/source metadata.
     await close_maintenance(app)
+    queues = []
+    for client in ('viewing', 'home'):
+        app.clients.attach(client)
+        with app.clients.bind(client):
+            if client == 'viewing':
+                app.state['selectedSessionId'] = owner['id']
+                app.state['view']['workSurface'] = 'chat'
+            app.browser_state()
+            queues.append(app.subscribe())
+    for queue in queues:
+        while not queue.empty():
+            queue.get_nowait()
+    attention_reads = []
+    snapshot = directory_attention.snapshot
+    def attention(*args, **kwargs):
+        attention_reads.append(True)
+        return snapshot(*args, **kwargs)
+    monkeypatch.setattr(directory_attention, 'snapshot', attention)
     project = project_slug(workspace)
     monkeypatch.setattr(app.history.index, '_invalidations',
-                        lambda: (True, {(project, 'worker', 'transcript')}))
-    with (paths['worker'] / 'transcript.jsonl').open('a') as stream:
-        stream.write(json.dumps({'role': 'assistant', 'content': 'Live child progress'}) + '\n')
+                        lambda: (True, {(project, kind, 'transcript')}))
+    with (paths[kind] / 'transcript.jsonl').open('a') as stream:
+        stream.write(json.dumps({'role': 'assistant', 'content': 'Live progress'}) + '\n')
     await app.history.refresh(force=False)
     assert app.state['sharedHistory']['error'] is None
+    assert not queues[0].empty()
+    assert queues[1].empty(), 'Native progress must not rebuild an unrelated Home view'
+    assert attention_reads == [], 'Unchanged attention must not be rescanned for progress'
     assert app._publish_client_narrow is True
+    for queue in queues:
+        while not queue.empty():
+            queue.get_nowait()
     # Requesting detail scope cannot suppress a real title/attention change.
-    metadata = json.loads((paths['worker'] / 'metadata.json').read_text())
-    (paths['worker'] / 'metadata.json').write_text(json.dumps({**metadata, 'name': 'Renamed child'}))
+    metadata = json.loads((paths[kind] / 'metadata.json').read_text())
+    (paths[kind] / 'metadata.json').write_text(json.dumps({**metadata, 'name': 'Renamed chat'}))
     monkeypatch.setattr(app.history.index, '_invalidations',
-                        lambda: (True, {(project, 'worker', 'metadata')}))
+                        lambda: (True, {(project, kind, 'metadata')}))
     await app.history.refresh(force=False)
     assert app.state['sharedHistory']['error'] is None
-    assert child['title'] == 'Renamed child'
+    assert owner['title'] == 'Renamed chat'
     assert app._publish_client_narrow is False
-    assert app.directory.resolve(child['id'])['title'] == 'Renamed child'
+    assert app.directory.resolve(owner['id'])['title'] == 'Renamed chat'
+    assert all(not queue.empty() for queue in queues)
+    for queue in queues:
+        while not queue.empty():
+            queue.get_nowait()
+    owner.update(status='error', error='Synthetic attention change')
+    app._publish_changes(sessions={owner['id']}, detail_only=True)
+    assert app._publish_client_narrow is False
+    assert all(not queue.empty() for queue in queues)
+    assert app.runtime.started == [] and app.runtime.sent == []
+    for queue in queues:
+        app.unsubscribe(queue)
 
 
 async def test_workspace_placeholder_delta_retains_selection_pins_and_owner_references(

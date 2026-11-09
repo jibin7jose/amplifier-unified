@@ -639,14 +639,14 @@ class AutomaticHistory:
                                    or directory_mode and (incoming['reset'] or incoming['sessions'] or incoming['removed'] or incoming['removedProjects']))
                     globals_changed = ({'sharedHistory'} if state.get('sharedHistory', {}).get('loading')
                                        or state.get('sharedHistory', {}).get('error') else set())
-                    worker_detail_only = (delta_mode and not full_merge
+                    resident_detail_only = (delta_mode and not full_merge
                         and not incoming['workspaces'] and not incoming['removed']
                         and not incoming['removedProjects']
                         and bool(snapshot['sessions'])
-                        and all(row.get('sessionKind') == 'worker' for row in incoming['sessions'])
-                        and (not directory_mode or all(
+                        and (all(
                             (row['nativeProject'], row['nativeIdentity']) in admitted
-                            for row in incoming['sessions']))
+                            for row in incoming['sessions']) if directory_mode else
+                            all(row.get('sessionKind') == 'worker' for row in incoming['sessions']))
                         and not locations_changed)
                     hidden_workspaces = set(state.get('hiddenNativeWorkspaces', []))
                     workspaces = {row['id']: row for row in state['workspaces']}
@@ -922,7 +922,7 @@ class AutomaticHistory:
                             # write scope. The service retains its independent
                             # detail-facts and pending-progress broadening guards.
                             self.service._publish_changes(sessions=touched, globals=globals_changed,
-                                                          detail_only=worker_detail_only and not globals_changed)
+                                                          detail_only=resident_detail_only and not globals_changed)
                         else:
                             self.service._publish_full(reason='Native catalog membership and ownership reconciliation')
                     if delta_mode:

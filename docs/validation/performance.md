@@ -191,6 +191,14 @@ current subscribers and concurrent owners independently when validating publicat
 Passing a recent-message window test does not establish bounded saves, admission,
 agent reads or model context. Measure those boundaries separately.
 
+Native history refresh obeys the same subscriber boundary as runtime progress.
+`test_history_publication_scope.py` exercises resident roots and workers with a
+viewing client and an unrelated Home client: progress must neither rebuild Home
+nor rescan unchanged attention. Real title/error changes still reach both clients;
+dormant catalog and workspace membership changes retain their broader scope.
+This avoids multiplying publication by unrelated viewers without changing history
+authority or claiming that the affected owner's save is history-independent.
+
 `tests/fixtures/execution_publication_scaling.py` keeps up to six large owners active
 in one actual service. It distinguishes cold saves, scalar/token saves, nested
 execution changes, current-placement changes with unchanged retired accounting,
