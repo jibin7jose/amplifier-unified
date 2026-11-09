@@ -49,6 +49,7 @@ def helper_manager(monkeypatch):
 def packaged_app(monkeypatch):
     direct = {"url": app_updates.SOURCE, "vcs_info": {"vcs": "git", "commit_id": REVISION}}
     distribution = SimpleNamespace(
+        metadata={"Name": "amplifier-unified"},
         version=app_updates.__version__,
         locate_file=Mock(return_value=Path(app_features.__file__).parent),
         read_text=Mock(side_effect=lambda name: json.dumps(direct)),
@@ -243,14 +244,17 @@ def test_startup_without_pending_receipt_never_infers_installation_success():
 @pytest.fixture
 async def managed(tmp_path, monkeypatch):
     from test_service import Runtime
+    from test_app_updates import synthetic_release_artifact
+    from amplifier_web import application_generations, update_readiness
     service = AppService(tmp_path / "app", Runtime(), workspace=tmp_path)
     await service.dispatch("session.create", {})
     service.port = 8941
     manager = UpdateManager(service)
     service.update_manager = manager
     manager.running_identity = {"version": app_updates.__version__, "revision": REVISION, "instanceId": "old-process"}
-    installation = SimpleNamespace(manager=manager, service=service, calls=[], probe_version=app_updates.__version__)
-    monkeypatch.setattr(app_features, "running_application", lambda manager: copy.deepcopy(HOST_APP))
+    installation = SimpleNamespace(manager=manager, service=service, calls=[], probe_version=app_updates.__version__,
+                                   artifact=None, current_app=copy.deepcopy(HOST_APP), archive_installed=False)
+    monkeypatch.setattr(app_features, "running_application", lambda manager: copy.deepcopy(installation.current_app))
     monkeypatch.setattr(app_updates, "installed_extras", lambda: ["tui"])
     monkeypatch.setattr(app_updates.components, "installed_graph", lambda: copy.deepcopy(BASELINE))
     monkeypatch.setattr("amplifier_web.app_feature_probe.installed_dependency_extras", lambda extras: {})
@@ -268,6 +272,34 @@ async def managed(tmp_path, monkeypatch):
     monkeypatch.setattr("amplifier_web.deployment_service.current_process_is_unit_managed", lambda home: True)
     monkeypatch.setattr(app_updates.os, "kill", lambda *args: pytest.fail("synthetic updater must never kill the host"))
 
+    async def prepare(folder, version, revision, *, delivery=None):
+        installation.artifact = await synthetic_release_artifact(folder, version, revision, delivery=delivery)
+        installation.archive_app = {**HOST_APP, 'version': version.removeprefix('v'), 'revision': revision,
+                                    'delivery': {key: installation.artifact[key] for key in ('url', 'sha256')}}
+        graph = app_updates.components.read_graph.return_value
+        app_updates.components.read_graph.return_value = [
+            copy.deepcopy(installation.archive_app) if row['name'] == 'amplifier-unified' else row for row in graph]
+        return installation.artifact
+    monkeypatch.setattr(app_updates.artifacts, 'prepare', prepare)
+
+    # This shared fixture isolates lifecycle behavior with a synthetic installer
+    # and running-app inventory. Real serving-location/stamp/binding validation
+    # is exercised without this substitution in test_archive_readiness.py.
+    def observed(manager, qualification, binding=None):
+        if (not installation.archive_installed or qualification.get('artifact') != installation.artifact
+                or qualification.get('app') != installation.current_app
+                or any(manager.running_identity.get(key) != installation.current_app[key] for key in ('version', 'revision'))):
+            return None
+        current = application_generations.bootstrap_identity(installation.previous['installation'])
+        if binding is not None and binding != current:
+            return None
+        return {'artifact': copy.deepcopy(installation.artifact), 'app': copy.deepcopy(installation.current_app),
+                'qualification': copy.deepcopy(qualification), 'installation': current}
+    monkeypatch.setattr(update_readiness, '_observed_artifact', observed)
+    def capture(manager):
+        manager._running_artifact = update_readiness.capture_artifact(manager)
+    installation.capture = capture
+
     async def process(*args, **kwargs):
         installation.calls.append((tuple(map(str, args)), kwargs))
         if "tool" in args and "install" in args:
@@ -276,6 +308,16 @@ async def managed(tmp_path, monkeypatch):
                 python = Path(tool_root) / "amplifier-unified/bin/python"
                 python.parent.mkdir(parents=True, exist_ok=True)
                 python.touch()
+            if installation.artifact:
+                prefix = Path(tool_root) / 'amplifier-unified' if tool_root else Path(installation.previous['installation'])
+                version = installation.archive_app['version']
+                info = prefix / 'lib/python3.13/site-packages' / f'amplifier_unified-{version}.dist-info'
+                info.mkdir(parents=True, exist_ok=True)
+                (info / 'METADATA').write_text(f'Metadata-Version: 2.1\nName: amplifier-unified\nVersion: {version}\n')
+                (info / 'direct_url.json').write_text(json.dumps({'url': Path(installation.artifact['path']).as_uri(), 'archive_info': {}}))
+                if not tool_root:
+                    installation.archive_installed = True
+                    installation.current_app = copy.deepcopy(installation.archive_app)
             return ""
         if "-c" in args and app_updates.PROBE in args:
             return installation.probe_version
@@ -330,15 +372,14 @@ async def test_normal_staging_keeps_published_release_selection_and_existing_ext
     await app_updates.stage(managed.manager)
     install = managed.calls[0][0]
     assert "--upgrade" in install
-    assert install[-1] == app_updates.install_requirement("d" * 40, ["tui"])
+    assert install[-1] == app_updates.install_requirement("d" * 40, ["tui"], managed.artifact)
     assert "--with-requirements" not in install
     pending = managed.service.state["updates"]["pendingApp"]
     assert pending["revision"] == "d" * 40 and "featureSelection" not in pending
     assert not managed.service.state["updates"].get("featureResults")
 
 @pytest.mark.parametrize("recover_feature", [False, True])
-async def test_attention_feature_failure_requires_same_revision_feature_recovery(managed, monkeypatch, recover_feature):
-    from amplifier_web.attention import snapshot
+async def test_feature_failure_receipt_requires_same_revision_feature_recovery(managed, monkeypatch, recover_feature):
     from amplifier_web.auth import data_identity
     manager, service = managed.manager, managed.service
     original_process = app_updates.process
@@ -349,9 +390,8 @@ async def test_attention_feature_failure_requires_same_revision_feature_recovery
     monkeypatch.setattr(app_updates, "process", reject_install)
     with pytest.raises(RuntimeError):
         await app_updates.stage(manager, feature="native-desktop", request_id="failed-feature")
-    failure = next(item for item in snapshot(service.state)["items"] if item.get("updateKind") == "application")
-    await service.dispatch("attention.read", {"ids": [failure["id"]],
-        "fingerprints": {failure["id"]: failure["fingerprint"]}})
+    failure = next(row['latest'] for row in manager.diagnostics.state['activeFailures'].values()
+                   if row['kind'] == 'application')
     monkeypatch.setattr(app_updates, "process", original_process)
     if recover_feature:
         await stage_feature(managed, "matching-feature")
@@ -363,6 +403,7 @@ async def test_attention_feature_failure_requires_same_revision_feature_recovery
         service.state["updates"]["application"] = {
             "status": "update", "revision": REVISION, "latest": app_updates.__version__}
         await app_updates.stage(manager)
+        graph = copy.deepcopy(app_updates.components.read_graph.return_value)
     await app_updates.activate(manager)
     # A replacement host reconstructs diagnostics from saved values, not the
     # staging manager's in-memory feature selection.
@@ -370,16 +411,18 @@ async def test_attention_feature_failure_requires_same_revision_feature_recovery
     service.update_manager = manager = UpdateManager(service)
     manager.running_identity = {"version": app_updates.__version__, "revision": REVISION,
                                 "instanceId": "new-process"}
+    managed.capture(manager)
     monkeypatch.setattr(app_updates, "installed_extras", lambda: extras)
     monkeypatch.setattr(app_updates.components, "installed_graph",
                         lambda: [row for row in graph if row["name"] != "amplifier-unified"])
     health = {"ok": True, "app": "amplifier-unified", "dataIdentity": data_identity(manager.home),
               **manager.running_identity}
     assert await manager.confirm_readiness(health)
-    remaining = [item for item in snapshot(service.state)["items"] if item.get("updateKind") == "application"]
+    remaining = [row for row in manager.diagnostics.state['activeFailures'].values() if row['kind'] == 'application']
     assert len(remaining) == (0 if recover_feature else 1)
     if remaining:
-        assert remaining[0]["fingerprint"] == failure["fingerprint"] and remaining[0]["read"]
+        assert remaining[0]['latest']['id'] == failure['id']
+    assert failure['id'] in manager.diagnostics.path.read_text()
 
 
 @pytest.mark.parametrize("change", ["drop-transitive", "upgrade-transitive", "new-app-revision"])

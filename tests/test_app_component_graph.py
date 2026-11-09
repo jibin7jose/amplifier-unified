@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from amplifier_web import app_component_graph as graph, app_updates
-from test_app_updates import prepared_activation
+from test_app_updates import prepared_activation, synthetic_release_artifact, synthetic_artifact_graph, synthetic_tool_install
 
 APP = {'name':'amplifier-unified','version':'99.0.0','url':app_updates.SOURCE,'revision':'a'*40}
 NATIVE = {'name':'amplifier-module-tool-computer-use','version':'1.0.0',
@@ -103,15 +103,19 @@ async def staged(tmp_path,monkeypatch):
     calls=[]
     async def process(*args,**kwargs):
         calls.append(args)
+        synthetic_tool_install(args, kwargs)
         return '99.0.0' if '-c' in args else ''
     monkeypatch.setattr(app_updates,'process',process)
     monkeypatch.setattr(app_updates.shutil,'which',lambda _: '/fixture/uv')
-    monkeypatch.setattr(graph,'read_graph',AsyncMock(return_value=copy.deepcopy(COMPONENTS)))
+    monkeypatch.setattr(app_updates.artifacts, 'prepare', synthetic_release_artifact)
+    async def observed(*args, artifact=None):
+        return synthetic_artifact_graph(copy.deepcopy(COMPONENTS), artifact)
+    monkeypatch.setattr(graph,'read_graph',AsyncMock(side_effect=observed))
     monkeypatch.setattr('amplifier_web.deployment_service.current_process_is_unit_managed',lambda _:True)
     await app_updates.stage(manager)
     pending=service.state['updates']['pendingApp']
     folder=manager.directory/'applications'/APP['revision']/pending['generation']
-    python=folder/'tools/amplifier-unified/bin/python';python.parent.mkdir(parents=True);python.touch()
+    python=folder/'tools/amplifier-unified/bin/python';python.parent.mkdir(parents=True,exist_ok=True);python.touch()
     return service,manager,folder,calls
 
 
@@ -120,8 +124,10 @@ async def test_new_resolution_refreshes_but_activation_uses_exact_reviewed_graph
     try:
         assert '--upgrade' in calls[0] and '--refresh' in calls[0]
         receipt=json.loads((folder/'validated.json').read_text())
-        assert receipt['componentGraph']==COMPONENTS
-        assert receipt['componentDigest']==graph.digest(COMPONENTS)
+        expected = synthetic_artifact_graph(COMPONENTS, receipt['artifact'])
+        assert receipt['componentGraph']==expected
+        assert receipt['componentDigest']==graph.digest(expected)
+        assert calls[0][-1] == app_updates.artifacts.requirement(receipt['artifact'])
         await app_updates.activate(manager)
         installs=[call for call in calls if 'install' in call]
         assert '--overrides' in installs[1] and str(folder/'components.txt') in installs[1]
@@ -151,8 +157,9 @@ async def test_changed_candidate_rejected_before_runtime_close_or_replacement(tm
 
 async def test_replacement_graph_mismatch_cannot_restart_or_claim_success(tmp_path,monkeypatch):
     service,manager,folder,calls=await staged(tmp_path,monkeypatch)
-    changed=copy.deepcopy(COMPONENTS);changed[1]['revision']='c'*40
-    monkeypatch.setattr(graph,'read_graph',AsyncMock(side_effect=[COMPONENTS,changed]))
+    candidate = json.loads((folder/'validated.json').read_text())['componentGraph']
+    changed=copy.deepcopy(candidate);changed[1]['revision']='c'*40
+    monkeypatch.setattr(graph,'read_graph',AsyncMock(side_effect=[candidate,changed]))
     restart=AsyncMock();monkeypatch.setattr(app_updates,'request_managed_restart',restart)
     try:
         await app_updates.activate(manager)

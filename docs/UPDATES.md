@@ -6,6 +6,16 @@ Automatic update checks default to every **4 hours**. Under **Update preferences
 
 Settings also provides manual checks, installation, and ecosystem rollback. Scheduled checks run while the local host is open; this is not a separate OS daemon. The Settings icon shows an update indicator. These controls use the shared action registry; forced interruption requires an explicit user confirmation.
 
+Application updates download the selected release's prebuilt wheel and checksum
+manifest, verify the bytes and embedded source revision, and install that local
+wheel in the existing private candidate environment. They do not build the UI
+or require Node. Missing or inconsistent artifacts fail preparation without
+replacing the running app; there is no silent fallback to building Git source.
+The candidate retains its wheel URL, checksum and local input alongside the
+existing qualification receipt. Installed metadata and the observed environment
+bind that proof to the running app; a source stamp alone does not establish
+artifact provenance or optional-feature eligibility.
+
 A prepared app update that is waiting for active work continues checking the
 published release channel at the configured automatic-check interval. **Check
 for newer release** refreshes availability without installing or replacing the
@@ -101,7 +111,7 @@ dependencies and explicit source restrictions still participate; no manifest or
 checked selection is rewritten. Generic project sync/freeze policy keeps its
 existing group rules.
 
-Application activation also verifies that the running host and the executable on PATH belong to the same uv tool installation. A development checkout or a different launcher cannot replace another installed tool. Candidate and installed-package probes use isolated Python imports, reject packages outside that environment, and cannot accidentally validate a checkout from the launch directory or PYTHONPATH. The installed package is checked again after replacement; a failed check leaves the running host up for recovery. The restart helper uses the separate validated environment, and new work remains blocked until restart. It preserves the effective bind addresses, public origins, TLS certificate/key, session lifetime, port, workspace and data directory without writing CLI overrides into saved server settings. The replacement host acknowledges the pending restart only after an authenticated HTTP request to its live listener confirms the expected version, exact installed Git revision, data directory identity, and a different process instance. Package probes and application construction alone cannot acknowledge a restart. Smart Tool servers are reported disconnected after restart and can be reconnected explicitly. The recovery record stores the actual prior installation source when available, rather than assuming an older release tag exists. Repeated installation requests reuse a pending validated generation. Cache symlinks remain symlinks while staging; external workspace trees are not copied into the update.
+Application activation also verifies that the running host and the executable on PATH belong to the same uv tool installation. A development checkout or a different launcher cannot replace another installed tool. Candidate and installed-package probes use isolated Python imports, reject packages outside that environment, and cannot accidentally validate a checkout from the launch directory or PYTHONPATH. The installed package is checked again after replacement; a failed check leaves the running host up for recovery. The restart helper uses the separate validated environment, and new work remains blocked until restart. It preserves the effective bind addresses, public origins, TLS certificate/key, session lifetime, port, workspace and data directory without writing CLI overrides into saved server settings. The replacement host acknowledges the pending restart only after an authenticated HTTP request to its live listener confirms the expected version, exact installed source revision, data directory identity, and a different process instance. Package probes and application construction alone cannot acknowledge a restart. Smart Tool servers are reported disconnected after restart and can be reconnected explicitly. The recovery record stores the actual prior installation source and available artifact proof, rather than assuming an older release tag exists. Repeated installation requests reuse a pending validated generation. Cache symlinks remain symlinks while staging; external workspace trees are not copied into the update.
 
 ## Optional app features
 
@@ -136,6 +146,14 @@ existing components, remove existing extras such as TUI, or grant OS permission
 or desktop control. A development checkout or custom source is not eligible.
 The existing installation-owner check also requires the actual serving uv tool
 environment and its active launcher to match before any replacement.
+
+For a receipt-backed wheel installation, feature additions retain its exact
+release URL and checksum even when a newer release exists. Historical Git
+installations retain their exact Git revision. The initial installer's local
+wheel has no update-generation receipt: its source stamp is visible, but the
+existing feature-install limitation remains until an ordinary owned update
+establishes the qualification. No enrollment record or separate artifact registry
+is introduced.
 
 An older running app that does not expose this action must first adopt a reviewed
 ordinary app release containing it. That update preserves the older installation's
@@ -401,6 +419,11 @@ launchers make one normal uv replacement first. A manual uv reinstall/upgrade
 changes the bootstrap identity and takes precedence; source checkouts and
 unrelated development venvs are never redirected. Package graph and restarted
 HTTP readiness are still separately verified before work resumes.
+For wheel candidates, the actual bootstrap interpreter must prove it can read
+that qualification before promotion. An older reader uses the same verified
+wheel through the existing replacement path; an invalid candidate is an error,
+not a compatibility fallback. Force restart remains unavailable when that
+immutable generation cannot be promoted.
 The qualified app starts with an isolated Python import path so a checkout in the
 launch directory cannot replace its tested package.
 

@@ -91,6 +91,50 @@ def promote(home, validated, bootstrap):
     return active(home)
 
 
+def verify_candidate(target):
+    """Use this launcher's reader to verify the exact target before execution."""
+    import subprocess
+
+    from .app_component_graph import GRAPH_PROBE, digest, normalized
+
+    validated = json.loads((Path(target['folder']) / 'validated.json').read_text())
+    artifact = validated.get('artifact')
+    prefix = Path(target['prefix'])
+    if artifact is not None and bootstrap_identity(prefix) != validated.get('installation'):
+        raise ValueError('Active app installation changed; its generation was preserved')
+    python = prefix / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    result = subprocess.run([str(python), '-I', '-c', GRAPH_PROBE],
+        capture_output=True, text=True, timeout=30, check=False)
+    if result.returncode or digest(normalized(json.loads(result.stdout),
+            **({'artifact': artifact} if artifact is not None else {}))) != target['componentDigest']:
+        raise ValueError('Active app packages changed; its generation was preserved')
+
+
+async def can_read_candidate(process, bootstrap, python, validated):
+    """Prove the actual bootstrap can read this graph before choosing promotion.
+
+    Older launchers lack the archive-aware reader. The caller retains its normal
+    uv replacement path for them; an invalid candidate is still an error.
+    """
+    script = '''import json,sys
+from pathlib import Path
+from amplifier_web import application_generations as generations
+verify = getattr(generations, "verify_candidate", None)
+if verify is None:
+ print("unsupported")
+else:
+ verify({"prefix": Path(sys.argv[1]), "folder": Path(sys.argv[2]), "componentDigest": sys.argv[3]})
+ print("compatible")
+'''
+    prefix = Path(python).parent.parent
+    launcher = Path(bootstrap) / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    output = await process(str(launcher), '-I', '-c', script, str(prefix),
+        str(prefix.parent.parent), validated['componentDigest'], timeout=40)
+    if output.strip() not in {'unsupported', 'compatible'}:
+        raise ValueError('The application bootstrap compatibility check returned invalid data')
+    return output.strip() == 'compatible'
+
+
 def delegate(argv=None):
     """Exec the exact qualified interpreter, retaining CLI args and data scope.
 
@@ -129,25 +173,10 @@ def delegate(argv=None):
         return
     # The private generation's interpreter and packages must still agree. The
     # serving host performs its separate health/readiness qualification too.
-    import subprocess
-
-    from .app_component_graph import GRAPH_PROBE, digest, normalized
-
     python = target["prefix"] / (
         "Scripts/python.exe" if os.name == "nt" else "bin/python"
     )
-    result = subprocess.run(
-        [str(python), "-I", "-c", GRAPH_PROBE],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    if (
-        result.returncode
-        or digest(normalized(json.loads(result.stdout))) != target["componentDigest"]
-    ):
-        raise ValueError("Active app packages changed; its generation was preserved")
+    verify_candidate(target)
     os.environ["AMPLIFIER_APP_GENERATION_EXEC"] = str(target["generation"])
     os.environ["AMPLIFIER_WEB_HOME"] = str(home)
     # Match qualification's isolated import path. A repository in the caller's

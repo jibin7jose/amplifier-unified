@@ -13,6 +13,7 @@ from . import __version__
 from .host.config import write_private
 from .updates import process
 from . import app_component_graph as components
+from . import app_release_artifacts as artifacts
 
 REPOSITORY='microsoft/amplifier-unified'
 SOURCE='https://github.com/'+REPOSITORY
@@ -249,8 +250,10 @@ def validated_extras(extras):
         raise ValueError('Unsupported optional application features')
     return sorted(extras)
 
-def install_requirement(revision,extras):
+def install_requirement(revision,extras,artifact=None):
     extras=validated_extras(extras)
+    if artifact is not None:
+        return artifacts.requirement(artifact, extras)
     source='git+'+SOURCE+'@'+revision
     return 'amplifier-unified['+','.join(extras)+'] @ '+source if extras else source
 
@@ -400,22 +403,36 @@ async def _stage(manager, *, selected=None, extras):
         resolution_args=['--refresh','--overrides',str(folder/'host-components.txt'),
                          '--with-requirements',str(folder/'host-components.txt')]
     await manager.publish(phase='staging',detail='Installing the app release in an isolated environment…',error=None)
-    await manager.diagnostics.run('candidate-install',process,uv,'tool','install','--force',*resolution_args,install_requirement(revision,extras),env=env,timeout=900)
+    # Ordinary updates consume published bytes. Same-app additions preserve an
+    # existing Git source or the exact qualified wheel, never a newer release.
+    artifact = None
+    if not selected or selected['hostApp'].get('delivery'):
+        artifact = await manager.diagnostics.run('candidate-artifact', artifacts.prepare,
+            folder, release['latest'], revision,
+            delivery=selected['hostApp']['delivery'] if selected else None)
+    await manager.diagnostics.run('candidate-install',process,uv,'tool','install','--force',*resolution_args,install_requirement(revision,extras,artifact),env=env,timeout=900)
     python=folder/'tools/amplifier-unified'/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
     browser_receipt = await prepare_browser(manager, python, extras)
     output=await manager.diagnostics.run('candidate-probe',process,python,'-I','-c',PROBE,*extras,**browser_process_options(manager, extras),timeout=30)
     installed=verified_version(manager,output,release['latest'],'candidate-version')
-    graph=await manager.diagnostics.run('candidate-components',components.read_graph,process,python)
+    graph=await manager.diagnostics.run('candidate-components',components.read_graph,process,python,
+        **({'artifact': artifact} if artifact is not None else {}))
     app=next((item for item in graph if item['name']=='amplifier-unified'),{})
     if app.get('revision')!=revision or app.get('url')!=SOURCE or app.get('version')!=installed:
         raise ValueError('Candidate component graph does not match the selected application')
+    if artifact is not None and app.get('delivery') != {key: artifact[key] for key in ('url', 'sha256')}:
+        raise ValueError('Candidate component graph does not match the verified release artifact')
     if selected:
         from .app_features import require_preserved_components
         require_preserved_components(graph, host_graph)
         from .app_feature_probe import DEPENDENCY_PROBE
         await manager.diagnostics.run('candidate-dependencies',process,python,'-I','-c',DEPENDENCY_PROBE,*extras,timeout=30)
     manager.diagnostics.sync('candidate-components-record',write_private,folder/'components.txt',components.requirements(graph))
-    manager.diagnostics.sync('candidate-record',write_private,folder/'validated.json',json.dumps({'revision':revision,'version':installed,'hostVersion':__version__,'attemptId':manager.diagnostics.state['attemptId'],'extras':extras,'generation':generation,'componentGraph':graph,'componentDigest':components.digest(graph),'hostGraph':host_graph,'hostDigest':components.digest(host_graph),**({'managedBrowser':browser_receipt} if browser_receipt else {}),**({'featureSelection':selected} if selected else {})}))
+    artifact_proof = {}
+    if artifact is not None:
+        from .application_generations import bootstrap_identity
+        artifact_proof = {'artifact': artifact, 'installation': bootstrap_identity(python.parent.parent)}
+    manager.diagnostics.sync('candidate-record',write_private,folder/'validated.json',json.dumps({'revision':revision,'version':installed,'hostVersion':__version__,'attemptId':manager.diagnostics.state['attemptId'],'extras':extras,'generation':generation,'componentGraph':graph,'componentDigest':components.digest(graph),'hostGraph':host_graph,'hostDigest':components.digest(host_graph),**artifact_proof,**({'managedBrowser':browser_receipt} if browser_receipt else {}),**({'featureSelection':selected} if selected else {})}))
     manager.diagnostics.clear_failure()
     manager.diagnostics.record('stage','succeeded',observedVersion=installed)
     await manager.publish(phase='app-staged',pendingApp={**release,'attemptId':manager.diagnostics.state['attemptId'],'generation':generation,'extras':extras},detail='Application release validated. Waiting for work to finish before restarting.')
@@ -557,6 +574,11 @@ async def _activate(manager, *, force=None):
         raise ValueError('App release must pass isolated validation before activation') from None
     if not isinstance(validated,dict) or validated.get('revision')!=revision:
         raise ValueError('App release must pass isolated validation before activation')
+    artifact = validated.get('artifact')
+    if artifact is not None:
+        artifacts.validate_descriptor(artifact, validated.get('version'))
+        if Path(artifact['path']).parent != folder.resolve():
+            raise ValueError('The qualified wheel must belong to this application generation')
     if version_tuple(validated.get('version'))!=version_tuple(release.get('latest')):
         raise ValueError('The pending release does not match its validated package')
     selected=validated.get('featureSelection')
@@ -600,21 +622,40 @@ async def _activate(manager, *, force=None):
     manager.diagnostics.begin('application',revision,validated.get('attemptId') or release.get('attemptId'),
                               application_extras=validated.get('extras'))
     uv,executable,installed_python,previous=await manager.diagnostics.run('target-discovery',installed_target)
+    from .update_readiness import artifact_context
+    previous_artifact = artifact_context(manager)
+    if previous_artifact is not None:
+        previous['artifact'] = previous_artifact
     helper_python=marker.parent/'tools/amplifier-unified'/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
     if not helper_python.is_file():
         raise ValueError('The validated app environment is missing; stage the release again')
     if graph is not None:
-        candidate_graph=await manager.diagnostics.run('candidate-components-recheck',components.read_graph,process,helper_python)
+        candidate_graph=await manager.diagnostics.run('candidate-components-recheck',components.read_graph,process,helper_python,
+            **({'artifact': artifact} if artifact is not None else {}))
         if candidate_graph!=graph:
             raise ValueError('The candidate components changed after validation; stage a new update')
+    if artifact is not None:
+        from .application_generations import bootstrap_identity
+        if bootstrap_identity(helper_python.parent.parent) != validated.get('installation'):
+            raise ValueError('The qualified application installation changed')
+    from .application_generations import supports, can_read_candidate
+    bootstrap = Path(previous['installation']) if previous.get('installation') else Path(sys.prefix)
+    can_promote = bool(generation and supports(bootstrap))
+    if can_promote and artifact is not None:
+        can_promote = await manager.diagnostics.run('bootstrap-artifact-compatibility',
+            can_read_candidate, process, bootstrap, helper_python, validated)
     if 'managed-browser' in extras:
         current_browser = await qualify_browser(manager, helper_python)
         if current_browser != validated.get('managedBrowser'):
             raise ValueError('The selected browser executable or launch settings changed after qualification; prepare the update again.')
     if force is not None:
-        from .application_generations import supports
-        if not generation or not supports(Path(previous['installation'])):
+        if not can_promote:
             raise ValueError('Force restart requires a qualified immutable application generation. Wait for work to finish on this installation.')
+    if artifact is not None and not can_promote:
+        # A fallback reinstallation consumes bytes again. Recheck before the
+        # durable replacement fence or any interruption of the serving host.
+        await manager.diagnostics.run('replacement-artifact', asyncio.to_thread,
+            artifacts.verify, artifact, validated['version'], revision)
     async with manager.service.lock:
         if force is not None:
             from .update_restart import require
@@ -632,6 +673,8 @@ async def _activate(manager, *, force=None):
         if graph is not None:
             replacement['qualification'] = {'app':next(row for row in graph if row['name']=='amplifier-unified'),
                 'extras':extras, 'dependencyDigest':components.digest([row for row in graph if row['name']!='amplifier-unified'])}
+            if artifact is not None:
+                replacement['qualification']['artifact'] = artifact
         if selected:
             replacement.update(featureSelection=selected, dependencyDigest=replacement['qualification']['dependencyDigest'])
         if force is not None:
@@ -660,19 +703,22 @@ async def _activate(manager, *, force=None):
         resolution_args=['--overrides',str(folder/'components.txt')] if graph is not None else []
         if selected:
             resolution_args.extend(['--with-requirements',str(folder/'components.txt')])
-        from .application_generations import supports, promote
+        from .application_generations import promote
         # Upgrade older bootstraps once through uv. Thereafter this tested app
         # environment is itself the live target: no second install or relocation.
-        bootstrap = Path(previous['installation']) if previous.get('installation') else Path(sys.prefix)
-        if generation and supports(bootstrap):
+        if can_promote:
             target = manager.diagnostics.sync('replacement-promote', promote, manager.home, validated, bootstrap)
             installed_python = target['prefix'] / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
         else:
-            await manager.diagnostics.run('replacement-install',process,uv,'tool','install','--force',*resolution_args,install_requirement(release['revision'],extras),env=git_environment(),timeout=900)
+            await manager.diagnostics.run('replacement-install',process,uv,'tool','install','--force',*resolution_args,install_requirement(release['revision'],extras,artifact),env=git_environment(),timeout=900)
+            # The serving interpreter may belong to an older active generation.
+            # uv replaced the public bootstrap, so verify that actual destination.
+            installed_python = bootstrap / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
         output=await manager.diagnostics.run('replacement-probe',process,installed_python,'-I','-c',PROBE,*extras,**browser_process_options(manager, extras),timeout=30)
         installed=verified_version(manager,output,validated['version'],'replacement-version')
         if graph is not None:
-            replacement_graph=await manager.diagnostics.run('replacement-components',components.read_graph,process,installed_python)
+            replacement_graph=await manager.diagnostics.run('replacement-components',components.read_graph,process,installed_python,
+                **({'artifact': artifact} if artifact is not None else {}))
             if replacement_graph!=graph:
                 raise ValueError('Installed components do not match the qualified application generation')
     except asyncio.CancelledError:

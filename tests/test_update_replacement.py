@@ -29,7 +29,9 @@ async def stage_replacement(managed, kind):
     graph = sorted([*copy.deepcopy(BASELINE), copy.deepcopy(HOST_APP)], key=lambda row: row["name"])
     app_updates.components.read_graph.return_value = graph
     await app_updates.stage(managed.manager)
-    return graph, ["tui"]
+    pending = managed.service.state['updates']['pendingApp']
+    folder = managed.manager.directory / 'applications' / pending['revision'] / pending['generation']
+    return json.loads((folder / 'validated.json').read_text())['componentGraph'], ["tui"]
 
 
 def replacement_install(args, kwargs):
@@ -115,7 +117,7 @@ async def fail_replacement(managed, monkeypatch, kind, failure="probe"):
         return await original(*args, **kwargs)
 
     if failure == "graph":
-        async def read_graph(*args):
+        async def read_graph(*args, **kwargs):
             return [{**row, "version": "99.0.0"} if row["name"] == "httpx" else row for row in graph] if installed else graph
         monkeypatch.setattr(app_updates.components, "read_graph", read_graph)
     monkeypatch.setattr(app_updates, "process", process)
@@ -231,6 +233,7 @@ async def test_uncertain_replacement_opens_only_for_exact_authenticated_new_host
     managed.service.update_manager = successor
     successor.running_identity = {"version": HOST_APP["version"], "revision": REVISION,
                                   "instanceId": "old-process" if mismatch == "same-instance" else "verified-new-process"}
+    managed.capture(successor)
     monkeypatch.setattr(app_updates, "installed_extras", lambda: [] if mismatch == "extras" else extras)
     dependencies = [row for row in graph if row["name"] != "amplifier-unified"]
     monkeypatch.setattr(app_updates.components, "installed_graph", lambda: dependencies + [{"name": "unexpected", "version": "1.0"}] if mismatch == "graph" else dependencies)

@@ -1,14 +1,69 @@
 from amplifier_web.state_records import load as load_saved_state
 import asyncio
+import hashlib
 import json
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import AsyncMock
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
+import zipfile
 import pytest
 from amplifier_web import app_updates
 from amplifier_web.service import AppError, AppService
 from amplifier_web.updates import UpdateManager,work_paused
 from test_service import Runtime
+
+
+async def synthetic_release_artifact(folder, version, revision, *, delivery=None):
+    """Offline release input with real stamp/checksum; installation stays synthetic."""
+    artifacts = app_updates.artifacts
+    version = artifacts.stable_version(version)
+    path = Path(folder) / artifacts.filename(version)
+    stamp = {'schema': 1, 'repository': artifacts.REPOSITORY, 'version': version, 'revision': revision}
+    members = {artifacts.STAMP: json.dumps(stamp, sort_keys=True),
+               'amplifier_web/__init__.py': '__version__=' + repr(version),
+               'amplifier_unified-' + version + '.dist-info/METADATA': 'Name: amplifier-unified\nVersion: ' + version + '\n'}
+    with zipfile.ZipFile(path, 'w') as archive:
+        for name, data in members.items():
+            archive.writestr(zipfile.ZipInfo(name, (2020, 1, 1, 0, 0, 0)), data)
+    observed = {'url': artifacts.SOURCE + '/releases/download/v' + version + '/' + path.name,
+                'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    assert delivery is None or delivery == observed, 'Same-app feature input must retain its selected artifact'
+    return artifacts.verify({**observed, 'path': str(path)}, version, revision)
+
+
+def synthetic_artifact_graph(rows, artifact):
+    """Use real normalization of observed fixture metadata, including its stamp."""
+    if artifact is None:
+        return rows
+    with zipfile.ZipFile(artifact['path']) as archive:
+        stamp = json.loads(archive.read(app_updates.artifacts.STAMP))
+    app = app_updates.components.normalized([{'name': 'amplifier-unified', 'version': stamp['version'],
+        'direct': {'url': Path(artifact['path']).as_uri(), 'archive_info': {}}, 'stamp': stamp}], artifact=artifact)[0]
+    return sorted([app if row['name'] == 'amplifier-unified' else dict(row) for row in rows], key=lambda row: row['name'])
+
+
+def synthetic_tool_install(args, options):
+    """Model uv's installed metadata so production prefix binding stays real."""
+    root = options.get('env', {}).get('UV_TOOL_DIR')
+    if 'install' not in args or not root:
+        return
+    source = str(args[-1]).split(' @ ')[-1]
+    if not source.startswith('file:'):
+        return
+    wheel = Path(url2pathname(urlsplit(source).path))
+    prefix = Path(root) / 'amplifier-unified'
+    with zipfile.ZipFile(wheel) as archive:
+        stamp = json.loads(archive.read(app_updates.artifacts.STAMP))
+        relative = 'amplifier_unified-' + stamp['version'] + '.dist-info'
+        dist = prefix / 'lib/python3.13/site-packages' / relative
+        dist.mkdir(parents=True, exist_ok=True)
+        (dist / 'METADATA').write_bytes(archive.read(relative + '/METADATA'))
+    (dist / 'direct_url.json').write_text(json.dumps({'url': wheel.as_uri(), 'archive_info': {}}))
+    python = prefix / 'bin/python'
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.touch()
 
 
 @pytest.fixture(autouse=True)
@@ -17,8 +72,11 @@ def base_installation(monkeypatch, tmp_path):
     monkeypatch.setattr(app_updates, 'installed_extras', lambda: [])
     monkeypatch.setattr(app_updates.components, 'installed_graph', lambda: [{'name':'amplifier-core','version':'1.6.1'}])
     monkeypatch.setattr(app_updates.components, 'updates', AsyncMock(return_value=[]))
-    monkeypatch.setattr(app_updates.components, 'read_graph', AsyncMock(return_value=[
-        {'name':'amplifier-unified','version':'99.0.0','url':app_updates.SOURCE,'revision':'a'*40}]))
+    monkeypatch.setattr(app_updates.artifacts, 'prepare', synthetic_release_artifact)
+    async def graph(*args, artifact=None):
+        return synthetic_artifact_graph([
+            {'name':'amplifier-unified','version':'99.0.0','url':app_updates.SOURCE,'revision':'a'*40}], artifact)
+    monkeypatch.setattr(app_updates.components, 'read_graph', AsyncMock(side_effect=graph))
 
 
 def test_packaging_probe_rejects_broken_login_dependency(tmp_path):
@@ -196,6 +254,7 @@ async def test_candidate_isolated_validated_and_busy_host_not_replaced(tmp_path,
     monkeypatch.setattr(app_updates.shutil,'which',lambda _: '/bin/tool')
     async def process(*args,**kwargs):
         calls.append((args,kwargs))
+        synthetic_tool_install(args, kwargs)
         return '99.0.0' if '-c' in args else ''
     monkeypatch.setattr(app_updates,'process',process)
     await app_updates.stage(manager)
@@ -290,6 +349,8 @@ async def test_development_host_cannot_overwrite_global_uv_tool(tmp_path,monkeyp
         await app_updates.installed_target()
 
 async def prepared_activation(tmp_path,monkeypatch):
+    # Historical Git receipt: exercises old staged replacements without invoking
+    # the modern ordinary release downloader. New archive stages use the helper above.
     monkeypatch.setattr(app_updates, 'installed_extras', lambda: [])
     monkeypatch.setattr(app_updates.components, 'installed_graph', lambda: [{'name':'amplifier-core','version':'1.6.1'}])
     monkeypatch.setattr(app_updates.components, 'read_graph', AsyncMock(return_value=[
@@ -591,6 +652,7 @@ async def test_candidate_probe_is_isolated_from_checkout_and_pythonpath(tmp_path
     monkeypatch.setattr(app_updates.shutil,'which',lambda _: '/fixture/uv')
     async def process(*args,**kwargs):
         calls.append(args)
+        synthetic_tool_install(args, kwargs)
         return '99.0.0' if '-c' in args else ''
     monkeypatch.setattr(app_updates,'process',process)
     await app_updates.stage(manager)

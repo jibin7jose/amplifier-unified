@@ -29,13 +29,97 @@ def running_identity():
         distribution = metadata.distribution('amplifier-unified')
         # Do not attest a different installed distribution when running a checkout.
         if Path(distribution.locate_file('amplifier_web')).resolve() == Path(__file__).parent.resolve():
-            source = json.loads(distribution.read_text('direct_url.json') or '{}')
-            value = source.get('vcs_info', {}).get('commit_id')
-            if isinstance(value, str) and re.fullmatch('[a-f0-9]{40}', value):
-                revision = value
+            from .app_release_artifacts import source_revision
+            revision = source_revision(distribution)
     except (metadata.PackageNotFoundError, OSError, ValueError, AttributeError):
         pass
     return {'version': __version__, 'revision': revision, 'instanceId': uuid.uuid4().hex}
+
+
+def _observed_artifact(manager, qualification, installation=None):
+    """Bind an existing qualification to the actual serving installation."""
+    from . import app_component_graph as components, application_generations
+    from .app_release_artifacts import distribution_row
+    from .app_updates import validated_extras
+    artifact = qualification.get('artifact')
+    if not artifact:
+        return None
+    app = components.validate_graph([qualification['app']])[0]
+    validated_extras(qualification['extras'])
+    if not re.fullmatch('[a-f0-9]{64}', qualification.get('dependencyDigest', '')):
+        return None
+    if any(app.get(key) != manager.running_identity.get(key) for key in ('version', 'revision')):
+        return None
+    distribution = metadata.distribution('amplifier-unified')
+    if Path(distribution.locate_file('amplifier_web')).resolve() != Path(__file__).parent.resolve():
+        return None
+    observed = components.normalized([distribution_row(distribution)], artifact=artifact)[0]
+    if observed != app or 'delivery' not in observed:
+        return None
+    binding = application_generations.bootstrap_identity(sys.prefix)
+    if installation is not None and installation != binding:
+        return None
+    return {'artifact': copy.deepcopy(artifact), 'app': observed,
+            'installation': binding, 'qualification': copy.deepcopy(qualification)}
+
+
+def capture_artifact(manager):
+    """Capture receipt-backed archive eligibility once, before replacing files.
+
+    A source stamp describes source; it cannot create delivery qualification.
+    Pending effects have no invented destination binding. A new host observes
+    that binding, while confirmed results/generations must retain their old one.
+    """
+    from . import application_generations, app_component_graph as components
+    from .app_replacement import qualified
+    state = manager.service.state['updates']
+    for key in ('pendingReplacement', 'pendingRestart', 'applicationResult'):
+        target = state.get(key)
+        if not isinstance(target, dict):
+            continue
+        try:
+            if key == 'applicationResult':
+                if (target.get('phase') not in {'restart-ack', 'restart-superseded', 'restart-reconcile'}
+                        or not isinstance(target.get('installation'), dict)):
+                    continue
+            elif (not valid_target(target) or not qualified(target)
+                    or target.get('sourceInstanceId') == manager.running_identity['instanceId']):
+                continue
+            if any(target.get(field) != manager.running_identity.get(field) for field in ('version', 'revision')):
+                continue
+            observed = _observed_artifact(manager, target.get('qualification') or {}, target.get('installation'))
+            if observed:
+                return observed
+        except (AttributeError, KeyError, TypeError, ValueError, OSError, metadata.PackageNotFoundError):
+            continue
+    try:
+        active = application_generations.active(manager.home)
+        if not active or Path(sys.prefix).resolve() != active['prefix'].resolve():
+            return None
+        validated = json.loads((active['folder'] / 'validated.json').read_text())
+        if not isinstance(validated.get('installation'), dict) or not validated.get('artifact'):
+            return None
+        graph = components.validate_graph(validated['componentGraph'])
+        if components.digest(graph) != validated['componentDigest']:
+            return None
+        app = next(row for row in graph if row['name'] == 'amplifier-unified')
+        proof = {'app': app, 'extras': validated['extras'], 'artifact': validated['artifact'],
+                 'dependencyDigest': components.digest([row for row in graph if row['name'] != 'amplifier-unified'])}
+        return _observed_artifact(manager, proof, validated['installation'])
+    except (AttributeError, KeyError, TypeError, ValueError, OSError, StopIteration, metadata.PackageNotFoundError):
+        return None
+
+
+def artifact_context(manager):
+    """Private delivery context; never expose it through listener identity."""
+    captured = getattr(manager, '_running_artifact', None)
+    if not captured:
+        return None
+    try:
+        current = _observed_artifact(manager, captured['qualification'], captured['installation'])
+        return copy.deepcopy(current['artifact']) if current else None
+    except (AttributeError, KeyError, TypeError, ValueError, OSError, metadata.PackageNotFoundError):
+        return None
 
 
 def valid_target(value):
@@ -149,6 +233,8 @@ async def qualify_successor(manager, target):
         candidate = {**target, 'version': identity['version'], 'revision': revision,
             'qualification': {'app': app, 'extras': extras,
                 'dependencyDigest': app_updates.components.digest(app_updates.components.installed_graph())}}
+        if app.get('delivery'):
+            candidate['qualification']['artifact'] = artifact_context(manager)
         if not matches_running(manager, candidate):
             return None
         output = await manager.diagnostics.run('restart-current-installation-probe', app_updates.process,
@@ -243,6 +329,21 @@ async def confirm_readiness(manager, health, expected=None, command_id=None, *, 
                         return False
                 except (AttributeError, ValueError, OSError, metadata.PackageNotFoundError):
                     return False
+            archive_result = {}
+            proof = installed.get('qualification') or {}
+            if (proof.get('app') or {}).get('delivery'):
+                try:
+                    if not proof.get('artifact') or artifact_context(manager) != proof['artifact']:
+                        return False
+                    if not matches_running(manager, installed):
+                        return False
+                    observed = _observed_artifact(manager, proof, manager._running_artifact['installation'])
+                    if not observed:
+                        return False
+                    archive_result = {'qualification': copy.deepcopy(proof),
+                                      'installation': observed['installation']}
+                except (AttributeError, KeyError, TypeError, ValueError, OSError, metadata.PackageNotFoundError):
+                    return False
             manager.diagnostics.begin('application', target['revision'], target['attemptId'],
                 application_extras=(target.get('qualification') or {}).get('extras'))
             if successor:
@@ -281,7 +382,7 @@ async def confirm_readiness(manager, health, expected=None, command_id=None, *, 
             # available release or a prepared candidate.
             state['applicationResult'] = {'attemptId': target['attemptId'], 'phase': phase,
                 'version': identity['version'], 'revision': identity['revision'],
-                'verifiedAt': time.time()}
+                'verifiedAt': time.time(), **archive_result}
             if not selected:
                 # Resume only after this exact restarted installation is healthy.
                 # A manual Install request covers the remaining component phases.

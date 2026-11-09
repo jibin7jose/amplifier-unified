@@ -68,12 +68,12 @@ def test_changed_qualification_receipt_is_not_a_launch_target(qualified):
         generations.active(home)
 
 
-def test_bootstrap_execs_qualified_interpreter_in_real_isolated_environments(tmp_path):
+def isolated_launchers(tmp_path, archive=False):
     import os
     import shutil
     import subprocess
     import venv
-    from amplifier_web import app_component_graph
+    from amplifier_web import app_component_graph, app_release_artifacts
 
     home = tmp_path / 'owned-app'
     bootstrap = tmp_path / 'bootstrap'
@@ -91,12 +91,32 @@ def test_bootstrap_execs_qualified_interpreter_in_real_isolated_environments(tmp
         (package / 'app_updates.py').write_text('def version_tuple(value): return tuple(int(part) for part in value.split("."))\n')
         shutil.copy2(generations.__file__, package / 'application_generations.py')
         shutil.copy2(app_component_graph.__file__, package / 'app_component_graph.py')
+        shutil.copy2(app_release_artifacts.__file__, package / 'app_release_artifacts.py')
         (package / '__main__.py').write_text('import sys,json\nfrom .application_generations import delegate\ndelegate()\nprint(json.dumps({"prefix":sys.prefix,"args":sys.argv[1:]}))\n')
         metadata = site / f'amplifier_unified-{version}.dist-info'
         metadata.mkdir()
         (metadata / 'METADATA').write_text(f'Name: amplifier-unified\nVersion: {version}\n')
-    receipt['componentDigest'] = digest(normalized([{'name': 'amplifier-unified', 'version': '99.0.0', 'direct': None}]))
+    row = {'name': 'amplifier-unified', 'version': '99.0.0', 'direct': None}
+    if archive:
+        artifact = {'url': app_release_artifacts.SOURCE + '/releases/download/v99.0.0/' + app_release_artifacts.filename('99.0.0'),
+                    'sha256': 'e' * 64, 'path': str(folder / app_release_artifacts.filename('99.0.0'))}
+        row['direct'] = {'url': Path(artifact['path']).as_uri(), 'archive_info': {}}
+        row['stamp'] = {'schema': 1, 'repository': app_release_artifacts.REPOSITORY,
+                        'revision': receipt['revision'], 'version': '99.0.0'}
+        (metadata / 'direct_url.json').write_text(json.dumps(row['direct']))
+        (package / 'release-source.json').write_text(json.dumps(row['stamp']))
+        receipt.update(artifact=artifact, installation=generations.bootstrap_identity(candidate))
+    receipt['componentDigest'] = digest(normalized([row], **({'artifact': receipt['artifact']} if archive else {})))
     (folder / 'validated.json').write_text(json.dumps(receipt))
+    return home, bootstrap, candidate, receipt
+
+
+@pytest.mark.parametrize('archive', [False, True])
+def test_bootstrap_execs_qualified_interpreter_in_real_isolated_environments(tmp_path, archive):
+    import os
+    import subprocess
+
+    home, bootstrap, candidate, receipt = isolated_launchers(tmp_path, archive)
     generations.promote(home, receipt, bootstrap)
     python = bootstrap / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
     arguments = ['--data-dir', str(home), '--port', '8999']
@@ -106,3 +126,40 @@ def test_bootstrap_execs_qualified_interpreter_in_real_isolated_environments(tmp
     actual = json.loads(result)
     assert Path(actual['prefix']).resolve() == candidate.resolve()
     assert actual['args'] == arguments
+
+
+@pytest.mark.parametrize('reader', ['old', 'current'])
+async def test_archive_preflight_uses_actual_bootstrap_reader(tmp_path, reader):
+    import os
+    from amplifier_web.updates import process
+
+    home, bootstrap, candidate, receipt = isolated_launchers(tmp_path, archive=True)
+    if reader == 'old':
+        module = next(bootstrap.rglob('application_generations.py'))
+        module.write_text('# Historical bootstrap has no archive-aware reader.\n')
+    python = candidate / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    assert await generations.can_read_candidate(process, bootstrap, python, receipt) == (reader == 'current')
+    assert not (home / 'updates/application-active.json').exists()
+
+
+@pytest.mark.parametrize('change', ['metadata', 'stamp', 'new-dependency'])
+async def test_archive_preflight_does_not_treat_changed_candidate_as_old_bootstrap(tmp_path, change):
+    import os
+    from amplifier_web.updates import process
+
+    _, bootstrap, candidate, receipt = isolated_launchers(tmp_path, archive=True)
+    info = next(candidate.rglob('amplifier_unified-99.0.0.dist-info'))
+    if change == 'metadata':
+        path = info / 'METADATA'
+        path.write_text(path.read_text() + 'Summary: changed after qualification\n')
+    elif change == 'stamp':
+        path = info.parent / 'amplifier_web/release-source.json'
+        stamp = json.loads(path.read_text())
+        path.write_text(json.dumps({**stamp, 'revision': 'f' * 40}))
+    else:
+        extra = info.parent / 'unexpected-1.0.dist-info'
+        extra.mkdir()
+        (extra / 'METADATA').write_text('Name: unexpected\nVersion: 1.0\n')
+    python = candidate / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    with pytest.raises(RuntimeError):
+        await generations.can_read_candidate(process, bootstrap, python, receipt)

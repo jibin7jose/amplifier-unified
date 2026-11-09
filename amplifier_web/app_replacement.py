@@ -12,6 +12,13 @@ def qualified(target):
     try:
         proof = target['qualification']
         app = components.validate_graph([proof['app']])[0]
+        if 'delivery' in app:
+            from .app_release_artifacts import validate_descriptor
+            artifact = validate_descriptor(proof.get('artifact'), app['version'])
+            if app['delivery'] != {key: artifact[key] for key in ('url', 'sha256')}:
+                return False
+        elif 'artifact' in proof:
+            return False
         validated_extras(proof['extras'])
         return (isinstance(target.get('sourceInstanceId'), str) and bool(target['sourceInstanceId'])
             and app['name'] == 'amplifier-unified' and app.get('url') == SOURCE and not app.get('subdirectory')

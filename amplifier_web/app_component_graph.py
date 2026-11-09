@@ -3,19 +3,29 @@ import asyncio
 import hashlib
 from importlib import metadata
 import json
+from pathlib import Path
 import re
 from urllib.parse import urlsplit
 
+from . import app_release_artifacts as artifacts
+
 # Runs with the target environment's isolated interpreter, including older apps.
-GRAPH_PROBE = r'''import importlib.metadata as m,json
+GRAPH_PROBE = r'''import importlib.metadata as m,json,re
+from pathlib import Path
 rows=[]
 for d in m.distributions():
- rows.append({'name':d.metadata['Name'],'version':d.version,'direct':json.loads(d.read_text('direct_url.json') or 'null')})
+ row={'name':d.metadata['Name'],'version':d.version,'direct':json.loads(d.read_text('direct_url.json') or 'null')}
+ if re.sub(r'[-_.]+','-',row['name'].lower())=='amplifier-unified':
+  try:
+   with Path(d.locate_file('amplifier_web/release-source.json')).open('rb') as stream: raw=stream.read(16385)
+   row['stamp']=json.loads(raw) if len(raw)<=16384 else None
+  except (OSError,ValueError): row['stamp']=None
+ rows.append(row)
 print(json.dumps(rows))
 '''
 
 
-def normalized(rows):
+def normalized(rows, *, artifact=None):
     if not isinstance(rows, list) or not rows:
         raise ValueError('The component receipt is empty or malformed')
     result = []
@@ -32,6 +42,18 @@ def normalized(rows):
         names.add(name)
         item = {'name': name, 'version': version}
         direct = raw.get('direct')
+        if name == 'amplifier-unified' and artifact is not None:
+            context = artifacts.validate_descriptor(artifact, version)
+            stamp = artifacts.validate_stamp(raw.get('stamp'), version)
+            if (stamp['repository'] != artifacts.REPOSITORY or not isinstance(direct, dict)
+                    or set(direct) != {'url', 'archive_info'}
+                    or not isinstance(direct['archive_info'], dict)
+                    or direct['url'] != Path(context['path']).as_uri()):
+                raise ValueError('Installed application does not match its qualified local artifact')
+            item.update(url=artifacts.SOURCE, revision=stamp['revision'],
+                        delivery={key: context[key] for key in ('url', 'sha256')})
+            result.append(item)
+            continue
         if direct:
             if not isinstance(direct, dict):
                 raise ValueError('Unsupported component source')
@@ -97,8 +119,8 @@ def requirements(graph, *, extras=None):
     return '\n'.join(lines) + '\n'
 
 
-async def read_graph(process, python):
-    return normalized(json.loads(await process(python, '-I', '-c', GRAPH_PROBE, timeout=30)))
+async def read_graph(process, python, *, artifact=None):
+    return normalized(json.loads(await process(python, '-I', '-c', GRAPH_PROBE, timeout=30)), artifact=artifact)
 
 
 def validate_graph(graph):
@@ -106,8 +128,15 @@ def validate_graph(graph):
         raise ValueError('Malformed component graph')
     raw = []
     for item in graph:
-        if not isinstance(item, dict) or set(item) - {'name', 'version', 'url', 'revision', 'subdirectory'}:
+        if not isinstance(item, dict) or set(item) - {'name', 'version', 'url', 'revision', 'subdirectory', 'delivery'}:
             raise ValueError('Malformed component graph')
+        if 'delivery' in item:
+            if (set(item) != {'name', 'version', 'url', 'revision', 'delivery'}
+                    or item.get('name') != 'amplifier-unified' or item.get('url') != artifacts.SOURCE
+                    or not isinstance(item.get('revision'), str)
+                    or not re.fullmatch('[a-f0-9]{40}', item['revision'])):
+                raise ValueError('Malformed application artifact graph')
+            artifacts.validate_delivery(item['delivery'], item['version'])
         direct = None
         if 'url' in item:
             direct = {'url': item['url'], 'vcs_info': {'vcs': 'git', 'commit_id': item.get('revision')}}
@@ -117,6 +146,9 @@ def validate_graph(graph):
             raise ValueError('Malformed component source')
         raw.append({'name': item.get('name'), 'version': item.get('version'), 'direct': direct})
     result = normalized(raw)
+    for original, item in zip(graph, result):
+        if 'delivery' in original:
+            item['delivery'] = original['delivery']
     if result != graph:
         raise ValueError('Noncanonical component graph')
     return result

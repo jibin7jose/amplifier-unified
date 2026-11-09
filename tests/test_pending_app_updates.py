@@ -4,6 +4,7 @@ import copy
 from pathlib import Path
 from types import SimpleNamespace
 import time
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -11,6 +12,7 @@ from amplifier_web import app_updates, application_generations
 from amplifier_web.service import AppService
 from amplifier_web.updates import UpdateManager, work_paused
 from test_service import Runtime
+from test_app_updates import synthetic_release_artifact, synthetic_artifact_graph, synthetic_tool_install
 
 
 def release(letter='a', version='99.0.0'):
@@ -41,16 +43,17 @@ async def waiting(tmp_path, monkeypatch):
     async def process(*args, env=None, **kwargs):
         if 'tool' in args:
             fixture.installs.append(str(args[-1]))
+            synthetic_tool_install(args, {'env': env})
             python = Path(env['UV_TOOL_DIR'])/'amplifier-unified/bin/python'
-            python.parent.mkdir(parents=True)
+            python.parent.mkdir(parents=True, exist_ok=True)
             python.touch()
             return ''
         if fixture.fail_probe and revision_of(args[0]) == 'b'*40:
             raise RuntimeError('Synthetic candidate validation failure')
         return version_of(args[0])
-    async def graph(runner, python):
-        return [*host, {'name': 'amplifier-unified', 'version': version_of(python),
-                       'url': app_updates.SOURCE, 'revision': revision_of(python)}]
+    async def graph(runner, python, *, artifact=None):
+        return synthetic_artifact_graph([*host, {'name': 'amplifier-unified', 'version': version_of(python),
+                       'url': app_updates.SOURCE, 'revision': revision_of(python)}], artifact)
     async def target():
         return '/synthetic/uv', '/synthetic/launcher', tmp_path/'bootstrap/bin/python', {'installation': str(tmp_path/'bootstrap')}
     def promote(home, validated, bootstrap):
@@ -62,6 +65,7 @@ async def waiting(tmp_path, monkeypatch):
     async def no_inventory(**kwargs):
         pytest.fail('Waiting app must not inspect the old host component inventory')
     monkeypatch.setattr(app_updates, 'check', check)
+    monkeypatch.setattr(app_updates.artifacts, 'prepare', synthetic_release_artifact)
     monkeypatch.setattr(app_updates, 'process', process)
     monkeypatch.setattr(app_updates.shutil, 'which', lambda _: '/synthetic/uv')
     monkeypatch.setattr(app_updates, 'installed_extras', lambda: [])
@@ -69,6 +73,7 @@ async def waiting(tmp_path, monkeypatch):
     monkeypatch.setattr(app_updates.components, 'read_graph', graph)
     monkeypatch.setattr(app_updates, 'installed_target', target)
     monkeypatch.setattr(application_generations, 'supports', lambda _: True)
+    monkeypatch.setattr(application_generations, 'can_read_candidate', AsyncMock(return_value=True))
     monkeypatch.setattr(application_generations, 'promote', promote)
     monkeypatch.setattr(app_updates, 'request_managed_restart', restart)
     monkeypatch.setattr('amplifier_web.deployment_service.current_process_is_unit_managed', lambda _: True)

@@ -437,9 +437,10 @@ class UpdateManager:
         self.closed = False
         self.cleanup_task = None
         self.wakeup = asyncio.Event()
-        from .update_readiness import running_identity,valid_target
+        from .update_readiness import running_identity,valid_target,capture_artifact
         self.running_identity = running_identity()
         state = service.state.setdefault('updates', {})
+        self._running_artifact = capture_artifact(self)
         from .app_replacement import pending as replacement_pending
         # An older process may have died after replacing its files but before
         # recording a restart target. Preserve uncertainty, never infer rollback.

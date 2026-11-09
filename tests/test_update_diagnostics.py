@@ -9,7 +9,7 @@ from amplifier_web.updates import process,UpdateManager
 from amplifier_web.update_diagnostics import CommandFailure,CommandTimeout,PROBE_PREFIX,probe_record
 from amplifier_web.service import AppService
 from test_service import Runtime
-from test_app_updates import prepared_activation
+from test_app_updates import prepared_activation, synthetic_release_artifact
 from test_runtime_ref_identity import normalized_runtime
 
 
@@ -156,6 +156,7 @@ async def test_collector_and_bounded_update_journal_receive_only_sanitized_origi
 
 async def test_candidate_install_failure_cannot_replace_host_or_become_generic(tmp_path,monkeypatch):
     monkeypatch.setattr(app_updates.components,'installed_graph',lambda:[{'name':'amplifier-core','version':'1.6.1'}])
+    monkeypatch.setattr(app_updates.artifacts,'prepare',synthetic_release_artifact)
     service=AppService(tmp_path,Runtime(),workspace=tmp_path)
     manager=UpdateManager(service);service.update_manager=manager
     service.state['updates']['application']={'status':'update','revision':'a'*40,'latest':'99.0.0'}

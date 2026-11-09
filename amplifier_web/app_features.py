@@ -5,7 +5,6 @@ installation, busy admission, replacement and restart remain in app_updates.
 """
 import copy
 from functools import lru_cache
-import json
 from importlib import metadata
 import os
 from pathlib import Path
@@ -101,11 +100,12 @@ def managed_browser_executable(home):
 
 def running_application(manager):
     from . import app_updates
+    from .app_release_artifacts import distribution_row
+    from .update_readiness import artifact_context
     distribution = metadata.distribution('amplifier-unified')
     if Path(distribution.locate_file('amplifier_web')).resolve() != Path(__file__).parent.resolve():
         raise ValueError('Feature installation requires the serving packaged app, not a development checkout.')
-    direct = json.loads(distribution.read_text('direct_url.json') or 'null')
-    row = app_updates.components.normalized([{'name': 'amplifier-unified', 'version': distribution.version, 'direct': direct}])[0]
+    row = app_updates.components.normalized([distribution_row(distribution)], artifact=artifact_context(manager))[0]
     if (row.get('url', '').removesuffix('.git') != app_updates.SOURCE
             or row.get('subdirectory')
             or row.get('revision') != manager.running_identity.get('revision')
