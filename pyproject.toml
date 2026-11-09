@@ -47,6 +47,10 @@ build-backend = "hatchling.build"
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[tool.hatch.build]
+# Produced by the release owner; retained unchanged when rebuilding an sdist.
+artifacts = ["/amplifier_web/release-source.json"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["amplifier_web", "amplifier_operations", "amplifier_kernels", "amplifier_scheduling", "amplifier_recall", "amplifier_outputs", "amplifier_worktrees", "amplifier_publishing", "amplifier_portability"]
 

@@ -107,10 +107,14 @@ jobs:
       - name: Build and verify distributions
         env:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_REVISION: ${{ steps.release.outputs.revision }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
         run: |
           uv run --no-sync python scripts/qualify_host_dependencies.py --verify --evidence "$RUNNER_TEMP/host-resolution"
+          python "$RUNNER_TEMP/release-tools/release_qualification.py" verify-candidate --evidence "$RUNNER_TEMP/host-resolution" --candidate "$RELEASE_CANDIDATE"
+          python "$RUNNER_TEMP/release-tools/release.py" stage-source --repository "$RELEASE_REPOSITORY" --revision "$RELEASE_REVISION" --version "$RELEASE_VERSION"
           uv build
-          python "$RUNNER_TEMP/release-tools/release.py" verify --version "$RELEASE_VERSION"
+          python "$RUNNER_TEMP/release-tools/release.py" verify --version "$RELEASE_VERSION" --repository "$RELEASE_REPOSITORY" --revision "$RELEASE_REVISION"
           uv venv "$RUNNER_TEMP/release-smoke"
           uv pip install --python "$RUNNER_TEMP/release-smoke/bin/python" --overrides "$RUNNER_TEMP/host-resolution/qualified-overrides.txt" dist/*.whl
           cd "$RUNNER_TEMP"

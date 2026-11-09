@@ -9,6 +9,7 @@ examples/shell-controls/node_modules/
 examples/shell-controls/package-lock.json
 packages/shell-sdk/*.tgz
 dist/
+/amplifier_web/release-source.json
 *.sqlite3*
 
 # Generated from the upstream assets and service-worker source at build time.

@@ -340,10 +340,169 @@ def test_release_requires_complete_frontend_bytes_in_both_formats(repository, ki
     assert not (dist / 'SHA256SUMS').exists()
 
 
-def test_released_sdist_rebuilds_complete_ui_without_node_or_network(tmp_path):
+@pytest.fixture
+def source_candidate(repository):
+    with (repository / 'pyproject.toml').open('a') as stream:
+        stream.write('\n[tool.hatch.build]\nartifacts = ["/amplifier_web/release-source.json"]\n')
+    (repository / '.gitignore').write_text('/dist/\n/amplifier_web/release-source.json\n__pycache__/\n*.pyc\n')
+    git(repository, 'add', '.'); git(repository, 'commit', '-m', 'source record packaging')
+    return repository, 'example/app', git(repository, 'rev-parse', 'HEAD'), '1.2.3'
+
+
+def test_source_record_uses_exact_selected_source_without_publication_claim(source_candidate):
+    root, repository, revision, version = source_candidate
+    assert release.stage_source(*source_candidate)['staged'] is True
+    path = root / 'amplifier_web/release-source.json'
+    data = path.read_bytes()
+    assert json.loads(data) == {'schema': 1, 'repository': repository, 'revision': revision, 'version': version}
+    assert git(root, 'status', '--porcelain') == ''
+    assert git(root, 'check-ignore', str(path))
+    assert release.stage_source(*source_candidate)['staged'] is True
+    assert path.read_bytes() == data
+    dist = distributions(root)
+    path.unlink()  # The separate publisher derives expectations; it need not retain staged metadata.
+    release.verify_dist(root, dist, version, repository, revision)
+
+
+@pytest.mark.parametrize('change', ['tracked', 'staged', 'untracked', 'removed-opt-in'])
+def test_source_record_rejects_dirty_candidate_before_write(source_candidate, change):
+    root, *_ = source_candidate
+    if change == 'untracked':
+        (root / 'new-input.py').write_text('changed')
+    elif change == 'removed-opt-in':
+        (root / 'pyproject.toml').write_text('[project]\nname="amplifier-unified"\nversion="1.2.3"\n')
+    else:
+        (root / 'amplifier_web/static/assets/app.js').write_text('changed')
+        if change == 'staged':
+            git(root, 'add', '.')
+    with pytest.raises(ValueError):
+        release.stage_source(*source_candidate)
+    assert not (root / 'amplifier_web/release-source.json').exists()
+
+
+@pytest.mark.parametrize('index,value', [(1, None), (1, 'https://github.com/example/app'), (2, None), (2, 'main'), (2, 'b' * 40), (3, '1.2.4')])
+def test_source_record_rejects_wrong_selected_identity(source_candidate, index, value):
+    args = list(source_candidate); args[index] = value
+    with pytest.raises(ValueError):
+        release.stage_source(*args)
+    assert not (source_candidate[0] / 'amplifier_web/release-source.json').exists()
+
+
+@pytest.mark.parametrize('operation', ['stage', 'verify'])
+def test_source_record_old_ancestor_cannot_select_legacy_contract_for_new_head(source_candidate, operation):
+    root, repository, _, version = source_candidate
+    old_revision = git(root, 'rev-parse', 'HEAD^')
+    with pytest.raises(ValueError, match='selected checkout'):
+        if operation == 'stage':
+            release.stage_source(root, repository, old_revision, version)
+        else:
+            release.verify_dist(root, distributions(root), version, repository, old_revision)
+    assert not (root / 'amplifier_web/release-source.json').exists()
+
+
+@pytest.mark.parametrize('kind', ['wheel', 'source'])
+@pytest.mark.parametrize('change', ['missing', 'malformed', 'schema', 'repository', 'revision', 'version', 'extra-field', 'different-bytes', 'duplicate'])
+def test_source_record_rejects_missing_or_changed_archive_facts(source_candidate, kind, change):
+    root, repository, revision, version = source_candidate
+    release.stage_source(*source_candidate)
+    dist = distributions(root)
+    relative = 'amplifier_web/release-source.json'
+    target = next(dist.glob('*.whl' if kind == 'wheel' else '*.tar.gz'))
+    if kind == 'wheel':
+        with zipfile.ZipFile(target) as archive:
+            entries = [(name, archive.read(name)) for name in archive.namelist()]
+        name = relative
+    else:
+        with tarfile.open(target) as archive:
+            entries = [(entry.name, archive.extractfile(entry).read()) for entry in archive.getmembers()]
+        name = 'amplifier_unified-1.2.3/' + relative
+    data = dict(entries)[name]
+    if change == 'duplicate':
+        entries.append((name, data))
+    else:
+        entries = [(entry, value) for entry, value in entries if entry != name]
+        if change == 'malformed':
+            data = b'{'
+        elif change == 'different-bytes':
+            data = json.dumps(json.loads(data), indent=2).encode()
+        elif change != 'missing':
+            value = json.loads(data); value[change] = 'changed'; data = json.dumps(value).encode()
+        if change != 'missing': entries.append((name, data))
+    if kind == 'wheel':
+        with zipfile.ZipFile(target, 'w') as archive:
+            for name, data in entries: archive.writestr(name, data)
+    else:
+        with tarfile.open(target, 'w:gz') as archive:
+            for name, data in entries:
+                entry = tarfile.TarInfo(name); entry.size = len(data)
+                archive.addfile(entry, io.BytesIO(data))
+    with pytest.raises(ValueError, match='source record'):
+        release.verify_dist(root, dist, version, repository, revision)
+    assert not (dist / 'SHA256SUMS').exists()
+
+
+def test_source_record_old_candidate_replay_remains_unstamped(repository):
+    result = release.stage_source(repository, 'example/app', git(repository, 'rev-parse', 'HEAD'), '1.2.3')
+    assert result['staged'] is False
+    assert not (repository / 'amplifier_web/release-source.json').exists()
+    release.verify_dist(repository, distributions(repository), '1.2.3')
+
+
+def test_source_record_cli_explains_missing_identity(source_candidate):
+    script = Path(__file__).parents[1] / 'scripts/release.py'
+    result = subprocess.run([sys.executable, str(script), 'stage-source'], cwd=source_candidate[0], capture_output=True, text=True)
+    assert result.returncode != 0 and 'repository' in result.stderr and 'Traceback' not in result.stderr
+    help_text = subprocess.check_output([sys.executable, str(script), '--help'], text=True)
+    assert '--repository OWNER/REPO' in help_text and '--revision FULL_COMMIT_SHA' in help_text
+
+
+def test_unstamped_editable_metadata_needs_no_release_or_frontend_setup(tmp_path):
+    pytest.importorskip('hatchling.build')
+    source = tmp_path / 'source'; source.mkdir()
+    root = Path(__file__).parents[1]
+    shutil.copyfile(root / 'pyproject.toml', source / 'pyproject.toml')
+    (source / 'README.md').write_text('Editable metadata fixture')
+    (source / 'amplifier_web').mkdir()
+    shutil.copyfile(root / 'amplifier_web/__init__.py', source / 'amplifier_web/__init__.py')
+    metadata = tmp_path / 'metadata'; metadata.mkdir()
+    code = '''import os, sys
+from hatchling.build import prepare_metadata_for_build_editable
+os.environ['PATH'] = ''
+def deny(event, args):
+    if event.startswith('socket.') or event in {'subprocess.Popen', 'os.system', 'os.posix_spawn'}:
+        raise RuntimeError('Editable metadata attempted external work: ' + event)
+sys.addaudithook(deny)
+print(prepare_metadata_for_build_editable(sys.argv[1]))
+'''
+    result = subprocess.check_output([sys.executable, '-I', '-c', code, str(metadata)], cwd=source, text=True)
+    assert (metadata / result.strip() / 'METADATA').is_file()
+    assert not (source / 'amplifier_web/release-source.json').exists()
+    assert not (source / 'amplifier_web/static').exists()
+
+
+def test_release_workflow_stages_source_only_after_candidate_verification():
+    workflow = yaml.safe_load((Path(__file__).parents[1] / '.github/workflows/release.yml').read_text())
+    steps = workflow['jobs']['prepare']['steps']
+    build = next(step for step in steps if step.get('name') == 'Build and verify distributions')
+    commands = build['run']
+    assert commands.index('verify-candidate') < commands.index('stage-source') < commands.index('uv build')
+    assert '--candidate "$RELEASE_CANDIDATE"' in commands
+    assert '--repository "$RELEASE_REPOSITORY" --revision "$RELEASE_REVISION"' in commands
+    assert build['env']['RELEASE_REPOSITORY'] == '${{ github.repository }}'
+    assert build['env']['RELEASE_REVISION'] == '${{ steps.release.outputs.revision }}'
+
+
+def test_released_sdist_rebuilds_complete_ui_without_node_or_network(tmp_path, request):
     """Exercise the real build backend and policy, outside the source checkout."""
     pytest.importorskip('hatchling.build')
     root = Path(__file__).parents[1]
+    record = root / 'amplifier_web/release-source.json'
+    original = record.read_bytes() if record.exists() else None
+    request.addfinalizer(lambda: record.write_bytes(original) if original is not None else record.unlink(missing_ok=True))
+    revision = git(root, 'rev-parse', 'HEAD')
+    version = release.version_at(root)
+    release.stage_source(root, 'microsoft/amplifier-unified', revision, version)
+    expected_record = record.read_bytes()
     dist = tmp_path / 'dist'
     dist.mkdir()
     empty_path = tmp_path / 'empty-path'
@@ -352,7 +511,7 @@ def test_released_sdist_rebuilds_complete_ui_without_node_or_network(tmp_path):
     builder.write_text('''import os, shutil, socket, subprocess, sys
 from hatchling.build import build_sdist, build_wheel
 os.environ["PATH"] = sys.argv[3]
-assert shutil.which("node") is None and shutil.which("npm") is None
+assert all(shutil.which(name) is None for name in ("node", "npm", "git"))
 def deny(event, args):
     if event.startswith("socket.") or event in {"subprocess.Popen", "os.system", "os.posix_spawn", "os.exec", "os.spawn"}:
         raise RuntimeError("Build attempted network or an external process: " + event)
@@ -368,6 +527,10 @@ for probe in (lambda: socket.create_connection(("127.0.0.1", 9)),
 print((build_sdist if sys.argv[1] == "sdist" else build_wheel)(sys.argv[2]))
 ''')
     command = [sys.executable, '-I', str(builder)]
+    direct = tmp_path / 'direct-wheel'
+    direct.mkdir()
+    subprocess.run([*command, 'wheel', str(direct), str(empty_path)], cwd=root,
+                   check=True, capture_output=True, text=True, timeout=120)
     subprocess.run([*command, 'sdist', str(dist), str(empty_path)], cwd=root,
                    check=True, capture_output=True, text=True, timeout=120)
     extracted = tmp_path / 'extracted'
@@ -375,9 +538,13 @@ print((build_sdist if sys.argv[1] == "sdist" else build_wheel)(sys.argv[2]))
         archive.extractall(extracted, filter='data')
     source = next(extracted.iterdir())
     assert not (source / '.git').exists()
+    assert (source / 'amplifier_web/release-source.json').read_bytes() == expected_record
     subprocess.run([*command, 'wheel', str(dist), str(empty_path)], cwd=source,
                    check=True, capture_output=True, text=True, timeout=120)
-    release.verify_dist(root, dist, release.version_at(root))
+    with zipfile.ZipFile(next(direct.glob('*.whl'))) as initial, zipfile.ZipFile(next(dist.glob('*.whl'))) as rebuilt:
+        assert initial.read('amplifier_web/release-source.json') == expected_record
+        assert {name: initial.read(name) for name in initial.namelist()} == {name: rebuilt.read(name) for name in rebuilt.namelist()}
+    release.verify_dist(root, dist, version, 'microsoft/amplifier-unified', revision)
     assert len((dist / 'SHA256SUMS').read_text().splitlines()) == 2
 
 
@@ -430,6 +597,7 @@ def test_real_sdist_build_excludes_untracked_ci_checkouts(repository):
 def test_release_publish_is_rerunnable_without_moving_tags_or_replacing_published_assets(repository,monkeypatch,published):
     dist=distributions(repository);revision=git(repository,'rev-parse','HEAD');calls=[]
     def run(*args,**kwargs):
+        if args[:2] == ('git', 'show'): return git(repository, 'show', args[2])
         calls.append(args)
         if args[:3]==('git','rev-parse','HEAD'):return revision
         if args[:2]==('git','ls-remote'):return revision+'\trefs/tags/v1.2.3'
@@ -445,16 +613,18 @@ def test_release_publish_is_rerunnable_without_moving_tags_or_replacing_publishe
 def test_release_never_moves_a_remote_tag(repository,monkeypatch):
     dist=distributions(repository);revision=git(repository,'rev-parse','HEAD');calls=[]
     def run(*args,**kwargs):
+        if args[:2] == ('git', 'show'): return git(repository, 'show', args[2])
         calls.append(args)
         return revision if args[:2]==('git','rev-parse') else 'b'*40+'\trefs/tags/v1.2.3'
     monkeypatch.setattr(release,'run',run)
     with pytest.raises(ValueError,match='refusing to move'):release.publish(repository,'example/app','v1.2.3',revision,dist)
-    assert len(calls)==2
+    assert len(calls)==3
 
 
 def test_new_release_publishes_only_after_draft_assets_are_uploaded(repository,monkeypatch):
     dist=distributions(repository);revision=git(repository,'rev-parse','HEAD');calls=[]
     def run(*args,**kwargs):
+        if args[:2] == ('git', 'show'): return git(repository, 'show', args[2])
         calls.append(args)
         if args[:3]==('git','rev-parse','HEAD'):return revision
         if args[:3]==('gh','release','list'):return '[]'
@@ -512,11 +682,13 @@ def test_shallow_publication_preserves_remote_tag_identity(repository, monkeypat
 def test_invalid_package_never_creates_a_tag_or_release(repository,monkeypatch):
     dist=distributions(repository);revision=git(repository,'rev-parse','HEAD');calls=[]
     (repository/'amplifier_web/static/assets/app.js').write_text('unvalidated bytes')
-    def run(*args,**kwargs):calls.append(args);return revision
+    def run(*args,**kwargs):
+        if args[:2] == ('git', 'show'): return git(repository, 'show', args[2])
+        calls.append(args); return revision
     monkeypatch.setattr(release,'run',run)
     with pytest.raises(ValueError,match='validated frontend bytes'):
         release.publish(repository,'example/app','v1.2.3',revision,dist)
-    assert calls==[('git','rev-parse','HEAD')]
+    assert calls==[('git','rev-parse','HEAD'), ('git','rev-parse','HEAD')]
 
 
 def test_release_requires_notes_for_exact_version_before_any_mutation(repository,monkeypatch):

@@ -16,6 +16,7 @@ import tomllib
 import zipfile
 
 VERSION = re.compile(r"\d+\.\d+\.\d+\Z")
+RELEASE_SOURCE = "amplifier_web/release-source.json"
 
 
 def run(*args, cwd=None):
@@ -174,10 +175,60 @@ def verify_frontend(root, names, read, label):
             raise ValueError(label + " frontend references a missing asset")
 
 
-def verify_dist(root, dist, expected):
+def source_record_bytes(root, repository, revision, version):
+    """Source facts, never publication proof; old candidates remain unstamped."""
+    current = run('git', 'rev-parse', 'HEAD', cwd=root)
+    selected = revision or current
+    if not isinstance(selected, str) or not re.fullmatch(r'[0-9a-f]{40}', selected):
+        raise ValueError('Source record requires a full selected commit SHA')
+    if selected != current:
+        raise ValueError('Source record does not match the selected checkout')
+    # Only the selected commit can opt into the new packaging contract.
+    project = run('git', 'show', selected + ':pyproject.toml', cwd=root)
+    build = tomllib.loads(project).get('tool', {}).get('hatch', {}).get('build', {})
+    if '/' + RELEASE_SOURCE not in build.get('artifacts', []):
+        return None
+    if not isinstance(repository, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
+        raise ValueError('Source record requires the selected release repository')
+    if not isinstance(revision, str) or not re.fullmatch(r'[0-9a-f]{40}', revision):
+        raise ValueError('Source record requires a full selected commit SHA')
+    if version_at(root) != version:
+        raise ValueError('Source record does not match the selected checkout')
+    run('git', 'diff', '--exit-code', 'HEAD', '--', cwd=root)
+    if run('git', 'ls-files', '--others', '--exclude-standard', cwd=root):
+        raise ValueError('Source record requires a clean candidate without untracked inputs')
+    value = {'schema': 1, 'repository': repository, 'revision': revision, 'version': version}
+    return (json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n').encode()
+
+
+def stage_source(root, repository, revision, version):
+    """Stage generated package facts after the workflow verifies its candidate."""
+    data = source_record_bytes(root, repository, revision, version)
+    path = root / RELEASE_SOURCE
+    if path.is_symlink():
+        raise ValueError('Source record destination must not be a link')
+    if data is None:
+        if path.exists():
+            raise ValueError('Historical candidate cannot carry a source record')
+        return {'staged': False, 'reason': 'candidate predates source-record packaging'}
+    path.write_bytes(data)
+    return {'staged': True, 'path': RELEASE_SOURCE}
+
+
+def verify_source_record(names, read, expected, label):
+    count = names.count(RELEASE_SOURCE)
+    if expected is None:
+        if count:
+            raise ValueError(label + ' unexpectedly carries a source record for a historical candidate')
+    elif count != 1 or read(RELEASE_SOURCE) != expected:
+        raise ValueError(label + ' source record does not match the selected candidate')
+
+
+def verify_dist(root, dist, expected, repository=None, revision=None):
     if version_at(root) != expected:
         raise ValueError("Checkout version changed during release")
     notes = release_notes(root, expected)
+    source_record = source_record_bytes(root, repository, revision, expected)
     wheels = list(dist.glob("*.whl"))
     sources = list(dist.glob("*.tar.gz"))
     if len(wheels) != 1 or len(sources) != 1:
@@ -185,6 +236,7 @@ def verify_dist(root, dist, expected):
     with zipfile.ZipFile(wheels[0]) as archive:
         names = archive.namelist()
         reject_ci_checkouts(names)
+        verify_source_record(names, archive.read, source_record, 'Wheel')
         metadata = [name for name in names if name.endswith(".dist-info/METADATA")]
         info = Parser().parsestr(archive.read(metadata[0]).decode()) if len(metadata) == 1 else {}
         if info.get("Name") != "amplifier-unified" or info.get("Version") != expected:
@@ -203,6 +255,8 @@ def verify_dist(root, dist, expected):
         names = archive.getnames()
         reject_ci_checkouts(names)
         prefix = names[0].split("/", 1)[0] + "/"
+        verify_source_record([entry.name.removeprefix(prefix) for entry in archive.getmembers() if entry.isfile()],
+                             lambda name: archive.extractfile(prefix + name).read(), source_record, 'Source archive')
         project = archive.extractfile(prefix + "pyproject.toml").read().decode()
         module = archive.extractfile(prefix + "amplifier_web/__init__.py").read().decode()
         if package_version(project, module) != expected:
@@ -241,7 +295,7 @@ def publish(root, repository, tag, revision, dist):
         raise ValueError("Release identity does not match validated checkout")
     if run("git", "rev-parse", "HEAD", cwd=root) != revision:
         raise ValueError("Release commit changed after validation")
-    verify_dist(root, dist, tag[1:])
+    verify_dist(root, dist, tag[1:], repository, revision)
     # Recheck remote immediately before mutation. Tags are never moved or deleted.
     remote = run("git", "ls-remote", "origin", "refs/tags/" + tag, "refs/tags/" + tag + "^{}", cwd=root)
     rows = [line.split() for line in remote.splitlines()]
@@ -288,16 +342,19 @@ def main():
         'Output names the remaining steps; merging the release PR starts existing publication '
         'and installed-package smoke workflows. Preparation never commits or publishes. '
         'See docs/validation/release-qualification.md for version choice and recovery.'
+        ' For source-record candidates, stage-source and verify also require '
+        '--version X.Y.Z --repository OWNER/REPO --revision FULL_COMMIT_SHA. '
+        'The workflow verifies its candidate receipt before staging; the record is not publication proof.'
     ))
-    parser.add_argument("command", choices=["prepare", "plan", "verify", "publish"])
+    parser.add_argument("command", choices=["prepare", "plan", "stage-source", "verify", "publish"])
     parser.add_argument("--dist", type=Path, default=Path("dist"))
     parser.add_argument("--version")
     parser.add_argument("--notes-file", type=Path, help="One authored release entry as JSON (prepare only)")
     parser.add_argument("--build", action="store_true", help="Run the canonical frontend build in the current prepared environment (prepare only)")
     parser.add_argument("--tag")
-    parser.add_argument("--revision")
+    parser.add_argument("--revision", help="Full selected commit SHA (plan, stage-source, verify, publish)")
     parser.add_argument("--fetch-tag", action="store_true", help="Fetch only the exact remote version tag before planning")
-    parser.add_argument("--repository")
+    parser.add_argument("--repository", help="Selected GitHub owner/repo (stage-source, verify, publish)")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     root = Path.cwd()
@@ -315,8 +372,17 @@ def main():
             with args.output.open("a") as output:
                 output.write("".join(f"{key}={value}\n" for key, value in result.items()))
         print(json.dumps(result))
+    elif args.command == 'stage-source':
+        try:
+            result = stage_source(root, args.repository, args.revision, args.version)
+        except (ValueError, OSError) as exc:
+            parser.exit(1, f'Source record staging failed: {exc}\n')
+        print(json.dumps(result))
     elif args.command == "verify":
-        verify_dist(root, args.dist, args.version)
+        try:
+            verify_dist(root, args.dist, args.version, args.repository, args.revision)
+        except (ValueError, OSError) as exc:
+            parser.exit(1, f'Release verification failed: {exc}\n')
     else:
         publish(root, args.repository, args.tag, args.revision, args.dist)
 

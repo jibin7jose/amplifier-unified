@@ -156,6 +156,21 @@ The source-archive round-trip regression exercises the real package backend with
 Node absent and network/process creation denied. It is an affected packaging
 check, not an additional universal release campaign.
 
+For candidates declaring `/amplifier_web/release-source.json` in Hatch's global
+`artifacts` list, the existing release tool stages that ignored file immediately
+before packaging, after verifying the selected candidate receipt. Its deterministic
+`schema: 1`, GitHub `repository` (`owner/repo`), full `revision` and package `version`
+describe the clean source candidate. Wheel and sdist must carry identical bytes
+matching those facts. The publication runner derives them again from its selected
+checkout; it does not trust the package's own assertion. The sdist retains the file
+when rebuilt without Git, Node or network access. Older manually selected candidates
+without that declaration keep their original unstamped packaging contract.
+
+Ordinary local/editable builds do not generate this record and require no release
+setup. A retained record states source facts only: it does not prove publication,
+unchanged delivery bytes, installed provenance or update eligibility. Those remain
+separate qualification and runtime concerns. No build hook or runtime reader is added.
+
 Routine release verification ends after the hosted published-package smoke.
 Absent a concrete failure, do not repeat its exact-candidate wheel, source or
 asset checks manually after publication. Record the workflow result and finish
