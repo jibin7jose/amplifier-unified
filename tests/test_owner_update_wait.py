@@ -953,6 +953,89 @@ async def test_final_idle_gate_requires_positive_enrolled_checkpoint(waiting):
     assert h.row['ready'] and not h.manager.busy()
 
 
+async def test_stop_supersedes_lost_owner_wait_without_claiming_checkpoint_or_replay(waiting):
+    h = waiting
+    await h.wait()
+    await h.yield_turn()
+    h.runtime.workers.pop(h.sid)  # The original transport is positively gone.
+    await drain.observe_waiters(h.manager)
+    assert h.row['unknown'] and not h.row['ready']
+    assert h.manager.busy()
+    calls = len(h.runtime.boundary_calls)
+    await h.change_task('stop')
+    await drain.observe_waiters(h.manager)
+    assert h.row['unknown'] and h.row['suppressed'] and not h.row['ready']
+    assert h.app.state['updates']['drain']['phase'] == 'released'
+    assert not h.manager.busy()
+    saved = (await h.app.dispatch('task.receipt',
+        {'sessionId': h.sid, 'commandId': 'owner-wait'}, include_state=False))['result']['receipt']
+    assert saved['status'] == 'suppressed'
+    assert saved['boundary']['unknown'] and not saved['boundary']['ready']
+    assert len(h.runtime.boundary_calls) == calls  # No call to the lost owner.
+    assert not h.runtime.admitted
+
+
+async def test_idle_configuration_refresh_preserves_update_checkpoint_and_continuation(waiting):
+    h = waiting
+    session = h.app._session(h.sid)
+    session.update(configurationPending=True, configurationPendingRevision=7)
+    owner = h.runtime.workers[h.sid]['runtimeOwnerId']
+    original_task = copy.deepcopy(h.controller.tasks.record())
+    await h.wait()
+    await h.yield_turn()  # The real idle event schedules the competing refresh.
+    await h.settle()
+    assert not h.runtime.stopped, 'Refresh retired the enrolled owner before its checkpoint'
+    assert h.runtime.workers[h.sid]['runtimeOwnerId'] == owner
+    assert session['configurationPending'] and not session.get('configurationBusy')
+
+    assert await drain.prepare(h.manager, h.release)
+    assert h.row['ready'] and not h.row.get('suppressed')
+    await h.app.refresh_configuration(h.sid)
+    assert not h.runtime.stopped, 'Refresh must not invalidate an already ready update wait'
+    h.replace()
+    await h.reconnect(successor=True)
+    await h.app.refresh_configuration(h.sid)  # The successor has no old runtime to retire.
+    assert not h.app._session(h.sid).get('configurationPending')
+    await h.confirm()
+    await h.finish()
+    await h.finish()
+    assert len(h.runtime.admitted) == 1
+    admitted = h.runtime.admitted[0]
+    assert admitted['task']['id'] == original_task['id']
+    assert admitted['goal']['condition'] == OBJECTIVE
+    assert admitted['goal']['turns_used'] == 3
+    assert admitted['goal']['continuations'] == 2
+
+
+@pytest.mark.parametrize('superseded', ['configuration', 'stop', 'task-pause', 'new-owner', 'no-owner'])
+async def test_update_wait_does_not_block_superseding_configuration_refresh(waiting, superseded):
+    h = waiting
+    session = h.app._session(h.sid)
+    session.update(configurationPending=True, configurationPendingRevision=7)
+    await h.wait()
+    # Park without an idle event so this test controls refresh admission order.
+    h.runtime.native[h.sid].runtime.generation = None
+    h.runtime.native[h.sid].parked = True
+    session.update(status='idle')
+    session['collaborationGeneration']['terminal'] = True
+    if superseded == 'configuration':
+        session['configurationPendingRevision'] += 1
+    elif superseded == 'stop':
+        await h.change_task('stop')
+    elif superseded == 'task-pause':
+        await h.change_task('paused')
+    elif superseded == 'new-owner':
+        h.runtime.workers[h.sid] = {'runtimeOwnerId': 'replacement-owner'}
+    else:
+        h.runtime.workers.pop(h.sid)
+    await h.app.refresh_configuration(h.sid)
+    await h.settle()
+    assert not session.get('configurationPending')
+    assert not session.get('configurationBusy')
+    assert bool(h.runtime.stopped) is (superseded != 'no-owner')
+    assert not h.runtime.admitted
+
+
 async def test_predecessor_block_is_not_an_update_wait_and_remains_blocked(waiting):
     """The original workaround stops goals but cannot produce a completion wake."""
     h = waiting

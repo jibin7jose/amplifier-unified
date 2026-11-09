@@ -5108,6 +5108,13 @@ class AppService:
             session.pop('fileAccessPending', None)
             session.pop('configurationRefresh',None)
             return
+        from .update_drain import owner_waiting
+        boundary=((self.state.get('updates',{}).get('drain') or {}).get('workers',{}).get(session['id']) or {})
+        # Passive freshness must not retire the enrolled owner before the update
+        # settles. New settings, Stop and task changes still supersede that wait.
+        if (isinstance(workers,dict) and boundary.get('owner')
+                and (workers.get(session['id']) or {}).get('runtimeOwnerId')==boundary['owner']
+                and owner_waiting(self,session['id'])):return
         if any(w.get('persistent') and w.get('status') in {'idle','running','starting'} for w in session.get('workers',[])):return
         session['configurationBusy']=True
         revision=session.get('configurationPendingRevision',0)

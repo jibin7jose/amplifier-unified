@@ -587,6 +587,12 @@ and children finish before positive checkpoint evidence permits replacement.
 Unsubmitted returns wait only for that owner; independent admitted work can
 still report on its original request. Other conversations remain usable.
 
+Routine idle configuration refresh retains that exact enrolled worker while its
+authorized update wait remains current, including after its checkpoint is ready.
+It must not destroy the checkpoint owner or manufacture a settings failure. New
+settings, Stop or task changes still supersede the wait; an absent or replacement
+worker is not retained by an older owner's boundary.
+
 After exact healthy `restart-ack`, matching running revision, and released
 replacement drain, the host admits one guarded continuation. An already queued
 eligible result takes precedence over a redundant update notification. Duplicate
