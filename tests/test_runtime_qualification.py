@@ -250,6 +250,43 @@ def test_windows_eol_metadata_rejects_malformed_policy(tmp_path, monkeypatch):
         runtime_qualification.installed_graph(project)
 
 
+@pytest.mark.parametrize('change', [
+    'none', 'text', 'binary', 'staged', 'staged-restored',
+    'local-false', 'local-input', 'mode', 'deleted',
+])
+async def test_staged_source_policy_uses_the_same_windows_checkout_eol_policy(tmp_path, monkeypatch, change):
+    import hashlib
+    import os
+    from amplifier_web import updates
+    source, _, isolated, git = _windows_eol_fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv('AMPLIFIER_GITHUB_ACCESS', 'anonymous')
+    if change == 'text':
+        (source / 'tracked.txt').write_bytes(b'changed\r\nsecond\r\n')
+    elif change == 'binary':
+        (source / 'binary.dat').write_bytes(b'\x00binary\r\n')
+    elif change in {'staged', 'staged-restored'}:
+        (source / 'tracked.txt').write_bytes(b'changed\r\nsecond\r\n')
+        git('-c', 'core.autocrlf=true', 'add', 'tracked.txt')
+        if change == 'staged-restored':
+            (source / 'tracked.txt').write_bytes(b'original\r\nsecond\r\n')
+    elif change.startswith('local-'):
+        git('config', '--local', 'core.autocrlf', change.removeprefix('local-'))
+    elif change == 'mode':
+        git('config', '--local', 'core.filemode', 'true')
+        (source / 'tracked.txt').chmod(0o755)
+    elif change == 'deleted':
+        (source / 'tracked.txt').unlink()
+    before = {p.relative_to(source).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in source.rglob('*') if p.is_file()}
+    before_env = dict(os.environ)
+    protected, artifacts = await updates.cache_changes(source)
+    assert bool(protected) is (change not in {'none', 'local-input'})
+    assert artifacts == []  # EOL interpretation is not a restorable cache artifact.
+    assert {p.relative_to(source).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in source.rglob('*') if p.is_file()} == before
+    assert dict(os.environ) == before_env
+
+
 @pytest.mark.parametrize('platform', ['linux', 'darwin'])
 def test_checkout_eol_lookup_does_not_change_posix_policy(tmp_path, monkeypatch, platform):
     monkeypatch.setattr(runtime_qualification, 'sys', SimpleNamespace(platform=platform))

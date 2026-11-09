@@ -313,7 +313,25 @@ async def cache_changes(root):
     inside an isolated staging copy. Untracked files are never removed.
     """
     root = Path(root).resolve()
-    records = (await process('git','--no-optional-locks','status','--porcelain=v1','-z','--untracked-files=no',cwd=root,timeout=10,raw=True)).split(b'\0')
+    from .runtime_qualification import _installed_git_environment, _installed_checkout_environment
+    isolated = _installed_git_environment()
+    checkout = await asyncio.to_thread(_installed_checkout_environment, root, isolated)
+    options = []
+    if checkout is not isolated:
+        # Reuse installed provenance's validated scalar, not personal auth,
+        # includes or rewrites. process() re-sanitizes anonymous environments,
+        # so carry this metadata-only value as an explicit Git argument.
+        last = int(checkout['GIT_CONFIG_COUNT']) - 1
+        options = ['-c', 'core.autocrlf=' + checkout[f'GIT_CONFIG_VALUE_{last}']]
+    records = (await process('git',*options,'--no-optional-locks','status','--porcelain=v1','-z','--untracked-files=no',cwd=root,timeout=10,raw=True)).split(b'\0')
+    changed = None
+    if options and any(record.startswith(b' M ') for record in records):
+        # With optional index writes disabled, status may keep a stat-only M
+        # after changing EOL interpretation. Ask Git for actual worktree edits.
+        # Staged/type/deleted changes below remain protected independently.
+        changed = set((await process('git',*options,'--no-optional-locks','diff',
+            '--no-ext-diff','--no-textconv','--name-only','-z','--',
+            cwd=root,timeout=10,raw=True)).split(b'\0'))
     protected, artifacts = [], []
 
     async def head_entry(path, revision='HEAD'):
@@ -383,6 +401,8 @@ async def cache_changes(root):
         change=record[:2].decode('ascii');path=os.fsdecode(record[3:])
         # Renames/copies have a second NUL-delimited name, even with whitespace.
         if 'R' in change or 'C' in change:index+=1
+        if change == ' M' and changed is not None and os.fsencode(path) not in changed:
+            continue
         if change not in {' M',' T'}:
             protected.append(path);continue
         if path=='wiki_weaver/_version.py':
