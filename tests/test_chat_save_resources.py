@@ -573,6 +573,9 @@ def test_execution_cold_commit_releases_both_preparations(app_factory, monkeypat
     row['execution'] = {'nodes': [], 'turns': [], 'retiredUsageNodes': [
         {'id': str(i), 'kind': 'llm', 'sessionId': row['id'], 'revision': 1,
          'usage': {'inputTokens': i}} for i in range(130)]}
+    # Exercise the detached fallback cache as well as encoded fragments; fully
+    # canonical accounting can now be encoded directly without that cache.
+    row['execution']['retiredUsageNodes'][0]['notAccounting'] = 'must be filtered'
     app._publish()
     cache = app._execution_preparation
     assert row['id'] in cache.accounting

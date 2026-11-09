@@ -336,6 +336,67 @@ def save_projected(cache, db, row, owners=None):
     return reference
 
 
+def test_current_save_does_not_recopy_canonical_retired_accounting(db, monkeypatch):
+    from amplifier_web import session_projection
+    cache, row = ExecutionPreparation(), observed_owner()
+    tree = row['execution']
+    tree['nodes'] = []
+    copies, original = [], session_projection._accounting_copy
+    def observe(value):
+        copies.append(1)
+        return original(value)
+    references = []
+    for step in range(3):
+        if step == 1:
+            tree['turns'][0]['phase'] = 'completed'
+        elif step == 2:
+            tree['retiredUsageNodes'][128]['assignmentReservation']['tokens'].append(99)
+        expected = resource_files.prepare(session_projection.stored_execution(tree))
+        with monkeypatch.context() as patch:
+            patch.setattr(session_projection, '_accounting_copy', observe)
+            result = save_projected(cache, db, row)
+        assert result['$resource'] == expected.identity
+        assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == json.loads(expected.text)
+        references.append(result['$resource'])
+    assert len(set(references)) == 3
+    assert not copies, 'A changed current row must not recopy already canonical retired accounting'
+    assert cache.bytes + cache.accounting_bytes + cache._reserved({}) <= 2 * cache.MAX_BYTES
+    # The public projection still owns detached nested values.
+    projection = session_projection.accounting_projection(tree)
+    projection[128]['assignmentReservation']['tokens'].append(100)
+    assert tree['retiredUsageNodes'][128]['assignmentReservation']['tokens'] == [128, 99]
+
+
+@pytest.mark.parametrize('change', ['extra-field', 'usage-extra', 'usage-bool', 'usage-none',
+    'empty-id', 'numeric-id', 'wrong-kind', 'duplicate', 'shared-nested', 'tuple', 'numeric-key'])
+def test_accounting_save_preserves_filtering_reduction_and_json_values(db, change):
+    from amplifier_web.session_projection import stored_execution
+    cache, row = ExecutionPreparation(), observed_owner()
+    tree = row['execution']
+    receipt = tree['retiredUsageNodes'][128]
+    if change == 'extra-field': receipt['prompt'] = 'Excluded from accounting'
+    elif change == 'usage-extra': receipt['usage']['notAccounting'] = 100
+    elif change == 'usage-bool': receipt['usage']['inputTokens'] = True
+    elif change == 'usage-none': receipt['usage'] = None
+    elif change == 'empty-id': receipt['id'] = ''
+    elif change == 'numeric-id': receipt['id'] = 44
+    elif change == 'wrong-kind': receipt['kind'] = 'tool'
+    elif change == 'duplicate':
+        receipt.update(id='0', revision=3, assignmentReservation={'tokens': [999]})
+        tree['retiredUsageNodes'][0]['assignmentId'] = 'original-assignment'
+    elif change == 'shared-nested':
+        tree['retiredUsageNodes'][129]['assignmentReservation'] = receipt['assignmentReservation']
+    elif change == 'tuple': receipt['lifecycle'] = (1, 'retained')
+    elif change == 'numeric-key': receipt['assignmentReservation'] = {1: [2]}
+    for revision in (1, 2):
+        tree['nodes'][-1]['revision'] = revision
+        tree['nodes'][-1]['usage']['inputTokens'] = 100 * revision
+        expected = resource_files.prepare(stored_execution(tree))
+        result = save_projected(cache, db, row)
+        assert result['$resource'] == expected.identity
+        assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == json.loads(expected.text)
+
+
 def test_three_owners_skip_conversion_only_after_fresh_content_and_committed_proof(db, monkeypatch):
     from amplifier_web import session_projection
     cache = ExecutionPreparation()

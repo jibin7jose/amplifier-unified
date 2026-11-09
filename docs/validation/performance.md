@@ -232,7 +232,17 @@ still visits the retained execution bytes. This short-term reduction in repeated
 conversion is not proof of history-independent work under WS5. Keep measuring
 that remaining cost; do not increase retention limits to make a benchmark pass.
 
-The retired-accounting preparation cache witnesses independent 128-row fragments
+For a synchronous private save, already canonical retired accounting can go
+directly to the existing encoder after the complete input witness excludes custom
+hooks. Check allowed fields, usage values and unique identities first; rows that
+need filtering or ordered reduction keep the original detached projection.
+Borrowed rows must not escape through an inline/public result or survive the save.
+Nested alias edits must still change the exact durable JSON and content hash.
+Prefer removing this redundant projection/decode work to retaining another graph
+or increasing a cache budget. `test_execution_references.py` checks this path
+against the canonical encoder and preserves public deep isolation.
+
+The fallback retired-accounting preparation cache witnesses independent 128-row fragments
 within the same 8 MiB witness and 64 MiB accounting budgets. It retains compact
 JSON and witness digests, decoding detached rows for each save. Non-JSON values
 keep the original projection. Encoding, accounting and committed/provisional
@@ -260,7 +270,7 @@ check changed receipts shared across fragments, removed turns, rejected rows
 and small-budget fallback against complete canonical readback.
 The tests also compare the pending flags and complete saved history after changed
 voice lifecycle, removed turns and rejected placements, including a small-budget
-fallback. This still traverses source witnesses and decodes retired-accounting
+fallback. This still traverses source witnesses and may decode fallback accounting
 fragments; it is not history-independent publication or a fix for unrelated
 storage GC delays.
 

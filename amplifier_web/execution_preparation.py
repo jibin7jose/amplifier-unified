@@ -92,6 +92,36 @@ def _input_digest(tree):
     return digest.digest()
 
 
+def _canonical_retired(rows):
+    """Borrow already canonical rows for one synchronous, builtin-only save.
+
+    Called only after the complete input witness excludes custom hooks. Nothing
+    here is retained or returned as an inline projection; ordinary callers keep
+    detached accounting. Rows needing filtering or ordered reduction fall back.
+    """
+    from .session_projection import ACCOUNTING_FIELDS, ACCOUNTING_USAGE_FIELDS
+    if len(rows) < ExecutionPreparation.CHUNK:
+        return None
+    identities = set()
+    for row in rows:
+        if (type(row) is not dict or row.keys() - ACCOUNTING_FIELDS
+                or row.get('kind') not in ('llm', 'worker')
+                or type(row.get('id')) is not str or not row['id']
+                or row.get('sessionId') is not None and type(row['sessionId']) is not str
+                or type(row.get('revision', 0)) is not int):
+            return None
+        if 'usage' in row:
+            usage = row['usage']
+            if (type(usage) is not dict or usage.keys() - ACCOUNTING_USAGE_FIELDS
+                    or any(type(amount) not in (str, int, float) for amount in usage.values())):
+                return None
+        identity = (row.get('sessionId'), row['id'])
+        if identity in identities:
+            return None
+        identities.add(identity)
+    return rows
+
+
 class ExecutionPreparation:
     CHUNK = 128
     # At most 128 MiB retained across encoding, accounting and references.
@@ -341,8 +371,10 @@ class ExecutionPreparation:
             if resource is not None:
                 pending[identity] = previous
                 return None, {**resource, **dict(previous.projection)}
-        value, turns, receipts = _stored_execution_fields(tree,
-            _retired=lambda rows: self.retired(identity, rows, self._reserved(pending)))
+        def retired(rows):
+            canonical = _canonical_retired(rows) if digest is not None else None
+            return canonical if canonical is not None else self.retired(identity, rows, self._reserved(pending))
+        value, turns, receipts = _stored_execution_fields(tree, _retired=retired)
         # Encoded nodes are an explicit part of preparation, not a partial
         # canonical tree masquerading as complete. Inline/unsupported values
         # still take the ordinary projection and retain Python representations.
