@@ -101,6 +101,60 @@ async def test_enabling_settles_existing_capability_and_permission_but_not_quest
     assert not any(call[0] == 'start' for call in app.runtime.calls)
 
 
+async def test_settlement_join_observes_actual_ack_and_cancelled_join_is_independent(app, monkeypatch):
+    source = app.state['sessions'][0]
+    await save(app)
+    await asyncio.sleep(0)
+    await app.access_mode.settle(source['id'], wait=True)
+    settle_once, passes = app.access_mode._settle_once, []
+    async def counted(sid):
+        passes.append(sid)
+        return await settle_once(sid)
+    monkeypatch.setattr(app.access_mode, '_settle_once', counted)
+    entered, finish = asyncio.Event(), asyncio.Event()
+    replies = []
+    async def respond(sid, identity, decision):
+        replies.append((sid, identity, decision))
+        entered.set()
+        await finish.wait()
+    app.runtime.approval = respond
+    source['approvals'].append({'id': 'held', 'status': 'pending', 'options': ['allow', 'deny']})
+    first = asyncio.create_task(app.access_mode.settle(source['id']))
+    await entered.wait()
+    joined = asyncio.create_task(app.access_mode.settle(source['id'], wait=True))
+    cancelled = asyncio.create_task(app.access_mode.settle(source['id'], wait=True))
+    await asyncio.sleep(0)
+    cancelled.cancel()
+    await asyncio.gather(cancelled, return_exceptions=True)
+    # save() may already have started the canonical settler. The ordinary
+    # duplicate is allowed to return; a joining observer must still wait.
+    assert not app.access_mode._settling[source['id']].done() and not joined.done()
+    assert source['approvals'][-1]['status'] == 'pending'
+    finish.set()
+    await asyncio.gather(first, joined)
+    assert source['approvals'][-1]['status'] == 'allow'
+    assert len(replies) == 1
+    assert passes == [source['id']]  # Passive joiners don't request another pass.
+
+
+async def test_settlement_join_propagates_owner_failure(app, monkeypatch):
+    sid = app.state['sessions'][0]['id']
+    entered, finish = asyncio.Event(), asyncio.Event()
+    async def broken(identity):
+        entered.set()
+        await finish.wait()
+        raise OSError('Canonical settlement failed')
+    monkeypatch.setattr(app.access_mode, '_settle_once', broken)
+    first = asyncio.create_task(app.access_mode.settle(sid))
+    await entered.wait()
+    joined = asyncio.create_task(app.access_mode.settle(sid, wait=True))
+    await asyncio.sleep(0)
+    finish.set()
+    for task in (first, joined):
+        with pytest.raises(OSError, match='Canonical settlement failed'):
+            await task
+
+
 async def test_stale_preview_and_exact_retry_do_not_change_authority_twice(app):
     source = app.state['sessions'][0]
     before = app.access_mode.snapshot(source)

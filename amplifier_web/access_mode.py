@@ -252,7 +252,7 @@ def definitions(schema, string):
 class AccessMode:
     def __init__(self, service):
         self.service = service
-        self._settling = set()
+        self._settling = {}
         self._settle_again = set()
         self.approval_timeout = 5
 
@@ -361,12 +361,18 @@ class AccessMode:
             await self.service.refresh_configuration(sid)
         return receipt
 
-    async def settle(self, sid):
+    async def settle(self, sid, *, wait=False):
         """Retry only resolution of the exact live waiter, never its operation."""
         if sid in self._settling:
-            self._settle_again.add(sid)
+            if wait:
+                error = await asyncio.shield(self._settling[sid])
+                if error is not None:
+                    raise error
+            else:
+                self._settle_again.add(sid)
             return
-        self._settling.add(sid)
+        settled = self._settling[sid] = asyncio.get_running_loop().create_future()
+        error = None
         try:
             attempt = 0
             while True:
@@ -378,8 +384,12 @@ class AccessMode:
                     return
                 attempt += 1
                 await asyncio.sleep(.25)
+        except BaseException as exc:
+            error = exc
+            raise
         finally:
-            self._settling.discard(sid)
+            self._settling.pop(sid, None)
+            settled.set_result(error)
 
     async def _settle_once(self, sid):
         async with self.service.lock:
