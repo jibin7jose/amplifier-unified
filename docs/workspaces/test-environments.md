@@ -32,6 +32,15 @@ automatically replayed. A read can observe containers without proving that an
 earlier command finished. Stop of a conversation revokes agent approval; it does
 not itself claim to stop an environment or cancel an in-container command.
 
+A fresh execute request refused at the initial environment lock is a failed
+admission, with `status: not-started`, `effectAdmitted: false` and code
+`environment_lock_contended`. No command or cleanup starts, and the competing
+resource's revision, pending operation and retained preparation remain unchanged.
+Inspect that owner before choosing a new request; the refused request is not
+replayed. This proof applies only to that new lock refusal. Earlier uncertain
+receipts and failures after admission keep their existing meaning, even after
+the environment is removed.
+
 A returned `repository-source-changed` or `repository-file-unsupported` failure
 during source preparation is a terminal failed check: no dependency preparation, guest launch or test command
 started. Keep the source stable, or correct selected paths that are neither

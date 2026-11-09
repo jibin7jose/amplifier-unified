@@ -295,6 +295,89 @@ async def test_stale_revision_and_active_owner_lock_cannot_clobber_state(app, ba
     assert len(backend) == 2
 
 
+@pytest.mark.parametrize('preparation_pending', [False, True])
+async def test_execute_lock_refusal_is_not_admitted_and_preserves_owner(app, backend, preparation_pending):
+    row = (await start(app))['resource']
+    sid = row['sessionId']
+    prior, _ = app.operations.requests.begin(sid, 'workspace.environments.start',
+        {'requestId': 'competing-owner'}, {})
+    prior = app.operations.requests.finish(prior, 'admitting', resourceId=row['id'])
+    before = owner.save(app.data_dir, owner.get(app.data_dir, sid, row['id']),
+        preparationPending=preparation_pending, pendingRequest=prior['requestId'])
+    calls = list(backend)
+    lock = app.data_dir / 'workspace-resources' / ('environment-' + row['id'] + '.lock')
+    with FileLock(str(lock)):
+        result = await act(app, 'execute', owner.public(app.data_dir, before),
+                           'blocked-execute', command='python -V')
+        saved = app.operations.requests.read(sid, 'blocked-execute')
+        assert saved == result['request']
+        assert owner.get(app.data_dir, sid, row['id']) == before
+        assert app.operations.requests.read(sid, prior['requestId']) == prior
+    assert saved['state'] == 'failed'
+    assert saved['result']['status'] == 'not-started'
+    assert saved['result']['effectAdmitted'] is False
+    assert saved['result']['code'] == 'environment_lock_contended'
+    assert result['resource'] == owner.public(app.data_dir, before)
+    assert backend == calls
+    again = await act(app, 'execute', owner.public(app.data_dir, before),
+                      'blocked-execute', command='python -V')
+    assert again['request'] == saved
+    assert owner.get(app.data_dir, sid, row['id']) == before
+    assert backend == calls
+
+
+@pytest.mark.parametrize('exception', [TimeoutError, owner.LockTimeout])
+async def test_execute_post_admission_timeout_stays_unknown(app, backend, monkeypatch, exception):
+    row = (await start(app))['resource']
+    row = owner.save(app.data_dir, owner.get(app.data_dir, row['sessionId'], row['id']),
+                     preparationPending=True)
+    def lost(*args):
+        backend.append(('execute', {}))
+        raise exception('lost after backend admission')
+    monkeypatch.setattr(owner, 'invoke', lost)
+    result = await act(app, 'execute', owner.public(app.data_dir, row),
+                       'admitted-timeout', command='python -V')
+    saved = app.operations.requests.read(row['sessionId'], 'admitted-timeout')
+    assert saved == result['request'] and saved['state'] == 'outcome_unknown'
+    assert saved['result']['status'] == 'unknown'
+    assert 'effectAdmitted' not in saved['result']
+    assert [action for action, _ in backend].count('execute') == 1
+
+
+@pytest.mark.parametrize('state', ['outcome_unknown', 'running'])
+async def test_execute_lock_refusal_cannot_reclassify_retained_request(app, backend, state):
+    row = (await start(app))['resource']
+    before = owner.get(app.data_dir, row['sessionId'], row['id'])
+    args = {'requestId': 'old-execute', 'command': 'true', 'expectedRevision': row['revision']}
+    request, _ = app.operations.requests.begin(row['sessionId'], 'workspace.environments.execute', args, {})
+    retained = app.operations.requests.finish(request, state, resourceId=row['id'],
+        result={'ok': False, 'status': 'not-started'}, message='Historical outcome remains unresolved.')
+    lock = app.data_dir / 'workspace-resources' / ('environment-' + row['id'] + '.lock')
+    with FileLock(str(lock)), pytest.raises(owner.LockTimeout):
+        await asyncio.to_thread(owner.effect, app, before, 'execute', args,
+            owner.configuration(app)[0], request, lambda: pytest.fail('admission ran'))
+    assert app.operations.requests.read(row['sessionId'], 'old-execute') == retained
+    assert owner.get(app.data_dir, row['sessionId'], row['id']) == before
+    assert [action for action, _ in backend] == ['prepare', 'start']
+
+
+@pytest.mark.parametrize('exception', [ValueError, owner.LockTimeout])
+async def test_execute_later_admission_error_does_not_borrow_initial_lock_proof(app, backend, exception):
+    row = (await start(app))['resource']
+    before = owner.save(app.data_dir, owner.get(app.data_dir, row['sessionId'], row['id']),
+                        preparationPending=True)
+    args = {'requestId': 'later-error', 'command': 'true', 'expectedRevision': before['revision']}
+    request, _ = app.operations.requests.begin(row['sessionId'], 'workspace.environments.execute', args, {})
+    def refuse():
+        raise exception('later admission error')
+    result = await asyncio.to_thread(owner.effect, app, before, 'execute', args,
+        owner.configuration(app)[0], request, refuse)
+    assert result['request']['state'] == 'outcome_unknown'
+    assert 'effectAdmitted' not in result['request']['result']
+    assert owner.get(app.data_dir, row['sessionId'], row['id']) == before
+    assert [action for action, _ in backend] == ['prepare', 'start']
+
+
 async def test_ownerless_pending_request_becomes_unknown_without_replay(app, backend, monkeypatch):
     row = (await start(app))['resource']
     raw = owner.get(app.data_dir, row['sessionId'], row['id'])

@@ -3,13 +3,14 @@
 # ruff: noqa: F401, F811
 import asyncio
 
+from filelock import FileLock
 import pytest
 
 from amplifier_web import task_environments as environments
 from amplifier_web.test_queue import TestQueue
 from test_configuration_authority import app
 from test_coordination_generation import until
-from test_task_environments import backend, scope
+from test_task_environments import backend, scope, start
 from test_test_queue import drive, queue, record, submit
 
 
@@ -134,6 +135,38 @@ async def test_guest_admission_lost_response_recovers_exact_result(app, queue, r
     assert record(queue, app)['job']['status'] == 'passed'
     assert len(running[1]) == 1
     assert [action for action, _ in backend].count('job_read') == 1
+
+
+@pytest.mark.parametrize('preparation_pending', [False, True])
+async def test_queued_execute_lock_refusal_preserves_resource_and_saved_result(app, queue, backend, preparation_pending):
+    await submit(app)
+    row = (await start(app))['resource']
+    sid = row['sessionId']
+    before = environments.save(app.data_dir, environments.get(app.data_dir, sid, row['id']),
+        preparationPending=preparation_pending, pendingRequest='start')
+    receipt = record(queue, app)
+    receipt['job'].update(resourceId=row['id'], status='checking')
+    queue.save(receipt)
+    calls = list(backend)
+    lock = app.data_dir / 'workspace-resources' / ('environment-' + row['id'] + '.lock')
+    with FileLock(str(lock)):
+        result = await queue.effect(receipt, environments.configuration(app)[0], 'execute')
+        saved = app.operations.requests.read(sid, receipt['requestId'] + ':execute')
+        assert saved == result
+        assert environments.get(app.data_dir, sid, row['id']) == before
+    assert result['state'] == 'failed'
+    assert result['result']['status'] == 'not-started'
+    assert result['result']['effectAdmitted'] is False
+    assert result['result']['code'] == 'environment_lock_contended'
+    assert 'durableJob' not in environments.get(app.data_dir, sid, row['id'])
+    observed = (await app.dispatch('workspace.tests.result',
+        {**scope(app), 'requestId': 'check'}))['result']
+    assert observed['operation']['state'] == 'failed'
+    assert observed['exitCode'] is None and observed['text'] == ''
+    assert await queue.effect(receipt, environments.configuration(app)[0], 'execute') == saved
+    assert app.operations.requests.read(sid, receipt['requestId'] + ':execute') == saved
+    assert backend == calls
+    assert environments.get(app.data_dir, sid, row['id']) == before
 
 
 async def test_profile_timeout_limit_is_enforced_before_any_admission(app, queue, backend):

@@ -882,6 +882,23 @@ def effect(app, row, action, args, config, request, admit, policy_admit=None):
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
             return {'resource': public(home, row), 'request': request}
+        if action == 'execute' and isinstance(exc, LockTimeout) and not locked and not admitted and result is None:
+            # Only this fresh request's initial lock refusal proves no execute
+            # admission. Retained preparation belongs to the earlier start,
+            # not this command. Never rewrite an older or changed receipt.
+            if (recorded != request or recorded.get('state') != 'admitting'
+                    or recorded.get('sessionId') != sid
+                    or recorded.get('requestId') != args['requestId']
+                    or recorded.get('action') != 'workspace.environments.execute'
+                    or recorded.get('resourceId') not in (None, row['id'])):
+                raise
+            message = 'The environment is busy with another operation. No command was admitted; inspect the current environment before making a new request.'
+            request = app.operations.requests.finish(recorded, 'failed', resourceId=row['id'],
+                result={'ok': False, 'status': 'not-started', 'effectAdmitted': False,
+                        'code': 'environment_lock_contended', 'message': message},
+                message=message)
+            # Without the resource lock, do not change its owner or projection.
+            return {'resource': public(home, row), 'request': request}
         if (locked and action in {'remove', 'finishCleanup'} and isinstance(result, dict)
                 and result.get('effectAdmitted') is False):
             # A returned helper/preflight refusal establishes that removal was
