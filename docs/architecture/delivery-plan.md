@@ -15,6 +15,11 @@ a release prerequisite. Its concrete resource semantics and numeric budgets rema
 proposals pending owner review. The waves below govern the separate protocol proof
 and migration, not an automatic cutover from main.
 
+The [prebuilt-release proposal](../design/prebuilt-release-artifacts.md) sequences
+the existing updater's artifact support before removing generated frontend output
+from Git. This packaging work preserves Node-free releases and is independent of
+the protocol migration; unrelated releases do not wait for it.
+
 ## Sequence and gates
 
 The November 7 refinement below defines the next small batches. The broader waves
