@@ -94,6 +94,68 @@ async def test_admission_history_commits_result_without_an_intermediate_full_sav
     assert not app.runtime.started and not app.runtime.sent
 
 
+@pytest.mark.parametrize('append_after_cancel', [False, True])
+async def test_admission_settles_cancelled_reload_of_loaded_history(
+        tmp_path, app_factory, monkeypatch, append_after_cancel):
+    from amplifier_web import automatic_history
+    from amplifier_web.cold_display import load
+    from amplifier_web.state_records import load_owner
+
+    directory = native_session(tmp_path / 'native', 'cancelled-reload')
+    app = app_factory()
+    await app.history.refresh()
+    row = app._session('cancelled-reload')
+    row['historyManaged'] = False
+    app._publish_changes(sessions={row['id']}, detail_only=True)
+    await app.history.load('cancelled-reload', canonical=True)
+    assert row['historyLoaded'] and not row['historyLoading']
+    await close_maintenance(app)
+    entered, release, finished = asyncio.Event(), threading.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    original_read = automatic_history.read_transcript
+
+    def held_read(*args, **kwargs):
+        loop.call_soon_threadsafe(entered.set)
+        try:
+            assert release.wait(5)
+            return original_read(*args, **kwargs)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(automatic_history, 'read_transcript', held_read)
+    pending = asyncio.create_task(app.history.load(row['id'], canonical=True))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        row['draft'] = 'Keep this unsent draft'
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+    finally:
+        release.set()
+        await asyncio.gather(pending, return_exceptions=True)
+        assert await asyncio.to_thread(finished.wait, 5)
+    assert not app.history.loads[row['id']].locked()
+    monkeypatch.setattr(automatic_history, 'read_transcript', original_read)
+    if append_after_cancel:
+        with (directory / 'transcript.jsonl').open('a') as stream:
+            stream.write(json.dumps({'role': 'assistant', 'content': 'New native answer'}) + '\n')
+    source_before = (directory / 'transcript.jsonl').read_bytes()
+
+    await app.history.ensure_loaded(row['id'])
+
+    descriptor, _ = load_owner(app.db, row['id'])
+    saved = load(app.db, descriptor['$viewPayload'])
+    assert row['historyLoaded'] and not row['historyLoading']
+    assert saved['historyLoaded'] and not saved['historyLoading'] and not saved['historyError']
+    assert saved['draft'] == 'Keep this unsent draft'
+    expected = ['Saved CLI question', 'Saved CLI answer']
+    if append_after_cancel:
+        expected.append('New native answer')
+    assert [message['text'] for message in saved['messages']] == expected
+    assert (directory / 'transcript.jsonl').read_bytes() == source_before
+    assert not app.runtime.started and not app.runtime.sent
+
+
 async def prepared(tmp_path, app_factory, monkeypatch):
     workspace = tmp_path / 'native'
     paths = {

@@ -1032,7 +1032,8 @@ class AutomaticHistory:
                 candidate = self.service.projections.sessions(self.service.state).by_id.get(session_id)
                 if candidate is None:
                     return
-                if candidate.get('historyLoaded', True) and not candidate.get('historyError'):
+                if (candidate.get('historyLoaded', True) and not candidate.get('historyError')
+                        and not candidate.get('historyLoading')):
                     # Checking the disk stamp needs identity only. Do not load
                     # cold display bodies or copy an entire execution history.
                     source = {key: candidate.get(key) for key in
