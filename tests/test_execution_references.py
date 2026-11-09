@@ -40,14 +40,19 @@ def test_two_owners_reuse_only_after_every_fresh_witness(db, monkeypatch):
     count = []
     witness = execution_preparation._witness
     monkeypatch.setattr(execution_preparation, '_witness', lambda value: (count.append(1), witness(value))[1])
+    complete = {resource_files.prepare(row['execution']).text.encode() for row in rows.values()}
+    sha256 = resource_files.hashlib.sha256
+    def observe_hash(value=b'', *args, **kwargs):
+        assert value not in complete, 'Unchanged whole resource rehashed'
+        return sha256(value, *args, **kwargs)
     with monkeypatch.context() as patch:
-        patch.setattr(resource_files.hashlib, 'sha256', lambda *a, **k: pytest.fail('Unchanged whole resource rehashed'))
+        patch.setattr(resource_files.hashlib, 'sha256', observe_hash)
         for name, row in rows.items():
             result = save(cache, db, row, rows)
             assert result == refs[name]
             result['bytes'] = 0  # Returned dict is not retained evidence.
     assert len(count) == 10  # Three node chunks plus two other complete fields per owner.
-    assert cache.bytes + cache._reserved({}) <= cache.MAX_BYTES
+    assert cache.bytes + cache.accounting_bytes + cache._reserved({}) <= 2 * cache.MAX_BYTES
 
 
 @pytest.mark.parametrize('change', ['alias', 'typed', 'field', 'remove-field', 'remove-chunk', 'order', 'custom'])
@@ -193,9 +198,9 @@ def test_inline_and_saturated_cache_preserve_original_storage(db):
         current = owner(str(index)); rows[current['id']] = current
         result = cache.reference(db, current, current['execution'], pending)
         assert result['$resource'] == resource_files.prepare(current['execution']).identity
-        assert cache.bytes + cache._reserved(pending) <= cache.MAX_BYTES
+        assert cache.bytes + cache.accounting_bytes + cache._reserved(pending) <= 2 * cache.MAX_BYTES
     db.commit(); cache.committed(pending, rows)
-    assert cache.bytes + cache._reserved({}) <= cache.MAX_BYTES
+    assert cache.bytes + cache.accounting_bytes + cache._reserved({}) <= 2 * cache.MAX_BYTES
     memory = sqlite3.connect(':memory:')
     try:
         memory.execute('CREATE TABLE state_resources (id TEXT PRIMARY KEY, value TEXT NOT NULL)')
@@ -217,16 +222,18 @@ def test_committed_and_provisional_reference_metadata_share_fragment_budget(db):
     committed = dict(cache.references)
     original_keys = set(cache.entries)
     pending = {}
-    for name in ('one', 'three', 'four', 'five'):
+    # Compact witnesses leave room for more owners; still saturate the shared
+    # budget and prove provisional references participate in eviction.
+    for name in ('one', *(str(i) for i in range(3, 13))):
         row = rows.setdefault(name, owner(name))
         row['execution']['nodes'][-1]['nested'][0] = 'provisional replacement'
         cache.reference(db, row, row['execution'], pending)
         assert any(entry is not None for entry in pending.values())
         assert cache.references == committed
-        assert cache.bytes + cache._reserved(pending) <= cache.MAX_BYTES
+        assert cache.bytes + cache.accounting_bytes + cache._reserved(pending) <= 2 * cache.MAX_BYTES
     assert not original_keys <= set(cache.entries)
     db.commit(); cache.committed(pending, rows)
-    assert cache.bytes + cache._reserved({}) <= cache.MAX_BYTES
+    assert cache.bytes + cache.accounting_bytes + cache._reserved({}) <= 2 * cache.MAX_BYTES
 
 
 @pytest.mark.parametrize('change', ['replacement', 'runtime', 'workspace', 'cold', 'native', 'deleted'])
@@ -350,7 +357,7 @@ def test_three_owners_skip_conversion_only_after_fresh_content_and_committed_pro
         actual['pendingWork'] = False  # Returned metadata cannot poison reuse.
         assert save_projected(cache, db, row, rows)['pendingWork'] is True
     assert not calls
-    assert cache.bytes + cache._reserved({}) <= cache.MAX_BYTES
+    assert cache.bytes + cache.accounting_bytes + cache._reserved({}) <= 2 * cache.MAX_BYTES
     # A cold service must derive everything again from source/storage evidence.
     assert save_projected(ExecutionPreparation(), db, rows['one']) == previous['one']
     assert calls == [1]
@@ -503,6 +510,7 @@ def test_digest_refresh_reserves_distinct_committed_and_pending_entries(db, monk
     reference = save_projected(cache, db, row)
     committed = cache.references[row['id']]
     cache.entries.clear(); cache.bytes = 0
+    cache.accounting.clear(); cache.accounting_bytes = 0
     cache.MAX_BYTES = committed.charge + committed.charge // 2
     row['execution']['nodes'][-1]['displayOnly'] = 'unchanged canonical projection'
     # Exercise the committed-reference return at the constrained reservation
@@ -516,7 +524,7 @@ def test_digest_refresh_reserves_distinct_committed_and_pending_entries(db, monk
     inline, actual = cache.stored(db, row, row['execution'], pending)
     assert inline is None and actual == reference
     assert pending[row['id']] is committed
-    assert cache.bytes + cache._reserved(pending) <= cache.MAX_BYTES
+    assert cache.bytes + cache.accounting_bytes + cache._reserved(pending) <= 2 * cache.MAX_BYTES
     db.commit(); cache.committed(pending, {row['id']: row})
     assert cache.references[row['id']] is committed
 
@@ -610,7 +618,7 @@ def test_placement_fragments_revalidate_changed_dependencies_and_preserve_exact_
         assert len(calls) == 2 * cache.CHUNK
     else:
         assert len(calls) == len(tree['nodes'])
-    assert cache.bytes + cache._reserved({}) <= cache.MAX_BYTES
+    assert cache.bytes + cache.accounting_bytes + cache._reserved({}) <= 2 * cache.MAX_BYTES
     assert cache.accounting_bytes <= cache.MAX_BYTES
 
 
@@ -620,7 +628,7 @@ def test_placement_preparation_falls_back_with_small_budget_and_inline_values(db
     cache.MAX_BYTES = 1000
     result = save_projected(cache, db, row)
     assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == stored_execution(row['execution'])
-    assert cache.bytes + cache._reserved({}) <= cache.MAX_BYTES
+    assert cache.bytes + cache.accounting_bytes + cache._reserved({}) <= 2 * cache.MAX_BYTES
     # A large node list alone does not turn inline tuple values into JSON lists.
     tree = {'nodes': [{'id': str(i), 'value': ('inline', i)} for i in range(300)]}
     inline, reference = cache.stored(db, row, tree, {})

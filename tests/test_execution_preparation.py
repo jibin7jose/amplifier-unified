@@ -67,7 +67,7 @@ def test_bounds_owner_replacement_and_eviction():
     for i in range(5):
         value = tree()
         assert cache.prepare(str(i), value) == resource_files.prepare(value)
-        assert cache.bytes <= cache.MAX_BYTES
+        assert cache.bytes + cache.accounting_bytes <= 2 * cache.MAX_BYTES
     value = tree()
     cache.MAX_BYTES = 1000000
     assert cache.prepare('same', value) == resource_files.prepare(value)
@@ -125,8 +125,11 @@ def test_retired_accounting_cache_observes_nested_edits_and_live_receipt_precede
     def prepared():
         return stored_execution(tree, _retired=lambda snapshot: cache.retired('a', snapshot))
     assert prepared() == stored_execution(tree)
-    previous = cache.accounting['a'][1]
-    assert prepared() == stored_execution(tree) and cache.accounting['a'][1] is previous
+    previous = cache.retired('a', rows)
+    entry = cache.accounting['a']
+    assert prepared() == stored_execution(tree) and cache.accounting['a'] is entry
+    previous[0]['usage']['inputTokens'] = -1  # A caller cannot poison cached rows.
+    assert prepared() == stored_execution(tree)
     rows[10]['usage']['inputTokens'] = 99
     rows[20]['assignmentReservation']['tokens'] = 80
     assert prepared() == stored_execution(tree)
@@ -134,7 +137,7 @@ def test_retired_accounting_cache_observes_nested_edits_and_live_receipt_precede
     tree['nodes'].append({**copy.deepcopy(rows[10]), 'revision': 2, 'liveObservation': True,
                           'assignmentId': 'replacement', 'usage': {'outputTokens': 50}})
     assert prepared() == stored_execution(tree)
-    assert cache.accounting['a'][1][10]['usage'] == {'inputTokens': 99}
+    assert cache.retired('a', rows)[10]['usage'] == {'inputTokens': 99}
     rows.reverse()
     assert prepared() == stored_execution(tree)
     cache.retain(())
@@ -203,11 +206,29 @@ def test_retired_snapshot_and_live_hook_order_match_uncached_projection():
 
 
 def test_retired_tuple_does_not_retain_a_borrowed_container():
+    from amplifier_web.session_projection import stored_execution
     cache = ExecutionPreparation()
     rows = [{'id': str(i), 'kind': 'llm', 'revision': 1,
              'lifecycle': {'tuple': tuple(['stable', i])}} for i in range(130)]
-    assert cache.retired('a', rows)
+    assert cache.retired('a', rows) is None
     assert not cache.accounting and cache.accounting_bytes == 0
+    tree = {'retiredUsageNodes': rows}
+    actual = stored_execution(tree, _retired=lambda snapshot: cache.retired('a', snapshot))
+    assert actual == stored_execution(tree)
+    assert type(actual['retiredUsageNodes'][0]['lifecycle']['tuple']) is tuple
+
+
+@pytest.mark.parametrize('value', [{1: 'number', '1': 'text'}, float('nan'), float('inf')])
+def test_retired_json_ineligible_values_keep_original_projection(value):
+    from amplifier_web.session_projection import stored_execution
+    cache = ExecutionPreparation()
+    rows = [{'id': str(i), 'kind': 'llm', 'revision': 1,
+             'lifecycle': {'value': value}} for i in range(130)]
+    assert cache.retired('a', rows) is None
+    assert not cache.accounting
+    tree = {'retiredUsageNodes': rows}
+    actual = stored_execution(tree, _retired=lambda snapshot: cache.retired('a', snapshot))
+    assert actual == stored_execution(tree)
 
 
 def test_one_retired_change_only_reprojects_and_sizes_one_fragment(monkeypatch):
@@ -224,7 +245,7 @@ def test_one_retired_change_only_reprojects_and_sizes_one_fragment(monkeypatch):
             patch.setattr(session_projection, 'accounting_projection', lambda tree, **kw: (
                 calls.append(len(tree['retiredUsageNodes'])), project(tree, **kw))[1])
             patch.setattr(cache, '_accounting_charge', lambda value: (sizes.append(len(value)), charge(value))[1])
-            assert cache.retired('root', rows) is previous
+            assert cache.retired('root', rows) == previous
             rows[-1]['assignmentReservation']['tokens'].append(9)
             current = cache.retired('root', rows)
         assert calls == sizes == [128]
@@ -274,3 +295,40 @@ def test_cross_fragment_aliases_invalidate_every_dependent_projection():
     assert before[127]['assignmentReservation'] == before[128]['assignmentReservation'] == {'tokens': [7]}
     assert after[127]['assignmentReservation']['tokens'] == [7, 9]
     assert after[128]['assignmentReservation']['tokens'] == [7, 9]
+
+
+def test_six_interleaved_histories_reuse_fragments_within_existing_total_budget(monkeypatch):
+    from amplifier_web import session_projection
+    cache = ExecutionPreparation()
+    cache.MAX_BYTES = 650000  # Scaled version of the existing 128 MiB total budget.
+    histories = {
+        str(owner): {'retiredUsageNodes': [
+            {'id': str(i), 'kind': 'llm', 'revision': 1, 'sessionId': str(owner),
+             'producerId': 'p', 'rootSessionId': str(owner), 'assignmentId': 'work',
+             'usage': {'inputTokens': i}, 'assignmentReservation': {'tokens': [i]}}
+            for i in range(256)], 'nodes': [], 'turns': []}
+        for owner in range(6)}
+    def save(owner, tree):
+        value = session_projection.stored_execution(tree,
+            _retired=lambda rows: cache.retired(owner, rows))
+        return cache.prepare(owner, value)
+    expected = {owner: resource_files.prepare(session_projection.stored_execution(tree))
+                for owner, tree in histories.items()}
+    for owner, tree in histories.items():
+        assert save(owner, tree) == expected[owner]
+    calls, encoded = [], []
+    project, dumps = session_projection.accounting_projection, json.dumps
+    with monkeypatch.context() as patch:
+        patch.setattr(session_projection, 'accounting_projection', lambda tree, **kw: (
+            calls.append(len(tree.get('retiredUsageNodes', []))), project(tree, **kw))[1])
+        patch.setattr(json, 'dumps', lambda value, *a, **kw: (
+            encoded.append(len(value)) if type(value) is list and value else None,
+            dumps(value, *a, **kw))[1])
+        for _ in range(2):
+            for owner, tree in histories.items():
+                assert save(owner, tree) == expected[owner]
+                assert cache.bytes + cache.accounting_bytes <= 2 * cache.MAX_BYTES
+    # The outer canonical projection still runs, but no retired fragment or
+    # unchanged list is rebuilt merely because another active owner saved.
+    assert calls == [256] * 12
+    assert encoded == []

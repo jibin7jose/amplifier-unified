@@ -1,4 +1,4 @@
-"""Owned-DTU publication benchmark: one to three large histories, no provider.
+"""Owned-DTU publication benchmark: one to six large histories, no provider.
 
 Compare the same retained state before/after a change. Content readback and
 unmodified history are required; timings are measurements, not machine gates.
@@ -107,8 +107,9 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
                 execution, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest())
         assert not app.runtime.started and not app.runtime.sent and not app.queues
         cache = app._execution_preparation
-        assert cache.bytes + cache._reserved({}) <= cache.MAX_BYTES
+        assert cache.bytes + cache.accounting_bytes + cache._reserved({}) <= 2 * cache.MAX_BYTES
         assert cache.accounting_bytes <= cache.MAX_BYTES
+        assert cache._reserved({}) <= cache.MAX_BYTES
         receipt = dict(records=records, owners=owner_count, placementsPerOwner=live_count + tools,
             receiptsPerOwner=receipts_count, turnsPerOwner=turns_count + 1,
             size=size, cycles=cycles, profiled=profile,
@@ -126,7 +127,8 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
             syntheticReservationPaddingBytes=reservation_bytes,
             retainedWorkersPerOwner=workers, providerCalls=0, exactReadback=True,
             encodingBytes=cache.bytes, projectionBytes=cache.accounting_bytes,
-            referenceBytes=cache._reserved({}), eachBudgetBytes=cache.MAX_BYTES,
+            referenceBytes=cache._reserved({}), totalBudgetBytes=2 * cache.MAX_BYTES,
+            accountingBudgetBytes=cache.MAX_BYTES, referenceBudgetBytes=cache.MAX_BYTES,
             scope='Synthetic actual AppService publications; no live data/provider/client.')
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
         if profiler:
@@ -142,7 +144,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[2])
-    parser.add_argument('--owners', type=int, default=3, choices=range(1, 4))
+    parser.add_argument('--owners', type=int, default=3, choices=range(1, 7))
     parser.add_argument('--reservation-bytes', type=int, default=0, choices=(0, 512))
     parser.add_argument('--size', choices=('small', 'large'), default='large')
     parser.add_argument('--cycles', type=int, default=1)

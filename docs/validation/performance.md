@@ -191,7 +191,7 @@ current subscribers and concurrent owners independently when validating publicat
 Passing a recent-message window test does not establish bounded saves, admission,
 agent reads or model context. Measure those boundaries separately.
 
-`tests/fixtures/execution_publication_scaling.py` keeps three large owners active
+`tests/fixtures/execution_publication_scaling.py` keeps up to six large owners active
 in one actual service. It distinguishes cold saves, scalar/token saves, nested
 execution changes, current-placement changes with unchanged retired accounting,
 and worker-report updates, checks exact durable readback and
@@ -200,7 +200,7 @@ owned DTU with `python tests/fixtures/execution_publication_scaling.py --output 
 `--source PATH` selects a frozen comparison checkout. A single-owner cache hit
 cannot qualify concurrent-owner behavior or hide eviction churn.
 Use `--reservation-bytes 512` to exceed a single accounting witness's size with
-synthetic retained assignment details, and vary `--owners 1` through `--owners 3`
+synthetic retained assignment details, and vary `--owners 1` through `--owners 6`
 separately. This is a stress shape, not a measured live receipt schema. Keep the
 same total preparation budgets in both runs: a larger history becoming cacheable
 can still make concurrent owners slower through eviction and repeated bookkeeping.
@@ -216,12 +216,19 @@ conversion is not proof of history-independent work under WS5. Keep measuring
 that remaining cost; do not increase retention limits to make a benchmark pass.
 
 The retired-accounting preparation cache witnesses independent 128-row fragments
-within the same 8 MiB witness and 64 MiB accounting budgets. A changed receipt
+within the same 8 MiB witness and 64 MiB accounting budgets. It retains compact
+JSON and witness digests, decoding detached rows for each save. Non-JSON values
+keep the original projection. Encoding, accounting and committed/provisional
+reference metadata share the existing 128 MiB total budget; accounting and
+reference metadata each remain capped at 64 MiB. Encoding may borrow unused space
+so several active histories do not cyclically evict one another merely because
+one partition is full. A changed receipt
 reprojects and sizes only its changed fragments; duplicate `(sessionId, id)`
 identities and unsupported values keep the original whole-list reduction.
-Fragment size accounting conservatively charges shared objects more than once.
+Size accounting charges retained text and metadata, not a second decoded graph.
 `test_execution_preparation.py` checks changed-fragment work, cross-fragment
-aliases, duplicate precedence, eviction and oversized fallback;
+aliases, duplicate precedence, eviction, oversized fallback and six interleaved
+histories without repeated fragment conversion/encoding;
 `test_execution_references.py` retains pointer-failure/retry and resource checks.
 Observed placements reuse the existing canonical JSON fragment cache after
 witnessing each source fragment, its current turn membership and its exact

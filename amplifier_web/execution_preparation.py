@@ -1,14 +1,15 @@
 """Disposable, content-checked canonical encoding of execution fragments.
 
-Private pickle bytes are only compared, NEVER unpickled, stored or accepted
-from another source. Custom reducers are rejected before invocation. JSON and
-its content hash remain the existing storage format and authority.
+Private pickle witnesses are hashed, NEVER unpickled, stored or accepted from
+another source. Custom reducers are rejected before invocation. JSON and its
+content hash remain the existing storage format and authority.
 """
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 import hashlib
 import json
 import io
+import math
 import pickle
 import sys
 
@@ -93,7 +94,9 @@ def _input_digest(tree):
 
 class ExecutionPreparation:
     CHUNK = 128
-    # Separate encoding and accounting budgets: at most 128 MiB retained here.
+    # At most 128 MiB retained across encoding, accounting and references.
+    # Accounting and reference metadata each remain capped at 64 MiB; encoding
+    # can use the remaining space instead of thrashing at a separate 64 MiB cap.
     MAX_BYTES = 64 * 1024 * 1024
 
     def __init__(self):
@@ -108,8 +111,8 @@ class ExecutionPreparation:
         entries.update((id(entry), entry) for entry in pending.values() if entry is not None)
         return sum(entry.charge for entry in entries.values())
 
-    def retired(self, owner, rows):
-        """Private persistence-only projection; callers must not mutate it.
+    def retired(self, owner, rows, reserved=None):
+        """Private persistence-only projection from compact detached fragments.
 
         Content is witnessed on every use, including edits through borrowed
         aliases. These detached derived rows carry no storage/commit authority.
@@ -126,7 +129,7 @@ class ExecutionPreparation:
                 witness_bytes += len(part)
                 if witness_bytes > _BoundedBytes.LIMIT:
                     return None  # Do not expand the prior whole-witness budget.
-                parts.append(part)
+                parts.append(hashlib.sha256(part).digest())
             witness = tuple(parts)
         except (Unsupported, pickle.PicklingError, RecursionError, TypeError, ValueError):
             return None
@@ -135,7 +138,8 @@ class ExecutionPreparation:
             # This exact builtin content already passed the eligibility checks
             # below. Witnessing still rejects custom values and nested edits.
             self.accounting.move_to_end(owner)
-            return old[1]
+            self._trim_encoding(self._reserved({}) if reserved is None else reserved)
+            return [row for text, _ in old[1] for row in json.loads(text)]
         # Witness first: custom keys/values must not gain extra lookup hooks.
         if any(type(row) is not dict or type(row.get('id')) is not str
                or row.get('sessionId') is not None and type(row['sessionId']) is not str
@@ -149,27 +153,45 @@ class ExecutionPreparation:
         result, fragments = [], []
         charge = sys.getsizeof(witness) + sys.getsizeof(owner) + 512
         for index, content in enumerate(witness):
-            previous = old[3][index] if old is not None and index < len(old[3]) else None
+            previous = old[1][index] if old is not None and index < len(old[1]) else None
             if previous is not None and old[0][index] == content:
-                fragment, size = previous
+                text, size = previous
+                fragment = json.loads(text)
             else:
                 fragment = accounting_projection({'retiredUsageNodes':
                     rows[index * self.CHUNK:(index + 1) * self.CHUNK]})
-                size = self._accounting_charge(fragment)
-            fragments.append((fragment, size))
+                if self._accounting_charge(fragment) > self.MAX_BYTES:
+                    return None  # Preserve non-JSON Python values on the canonical path.
+                try:
+                    # Keep insertion order here: live accounting still merges
+                    # these rows before the final canonical sorted encoding.
+                    text = json.dumps(fragment, ensure_ascii=False, separators=(',', ':'))
+                except (TypeError, ValueError, OverflowError, RecursionError):
+                    return None
+                size = sys.getsizeof(text)
+                # Cold and reused fragments must have the same detached form:
+                # source aliasing is not part of the accounting value, but can
+                # otherwise invalidate downstream placement/encoding witnesses.
+                fragment = json.loads(text)
+            fragments.append((text, size))
             result.extend(fragment)
             charge += sys.getsizeof(content) + sys.getsizeof(fragments[-1]) + sys.getsizeof(size) + size
-        # Shared scalars across fragments are deliberately charged more than
-        # once. A changed chunk never requires walking unchanged derived graphs.
-        charge += sys.getsizeof(result) + sys.getsizeof(fragments)
+        # Only text and bounded digests survive this save, not the decoded graph.
+        # A changed chunk never requires walking unchanged derived graphs.
+        charge += sys.getsizeof(fragments)
         if old is not None:
             self.accounting_bytes -= self.accounting.pop(owner)[2]
         if charge <= self.MAX_BYTES:
             while self.accounting and self.accounting_bytes + charge > self.MAX_BYTES:
                 self.accounting_bytes -= self.accounting.popitem(last=False)[1][2]
-            self.accounting[owner] = (witness, result, charge, fragments)
+            self.accounting[owner] = (witness, fragments, charge)
             self.accounting_bytes += charge
+        self._trim_encoding(self._reserved({}) if reserved is None else reserved)
         return result
+
+    def _trim_encoding(self, reserved):
+        while self.entries and self.bytes + self.accounting_bytes + reserved > 2 * self.MAX_BYTES:
+            self.bytes -= self.entries.popitem(last=False)[1][2]
 
     def _accounting_charge(self, result):
         """Conservative detached-fragment size; unsupported containers stay uncached."""
@@ -181,17 +203,21 @@ class ExecutionPreparation:
             seen.add(id(value))
             charge += sys.getsizeof(value)
             if type(value) is dict:
+                if any(type(key) is not str for key in value):
+                    return self.MAX_BYTES + 1  # JSON would change these keys.
                 pending.extend(value.keys())
                 pending.extend(value.values())
             elif type(value) is list:
                 pending.extend(value)
+            elif type(value) is float and not math.isfinite(value):
+                return self.MAX_BYTES + 1
             elif type(value) not in (str, int, float, bool, type(None)):
                 return self.MAX_BYTES + 1
         return charge
 
     def _part(self, key, value, reserved=0, project=None):
         try:
-            witness = _witness(value)
+            witness = hashlib.sha256(_witness(value)).digest()
         except (Unsupported, pickle.PicklingError, RecursionError, TypeError, ValueError):
             return json.dumps(project(value) if project else value,
                               ensure_ascii=False, sort_keys=True, separators=(',', ':')), None
@@ -207,8 +233,8 @@ class ExecutionPreparation:
         charge = sys.getsizeof(witness) + sys.getsizeof(text) + sys.getsizeof(key) + 256
         if old is not None:
             self.bytes -= self.entries.pop(key)[2]
-        if charge + reserved <= self.MAX_BYTES:
-            while self.entries and self.bytes + charge + reserved > self.MAX_BYTES:
+        if charge + reserved + self.accounting_bytes <= 2 * self.MAX_BYTES:
+            while self.entries and self.bytes + charge + reserved + self.accounting_bytes > 2 * self.MAX_BYTES:
                 self.bytes -= self.entries.popitem(last=False)[1][2]
             self.entries[key] = (witness, text, charge, token)
             self.bytes += charge
@@ -317,7 +343,7 @@ class ExecutionPreparation:
             if result is not None:
                 node_parts = parts
             return result
-        value = stored_execution(tree, _retired=lambda rows: self.retired(identity, rows),
+        value = stored_execution(tree, _retired=lambda rows: self.retired(identity, rows, self._reserved(pending)),
             _nodes=project_nodes if digest is not None else None)
         if len(value.get('retiredUsageNodes', ())) < self.CHUNK:
             return value, None
@@ -336,8 +362,7 @@ class ExecutionPreparation:
             reserved = self._reserved({**pending, identity: updated})
             if reserved <= self.MAX_BYTES:
                 pending[identity] = updated
-                while self.entries and self.bytes + reserved > self.MAX_BYTES:
-                    self.bytes -= self.entries.popitem(last=False)[1][2]
+                self._trim_encoding(reserved)
         return None, projection
 
     def reference(self, db, session, tree, pending, *, node_parts=None):
@@ -375,8 +400,7 @@ class ExecutionPreparation:
                 if charge + self._reserved(pending) <= self.MAX_BYTES:
                     pending[identity] = ReferenceEntry(owner, signature, resource, charge)
                     reserved = self._reserved(pending)
-                    while self.entries and self.bytes + reserved > self.MAX_BYTES:
-                        self.bytes -= self.entries.popitem(last=False)[1][2]
+                    self._trim_encoding(reserved)
         return reference
 
     def committed(self, pending, owners, deleted=()):
