@@ -27,11 +27,15 @@ function tree(root,directory){
  });
 }
 
+export function buildInputs(root){
+ return [...files,...tree(root,'frontend/src'),...tree(root,'frontend/public')].sort();
+}
+
 export function buildIdentity(root){
  const hash=createHash('sha256');
  // Relative names, explicit byte lengths and sorted order keep the identity
  // stable across checkout locations while distinguishing renames/boundaries.
- for(const name of [...files,...tree(root,'frontend/src'),...tree(root,'frontend/public')].sort()){
+ for(const name of buildInputs(root)){
   const bytes=readFileSync(join(root,name));
   hash.update(name+'\0'+bytes.length+'\0').update(bytes);
  }
