@@ -95,6 +95,7 @@ class Worker:
         self.response_blocks = ResponseBlocks()
         self.terminal_response_refs = None
         self.terminal_checkpointed = False
+        self.preparation_report = {}
         if __package__:
             from .ownership import WorkerOwnership
         else:
@@ -1043,6 +1044,7 @@ class Worker:
             from amplifier_web.support_diagnostics import runtime_versions
             with startup_timing.phase('worker.support'):
                 public["support"] = runtime_versions()
+            public.update(self.preparation_report)
             with startup_timing.phase('worker.ready'):
                 publish({"type": "runtime.ready", "report": public,
                          "workerIdentity": {"pid": os.getpid(), "sessionId": self.session.session_id}})
@@ -1865,6 +1867,16 @@ class Worker:
             self.shutdown.set()
 
     async def run(self):
+        if __package__:
+            from .runtime_preparation import preparation_scope
+        else:
+            from runtime_preparation import preparation_scope
+        # Bind before creating any worker task and retain through joined cleanup.
+        # Foundation captures this policy for later lazy module activation.
+        with preparation_scope() as self.preparation_report:
+            await self._run()
+
+    async def _run(self):
         # The host verifies membership/creation time before sending even start.
         # This carries no readiness or permission claim.
         publish_process_identity()
