@@ -9,10 +9,26 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tomllib
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from . import runtime_environment as environments
+
+
+def _file_url_path(parsed):
+    """Decode a file URL with native drive/authority rules, not URI path rules."""
+    from urllib.request import url2pathname
+    authority = '//' + parsed.netloc if parsed.netloc and parsed.netloc.lower() != 'localhost' else ''
+    return Path(url2pathname(authority + parsed.path))
+
+
+def _installed_git_environment():
+    """Keep native metadata reads under the existing child-only Git policy."""
+    if sys.platform == 'win32':
+        from .reset import repository_environment
+        return repository_environment()
+    return None
 
 
 def installed_graph(project):
@@ -21,6 +37,7 @@ def installed_graph(project):
     paths += [Path(project) / '.venv/Lib/site-packages']
     rows = []
     roots = {}  # One fresh evidence snapshot per real checkout, per call.
+    git_env = _installed_git_environment()
     for dist in importlib.metadata.distributions(path=[str(path) for path in paths if path.is_dir()]):
         row = {'name': environments.package_name(dist.metadata['Name']), 'version': dist.version}
         direct = json.loads(dist.read_text('direct_url.json') or '{}')
@@ -28,16 +45,16 @@ def installed_graph(project):
             row['directUrl'] = direct
             parsed = urlsplit(direct.get('url', ''))
             if parsed.scheme == 'file' and direct.get('dir_info') is not None:
-                path = Path(unquote(parsed.path)).resolve()
+                path = _file_url_path(parsed).resolve()
                 row['path'] = str(path)
                 for parent in (path, *path.parents):
                     meta = parent / '.amplifier_cache_meta.json'
                     if meta.is_file() and (parent / '.git').exists():
                         if parent not in roots:
                             data = json.loads(meta.read_text())
-                            revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=parent, text=True).strip()
-                            dirty = subprocess.check_output(['git', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], cwd=parent, text=True).strip()
-                            tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=parent).split(b'\0')
+                            revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=parent, env=git_env, text=True).strip()
+                            dirty = subprocess.check_output(['git', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], cwd=parent, env=git_env, text=True).strip()
+                            tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=parent, env=git_env).split(b'\0')
                             tree = hashlib.sha256()
                             for raw in sorted(item for item in tracked if item):
                                 file = parent / raw.decode()
@@ -200,9 +217,7 @@ async def prepare_overrides(project, target, *, owned_root=None):
         if editable or reference.startswith(('.', '/', 'file:')):
             parsed = urlsplit(reference)
             if parsed.scheme == 'file':
-                from urllib.request import url2pathname
-                authority = '//' + parsed.netloc if parsed.netloc and parsed.netloc != 'localhost' else ''
-                path = Path(url2pathname(authority + parsed.path))
+                path = _file_url_path(parsed)
             else:
                 path = project / reference
             path = path.resolve()

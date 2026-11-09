@@ -10,6 +10,112 @@ from amplifier_web import runtime_environment, runtime_qualification, updates
 from amplifier_web.updates import UpdateManager
 
 
+@pytest.mark.parametrize('authority', ['', 'localhost', 'fixture-server'])
+def test_installed_graph_decodes_file_uri_with_platform_path_rules(tmp_path, monkeypatch, authority):
+    """PEP 610 file URLs must not become /C:/ paths relative to a UNC cwd."""
+    from urllib import request
+    source = tmp_path / 'source with % and \u03bb'
+    source.mkdir()
+    project = tmp_path / 'project'
+    metadata = project / '.venv/Lib/site-packages/fixture-1.0.dist-info'
+    metadata.mkdir(parents=True)
+    (metadata / 'METADATA').write_text('Metadata-Version: 2.1\nName: fixture\nVersion: 1.0\n')
+    reference = source.as_uri()
+    if authority:
+        reference = reference.replace('file:///', 'file://' + authority + '/', 1)
+    (metadata / 'direct_url.json').write_text(json.dumps({'url': reference, 'dir_info': {}}))
+    calls = []
+    def decode(value):
+        calls.append(value)
+        # A controlled platform decoder lets the authority cases run without
+        # contacting a remote share. The ordinary case below uses the real one.
+        return str(source)
+    monkeypatch.setattr(request, 'url2pathname', decode)
+    graph = runtime_qualification.installed_graph(project)
+    assert len(graph) == 1 and graph[0]['path'] == str(source.resolve())
+    parsed = runtime_qualification.urlsplit(reference)
+    prefix = '//' + authority if authority and authority != 'localhost' else ''
+    assert calls == [prefix + parsed.path]
+    assert graph[0]['directUrl']['url'] == reference
+
+
+@pytest.mark.parametrize('authority', ['', 'localhost', 'LOCALHOST', 'LocalHost'])
+def test_installed_graph_real_file_uri_preserves_absolute_path(tmp_path, authority):
+    source = tmp_path / 'source with % and \u03bb'
+    source.mkdir()
+    project = tmp_path / 'project'
+    metadata = project / '.venv/Lib/site-packages/fixture-1.0.dist-info'
+    metadata.mkdir(parents=True)
+    (metadata / 'METADATA').write_text('Metadata-Version: 2.1\nName: fixture\nVersion: 1.0\n')
+    reference = source.as_uri()
+    if authority:
+        reference = reference.replace('file:///', 'file://' + authority + '/', 1)
+    (metadata / 'direct_url.json').write_text(json.dumps({'url': reference, 'dir_info': {}}))
+    graph = runtime_qualification.installed_graph(project)
+    assert graph[0]['path'] == str(source.resolve())
+    assert graph[0]['directUrl']['url'] == reference
+
+
+@pytest.mark.parametrize('policy', [None, {'QUALIFICATION_FIXTURE': 'child-only'}])
+def test_installed_graph_file_uri_keeps_git_identity_and_dirty_refusal(tmp_path, monkeypatch, policy):
+    import subprocess
+    import os
+    child_env = None if policy is None else {**os.environ, **policy}
+    monkeypatch.setattr(runtime_qualification, '_installed_git_environment', lambda: child_env)
+    original = subprocess.check_output
+    reads = []
+    def observe(*args, **kwargs):
+        if args[0][:2] in (['git', 'rev-parse'], ['git', '--no-optional-locks'], ['git', 'ls-files']):
+            reads.append(kwargs.get('env'))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(runtime_qualification.subprocess, 'check_output', observe)
+    source = tmp_path / 'cache % \u03bb'
+    source.mkdir()
+    def git(*args):
+        return subprocess.check_output(['git', '-c', 'user.name=Fixture',
+            '-c', 'user.email=fixture@example.invalid', *args], cwd=source, text=True).strip()
+    git('init')
+    tracked = source / 'tracked.txt'
+    tracked.write_text('original\n')
+    git('add', 'tracked.txt')
+    git('commit', '-m', 'fixture')
+    revision = git('rev-parse', 'HEAD')
+    reads.clear()
+    (source / '.amplifier_cache_meta.json').write_text(json.dumps({
+        'git_url': 'https://example.invalid/fixture', 'ref': 'main', 'commit': revision}))
+    project = tmp_path / 'project'
+    metadata = project / '.venv/Lib/site-packages/amplifier_fixture-1.0.dist-info'
+    metadata.mkdir(parents=True)
+    (metadata / 'METADATA').write_text('Metadata-Version: 2.1\nName: amplifier-fixture\nVersion: 1.0\n')
+    reference = source.as_uri()
+    (metadata / 'direct_url.json').write_text(json.dumps({'url': reference, 'dir_info': {}}))
+    clean = runtime_qualification.installed_graph(project)
+    assert clean[0]['path'] == str(source.resolve())
+    assert clean[0]['cacheSource']['revision'] == revision
+    assert clean[0]['cacheSource']['dirty'] is False
+    observed = runtime_environment.installed_sources(project, graph=clean)['amplifier-fixture']
+    assert observed['url'] == 'https://example.invalid/fixture'
+    assert observed['current'] == revision and not observed.get('override')
+    tracked.write_text('changed\n')
+    dirty = runtime_qualification.installed_graph(project)
+    assert dirty[0]['cacheSource']['dirty'] is True
+    assert runtime_environment.installed_sources(project, graph=dirty)['amplifier-fixture']['override'] is True
+    assert dirty[0]['directUrl']['url'] == reference
+    assert len(reads) == 6
+    assert all(env is child_env for env in reads)
+
+
+@pytest.mark.parametrize('platform', ['win32', 'linux', 'darwin'])
+def test_installed_git_metadata_policy_is_windows_only(monkeypatch, platform):
+    from amplifier_web import reset
+    expected = {'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'core.longpaths', 'GIT_CONFIG_VALUE_0': 'true'}
+    calls = []
+    monkeypatch.setattr(runtime_qualification, 'sys', SimpleNamespace(platform=platform))
+    monkeypatch.setattr(reset, 'repository_environment', lambda: calls.append(True) or expected)
+    assert runtime_qualification._installed_git_environment() == (expected if platform == 'win32' else None)
+    assert calls == ([True] if platform == 'win32' else [])
+
+
 async def test_fresh_probe_freezes_then_uses_an_ordinary_resolver(tmp_path, monkeypatch):
     calls = []
     release = '2' * 32
