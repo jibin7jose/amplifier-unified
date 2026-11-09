@@ -189,25 +189,52 @@ async def observe_waiters(manager):
     current = service.state['updates'].get('drain') or {}
     if current.get('phase') != 'waiting':
         return
+    def retained(row):
+        return (service.state['updates'].get('drain') is current
+                and current.get('phase') == 'waiting'
+                and current['workers'].get(row['sessionId']) is row)
     for sid, row in list(current['workers'].items()):
+        if not retained(row):
+            continue
         if row.get('initializing') and current.get('hostInstanceId') != service.instance_id:
             async with service.lock:
+                if not retained(row):
+                    continue
                 row.update(initializing=False, unknown=True, waitingFor=['boundary-outcome-unknown'])
                 save_wait(service, row, 'unknown')
                 service._publish_changes(globals={'updates'})
-        if row.get('initializing') or row.get('suppressed'):
+        if row.get('initializing'):
             continue
         worker = getattr(service.runtime, 'workers', {}).get(sid) or {}
-        reason = continuation_guard(service, {'updateYield': row}, authority_only=True)
+        if row.get('suppressed') and worker.get('runtimeOwnerId') != row['owner']:
+            continue
+        reason = row.get('suppressed') or continuation_guard(service, {'updateYield': row}, authority_only=True)
         pending = service.state['updates'].get('pendingApp') or {}
         if any(pending.get(key) != current['target'].get(key) for key in ('attemptId', 'revision', 'generation')):
             reason = 'The staged update changed; this wait cannot follow a different target.'
         if reason:
+            cancelled = False
             if worker.get('runtimeOwnerId') == row['owner']:
-                await service.runtime.handoff_boundary(sid, row['boundaryId'], cancel=True)
+                try:
+                    result = await service.runtime.handoff_boundary(sid, row['boundaryId'], cancel=True,
+                        receipt={'updateWait': {'owner': row['owner']}})
+                    if result.get('cancelled') is not True:
+                        raise RuntimeError('The original worker did not confirm cancellation of its update wait.')
+                except Exception:
+                    async with service.lock:
+                        if not retained(row):
+                            continue
+                        raise
+                cancelled = True
             async with service.lock:
+                if not retained(row):
+                    continue
                 row.update(suppressed=reason)
                 save_wait(service, row, 'suppressed')
+                if cancelled:
+                    # Retain the old command receipt, not an active slot that
+                    # prevents this owner from making a fresh explicit wait.
+                    del current['workers'][sid]
                 service._publish_changes(globals={'updates'})
             service._task(service.collaboration.drain(sid))
             continue
@@ -217,6 +244,8 @@ async def observe_waiters(manager):
             continue
         if worker.get('runtimeOwnerId') != row['owner']:
             async with service.lock:
+                if not retained(row):
+                    continue
                 row.update(unknown=True, waitingFor=['original-owner-unavailable'])
                 save_wait(service, row, 'unknown')
                 service._publish_changes(globals={'updates'})
@@ -226,16 +255,21 @@ async def observe_waiters(manager):
                 receipt={'updateWait': {'owner': row['owner'], 'observeOnly': True}})
         except Exception:
             async with service.lock:
+                if not retained(row):
+                    continue
                 row.update(unknown=True, waitingFor=['boundary-outcome-unknown'])
                 save_wait(service, row, 'unknown')
                 service._publish_changes(globals={'updates'})
             continue
         async with service.lock:
+            if not retained(row):
+                continue
             row.update(result)
             save_wait(service, row, 'checkpoint_ready' if row.get('ready') else 'waiting')
             service._publish_changes(globals={'updates'})
     async with service.lock:
-        if current['workers'] and all(row.get('suppressed') for row in current['workers'].values()):
+        if (service.state['updates'].get('drain') is current and current.get('phase') == 'waiting'
+                and all(row.get('suppressed') for row in current['workers'].values())):
             current.update(phase='released', result='superseded')
             service._publish_changes(globals={'updates'})
 

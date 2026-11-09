@@ -535,6 +535,13 @@ and the continuation's `coordination.result` reference when queued. Adoption is
 not proof that the continuation was admitted or completed. Do not submit another
 wait to recover an uncertain one. No blocked tasks are resumed in bulk.
 
+When fresh input supersedes a wait, confirmation from the exact original worker
+that its boundary is cancelled frees that owner's active wait slot. The original
+command receipt remains suppressed, including any earlier unknown admission. A
+new explicit wait can then use the current task and staged target, even while
+other owners are waiting. Missing or uncertain cancellation does not free the
+slot; a late observation cannot replace a newer wait or rewrite the old receipt.
+
 After final candidate validation, activation rechecks readiness under the same
 host lock that commits replacement. Work arriving during validation takes priority
 and postpones that replacement. Only the actual replacement/restart window holds

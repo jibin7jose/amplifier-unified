@@ -141,6 +141,7 @@ class UpdateWait:
         self.runtime.app = self.app
         self.app.management = SimpleNamespace(
             ensure_runtime=AsyncMock(), unresolved_configuration=lambda session: False,
+            command=AsyncMock(side_effect=AssertionError('Unexpected management command in update-wait fixture')),
             pending_config_tasks={}, lock=asyncio.Lock(),
             notifications=SimpleNamespace(send=AsyncMock()))
         self.manager = UpdateManager(self.app)
@@ -231,9 +232,8 @@ class UpdateWait:
         worker.runtime.generation = None
         worker.parked = park
         session = self.app._session(self.sid)
-        session['status'] = 'idle'
         session['collaborationGeneration']['terminal'] = True
-        self.app._publish_changes(sessions={self.sid})
+        await self.app.on_runtime_event('runtime.status', {'sessionId': self.sid, 'status': 'idle'})
 
     async def ready(self):
         await self.wait()
@@ -619,6 +619,137 @@ async def test_unknown_native_enrollment_is_retained_and_never_replayed(waiting)
     assert not h.runtime.admitted and not h.receipts('updates.app')
 
 
+async def supersede_wait_with_human_input(h):
+    worker = h.runtime.native[h.sid]
+    worker.runtime.generation = None
+    worker.parked = True
+    h.app._session(h.sid).update(status='idle')
+    h.app._session(h.sid)['collaborationGeneration']['terminal'] = True
+    await h.app.dispatch('conversation.send', {'sessionId': h.sid, 'text': 'New direction',
+        'allowNextTurn': True}, command_id='fresh-human', include_state=False)
+    await h.settle()
+    worker.runtime.generation = {'id': 'replacement-generation:' + h.sid}
+    worker.parked = False
+    await generation(h.app, h.app._session(h.sid), worker.runtime.generation['id'], ['fresh-human'])
+
+
+async def enroll_other_owner(h):
+    original = h.sid
+    h.sid = await h.new_task('Independent owner waiting for the same update')
+    try:
+        await h.wait(args={**h.wait_args, 'sessionId': h.sid}, command='other-owner-wait')
+        return h.sid
+    finally:
+        h.sid = original
+
+
+@pytest.mark.parametrize('already_suppressed', [False, True])
+async def test_confirmed_superseded_wait_allows_fresh_wait_while_other_owner_waits(waiting, already_suppressed):
+    h = waiting
+    await h.wait()
+    original = copy.deepcopy(h.row)
+    task = copy.deepcopy(h.controller.tasks.record())
+    other = await enroll_other_owner(h)
+    other_boundary = h.app.state['updates']['drain']['workers'][other]['boundaryId']
+    await supersede_wait_with_human_input(h)
+    if already_suppressed:
+        # A previous host kept superseded receipts in the active workers map.
+        h.row['suppressed'] = 'New input already continued this conversation.'
+        drain.save_wait(h.app, h.row, 'suppressed')
+    await drain.observe_waiters(h.manager)
+    result = await h.wait(command='fresh-owner-wait')
+    assert result['accepted'] and not result.get('duplicate')
+    assert h.row['boundaryId'] != original['boundaryId']
+    assert h.app.state['updates']['drain']['phase'] == 'waiting'
+    assert h.app.state['updates']['drain']['workers'][other]['boundaryId'] == other_boundary
+    assert h.controller.tasks.record() == task
+    old_receipt = (await h.wait())['result']
+    assert old_receipt['status'] == 'suppressed' and old_receipt['boundary']['suppressed']
+    assert old_receipt['boundary']['boundaryId'] == original['boundaryId']
+    assert old_receipt['admissionStatus'] == 'acknowledged'
+    assert [call for call in h.runtime.boundary_calls if call[2]] == [
+        (h.sid, original['boundaryId'], True, False)]
+    assert (await h.wait(command='fresh-owner-wait'))['duplicate']
+    await h.yield_turn()
+    first = h.sid
+    h.sid = other
+    await h.yield_turn()
+    h.sid = first
+    assert await drain.prepare(h.manager, h.release)
+    h.replace()
+    await h.reconnect(successor=True)
+    await h.confirm()
+    await h.finish()
+    await h.finish()
+    assert [row['sessionId'] for row in h.runtime.admitted].count(first) == 1
+    assert [row['sessionId'] for row in h.runtime.admitted].count(other) == 1
+    assert all(row['goal']['turns_used'] == 3 for row in h.runtime.admitted)
+    assert h.controller.tasks.record()['id'] == task['id']
+    assert (await h.wait())['result'] == old_receipt
+
+
+@pytest.mark.parametrize('acknowledgement', ['lost', 'missing'])
+async def test_superseded_wait_requires_positive_cancellation_before_reenrollment(waiting, acknowledgement):
+    h = waiting
+    await h.wait()
+    original = copy.deepcopy(h.row)
+    await enroll_other_owner(h)
+    await supersede_wait_with_human_input(h)
+    if acknowledgement == 'lost':
+        h.runtime.lose_boundary_ack = True
+    else:
+        h.runtime.handoff_boundary = AsyncMock(return_value={'ready': True})
+    with pytest.raises((TimeoutError, RuntimeError)):
+        await drain.observe_waiters(h.manager)
+    assert h.row == original
+    with pytest.raises(AppError, match='already has a saved update wait'):
+        await h.wait(command='fresh-owner-wait')
+    assert len(h.receipts('task.waitForUpdate')) == 2
+    assert not h.runtime.admitted
+
+
+@pytest.mark.parametrize('acknowledgement', ['cancelled', 'lost', 'missing'])
+async def test_late_cancel_observer_cannot_remove_new_wait_or_rewrite_old_receipt(waiting, acknowledgement):
+    h = waiting
+    await h.wait()
+    old_boundary = h.row['boundaryId']
+    other = await enroll_other_owner(h)
+    other_boundary = h.app.state['updates']['drain']['workers'][other]['boundaryId']
+    await supersede_wait_with_human_input(h)
+    original = h.runtime.handoff_boundary
+    reached, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        if kwargs.get('cancel') and not reached.is_set():
+            reached.set()
+            await release.wait()
+            if acknowledgement == 'lost':
+                raise TimeoutError('Old cancellation acknowledgement arrived too late')
+            if acknowledgement == 'missing':
+                return {'ready': True}
+        return result
+
+    h.runtime.handoff_boundary = delayed
+    late = asyncio.create_task(drain.observe_waiters(h.manager))
+    try:
+        await asyncio.wait_for(reached.wait(), 5)
+        await drain.observe_waiters(h.manager)
+        receipt = copy.deepcopy((await h.wait())['result'])
+        await h.wait(command='fresh-owner-wait')
+        new_boundary = h.row['boundaryId']
+        assert new_boundary != old_boundary
+        release.set()
+        await asyncio.wait_for(late, 5)
+        assert h.row['boundaryId'] == new_boundary and not h.row.get('suppressed')
+        assert h.app.state['updates']['drain']['phase'] == 'waiting'
+        assert h.app.state['updates']['drain']['workers'][other]['boundaryId'] == other_boundary
+        assert (await h.wait())['result'] == receipt
+    finally:
+        release.set()
+        await late
+
+
 async def test_goal_exhausted_at_yield_keeps_its_used_allowance_without_continuation(waiting):
     h = waiting
     await h.wait()
@@ -799,11 +930,12 @@ async def test_unknown_boundary_does_not_hold_a_new_human_generation(waiting):
     await h.settle()
     assert not drain.owner_waiting(h.app, h.sid)
     await drain.observe_waiters(h.manager)
-    assert h.row['unknown'] and h.row['suppressed']
+    assert h.sid not in h.app.state['updates']['drain']['workers']
     assert h.app.state['updates']['drain']['phase'] == 'released'
     saved = (await h.app.dispatch('task.receipt',
         {'sessionId': h.sid, 'commandId': 'owner-wait'}, include_state=False))['result']['receipt']
     assert saved['admissionStatus'] == 'unknown' and saved['status'] == 'suppressed'
+    assert saved['boundary']['unknown'] and saved['boundary']['suppressed']
     assert len(h.runtime.boundary_calls) == 2  # Original effect, then exact cancellation; no replay.
     assert not h.runtime.admitted
 
