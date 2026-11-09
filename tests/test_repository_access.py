@@ -104,6 +104,32 @@ async def test_update_subprocess_carries_anonymous_policy_to_nested_installers(m
     assert smart_tools._install_environment()['AMPLIFIER_GITHUB_ACCESS'] == 'anonymous'
 
 
+@pytest.mark.parametrize('platform', ['win32', 'linux', 'darwin'])
+@pytest.mark.parametrize('anonymous', [False, True])
+def test_git_long_paths_are_windows_child_policy_without_restoring_auth(monkeypatch, platform, anonymous):
+    monkeypatch.setattr(reset.sys, 'platform', platform)
+    monkeypatch.setattr(reset.shutil, 'which', lambda _: None)
+    original = {'GIT_CONFIG_COUNT': '2', 'GIT_CONFIG_KEY_0': 'core.longpaths',
+                'GIT_CONFIG_VALUE_0': 'false', 'GIT_CONFIG_KEY_1': 'http.extraHeader',
+                'GIT_CONFIG_VALUE_1': 'Authorization: synthetic-only',
+                'GH_TOKEN': 'synthetic-token', 'HTTPS_PROXY': 'http://proxy.example:8080'}
+    before = dict(original)
+    env = reset.repository_environment(original, anonymous=anonymous)
+    settings = {env[f'GIT_CONFIG_KEY_{i}']: env[f'GIT_CONFIG_VALUE_{i}']
+                for i in range(int(env['GIT_CONFIG_COUNT']))}
+    assert settings.get('core.longpaths') == ('true' if platform == 'win32' else None if anonymous else 'false')
+    if anonymous:
+        assert settings['http.extraHeader'] == ''
+        assert settings['credential.helper'] == ''
+        assert settings['core.askPass'] == ''
+        assert 'GH_TOKEN' not in env
+        assert env['GIT_CONFIG_GLOBAL'] == env['GIT_CONFIG_SYSTEM'] == os.devnull
+    else:
+        assert settings['http.extraHeader'] == original['GIT_CONFIG_VALUE_1']
+        assert env['GH_TOKEN'] == original['GH_TOKEN']
+    assert env['HTTPS_PROXY'] == original['HTTPS_PROXY'] and original == before
+
+
 async def test_bundle_fetch_inherits_anonymous_policy(monkeypatch):
     monkeypatch.setenv('AMPLIFIER_GITHUB_ACCESS', 'anonymous')
     child = AsyncMock()

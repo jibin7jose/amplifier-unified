@@ -183,6 +183,11 @@ def repository_environment(env=None, *, anonymous=False):
                     ("http.cookieFile", ""), ("core.askPass", "")]
     else:
         settings = [("credential.https://github.com.helper", "!gh auth git-credential")] if shutil.which("gh") else []
+    if sys.platform == "win32":
+        # Anonymous isolation intentionally discards personal Git configuration.
+        # Restore only Git for Windows' filesystem capability, not user auth or
+        # URL rewrites. This is child-scoped and never edits machine settings.
+        settings.append(("core.longpaths", "true"))
     count = int(env.get("GIT_CONFIG_COUNT", "0"))
     for key, value in settings:
         env[f"GIT_CONFIG_KEY_{count}"] = key
