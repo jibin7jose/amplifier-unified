@@ -416,7 +416,7 @@ async def ensure(home, generation, session, *, progress=None):
             timeout=900,
         )
         overrides = await _run_phase(stage, attempt, "installer-policy", prepare_overrides,
-            project, stage / "runtime-install-overrides.txt"
+            project, stage / "runtime-install-overrides.txt", owned_root=home
         )
         env = {
             **os.environ,

@@ -27,13 +27,15 @@ async def test_fresh_probe_freezes_then_uses_an_ordinary_resolver(tmp_path, monk
         (receipt / 'runtime-installed.json').write_text('[]')
         (frozen / '.venv').mkdir(parents=True)
         return frozen
-    async def overrides(project, target):
+    async def overrides(project, target, *, owned_root):
+        assert owned_root == tmp_path
         calls.append(('overrides', project))
         return target
     def verify(project, target):
         assert project == frozen and target == receipt
         calls.append('verify')
     class Diagnostics:
+        state = {'attemptId': release}
         async def run(self, phase, function, *command, **kwargs):
             if phase == 'ecosystem-source-preflight':
                 assert calls[-1] == 'collect'
@@ -84,6 +86,7 @@ async def test_historical_receipt_never_gets_refresh_or_new_foundation_arguments
         assert finalize
         return tmp_path / 'historical'
     class Diagnostics:
+        state = {'attemptId': release}
         async def run(self, phase, function, *command, **kwargs):
             assert '--refresh-dependencies' not in command
             assert '--install-overrides' not in command
@@ -269,8 +272,11 @@ async def test_one_batch_and_readonly_offered_profiles_exclude_history(tmp_path,
         assert completed[-1] == 'prepare'
         completed.append('freeze')
         return project
-    async def overrides(project, target): return target
+    async def overrides(project, target, *, owned_root):
+        assert owned_root == tmp_path
+        return target
     class Diagnostics:
+        state = {'attemptId': release}
         async def run(self, phase, function, *command, **kwargs):
             if phase == 'ecosystem-runtime-policy':
                 return await function(*command, **kwargs)

@@ -117,7 +117,7 @@ def prepare_project(home, generation=None, *, content=None):
     target = project / 'pyproject.toml'
     if not target.exists() or target.read_bytes() != content:
         from .deployment import write_private
-        write_private(target, content.decode())
+        write_private(target, content.decode(), owned_root=home)
     receipt = receipt_directory(home, generation) / 'runtime.lock'
     if receipt.exists():
         lock = project / 'uv.lock'
@@ -568,7 +568,7 @@ async def stage(manager, generation, candidates, *, finalize=True):
     verify_candidate(project, registry_policy)
     if registry_policy and not receipt.exists():
         from .deployment import write_private
-        write_private(receipt.with_name(registry_receipt), json.dumps(registry_policy) + '\n')
+        write_private(receipt.with_name(registry_receipt), json.dumps(registry_policy) + '\n', owned_root=manager.home)
     locked = locked_sources(project)
     policies = {}
     for row in selected:
@@ -597,7 +597,7 @@ async def stage(manager, generation, candidates, *, finalize=True):
         # Handoff checked policy separately from uv's representation. Freeze
         # binds it again to installed identity; recorded generations stay intact.
         from .deployment import write_private
-        write_private(receipt.with_name('runtime-sources.json'), json.dumps(policies, indent=2) + '\n')
+        write_private(receipt.with_name('runtime-sources.json'), json.dumps(policies, indent=2) + '\n', owned_root=manager.home)
     if finalize and not receipt.exists():
         receipt.with_name('runtime-base.toml').write_bytes(declared_manifest())
         shutil.copy2(project / 'pyproject.toml', receipt.with_name('runtime.toml'))

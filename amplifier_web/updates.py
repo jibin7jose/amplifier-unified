@@ -1209,7 +1209,7 @@ class UpdateManager:
             env.pop('AMPLIFIER_SOURCE_STORE', None)  # Preserve pinned/older workers' legacy source contract.
         async def probe(project, *, refresh=False):
             qualified=fresh or (receipt/'runtime-installed.json').exists()
-            overrides=await self.diagnostics.run('ecosystem-runtime-policy',prepare_overrides,project,receipt/'runtime-install-overrides.txt') if qualified else Path(__file__).parent/'runtime_deps/compatibility.txt'
+            overrides=await self.diagnostics.run('ecosystem-runtime-policy',prepare_overrides,project,receipt/'runtime-install-overrides.txt',owned_root=self.home) if qualified else Path(__file__).parent/'runtime_deps/compatibility.txt'
             command=[shutil.which('uv'),'run','--locked','--no-sync','--project',str(project),'--python','3.13','python',str(Path(__file__).with_name('update_probe.py'))]
             flags=['--install-overrides',str(overrides)] if qualified else []
             probe_env = dict(env)
@@ -1255,7 +1255,7 @@ class UpdateManager:
                 nonlocal collection_inputs
                 target = stage / 'selected-source-declarations.json'
                 overrides = await self.diagnostics.run('ecosystem-runtime-policy', prepare_overrides,
-                    project, receipt / 'runtime-install-overrides.txt')
+                    project, receipt / 'runtime-install-overrides.txt', owned_root=self.home)
                 command = [shutil.which('uv'), 'run', '--locked', '--no-sync', '--project', str(project),
                            '--python', '3.13', 'python', str(Path(__file__).with_name('update_probe.py'))]
                 before = policy_inputs(stage, project)

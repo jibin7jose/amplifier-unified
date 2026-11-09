@@ -174,7 +174,8 @@ def profile_inputs(tmp_path, monkeypatch):
         await asyncio.sleep(0)
         return ""
 
-    async def overrides(project, target):
+    async def overrides(project, target, *, owned_root):
+        assert owned_root == home
         target.write_text("fixture-installed==1\n")
         return target
 

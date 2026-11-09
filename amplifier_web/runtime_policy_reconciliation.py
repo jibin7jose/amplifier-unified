@@ -517,7 +517,7 @@ async def reconcile(manager, stage, project, collect):
         # Carry the acknowledgment forward when another component prompted an
         # update. Otherwise an unresolved extra would prompt again next time.
         if old_receipt.exists():
-            write_private(stage / RECEIPT, old_receipt.read_text())
+            write_private(stage / RECEIPT, old_receipt.read_text(), owned_root=home)
         return
     separate = project / 'uv.toml'
     if separate.exists() or separate.is_symlink():
@@ -545,7 +545,7 @@ async def reconcile(manager, stage, project, collect):
                                    ('url', 'ref', 'subdirectory', 'revision')},
                                    'selected-declaration', manifestSha256=source['manifestSha256'])
     if selected:
-        write_private(checked_path, json.dumps(checked, indent=2) + '\n')
+        write_private(checked_path, json.dumps(checked, indent=2) + '\n', owned_root=home)
         await align_checked_sources(manager, stage, selection=first)
         from .selected_runtime_dependencies import refresh
         await refresh(manager, stage, project, selected)
@@ -561,7 +561,7 @@ async def reconcile(manager, stage, project, collect):
         # the current authored input; the existing freeze checks installed bytes.
         for name, source in selected.items():
             checked[name]['policyOrigin']['manifestSha256'] = verified[name]['manifestSha256']
-        write_private(checked_path, json.dumps(checked, indent=2) + '\n')
+        write_private(checked_path, json.dumps(checked, indent=2) + '\n', owned_root=home)
     if active_release(home).get('current') != old_generation:
         raise ValueError('The active generation changed during policy reconciliation.')
     result = {'version': VERSION, 'selectionVersion': SELECTION_VERSION, 'configuration': request['configuration'],
@@ -569,7 +569,7 @@ async def reconcile(manager, stage, project, collect):
               'remaining': {name: old for name, old in request['candidates'].items() if name not in selected},
               'offeredPackages': sorted(first.get('packages', {})),
               'migrated': {name: checked[name] for name in selected}}
-    write_private(stage / RECEIPT, json.dumps(result, indent=2) + '\n')
+    write_private(stage / RECEIPT, json.dumps(result, indent=2) + '\n', owned_root=home)
     # Only this invocation may reuse its collection. A migration changes checked
     # policy, bindings and/or resolver input and always needs fresh composition.
     return {'selection': first, 'generation': old_generation} if not selected else None

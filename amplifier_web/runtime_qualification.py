@@ -163,7 +163,7 @@ def verify_install_overrides(project, target):
     return target
 
 
-async def prepare_overrides(project, target):
+async def prepare_overrides(project, target, *, owned_root=None):
     """Export resolver-selected markers instead of flattening a universal lock.
 
     uv owns dependency-edge marker propagation, extras, groups and version
@@ -215,11 +215,11 @@ async def prepare_overrides(project, target):
             value = ('-e ' if editable else local_names[path] + ' @ ') + url
         lines.append(value + separator + marker)
     content = '\n'.join(sorted(lines)) + '\n'
-    write_private(target, content)
+    write_private(target, content, owned_root=owned_root)
     write_private(target.with_name('runtime-install-policy.json'), json.dumps({
         'version': 2, 'lockSha256': hashlib.sha256((project / 'uv.lock').read_bytes()).hexdigest(),
         'overridesSha256': hashlib.sha256(content.encode()).hexdigest(),
-    }) + '\n')
+    }) + '\n', owned_root=owned_root)
     return target
 
 
@@ -378,16 +378,16 @@ async def freeze(manager, generation, project):
                 raise ValueError('The frozen worker installation differs from its prepared source graph.')
             from .deployment import write_private
             write_private(final / 'qualification.json', json.dumps({'key': key,
-                'lockSha256': hashlib.sha256((final / 'uv.lock').read_bytes()).hexdigest()}))
+                'lockSha256': hashlib.sha256((final / 'uv.lock').read_bytes()).hexdigest()}), owned_root=manager.home)
         else:
             manager.diagnostics.record('ecosystem-runtime-reuse', 'succeeded')
     from .deployment import write_private
-    write_private(receipt / 'runtime-project.json', json.dumps({'project': final.name}))
+    write_private(receipt / 'runtime-project.json', json.dumps({'project': final.name}), owned_root=manager.home)
     receipt.joinpath('runtime-base.toml').write_bytes(environments.declared_manifest())
     shutil.copy2(final / 'pyproject.toml', receipt / 'runtime.toml')
     shutil.copy2(final / 'uv.lock', receipt / 'runtime.lock')
     receipt.joinpath('runtime-sources.json').write_text(json.dumps(policies, indent=2) + '\n')
-    await manager.diagnostics.run('ecosystem-runtime-policy', prepare_overrides, final, receipt / 'runtime-install-overrides.txt')
+    await manager.diagnostics.run('ecosystem-runtime-policy', prepare_overrides, final, receipt / 'runtime-install-overrides.txt', owned_root=manager.home)
     receipt.joinpath('runtime-installed.json').write_text(json.dumps(actual, indent=2) + '\n')
     # Qualification owns this disposable preparation environment. Keep only
     # the frozen graph after every installer has exited; never accumulate a

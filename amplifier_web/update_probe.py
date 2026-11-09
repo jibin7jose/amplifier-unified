@@ -51,8 +51,9 @@ async def main():
             from amplifier_web.host.config import load_config
             if args.source_policy_only:
                 from amplifier_web.deployment import write_private
-                evidence = await collector.report(batch, load_config(args.workspace, global_only=True), allow_generated=True)
-                write_private(args.source_policy_only, json.dumps(evidence))
+                config = load_config(args.workspace, global_only=True)
+                evidence = await collector.report(batch, config, allow_generated=True)
+                write_private(args.source_policy_only, json.dumps(evidence), owned_root=config.home)
                 facts.update(ok=True, stage='source-policy-collected', dependenciesPrepared=False)
                 print(PROBE_PREFIX + json.dumps(facts), flush=True)
                 return

@@ -110,6 +110,66 @@ async def test_stage_freeze_and_next_inventory_preserve_checked_branch(normalize
     assert row['ref'] == 'main' and row['eligible']
 
 
+@pytest.mark.parametrize('registry_policy', [False, True])
+@pytest.mark.parametrize('refuse', [False, True])
+async def test_stage_receipts_use_explicit_data_owner(normalized_runtime, monkeypatch, registry_policy, refuse):
+    from amplifier_web import deployment, runtime_registry_updates
+    manager, generation, receipt, graph = normalized_runtime
+    writes = []
+    original = deployment.write_private
+    if registry_policy:
+        monkeypatch.setattr(runtime_registry_updates, 'prepare_manifest',
+                            lambda content, *args: (content, {'fixture': 'checked'}))
+        monkeypatch.setattr(runtime_registry_updates, 'verify_candidate', lambda *args: None)
+    def private(path, value, *, owned_root=None):
+        assert owned_root == manager.home
+        assert Path(path).is_relative_to(manager.home)
+        if Path(path).parent == receipt:
+            writes.append(Path(path).name)
+            if refuse:
+                raise PermissionError('owned receipt refused')
+        original(path, value, owned_root=owned_root)
+    monkeypatch.setattr(deployment, 'write_private', private)
+    if refuse:
+        with pytest.raises(PermissionError, match='owned receipt refused'):
+            await environments.stage(manager, generation, [ROW], finalize=False)
+        assert not (receipt / 'runtime-sources.json').exists()
+    else:
+        await environments.stage(manager, generation, [ROW], finalize=False)
+        assert writes == ([runtime_registry_updates.RECEIPT] if registry_policy else []) + ['runtime-sources.json']
+        assert json.loads((receipt / 'runtime-sources.json').read_text())[ROW['package']]['revision'] == REVISION
+    assert not (receipt / 'runtime.lock').exists()
+    assert not (manager.home / 'updates/active.json').exists()
+
+
+@pytest.mark.parametrize('refuse', [False, True])
+async def test_freeze_receipts_use_explicit_data_owner(normalized_runtime, monkeypatch, refuse):
+    from amplifier_web import deployment
+    manager, generation, receipt, graph = normalized_runtime
+    prepared = await environments.stage(manager, generation, [ROW], finalize=False)
+    original, writes = deployment.write_private, []
+    def private(path, value, *, owned_root=None):
+        assert owned_root == manager.home
+        assert Path(path).is_relative_to(manager.home)
+        writes.append(Path(path).name)
+        if refuse:
+            raise PermissionError('owned receipt refused')
+        original(path, value, owned_root=owned_root)
+    monkeypatch.setattr(deployment, 'write_private', private)
+    if refuse:
+        with pytest.raises(PermissionError, match='owned receipt refused'):
+            await qualification.freeze(manager, generation, prepared)
+        assert not (receipt / 'runtime-project.json').exists()
+        assert not (receipt / 'runtime.lock').exists()
+    else:
+        final = await qualification.freeze(manager, generation, prepared)
+        assert writes == ['qualification.json', 'runtime-project.json',
+                          'runtime-install-overrides.txt', 'runtime-install-policy.json']
+        qualification.verify_recorded(final, receipt)
+        qualification.verify_install_overrides(final, receipt / 'runtime-install-overrides.txt')
+    assert not (manager.home / 'updates/active.json').exists()
+
+
 @pytest.mark.parametrize('changed', ['url', 'subdirectory', 'commit_id'])
 async def test_freeze_cannot_apply_checked_policy_to_a_different_install(normalized_runtime, changed):
     manager, generation, receipt, graph = normalized_runtime

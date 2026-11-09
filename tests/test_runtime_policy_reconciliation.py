@@ -130,6 +130,14 @@ async def test_untrusted_cache_identity_cannot_establish_policy(selected, case, 
 @pytest.mark.parametrize('source_owner', ['module', 'host-component'])
 async def test_stale_selected_root_advances_before_install_and_old_generation_is_untouched(selected, monkeypatch, source_owner):
     s = selected
+    from amplifier_web import deployment
+    original_write, receipt_writes = deployment.write_private, []
+    def write_owned(path, value, *, owned_root=None):
+        if Path(path).parent == s.stage:
+            assert owned_root == s.home
+            receipt_writes.append(Path(path).name)
+        return original_write(path, value, owned_root=owned_root)
+    monkeypatch.setattr(deployment, 'write_private', write_owned)
     if source_owner == 'host-component':
         from amplifier_foundation import Bundle
         from amplifier_web.host.components import HostComponents
@@ -166,6 +174,7 @@ async def test_stale_selected_root_advances_before_install_and_old_generation_is
     assert (old_receipt / 'runtime-sources.json').read_text() == 'old receipt stays unchanged'
     receipt = json.loads((s.stage / migration.RECEIPT).read_text())
     assert receipt['decisions'] == {NAME: 'migrated'} and not receipt['remaining']
+    assert receipt_writes == ['runtime-sources.json', 'runtime-sources.json', migration.RECEIPT]
 
 
 async def _value(value): return value

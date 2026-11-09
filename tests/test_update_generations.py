@@ -356,7 +356,8 @@ async def test_profile_qualification_is_coalesced_and_installed_outside_serving_
 
     monkeypatch.setattr(updates, "process", process)
 
-    async def overrides(project, path):
+    async def overrides(project, path, *, owned_root):
+        assert owned_root == home
         path.write_text("")
         return path
 
