@@ -103,3 +103,58 @@ Only the transport advertisement is narrowed to select SSE; build and server
 identity responses are unchanged. Providers/runtime remain synthetic, and
 background updates/work and provider preloading are disabled. This does not
 qualify native execution, model accounts, devices, other versions or AHP.
+
+## Shared inputs for the source ownership transfer
+
+The next client source owner is planned as `microsoft/amplifier-unified-web`.
+Creating that repository and qualifying its import precede the source transfer;
+this prerequisite does not move canonical ownership or publish another SDK.
+
+| Source or check | Owner at the transfer boundary |
+| --- | --- |
+| Authored `frontend/src`, `frontend/public`, client build and packaging | Web client; Unified retains the current source until the coordinated transfer |
+| Client-only unit tests and standalone HTTP/SSE fixture | Web client, classified by actual dependencies before moving |
+| Real AppService fixtures, installed composition and server-dependent browser checks | Unified integration owner; retain their coverage and repoint their client input |
+| Three shared JSON catalogs, official branding and current shell SDK | Existing canonical paths in Unified; generated build copies are never edited |
+| Family/client contracts and tested default selection | Existing contract and distribution owners; reference their promises rather than copying them |
+
+Do not move the entire frontend test directory by assumption. Some checks read
+server source or start Python fixtures; these need an explicit owner and installed
+peer entrypoint. The independently packaged client remains paired with one exact
+server revision until its compatibility and adoption policy is deliberately
+expanded. Installation continues to assemble assets into `amplifier_web/static`,
+preserving serving, installed build identity and shell validation. Released
+packages remain self-contained; development builds require Node.
+
+The existing capsule tool can export just the finite shared inputs:
+
+```sh
+node frontend/scripts/client-capsule.mjs inputs /tmp/web-build-inputs
+node frontend/scripts/client-capsule.mjs verify-inputs /tmp/web-build-inputs SOURCE_COMMIT
+```
+
+The selection comes from the existing build inventory outside `frontend/`, plus
+the full capsule's existing version metadata and licenses. It currently contains
+15 files: the three catalogs, SDK entrypoint/package/license, six branding files
+and their upstream license, root license, and `pyproject.toml`. The current build
+reads its version from `pyproject.toml`; a later independent client version must
+replace that dependency explicitly. Dependencies under `frontend/node_modules`
+remain selected by the client's npm lock and are not exported.
+
+`build-inputs.lock.json` records the canonical input-owner repository/commit and
+each relative path, byte count and SHA-256. It is generated data. It contains no
+paired-server qualification, runtime registry or new catalog definition. The
+client can pin that lock and receive the same bounded payload online or as an
+offline archive, keeping materialized copies under an ignored build directory.
+Its importer and independent release version are the next client-owned batch.
+
+Verification is offline and checks the selected revision, exact file membership
+and byte hashes; missing, changed, extra or linked files fail. The selected lock
+must come from a trusted canonical export, or its archive/digest must be pinned
+by the component selection. A matching self-contained lock does **not**
+authenticate source provenance if somebody replaces both files and lock. No
+GitHub download or alternate SDK publication is introduced here.
+
+Use new task-owned export paths. Retain the small lock and useful qualification
+record; remove superseded materialized inputs with their build task. The current
+capsule commands, build identity and generated application output are unchanged.
