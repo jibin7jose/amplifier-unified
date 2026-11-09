@@ -618,9 +618,27 @@ try{
  await action('canvas.show',{kind:'settings'});
  await action('view.update',{patch:{settingsExpanded:['providers'],settingsCanvas:true,panel:null}});
  const settings=page.locator('.a-settings-experience[data-settings-page="providers"]');
- await expect(settings).toBeVisible();await settings.getByRole('button',{name:'Add provider',exact:true}).click();
+ await expect(settings).toBeVisible();
+ // This fixture has a saved provider. Settle its initial hydration before
+ // choosing a blank editor, so a fill/setup race cannot masquerade as lost
+ // private input after cancelling history navigation.
+ await expect.poll(async()=>{
+  const s=await state(),setup=s.setup||{},draft=s.view.providerEditor||{};
+  const provider=(setup.providers||[]).find(row=>row.enabled!==false&&row.id===draft.id);
+  return setup.operations?.['providers.list:']?.phase==='ready'&&!!setup.providersLoadedAt&&
+   !!provider&&draft.selectionKey===provider.id&&draft.config===JSON.stringify(provider.config||{},null,2);
+ }).toBe(true);
+ await expect(settings.getByRole('button',{name:'Refresh providers',exact:true})).toBeEnabled();
+ await settings.getByRole('button',{name:'Add provider',exact:true}).click();
+ await expect.poll(async()=>{
+  const draft=(await state()).view.providerEditor||{};
+  return {id:draft.id,selectionKey:draft.selectionKey,module:draft.module,config:draft.config,detailOpen:draft.detailOpen};
+ }).toEqual({id:'',selectionKey:'',module:'',config:'{}',detailOpen:true});
  await settings.getByRole('button',{name:'Show advanced configuration',exact:true}).click();
- const privateEdit=settings.locator('[id$="provider-config"]');await privateEdit.fill('{"unsaved-history-input":');
+ const privateEdit=settings.locator('[id$="provider-config"]');
+ await expect(privateEdit).toHaveValue('{}');
+ await privateEdit.fill('{"unsaved-history-input":');
+ await expect(privateEdit,'Establish exact private input before Back; do not accept a prefixed fill').toHaveValue('{"unsaved-history-input":');
  const settingsTrail=await saved();await back.click();
  await expect(page.getByRole('alertdialog')).toBeVisible();
  await page.getByRole('button',{name:'Keep settings open',exact:true}).click();

@@ -72,7 +72,7 @@ try{
  await input.fill('Long draft. '.repeat(150));await expect(surface).toHaveAttribute('data-expanded','true');await expect(primary).toBeInViewport();
  const long=await measure();assert.ok(long.input.width>=long.surface.width-40,'Long draft uses the full writing width');assert.ok(long.input.height<=181);assert.equal(long.overflow,false);
  await input.evaluate(el=>{el.scrollTop=el.scrollHeight});await page.screenshot({path:output+'/compact-long-320.png'});
- const retained=await input.innerText();await options.click();const menu=page.getByRole('dialog',{name:'Chat options',exact:true});await expect(menu).toBeVisible();await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(options).toBeFocused();assert.equal(await input.innerText(),retained);
+ const retained=await input.innerText();await options.click();const menu=page.getByRole('dialog',{name:'Model for this chat',exact:true});await expect(menu).toBeVisible();await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(options).toBeFocused();assert.equal(await input.innerText(),retained);
  await clearComposer(input);await input.fill('Do not send during composition');
  await input.evaluate(el=>{el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,keyCode:229,bubbles:true,cancelable:true}));el.dispatchEvent(new InputEvent('beforeinput',{inputType:'insertParagraph',isComposing:true,bubbles:true,cancelable:true}));});assert.equal(sends.length,0);await expect(input).toHaveDraft('Do not send during composition');
  await input.press('Shift+Enter');await page.keyboard.type('Second line');assert.equal(sends.length,0);

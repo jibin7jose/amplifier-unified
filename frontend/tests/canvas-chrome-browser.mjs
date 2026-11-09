@@ -402,8 +402,22 @@ try{
     const remaining=await strip.evaluate(el=>el.scrollLeft);
     if(remaining>1)await wheel(strip,-remaining,0);
     await expect.poll(()=>strip.evaluate(el=>el.scrollLeft)).toBeLessThanOrEqual(1);
-    await expect(overviewTab.locator('span')).toBeVisible();
-    await expect.poll(()=>overviewTab.locator('span').evaluate(el=>getComputedStyle(el).opacity)).toBe('1');
+    // The named tab stays reachable; its label collapses by Canvas container
+    // width, not viewport width (a desktop split can be only 390px wide).
+    const paneWidth=await panel.evaluate(el=>{const s=getComputedStyle(el);return el.clientWidth-parseFloat(s.paddingLeft)-parseFloat(s.paddingRight)});
+    const overviewLabel=overviewTab.locator('span');
+    await expect(overviewTab).toHaveAccessibleName('Chat overview');
+    await requireReachable(overviewTab,'Overview tab at the start of the strip');
+    await expect(overviewTab.locator('svg')).toBeVisible();
+    const overviewBox=await overviewTab.boundingBox();
+    assert.ok(overviewBox.width>=44&&overviewBox.height>=44,'Overview retains a 44px target');
+    if(paneWidth<=600){
+     await expect(overviewLabel).toBeHidden();
+    }else{
+     await expect(overviewLabel).toBeVisible();
+     await expect.poll(()=>overviewLabel.evaluate(el=>getComputedStyle(el).opacity)).toBe('1');
+    }
+    (report.overviewPresentation??=[]).push({scheme,layout:size.name,paneWidth,labelVisible:await overviewLabel.isVisible(),target:overviewBox});
     await expect(panel.getByRole('heading',{name:'Second version',exact:true})).toBeVisible();
     await expect(page.locator('#canvas-options')).toBeHidden();
     for(const name of ['Choose artifact version','Copy canvas source','Download canvas source','Canvas details','Focus canvas']){
