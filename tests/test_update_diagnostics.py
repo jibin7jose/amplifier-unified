@@ -512,7 +512,9 @@ async def test_real_freeze_mismatch_reaches_install_error_and_sanitized_report(n
     service = AppService(fixture_manager.home, runtime, workspace=fixture_manager.home.parent)
     manager = UpdateManager(service)
     service.update_manager = manager
-    manager.inventory = [{**ROW, 'status': 'update', 'label': 'Fixture component'}]
+    from amplifier_web.update_sequence import app_selection
+    manager.inventory = [{**ROW, 'status': 'update', 'label': 'Fixture component',
+                          'appSelection': app_selection(manager.home)['witness']}]
     resolver = updates.process
     preparation_probes = []
 

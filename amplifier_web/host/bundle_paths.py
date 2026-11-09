@@ -9,6 +9,19 @@ class AmbiguousBundleReferenceError(ValueError):
     """A bare ID matched more than one registration; no source was selected."""
 
 
+def configured_bundle_reference(config, reference, find):
+    """Select a root/app reference without loading it; composition owns this rule."""
+    reference = canonical_bundle_reference(config, reference)
+    replacement = config.resolve_source(reference)
+    if replacement is None:
+        registered = find(reference)
+        if registered:
+            replacement = config.resolve_source(registered)
+    reference = replacement or reference
+    candidate = local_bundle_path(config, reference)
+    return str(candidate) if candidate is not None else reference
+
+
 def canonical_bundle_reference(config, reference):
     """Resolve a bare registered ID without changing paths, URLs or exact aliases.
 

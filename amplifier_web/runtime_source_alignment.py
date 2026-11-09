@@ -16,11 +16,20 @@ from .staged_sources import owned_path as _owned, owned_git_checkout, retarget_r
 
 
 def verify_checked_selection(checked, selection, *, exact=False):
-    """Check explicit batch choices, never infer selection from installed extras."""
+    """Check batch roots and their evidenced reachable dependencies, not extras."""
     from .runtime_environment import ProtectedRuntimeSource
     from .updates import source_key
     packages = selection['packages']
-    for name in selection['batchPaths']:
+    # Collector only adds dependency rows reached from the actual selected
+    # manifests. A dependency need not be an explicit pip install root: ignoring
+    # it here lets a root's authored pin be displaced by the checked overrides.
+    # Unresolved provenance is protective, never absence of a source choice.
+    names = set(selection['batchPaths']) | {
+        name for name, source in packages.items()
+        if source.get('sourceKind') == 'dependency'
+        or source.get('status') == 'selected-dependency-unresolved'
+    }
+    for name in sorted(names):
         policy = checked.get(name)
         source = packages.get(name, {})
         if policy is None:
@@ -31,6 +40,18 @@ def verify_checked_selection(checked, selection, *, exact=False):
             continue  # Ordinary dependencies remain governed by overrides and freeze.
         if source.get('status') == 'authored-constraint':
             raise ProtectedRuntimeSource(name, 'runtime-source-constraint')
+        if source.get('status') == 'explicit-pin' and source.get('sourceKind') == 'dependency':
+            # A reachable authored SHA is retention evidence even when the
+            # checked installed policy names a branch. It cannot authorize
+            # alignment/advance: all three commits must already be identical.
+            if (not re.fullmatch('[a-f0-9]{40}', source.get('ref', ''))
+                    or source['ref'] != source.get('revision')
+                    or source['revision'] != policy.get('revision')
+                    or not source.get('manifestSha256')
+                    or source_key(source['url'], 'HEAD')[0] != source_key(policy['url'], 'HEAD')[0]
+                    or source.get('subdirectory', '') != policy.get('subdirectory', '')):
+                raise ProtectedRuntimeSource(name, 'runtime-source-constraint')
+            continue
         if (source.get('status') not in {'selected', 'explicit-pin'}
                 or any(not source.get(field) for field in ('url', 'ref', 'revision'))
                 or source_key(source['url'], source['ref']) != source_key(policy['url'], policy['ref'])

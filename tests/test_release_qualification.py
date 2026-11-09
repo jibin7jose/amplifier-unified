@@ -557,12 +557,12 @@ def test_manual_python_selection_is_fixed_and_preserves_full_and_core_modes():
     workflow = yaml.load((ROOT / '.github/workflows/python-checks.yml').read_text(), Loader=yaml.BaseLoader)
     selection = workflow['on']['workflow_dispatch']['inputs']['suite']
     assert selection['type'] == 'choice' and selection['default'] == 'full'
-    assert selection['options'] == ['full', 'inline-chat-card', 'queued-configuration', 'security-redaction', 'patch-placement-recovery', 'patch-placement-native', 'managed-removal-recovery', 'fresh-cleanup-native', 'shared-work-continuity', 'manager-exception-boundary', 'remote-test-origins', 'shared-work-native', 'cold-control-restore', 'goal-peer-publisher-0410', 'updater-omitted-ref', 'updater-synthetic-acquisition', 'updater-expanded-lock', 'native-child-fixtures']
+    assert selection['options'] == ['full', 'inline-chat-card', 'queued-configuration', 'security-redaction', 'patch-placement-recovery', 'patch-placement-native', 'managed-removal-recovery', 'fresh-cleanup-native', 'shared-work-continuity', 'manager-exception-boundary', 'remote-test-origins', 'shared-work-native', 'cold-control-restore', 'goal-peer-publisher-0410', 'updater-omitted-ref', 'updater-public-selected-source', 'updater-synthetic-acquisition', 'updater-expanded-lock', 'native-child-fixtures']
     assert workflow['on']['workflow_call']['inputs'] == {'revision': {'type': 'string', 'required': 'true'}}
     assert workflow['on']['workflow_call']['secrets'] == {'LOOP_LIVE_CI_READ_KEY': {'required': 'true'}}
     assert workflow['permissions'] == {'contents': 'read'}
     jobs = workflow['jobs']
-    assert jobs['python']['if'] == "${{ !inputs.core_wheels && inputs.suite != 'remote-test-origins' && inputs.suite != 'cold-control-restore' && inputs.suite != 'goal-peer-publisher-0410' && inputs.suite != 'updater-omitted-ref' && inputs.suite != 'updater-synthetic-acquisition' && inputs.suite != 'updater-expanded-lock' && inputs.suite != 'fresh-cleanup-native' }}"
+    assert jobs['python']['if'] == "${{ !inputs.core_wheels && inputs.suite != 'remote-test-origins' && inputs.suite != 'cold-control-restore' && inputs.suite != 'goal-peer-publisher-0410' && inputs.suite != 'updater-omitted-ref' && inputs.suite != 'updater-public-selected-source' && inputs.suite != 'updater-synthetic-acquisition' && inputs.suite != 'updater-expanded-lock' && inputs.suite != 'fresh-cleanup-native' }}"
     assert jobs['python']['env']['CHECK_SUITE'] == "${{ inputs.suite || 'full' }}"
     assert jobs['core-wheels']['if'] == "${{ inputs.core_wheels && (!inputs.suite || inputs.suite == 'full') }}"
     remote = jobs['remote-test-origins']
@@ -573,6 +573,12 @@ def test_manual_python_selection_is_fixed_and_preserves_full_and_core_modes():
     assert updater['uses'] == './.github/workflows/updater-omitted-ref.yml'
     assert updater['secrets'] == {'LOOP_LIVE_CI_READ_KEY': '${{ secrets.LOOP_LIVE_CI_READ_KEY }}'}
     assert 'with' not in updater
+    assert jobs['updater-public-selected-source'] == {
+        'if': "${{ github.event_name == 'workflow_dispatch' && !inputs.core_wheels && inputs.suite == 'updater-public-selected-source' }}",
+        'uses': './.github/workflows/updater-omitted-ref.yml',
+        'with': {'public_selected_source': 'true'},
+        'secrets': {'LOOP_LIVE_CI_READ_KEY': '${{ secrets.LOOP_LIVE_CI_READ_KEY }}'},
+    }
     assert jobs['updater-synthetic-acquisition'] == {
         'if': "${{ !inputs.core_wheels && inputs.suite == 'updater-synthetic-acquisition' }}",
         'uses': './.github/workflows/updater-synthetic-acquisition.yml',
@@ -780,7 +786,8 @@ def test_cold_control_restore_is_exclusive_manual_locked_and_bounded():
     jobs = workflow['jobs']
     assert set(jobs) == {'python', 'core-wheels', 'remote-test-origins', 'incompatible-selection',
                          'cold-control-restore', 'goal-peer-publisher-0410', 'fresh-cleanup-native',
-                         'updater-omitted-ref', 'updater-synthetic-acquisition', 'updater-expanded-lock'}
+                         'updater-omitted-ref', 'updater-public-selected-source',
+                         'updater-synthetic-acquisition', 'updater-expanded-lock'}
     job = jobs['cold-control-restore']
     assert job['if'] == "${{ github.event_name == 'workflow_dispatch' && !inputs.core_wheels && inputs.suite == 'cold-control-restore' }}"
     assert job['runs-on'] == 'ubuntu-latest' and job['timeout-minutes'] == '15'
@@ -875,7 +882,8 @@ def test_expanded_lock_preflight_reuses_private_checkout_without_running_worker(
         Loader=yaml.BaseLoader,
     )
     assert workflow['on'] == {'workflow_call': {
-        'inputs': {'offline_lock_preflight': {'type': 'boolean', 'default': 'false'}},
+        'inputs': {'offline_lock_preflight': {'type': 'boolean', 'default': 'false'},
+                   'public_selected_source': {'type': 'boolean', 'default': 'false'}},
         'secrets': {'LOOP_LIVE_CI_READ_KEY': {'required': 'true'}},
     }}
     assert workflow['permissions'] == {'contents': 'read'}
@@ -884,7 +892,7 @@ def test_expanded_lock_preflight_reuses_private_checkout_without_running_worker(
     assert set(job) == {'runs-on', 'timeout-minutes', 'steps'}
     assert job['runs-on'] == 'ubuntu-latest' and job['timeout-minutes'] == '30'
     steps = job['steps']
-    assert len(steps) == 10
+    assert len(steps) == 11
     checkouts = [s for s in steps if s.get('uses', '').startswith('actions/checkout@')]
     assert checkouts == [
         {
@@ -919,7 +927,11 @@ def test_expanded_lock_preflight_reuses_private_checkout_without_running_worker(
     host = next(s for s in steps if s.get('name') == 'Prepare locked host dependencies using only the approved private checkout')
     worker = next(s for s in steps if s.get('name') == 'Prepare the independent worker graph and run the fixed no-account fixture')
     preflight = next(s for s in steps if s.get('name') == 'Resolve the expanded graph with the fixed offline lock preflight')
-    assert host['if'] == worker['if'] == '${{ !inputs.offline_lock_preflight }}'
+    assert host['if'] == '${{ !inputs.offline_lock_preflight }}'
+    assert worker['if'] == '${{ !inputs.offline_lock_preflight && !inputs.public_selected_source }}'
+    public = next(s for s in steps if s.get('name') == 'Qualify selected public app sources through the ordinary updater')
+    assert public['if'] == '${{ inputs.public_selected_source && !inputs.offline_lock_preflight }}'
+    assert 'python scripts/qualify_public_selected_source.py' in public['run']
     assert preflight['if'] == '${{ inputs.offline_lock_preflight }}'
     assert "['uv', 'sync', '--locked', '--group', 'dev', '--group', 'artifacts']" in host['run']
     assert worker['run'].splitlines() == [
@@ -934,7 +946,7 @@ def test_expanded_lock_preflight_reuses_private_checkout_without_running_worker(
         'python scripts/qualify_omitted_ref.py ',
         'python scripts/qualify_omitted_ref.py --offline-lock-preflight ', 1,
     )
-    assert [s for s in steps if 'run' in s] == [pin, host, worker, preflight]
+    assert [s for s in steps if 'run' in s] == [pin, host, worker, public, preflight]
     assert all('${{' not in s['run'] for s in (host, worker, preflight))
     assert all('continue-on-error' not in s for s in steps)
     assert steps.index(checkouts[1]) < steps.index(host) < steps.index(worker) < steps.index(preflight)

@@ -6,6 +6,9 @@ on:
       offline_lock_preflight:
         type: boolean
         default: false
+      public_selected_source:
+        type: boolean
+        default: false
     secrets:
       LOOP_LIVE_CI_READ_KEY:
         required: true
@@ -79,7 +82,7 @@ jobs:
           raise SystemExit(result.returncode)
           PY
       - name: Prepare the independent worker graph and run the fixed no-account fixture
-        if: ${{ !inputs.offline_lock_preflight }}
+        if: ${{ !inputs.offline_lock_preflight && !inputs.public_selected_source }}
         run: |
           set -euo pipefail
           python scripts/qualify_omitted_ref.py \
@@ -87,6 +90,14 @@ jobs:
             --work "$RUNNER_TEMP/omitted-ref-work" \
             --output "$RUNNER_TEMP/omitted-ref-evidence" \
             2>&1 | tee "$RUNNER_TEMP/omitted-ref-evidence/adapter.log"
+      - name: Qualify selected public app sources through the ordinary updater
+        if: ${{ inputs.public_selected_source && !inputs.offline_lock_preflight }}
+        run: |
+          set -euo pipefail
+          python scripts/qualify_public_selected_source.py \
+            --loop-source "$GITHUB_WORKSPACE/.ci/omitted-ref-loop" \
+            --work "$RUNNER_TEMP/public-selected-work" \
+            --output "$RUNNER_TEMP/omitted-ref-evidence"
       - name: Resolve the expanded graph with the fixed offline lock preflight
         if: ${{ inputs.offline_lock_preflight }}
         run: |

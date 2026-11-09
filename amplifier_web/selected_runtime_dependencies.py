@@ -32,7 +32,8 @@ def git_source(value):
 
 def selected(manifests, *, distributions=None, environment=None):
     from .runtime_environment import package_name
-    from .runtime_policy_reconciliation import authored_constraints
+    from .runtime_policy_reconciliation import compatible_constraint, exact_constraint_pin
+    from .runtime_source_policy import constraint_declarations
     from .updates import source_key, pinned
 
     environment = default_environment() if environment is None else environment
@@ -45,6 +46,7 @@ def selected(manifests, *, distributions=None, environment=None):
         installed[name] = dist
 
     roots, constraints, queue = {}, {}, deque()
+    constraint_evidence = defaultdict(set)
     for name, content in manifests.items():
         project = tomllib.loads(content.decode()).get('project', {})
         # Static dependency declarations are the source of selection. Dynamic
@@ -56,11 +58,15 @@ def selected(manifests, *, distributions=None, environment=None):
             continue
         roots[name] = values
         queue.append((name, frozenset()))
-        for dependency, declaration in authored_constraints(content, runtime_batch=True).items():
-            if dependency in constraints and constraints[dependency] != declaration:
-                constraints[dependency] = None
-            else:
-                constraints[dependency] = declaration
+        # A contributor's uv source can restrict a dependency without selecting
+        # it. Preserve every restriction separately; missing selection there is
+        # not unknown identity when another reachable requirement selects it.
+        for dependency, declarations in constraint_declarations(content, runtime_batch=True).items():
+            constraints.setdefault(dependency, []).extend(declarations)
+            if any(exact_constraint_pin(item) for item in declarations):
+                constraint_evidence[dependency].add(json.dumps({
+                    'parent': name, 'manifestSha256': hashlib.sha256(content).hexdigest(),
+                    'constraints': declarations}, sort_keys=True))
 
     seen, reachable, declarations, evidence = set(), set(), defaultdict(set), defaultdict(set)
     rejected, identities = set(), {}
@@ -94,7 +100,10 @@ def selected(manifests, *, distributions=None, environment=None):
                 # Even an inactive pin/alternate is a source choice we cannot
                 # discard while recovering an old pin's missing origin.
                 declarations[dependency].add(json.dumps(source, sort_keys=True))
-                if requirement.marker is not None or pinned(source['ref']):
+                # Full SHA identity may prove retention, never moving recovery.
+                # Conditional refs, tags and abbreviated pins remain unresolved.
+                if requirement.marker is not None or (
+                        pinned(source['ref']) and not re.fullmatch('[a-f0-9]{40}', source['ref'])):
                     rejected.add(dependency)
             try:
                 active = requirement.marker is None or any(requirement.marker.evaluate(
@@ -133,11 +142,20 @@ def selected(manifests, *, distributions=None, environment=None):
         source = identities.get(name)
         if source is None or name in rejected or len(declarations[name]) != 1:
             continue
-        constraint = constraints.get(name)
-        if name in constraints and (not constraint or constraint.get('refKind') == 'tag' or any(
-                constraint.get(key, '') != source[key] for key in ('url', 'ref', 'subdirectory'))):
+        restrictions = constraints.get(name, [])
+        if any(not compatible_constraint(constraint, source) for constraint in restrictions):
             continue
-        result[name] = {'status': 'selected', **source, 'sourceKind': 'dependency',
+        if any(exact_constraint_pin(constraint) for constraint in restrictions):
+            # A compatible full-SHA restriction binds the installed identity,
+            # even when the selecting requirement names a branch. Report a pin
+            # so neither recovery nor the strict checked guard may advance it.
+            source = {**source, 'ref': source['revision']}
+            evidence[name].update(constraint_evidence[name])
+        exact_pin = bool(re.fullmatch('[a-f0-9]{40}', source['ref']))
+        if exact_pin and source['ref'] != source['revision']:
+            continue
+        result[name] = {'status': 'explicit-pin' if exact_pin else 'selected',
+                        **source, 'sourceKind': 'dependency',
                         'manifestSha256': hashlib.sha256('\n'.join(sorted(evidence[name])).encode()).hexdigest()}
     return result
 
@@ -151,7 +169,8 @@ async def refresh(manager, stage, project, selected):
     import shutil
     from pathlib import Path
 
-    selected = {name: row for name, row in selected.items() if row.get('sourceKind') == 'dependency'}
+    selected = {name: row for name, row in selected.items()
+                if row.get('sourceKind') == 'dependency' and row.get('status') != 'explicit-pin'}
     if not selected:
         return
     project, stage = Path(project), Path(stage)
@@ -217,7 +236,8 @@ async def refresh(manager, stage, project, selected):
         rebound.add(name)
     if set(generated).intersection(selected) != rebound:
         raise ValueError('A generated resolver override is missing before reconciliation.')
-    write_private(path, '\n'.join(json.dumps(key) + ' = ' + toml_value(value) for key, value in data.items()) + '\n')
+    write_private(path, '\n'.join(json.dumps(key) + ' = ' + toml_value(value) for key, value in data.items()) + '\n',
+                  owned_root=manager.home)
     uv = shutil.which('uv')
     await process(uv, 'lock', '--project', str(project), '--python', '3.13',
                   *[arg for name in sorted(selected) for arg in ('--upgrade-package', name, '--refresh-package', name)],

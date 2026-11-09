@@ -73,7 +73,7 @@ def group_sources(items):
     """
     groups = {}
     for item in items:
-        row = {k: v for k, v in item.items() if k not in {'path', 'url', 'eligible'}}
+        row = {k: v for k, v in item.items() if k not in {'path', 'url', 'eligible', 'appSelection'}}
         if row.get('kind') not in {'bundle / module', 'runtime dependency', 'source group'} or not row.get('ref'):
             groups[('id', row['id'])] = row
             continue
@@ -580,6 +580,8 @@ class UpdateManager:
         return await inventory(self, lambda: self._scan_inventory(app_only=True))
 
     async def _scan_inventory(self, *, app_only=False):
+        from .update_sequence import app_selection
+        selection = await asyncio.to_thread(app_selection, self.home)
         base = foundation_home(self.home)
         # Capture only selection metadata before yielding. The history catalog
         # can change while filesystem/settings reads run outside the event loop.
@@ -649,7 +651,9 @@ class UpdateManager:
         from .update_sequence import classify
         smart = getattr(self.service, 'smart_tools', None)
         if smart: rows.extend(smart.update_sources())
-        return classify(self.home, rows)
+        if (await asyncio.to_thread(app_selection, self.home)) != selection:
+            raise ValueError('App behavior selection changed during inventory')
+        return classify(self.home, rows, selection=selection)
 
     async def command(self, action, args=None, command_id=None):
         if self.awaiting_restart() and action not in {'featureInstall', 'forceRestart'}:return
@@ -838,7 +842,7 @@ class UpdateManager:
                     # installed Git rows need the same proof as cache URIs;
                     # retain an exact already-qualified authored policy.
                     prove_kind = bool(row.get('cacheManaged') or row.get('sharedSource')
-                        or row.get('kind') == 'bundle / module'
+                        or row.get('kind') in {'bundle / module', 'included source'}
                         or row.get('kind') == 'runtime dependency' and not typed_policy)
                     key = (row['url'], row['ref'], prove_kind)
                     task = remote_tasks.setdefault(key, None)
@@ -873,6 +877,8 @@ class UpdateManager:
                     sequence.update(stage=stage)
                     sequence[stage] = summary(group_sources(selected))
                     if sequence[stage]['available'] or (stage == 'included' and sequence[stage]['issues']):break
+                from .update_sequence import verify_app_selection
+                await asyncio.to_thread(verify_app_selection, self, checked)
                 self.inventory = checked
                 write_private(self.directory/'inventory.json',json.dumps(checked))
                 public = group_sources(checked)
@@ -1012,6 +1018,8 @@ class UpdateManager:
             if not candidates:
                 await self.publish(detail='Check for updates before installing. No eligible updates are available.')
                 return
+            from .update_sequence import verify_app_selection
+            await asyncio.to_thread(verify_app_selection, self, self.inventory)
             from .update_health import preparation_key, retry_decision, environment_repaired
             input_key = preparation_key(self, self.inventory)
             prior_retry = self.diagnostics.state.get('batch', {}).get('retry') or {}
@@ -1056,6 +1064,7 @@ class UpdateManager:
                 # Beyond plain snapshots, preparation can invoke shared source
                 # stores, installers and native hooks. Do not infer their effects
                 # or settlement from a CancelledError.
+                await asyncio.to_thread(verify_app_selection, self, self.inventory)
                 proof['boundary'] = 'preparing'
                 for config_file in (stage/'config').rglob('*.yaml'):
                     config_file.write_text(config_file.read_text().replace(str(source),str(stage/'foundation')))
@@ -1065,6 +1074,7 @@ class UpdateManager:
                                   .replace(str(self.home/'foundation'),str(stage/'foundation')))
                 registry=stage/'foundation/registry.json'
                 if registry.exists(): registry.write_text(registry.read_text().replace(str(source),str(stage/'foundation')))
+                await asyncio.to_thread(verify_app_selection, self, self.inventory, stage=stage)
                 # Snapshot shared configuration, never CLI registry or caches.
                 # Candidate preparation resolves declarations into its own store.
                 cache_rows = []
@@ -1081,6 +1091,7 @@ class UpdateManager:
                         continue
                     cache_rows.append(row)
                 await self.stage_cache_sources(stage, cache_rows)
+                await asyncio.to_thread(verify_app_selection, self, self.inventory, stage=stage)
                 await self.publish(phase='validating',detail='Preparing dependencies in a separate runtime…')
                 phase='ecosystem-validation'
                 from .update_plan import build, reuse_runtime
@@ -1091,6 +1102,7 @@ class UpdateManager:
                     await self.diagnostics.run('ecosystem-runtime-reuse', reuse_runtime, self, stage, plan)
                 else:
                     await self.validate(stage,release)
+                await asyncio.to_thread(verify_app_selection, self, self.inventory, stage=stage)
                 write_private(stage/'validated.json',json.dumps({'generationSchema': 1, 'workerProtocol': 1, 'createdAt':time.time(),'sources':len(candidates),'hostVersion':__import__('amplifier_web').__version__, 'updateTier': self.service.state['updates'].get('sequence', {}).get('stage')}))
                 self.diagnostics.clear_failure()
                 self.diagnostics.record('ecosystem-stage','succeeded',commandId=stage_id)

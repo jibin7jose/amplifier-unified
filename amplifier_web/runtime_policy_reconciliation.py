@@ -236,7 +236,8 @@ class Collector:
                 # Identity can prove an unchanged install without granting
                 # moving-ref recovery or permission to rewrite this checkout.
                 package['status'] = 'explicit-pin'
-                continue
+            # A verified pinned root still constrains its reachable dependencies.
+            # Its own explicit-pin status remains ineligible for moving recovery.
             manifests[name] = content
         for name, package in packages.items():
             if package.get('status') not in {'selected', 'explicit-pin'} or name not in constraints:
@@ -257,7 +258,7 @@ class Collector:
             package['authoredConstraints'] = constraint_origins[name]
         from .selected_runtime_dependencies import selected
         dependencies = selected({name: content for name, content in manifests.items()
-                                 if packages[name].get('status') == 'selected'})
+                                 if packages[name].get('status') in {'selected', 'explicit-pin'}})
         for name, package in dependencies.items():
             packages.setdefault(name, package)
         return {'version': VERSION, 'configuration': configuration(config), 'packages': packages,

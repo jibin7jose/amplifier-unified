@@ -802,20 +802,11 @@ def module_source(config, snapshot, module, source, components=None):
 
 async def load_configured_bundle(registry, config, reference):
     """Apply the same source selections to roots and app behaviors as includes."""
-    from .bundle_paths import canonical_bundle_reference
-    reference = canonical_bundle_reference(config, reference)
-    replacement = config.resolve_source(reference)
-    if replacement is None:
-        registered = registry.find(reference)
-        if registered:
-            replacement = config.resolve_source(registered)
-    reference = replacement or reference
-    from .bundle_paths import local_bundle_path
-    candidate = local_bundle_path(config, reference)
-    chosen = str(candidate) if candidate is not None else reference
+    from .bundle_paths import configured_bundle_reference, local_bundle_path
+    chosen = configured_bundle_reference(config, reference, registry.find)
     observer = getattr(config, '_source_policy_observer', None)
     if observer:
-        observer.observe(chosen, config, registry, explicit_local=candidate is not None)
+        observer.observe(chosen, config, registry, explicit_local=local_bundle_path(config, chosen) is not None)
     return await registry.load(chosen), chosen
 
 

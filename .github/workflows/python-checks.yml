@@ -23,6 +23,7 @@ on:
           - cold-control-restore
           - goal-peer-publisher-0410
           - updater-omitted-ref
+          - updater-public-selected-source
           - updater-synthetic-acquisition
           - updater-expanded-lock
           - native-child-fixtures
@@ -42,7 +43,7 @@ permissions:
   contents: read
 jobs:
   python:
-    if: ${{ !inputs.core_wheels && inputs.suite != 'remote-test-origins' && inputs.suite != 'cold-control-restore' && inputs.suite != 'goal-peer-publisher-0410' && inputs.suite != 'updater-omitted-ref' && inputs.suite != 'updater-synthetic-acquisition' && inputs.suite != 'updater-expanded-lock' && inputs.suite != 'fresh-cleanup-native' }}
+    if: ${{ !inputs.core_wheels && inputs.suite != 'remote-test-origins' && inputs.suite != 'cold-control-restore' && inputs.suite != 'goal-peer-publisher-0410' && inputs.suite != 'updater-omitted-ref' && inputs.suite != 'updater-public-selected-source' && inputs.suite != 'updater-synthetic-acquisition' && inputs.suite != 'updater-expanded-lock' && inputs.suite != 'fresh-cleanup-native' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -685,6 +686,14 @@ jobs:
   updater-synthetic-acquisition:
     if: ${{ !inputs.core_wheels && inputs.suite == 'updater-synthetic-acquisition' }}
     uses: ./.github/workflows/updater-synthetic-acquisition.yml
+
+  updater-public-selected-source:
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.core_wheels && inputs.suite == 'updater-public-selected-source' }}
+    uses: ./.github/workflows/updater-omitted-ref.yml
+    with:
+      public_selected_source: true
+    secrets:
+      LOOP_LIVE_CI_READ_KEY: ${{ secrets.LOOP_LIVE_CI_READ_KEY }}
 
   updater-expanded-lock:
     if: ${{ !inputs.core_wheels && inputs.suite == 'updater-expanded-lock' }}

@@ -242,3 +242,45 @@ def test_prior_direct_only_receipt_is_reconsidered_once(selected_source, monkeyp
     old['selectionVersion'] = migration.SELECTION_VERSION
     target.write_text(json.dumps(old))
     assert migration.pending(s.home, None, [row()]) is None
+
+
+@pytest.mark.parametrize('checked_ref',['main',OLD])
+def test_matching_transitive_pin_retains_exact_identity_without_recovery(checked_ref):
+    from amplifier_web.runtime_source_alignment import verify_checked_selection
+    content=manifest([NAME+' @ git+'+URL+'@'+OLD])
+    packages=dependencies.selected({'selected-root':content},distributions=[dist()])
+    selection={'batchPaths':{'selected-root':'/selected/root'},'packages':packages}
+    checked={NAME:{'url':URL,'ref':checked_ref,'revision':OLD,'subdirectory':''}}
+    verify_checked_selection(checked,selection,exact=True)
+    assert packages[NAME]['status']=='explicit-pin'
+    candidate={'kind':'runtime dependency','package':NAME,'url':URL,'ref':OLD,'current':OLD,
+               'policyOrigin':{'kind':'unresolved-reference','originalRef':'main'}}
+    assert not migration.selected_policies(migration.legacy_candidates([candidate]),
+                                           {'packages':packages})[0]
+    checked[NAME]['revision']=NEW
+    with pytest.raises(runtime.ProtectedRuntimeSource) as caught:
+        verify_checked_selection(checked,selection)
+    assert caught.value.diagnostic_facts['package']==NAME
+
+
+@pytest.mark.parametrize('case',['different-install','fork','subdirectory','conditional',
+                                'duplicate','conflict','tag','missing','unselected'])
+def test_transitive_pin_retention_requires_complete_exact_evidence(case):
+    from amplifier_web.runtime_source_alignment import verify_checked_selection
+    content=manifest([NAME+' @ git+'+URL+'@'+OLD])
+    records=[dist()]
+    if case=='different-install':records=[dist(revision=NEW)]
+    if case=='fork':records=[dist(url=URL+'-fork')]
+    if case=='subdirectory':records=[dist(subdirectory='other')]
+    if case=='conditional':content=manifest([NAME+' @ git+'+URL+'@'+OLD+' ; python_version > "1"'])
+    if case=='duplicate':records.append(dist())
+    if case=='conflict':content=manifest([NAME+' @ git+'+URL+'@'+OLD,NAME+' @ git+'+URL+'@main'])
+    if case=='tag':content=manifest([NAME+' @ git+'+URL+'@v1.0.0'])
+    if case=='missing':records=[]
+    if case=='unselected':content=manifest([])
+    packages=dependencies.selected({'selected-root':content},distributions=records)
+    assert packages.get(NAME,{}).get('status')!='explicit-pin'
+    if case!='unselected':
+        with pytest.raises(runtime.ProtectedRuntimeSource):
+            verify_checked_selection({NAME:{'url':URL,'ref':'main','revision':OLD}},
+                                     {'batchPaths':{},'packages':packages},exact=True)

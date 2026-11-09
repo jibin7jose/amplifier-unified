@@ -18,6 +18,13 @@ def git(path,*args):
 async def app(tmp_path,monkeypatch,repo):
     from amplifier_web import app_updates,updates,update_sequence
     monkeypatch.setattr(update_sequence, 'included_sources', lambda: (set(), []))
+    # This fixture exercises repository staging, not enabled app behaviors.
+    from amplifier_web.builtin_behaviors import DEFAULT_BEHAVIORS
+    from amplifier_web.session_files import amplifier_home
+    import yaml
+    settings = amplifier_home()/'settings.yaml'
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(yaml.safe_dump({'web_bundles':{'excluded':list(DEFAULT_BEHAVIORS)}}))
     async def check():return {"id":"application","label":"Amplifier Unified","status":"current"}
     monkeypatch.setattr(app_updates,"check",check)
     original=updates.process
@@ -50,7 +57,9 @@ async def prepare(app,repo):
     (root/'.amplifier_cache_meta.json').write_text(json.dumps({'git_url':'https://example.invalid/repo','ref':'main','commit':old}))
     (app.data_dir/'config').mkdir(exist_ok=True);(app.data_dir/'config/settings.yaml').write_text('{}')
     manager=app.update_manager
-    manager.inventory=[{'id':'repo','path':'cache/repository','url':'https://example.invalid/repo','label':'Fixture','current':old,'latest':new,'ref':'main','eligible':True,'status':'update'}]
+    from amplifier_web.update_sequence import app_selection
+    manager.inventory=[{'id':'repo','path':'cache/repository','url':'https://example.invalid/repo','label':'Fixture','current':old,'latest':new,'ref':'main','eligible':True,'status':'update',
+                        'appSelection':app_selection(manager.home)['witness']}]
     return manager,root
 
 async def test_stage_activate_and_rollback_preserve_original_cache(app,repo):
@@ -196,7 +205,9 @@ async def test_background_policy_preserves_explicit_opt_out(app):
     manager=app.update_manager;events=[]
     async def check(**kwargs):
         events.append('check');app.state['updates'].update(phase='available',available=1,lastCheck=time.time())
-    async def install():events.append('install')
+    async def install(*, automatic=False):
+        assert automatic is True
+        events.append('install')
     manager.check=check;manager.install=install
     assert app.state['settings']['updates']['autoInstall'] is True
     app.state['settings']['updates']['autoInstall']=False
@@ -674,7 +685,9 @@ async def test_new_automatic_default_installs_eligible_updates_but_not_managed_p
     manager=app.update_manager;events=[]
     async def check(**kwargs):
         events.append('check');app.state['updates'].update(phase='available',available=1,lastCheck=time.time())
-    async def install():events.append('install')
+    async def install(*, automatic=False):
+        assert automatic is True
+        events.append('install')
     manager.check=check;manager.install=install
     await manager.tick();assert events==['check','install']
     app.state['updates'].update(appAvailable=True,application={'canInstall':False})

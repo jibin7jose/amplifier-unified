@@ -19,6 +19,7 @@ def signature(manager):
     from . import __version__
     from .session_files import amplifier_home
     from .updates import active_release, foundation_home
+    from .update_sequence import app_selection
 
     home = Path(manager.home)
     base = foundation_home(home)
@@ -46,6 +47,7 @@ def signature(manager):
         json.dumps(
             [
                 __version__,
+                app_selection(home)['witness'],
                 active_release(home),
                 stamps,
                 tools,
