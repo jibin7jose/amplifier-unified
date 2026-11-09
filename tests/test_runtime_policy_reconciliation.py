@@ -351,6 +351,31 @@ def test_explicit_external_resolver_policy_does_not_get_a_migration_prompt(selec
     assert migration.pending(selected.home, None, [row()]) is None
 
 
+@pytest.mark.parametrize('acknowledged', [False, True])
+async def test_no_candidates_read_inventory_once_without_composition(tmp_path, monkeypatch, acknowledged):
+    home = tmp_path / 'app'
+    stage = home / 'updates/releases' / ('c' * 32)
+    stage.mkdir(parents=True)
+    project = home / 'runtime'
+    project.mkdir()
+    previous = environments.receipt_directory(home) / migration.RECEIPT
+    if acknowledged:
+        previous.parent.mkdir()
+        previous.write_text('{"retained":"acknowledgment"}')
+    calls = []
+    async def inventory(target):
+        calls.append(target)
+        return []
+    async def collect():
+        pytest.fail('No candidates must not launch a policy composition')
+    monkeypatch.setattr(environments, 'update_inventory', inventory)
+    assert await migration.reconcile(SimpleNamespace(home=home), stage, project, collect) is None
+    assert calls == [home]
+    assert list(stage.iterdir()) == ([stage / migration.RECEIPT] if acknowledged else [])
+    if acknowledged:
+        assert (stage / migration.RECEIPT).read_bytes() == previous.read_bytes()
+
+
 async def test_declaration_probe_collects_without_install_or_live_session(selected, monkeypatch):
     import asyncio
     import runpy

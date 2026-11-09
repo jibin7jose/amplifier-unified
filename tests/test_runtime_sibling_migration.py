@@ -365,16 +365,47 @@ async def test_real_legacy_local_sibling_refuses_before_checkout_or_install(lega
     c.assert_preserved()
 
 
-async def test_validate_orders_real_legacy_sibling_collection_and_single_install(legacy_siblings, monkeypatch):
+@pytest.mark.parametrize('availability', ['full', 'included-only'])
+async def test_validate_orders_real_legacy_sibling_collection_and_single_install(legacy_siblings, monkeypatch, availability):
     """Real validate/reconcile/uv/freeze; adapt only the profile probe boundary.
 
     The synthetic sibling modules have no provider or conversation loop. The
     post-freeze read-only compatibility mount is counted, not claimed tested.
     """
-    from amplifier_web import bundles, update_sources
+    from amplifier_web import bundles, update_sources, update_sequence
     from amplifier_web.host import config as host_config
     c = legacy_siblings
     c.manager.inventory = await environments.update_inventory(c.home)
+    assert set(migration.legacy_candidates(c.manager.inventory)) == set(PACKAGES)
+    assert not (environments.receipt_directory(c.home) / migration.RECEIPT).exists()
+    if availability == 'included-only':
+        from amplifier_web.service import AppService
+        from test_update_sequence import Runtime
+        service = AppService(c.home, Runtime(), workspace=c.config.workspace)
+        manager = updates.UpdateManager(service)
+        service.update_manager = manager
+        included = {
+            'id': 'included', 'kind': 'bundle / module', 'label': 'included',
+            'url': URL, 'ref': 'main', 'current': c.old,
+            'status': 'not_checked', 'eligible': True, 'updateTier': 'included',
+            'appSelection': update_sequence.app_selection(c.home)['witness'],
+        }
+        rows = [included, *[{**row, 'updateTier': 'other'} for row in c.manager.inventory]]
+        async def inventory(**kwargs):
+            return rows
+        monkeypatch.setattr(manager, 'inventory_sources', inventory)
+        try:
+            # Exercise the real early stop and persisted availability inventory,
+            # not an empty list substituted for the missing legacy siblings.
+            await manager.check(tier='included')
+            assert service.state['updates']['sequence']['stage'] == 'included'
+            assert service.state['updates']['available'] == 1
+            c.manager.inventory = manager.inventory
+            assert c.manager.inventory == [included]
+            assert json.loads((c.home / 'updates/inventory.json').read_text()) == [included]
+            assert not migration.legacy_candidates(c.manager.inventory)
+        finally:
+            await service.close()
     monkeypatch.setattr(bundles, 'profile_candidates', lambda config: ['fixture'])
     monkeypatch.setattr(bundles, 'offered_profiles', lambda config: ['fixture'])
     monkeypatch.setattr(host_config, 'read_config', lambda *args, **kwargs: c.config)
