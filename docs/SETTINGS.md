@@ -51,8 +51,8 @@ exact-source evidence when behavior changes.
 
 Follow the [release qualification policy](validation/release-qualification.md):
 run affected unit and browser checks against exact source in an owned DTU with
-synthetic state. Broad suites run separately in the background; this guide adds
-no exhaustive merge or publication gate. Maintained commands live in
+synthetic state. Broad suites run nightly or by explicit request, not automatically
+per release; this guide adds no exhaustive merge or publication gate. Maintained commands live in
 [frontend/package.json](../frontend/package.json), including:
 
 | Changed behavior | Relevant browser journey |

@@ -5,10 +5,10 @@ Released: [0.20.86](https://github.com/microsoft/amplifier-unified/releases/tag/
 `687fb99f26ee7cf3d131419d55657f3b8efd438a`. Acceptance completed October 8, 2026.
 Scope: existing main application; AHP/ACP remains a separate secondary track.
 
-This is a historical acceptance record. The October 13 [local-first release
-policy](release-qualification.md#local-first-fast-publication-policy-october-13-2026)
-supersedes the PR/main readiness gate described below: exhaustive readiness now
-runs after publication, and the required PR gate is Fast release checks.
+This is a historical acceptance record, not current release instructions. Follow
+the [Fast Release Guide](release-qualification.md#qualification-policy):
+exhaustive readiness belongs to nightly/manual verification, not a per-release
+campaign. The required PR gate is Fast release checks.
 
 ## Changes
 

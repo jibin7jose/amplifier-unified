@@ -17,7 +17,11 @@ npm ci --prefix frontend
 npm run build --prefix frontend
 ```
 
-Reuse prepared dependencies while their lockfiles match. The canonical frontend
+These are development setup commands, not a per-release checklist. For releases,
+use the [Fast Release Guide](docs/validation/release-qualification.md): reuse the
+prepared environment and run `release.py prepare --build` once instead of adding
+another manual build. Refresh dependencies only when missing or stale.
+The canonical frontend
 build writes `amplifier_web/static`; keep that generated output committed for now.
 Do not edit minified assets. Follow the [release preparation and asset recovery
 guidance](docs/validation/release-qualification.md#preparing-a-version-change) when
@@ -58,9 +62,12 @@ For performance-sensitive changes, use [performance validation](docs/validation/
 at design and review. Describe the affected operation, scaling inputs, measured
 budget and semantic checks in the PR; distinguish source tests from installed or
 live evidence. Select checks for the changed risk under the
-[release policy](docs/validation/release-qualification.md#local-first-fast-publication-policy-updated-november-4-2026).
+[release policy](docs/validation/release-qualification.md#qualification-policy).
 
-For release acceptance, use the [platform and first-use checklist](docs/validation/release-acceptance.md).
+For routine publication, follow the [Fast Release Guide](docs/validation/release-qualification.md).
+Use the [platform and first-use checklist](docs/validation/release-acceptance.md)
+when qualifying an affected platform or first-use change; it is not a mandatory
+campaign for every release.
 
 Keep native test dependencies in the development group. When a fixture package
 and its dependency declare the same source, align their authored refs and retain

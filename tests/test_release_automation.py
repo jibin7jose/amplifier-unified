@@ -142,6 +142,8 @@ def test_prepare_optional_build_runs_only_the_existing_build_once(preparation, m
         result = release.prepare(root, '1.2.4', notes, build=True)
         assert result['buildStatus'] == 'passed'
         assert result['build']['version'] == '1.2.4'
+        assert result['nextSteps'][0].startswith('Run uv sync --locked --dry-run')
+        assert not any('Run buildCommand' in step for step in result['nextSteps'])
     else:
         with pytest.raises(ValueError, match='prepared metadata retained' if outcome == 'failed' else 'does not match'):
             release.prepare(root, '1.2.4', notes, build=True)
@@ -163,7 +165,23 @@ def test_prepare_cli_produces_metadata_without_installing_or_building(preparatio
     assert payload['buildStatus'] == 'not-run'
     assert payload['buildCommand'] == ['npm','run','build','--prefix','frontend']
     assert payload['nextSteps'][0].startswith('Run buildCommand once')
+    assert payload['nextSteps'][1].startswith('Run uv sync --locked --dry-run')
+    assert 'change PR where practical; push early' in payload['nextSteps'][2]
+    assert 'While required CI runs' in payload['nextSteps'][3]
+    assert 'Reuse independent feature review' in payload['nextSteps'][3]
+    assert 'exact reviewed head through repository protections' in payload['nextSteps'][3]
     assert 'Live adoption is separate' in payload['nextSteps'][-1]
+    assert payload['guidance'].endswith('#preparing-a-version-change')
+
+
+def test_prepare_help_describes_the_routine_single_build_path():
+    script = Path(__file__).parents[1]/'scripts/release.py'
+    help_text = ' '.join(subprocess.check_output([sys.executable, str(script), '--help'], text=True).split())
+    assert 'prepare --version X.Y.Z --notes-file /path/to/entry.json --build' in help_text
+    assert 'uv sync --locked --dry-run --group dev --group artifacts' in help_text
+    assert 'Coordinate one owner, version and publisher' in help_text
+    assert 'reuse matching dependencies' in help_text
+    assert 'Preparation never commits or publishes' in help_text
 
 
 def test_prepare_cli_reports_invalid_notes_without_traceback_or_source_changes(preparation):

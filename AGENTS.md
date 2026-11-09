@@ -41,42 +41,38 @@ Use measured workload budgets; this does not add a full-suite release gate.
 
 ## Keep the development release loop fast
 
-Every release needs an authored What's new entry, including fixes-only and
-maintenance releases. Before choosing a version or preparing a release PR,
-follow [version choice and release notes](docs/validation/release-qualification.md#version-choice-and-release-notes).
-The release owner checks the shipped changes and high-impact guidance; a version
-bump and passing format validator alone are not a complete release summary.
+Follow the [Fast Release Guide](docs/validation/release-qualification.md):
+**one PR → review while required CI runs → merge → automatic publication and
+installed-package smoke**. Qualify affected behavior first; reuse independent
+review and passing tests when their relevant inputs are unchanged.
 
-User direction, November 4, 2026: the **total routine per-release loop targets
-five minutes or less**, including publication and the published-package smoke;
-moving an hour of work into the background for every release is not acceptable.
-Reuse maintained release commands and exact-input PR/DTU evidence; do not recreate
-one-off qualification harnesses or full-tree evidence packages for each version-only
-release. Fast keeps identity/notes and asset/build smoke for proven version-only
-PRs, avoiding unchanged release/reporting/access harness tests; changed or unknown
-inputs retain full checks, with one full nightly/manual owner. Do not relabel smoke as
-full-suite evidence. Run affected checks when inputs
-change, with specific checks for material risks such as migrations or authority
-changes. Do not repeat full suites for version-only preparation.
+Coordinate one release owner, selected version and publisher before preparation;
+a free tag check alone is not cross-session coordination. Every release needs an
+authored What's new entry and a high-impact-notice assessment based on the combined
+unpublished changes. Prefer including version, notes and assets in the change PR;
+a separate release PR is for batching, not a required extra step.
 
-Run package/frontend/native-runtime qualification together on one read-only runner,
-then publish on an isolated write-enabled runner. Keep one published-asset
-checksum/install probe; successful automatic smoke finishes on its read-only
-runner without another reporting queue. Broad Python, readiness, browser and
-integration coverage runs **once nightly around 01:00 America/Los_Angeles**, or by
-explicit manual investigation. Do not launch broad campaigns or model-powered
-monitor sessions for every release. The scheduled workflow owns reporting;
-assign human/agent follow-up only for actionable failures. Remove duplicated
-coverage only when another owner exercises the same boundary; preserve distinct
-installed-package, platform and media behavior.
+Use `scripts/release.py prepare --version X.Y.Z --notes-file /path/to/entry.json
+--build` and the locked dependency dry-run in an owned, prepared isolated
+environment. Reuse matching dependencies and the supported source-staging/build
+path. Do not provision a new environment, create a one-off harness or large evidence
+archive, add another reviewer, or repeat unchanged feature checks by default.
+Review only remaining integration/version/notes/output risks while CI runs.
+Merge the exact reviewed head through authorized controls with required checks
+and reviews satisfied; never bypass failures or change protections for speed.
 
-This is a measured target, not permission to suppress failures, cancel slow checks
-into success, change branch protection, or relabel old evidence. Report queue,
-cold-build and required-check overruns separately and fix their causes. Published,
-smoke-verified and broadly verified are distinct. Preserve failures and immutable
-release bytes; a smoke pass cannot close a broad-suite failure. Do not expand the
-routine graph without an explicit decision and an update to
-[the release policy](docs/validation/release-qualification.md).
+The **total routine release target is five minutes or less**, from version/notes
+preparation through published-package smoke, including required CI and queues.
+Record setup, orchestration, queue and required-check overruns honestly; this
+target is not a waiver. Published, smoke-verified and broadly verified are distinct.
+Never replace published tags or assets. After an uncertain operation, inspect its
+saved result before retrying.
+
+Broad Python, readiness, browser and integration coverage belongs to the single
+nightly/manual owner, not a per-release campaign or model monitor. Preserve failures
+and skips; a smoke pass cannot close a broad failure. Routine release completion is
+published and smoke-verified. Live adoption is a separate assigned operation; keep
+the overall task open when adoption is part of the request.
 
 ## Bundled client and server evolve together
 

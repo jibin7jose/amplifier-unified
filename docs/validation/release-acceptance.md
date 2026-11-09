@@ -1,6 +1,10 @@
 # Platform and first-use acceptance
 
 Status: checklist prepared; platform and human results are still pending.
+Use this checklist for affected platform, promotion or first-use acceptance, not
+as a mandatory routine-release campaign. Select checks for changed platform risks
+or an explicit acceptance request and reuse matching qualified evidence. Routine
+publication follows the [Fast Release Guide](release-qualification.md).
 Run against the exact candidate artifact supplied by the release owner. Record
 its version, commit, artifact checksum and source link before starting. Follow
 the [setup instructions](../../README.md#set-up-unified-on-your-computer) for
@@ -9,8 +13,8 @@ profile/account and synthetic work; keep any working installation separate.
 
 ## Platform checks
 
-Run once on **Windows with WSL and a Windows browser**, and once on **macOS with
-the backend running locally**. A Mac browser connected to Linux does not qualify
+For cross-platform acceptance, qualify **Windows with WSL and a Windows browser**
+and **macOS with the backend running locally**. A Mac browser connected to Linux does not qualify
 the macOS backend.
 
 1. Install and start from the published instructions. Open the app, sign in,

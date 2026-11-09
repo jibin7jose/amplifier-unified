@@ -222,8 +222,9 @@ Local acceptance: `npm --prefix frontend run test:mcp-recovery-browser` uses an
 actual MCP SDK fixture and restarts the host over isolated synthetic state. It
 checks source identity, launch receipts, mutation counts, input preservation,
 cooperative safe-read recovery, deliberate historical selection and changed-schema
-denial. It also runs once in the extended browser plan after publication or manual
-dispatch. `AMPLIFIER_TEST_PYTHON` selects the test interpreter. See the
+denial. It also runs in the nightly or explicitly dispatched extended browser plan
+against the selected immutable published revision, not automatically per release.
+`AMPLIFIER_TEST_PYTHON` selects the test interpreter. See the
 [807–809 qualification and remaining decision](validation/mcp-recovery-807-809.md).
 
 ## Supported protocol profile

@@ -1,16 +1,63 @@
-# Parallel release qualification
+# Amplifier Unified — Fast Release Guide
 
-The 0.20.8 release run [35803007224](https://github.com/microsoft/amplifier-unified/actions/runs/35803007224)
-took 27m04s. Its serial stages included 7m34s of Python/frontend validation,
-9m39s of runtime qualification, and 7m43s of browser checks. The runtime stage
-spent 9m28s rebuilding the same Core Git commit as the preceding attempts;
-its 24 actual tests took 4.57s. Application packaging and its install probe took
-six seconds.
+**Release path:** prepare one PR → review while required CI runs → merge →
+verify automatic publication and installed-package smoke.
+
+**Target:** five minutes or less from routine version/notes preparation through
+published-package smoke, once behavior is qualified. Include required CI and runner
+queues. Record setup, orchestration, queue and required-check overruns separately;
+the target is not a waiver or a claim that every release meets it.
+
+## Establish the release owner and scope
+
+Read `AGENTS.md` and this guide. Use a task-owned branch and preserve unrelated work.
+Coordinate **one publisher and one selected version before preparing it**. Check
+the latest published tag, current main, existing release PRs, publication runs and
+other release owners. A free version check alone is not cross-session coordination.
+
+Include all intended changes since the latest published tag. Qualify affected
+behavior and obtain independent review before release preparation; reuse accepted
+review and passing tests when their relevant inputs are unchanged. Hand off the
+exact source, concise results, material limitations and retained evidence links or
+hashes. Do not reconstruct a large evidence packet or commission another reviewer
+solely because a contribution reached the release owner.
+
+If another owner takes the version, reconcile that release with its owner. Do not
+race it, replace its artifacts or automatically cut a second version. If releases
+land between your releases, fetch current main and re-evaluate the unpublished
+scope and selected version before preparation. Refresh dependencies only when
+their inputs changed. Preserve authored source when resolving generated-asset
+conflicts; rebuild once for the selected version rather than merging bundles by hand.
+
+## Routine release
+
+1. Choose the version and author the entry below, outside the source checkout.
+2. In the owned prepared isolated environment, run the single preparation/build
+   and locked dependency dry-run under [Preparing a version change](#preparing-a-version-change).
+   Commit the four metadata files and generated assets in the change PR. A separate
+   release PR is useful for batching already-merged contributions, not mandatory.
+3. Push as soon as the candidate is ready. State the version rationale, user-facing
+   scope, affected validation and limitations. **While required CI runs**, review
+   only the remaining integration, version, notes and generated-output risks.
+   Reuse independent feature review; add review only for risks not already covered.
+4. Pass required CI, including **Fast release checks**, and satisfy repository review
+   requirements. Merge the exact reviewed head promptly through authorized controls.
+   Investigate relevant failures; do not bypass protections. Recheck unexpected main
+   changes, but do not rebuild merely because unrelated files moved.
+5. Verify the automatic release, then return the concise receipt under
+   [Release completion and follow-up](#release-completion-and-follow-up).
+
+Keep unnecessary work off the critical path: no fresh environment, repeated feature
+review, broad suite, second manual build, large evidence archive or additional
+reviewer by default. Use the maintained staging/build/output-transfer path rather
+than authoring a new wrapper for every version. Keep evidence with its owner;
+do not add acknowledgment loops, repeated status polling or waits for unrelated work.
+After a timeout, inspect the saved operation or actual effect before retrying.
 
 ## Version choice and release notes
 
 The release owner chooses the version from the combined changes since the last
-published tag, and records the bump type and reason in the release PR.
+published tag, and records the bump type and reason in the PR.
 
 - **Patch (`0.y.z` → `0.y.z+1`)**: repairs, performance, dependency/security
   maintenance, documentation and refinements to an existing workflow, preserving
@@ -44,7 +91,7 @@ maintenance releases:
    what they are installing. Backfill omissions under the version that actually
    shipped the behavior, using verified source/release evidence. Deliver those
    corrections in the next package; never rewrite published tags or assets.
-4. In the release PR, state the version rationale and whether high-impact
+4. In the prepared PR, state the version rationale and whether high-impact
    guidance is included (or why none is needed). Use the existing release-notes
    tests, Fast release checks and package validation; no extra broad gate.
 
@@ -64,14 +111,25 @@ limit accommodates the authored backfill; the byte budget preserves the complete
 history as it grows. Cached entries are validated in compact UTF-8 form, so JSON
 spacing and ASCII escaping do not discard otherwise valid saved notes.
 
+Write one entry JSON file outside the source checkout, replacing the sample values:
+
+```json
+{
+  "version": "X.Y.Z",
+  "title": "Short user-facing title",
+  "changes": ["Explain what changed for users."],
+  "notices": []
+}
+```
+
 ## Preparing a version change
 
 Measure the five-minute routine release target from the start of version, notes
 and build preparation through publication and the installed-package smoke,
 including required CI and runner queues.
 
-Build and package routine version-only changes in an already-owned prepared
-release DTU, or in a qualified author DTU through its owner. Keep candidate source
+Prepare releases in an already-owned prepared isolated release environment,
+or in a qualified author environment through its owner. Keep candidate source
 and package checks isolated, but do not provision and finalize a fresh test
 environment for each release when the existing dependencies and toolchain match.
 The publication workflow owns the fresh exact-candidate installed-package proof;
@@ -91,12 +149,23 @@ checkout-local path. New launchers should use `fixturePython` from
 `frontend/tests/fixture-python.mjs`. This chooses only the interpreter; readiness,
 fixture arguments, browser installation and product assertions stay separate.
 
-Choose the version and author one complete release-entry JSON object (the same
-`version`, `title`, `changes` and optional `notices` fields used in
-`amplifier_web/release-notes.json`). Then use the maintained preparation command:
+Use Python 3.13, uv and Node.js 22 with npm. Establish environment ownership and a
+supported source-update path once; reuse the environment and matching dependencies
+across releases. A new agent can take an explicit handoff instead of provisioning
+again. Stage fresh task-owned source without overwriting another task's files or
+running processes. New toolchains, changed lockfiles or missing dependencies require
+preparation; a version bump alone does not. The dry-run below validates the lock,
+not that every optional package is already installed or tested.
+
+With the version coordinated and entry authored, prepare and build in one operation:
 
 ```sh
-python scripts/release.py prepare --version X.Y.Z --notes-file /path/to/authored-entry.json
+python scripts/release.py prepare \
+  --version X.Y.Z \
+  --notes-file /path/to/entry.json \
+  --build
+
+uv sync --locked --dry-run --group dev --group artifacts
 ```
 
 It validates the notes and three version owners before changing them, preserves
@@ -105,13 +174,11 @@ already saved for that version. An identical retry changes nothing. It neither
 installs dependencies nor commits, tags or publishes. `--help` describes the notes
 input; JSON output includes the remaining steps and a link to this guidance.
 Expected preparation failures report a concise error and a nonzero exit status.
-Run with `--build` in the
-owned prepared DTU to perform the single canonical frontend build in that same
-invocation; otherwise its output gives the build command for the environment
-owner. Complete routine preparation in one invocation, then commit, push and open
-the release PR; avoid separate model/tool turns for each version field, hash or
-repeated readback. A failed build retains the prepared metadata: fix the reported build
-failure and rerun that build, rather than reconstructing the candidate by hand.
+Without `--build`, the command emits the build step for the environment owner;
+this split is for a necessary handoff, not the routine path. Avoid separate
+model/tool turns for each version field, hash or repeated readback. A failed build
+retains prepared metadata: fix the reported failure and rerun that build, rather
+than reconstructing the candidate by hand or treating the failed attempt as passed.
 
 The frontend embeds the package version in both its JavaScript bundle and
 `static/build.json`. Verify `uv sync --locked --dry-run --group dev --group artifacts`
@@ -119,8 +186,17 @@ in the owned environment. Reuse installed dependencies that match the current
 lockfiles and toolchain; run `npm ci --prefix frontend` only when preparation is
 missing or stale. Include the four prepared metadata files and all resulting
 `amplifier_web/static` changes in the release commit: a version-only edit still
-changes generated bundle hashes. The command does not replace review of the
-authored release scope or the normal unused-version check.
+changes generated bundle hashes. Commit:
+
+- `amplifier_web/__init__.py`
+- `pyproject.toml`
+- `uv.lock`
+- `amplifier_web/release-notes.json`
+- Generated changes under `amplifier_web/static/`
+
+Review generated output through the maintained source/build manifest and hash
+checks, not manual bundle inspection. Do not commit `release-source.json`; publication
+generates it. The command does not replace scope review or version coordination.
 Automatic publication watches the dedicated `amplifier_web/__init__.py` version
 owner. Dependency or release-tool edits alone do not start a publisher; explicit
 manual dispatch remains available with the same immutable identity checks.
@@ -239,6 +315,19 @@ still applies when editing source through that tool; it is not a requirement to
 read each generated file before a checked archive import. Preserve local changes
 and reject changed inputs, unexpected paths or links before copying.
 
+### Verify automatic publication
+
+Merging the version change starts **`release.yml`**, which qualifies, packages,
+verifies and publishes immutable artifacts. Do not also create a tag, upload assets
+or dispatch a competing publisher.
+
+Confirm the publication succeeded at the intended merged commit, the release tag
+and wheel/source-archive checksums match that commit and version, and automatic
+**`post-release.yml`** installed-package smoke succeeded. Use those exact run/attempt
+and candidate records; a green unrelated workflow or a saved build manifest is not
+publication evidence. After an uncertain outcome, reconcile the existing operation
+before considering a retry. Never move a published tag or replace release assets.
+
 ### Release completion and follow-up
 
 Routine release work ends after immutable publication and the short published
@@ -246,18 +335,23 @@ asset/install smoke. Do not create a per-release model monitor, full-suite task,
 or broad acceptance campaign. GitHub records conclusions and tracks failures;
 assign an owner only when a failure needs investigation. A skipped nightly suite
 is not evidence that it passed, and a smoke success cannot close its failure issue.
+Return a concise receipt: **version · commit · release URL · publisher result ·
+smoke result · material limitations**, with measured total time and any material
+overrun. Absent a concrete failure, do not repeat the hosted package probe locally.
+Reconcile owned resources, retaining prepared environments only with explicit
+custody and cleanup responsibility.
 
-## Local-first, fast publication policy (updated November 4, 2026)
+Publication does not update running installations. Only the assigned live-update
+operator performs adoption and verifies the new runtime identity without losing or
+replaying work. Publication need not wait for adoption; the overall task stays open
+when adoption is part of the request.
 
-Target **five minutes or less in total for a ready candidate's routine release**:
-reuse matching focused PR/DTU evidence, run the existing short publication graph,
-and verify the published package. This replaces automatic broad testing after
-every publication; putting hours in the background does not meet the policy.
-The observed warm publisher took 175 seconds; resolving its published identity,
-install smoke and reporting took about 48 seconds, roughly 3 minutes 43 seconds
-combined. These measurements exclude scheduling delay and are not a guarantee.
-Report queue, cold-build and required-check overhead separately. An overrun is a
-measurement to address, never permission to skip a required check or claim success.
+## Qualification policy
+
+The routine graph consists of affected-feature qualification, required PR checks,
+automatic publication and installed-package smoke. Keep exhaustive coverage with
+its nightly/manual owner; moving hours of testing into the background for every
+release is not the fast path.
 
 Before requesting merge, qualify affected backend/frontend behavior and changed
 user flows in an owned DTU with synthetic state. Reuse dependencies and exact
@@ -288,8 +382,7 @@ npm ci --prefix frontend
 # Qualify changed behavior; reuse matching prior evidence for unchanged inputs.
 uv run --no-sync pytest -q --tb=short tests/test_affected_feature.py
 (cd frontend && node --test tests/affected-feature.test.mjs)
-# Build changed client/version inputs once, then review and commit generated assets.
-npm run build --prefix frontend
+# For release version/notes/assets, use prepare --build above; do not build twice.
 # Select relevant browser scripts from frontend/package.json.
 # Full suites and committed-assets comparison remain with their CI owners.
 ```
@@ -395,7 +488,8 @@ publication graph uses one read-only qualification runner for preparation, packa
 frontend and native-runtime checks, then an isolated write-enabled publisher.
 Matching candidate/dependency receipts, fresh installed-wheel probing,
 immutable tags, checksums and the short real-runtime regression suite still gate
-publication. The exhaustive readiness suite no longer runs on PRs or main pushes.
+publication. Exhaustive readiness belongs to nightly/manual verification, not PRs
+or main pushes.
 
 **Release smoke** starts after a successful publisher, including publishers using
 `GITHUB_TOKEN`. It verifies that run's retained candidate and actual published
@@ -420,8 +514,8 @@ main. All broad lanes receive the same verified immutable revision. Manual
 `post-release.yml` dispatch defaults to smoke; `broad: true` explicitly requests
 readiness, full Python, registered browsers and owned integrations as well.
 
-Readiness retains its distinct browser and installed-media checks; duplicate
-Python subsets now belong to the full Python lane. Full frontend units belong to
+Readiness retains its distinct browser and installed-media checks. Source-unit
+Python coverage belongs to the full Python lane. Full frontend units belong to
 the unfiltered browser lane; readiness does not repeat them. The [integration ownership
 checklist](integration-coverage.md) assigns optional dependencies and rejects
 unexpected skips. The short publication runtime group is not duplicated there.
@@ -478,7 +572,7 @@ probe (that has its own lane). Canonical Work explicitly selects multiprocess
 Chromium there; its extended default is also multiprocess. Empty-host failure and
 lost-response modes and the four session-health modes in the extended plan remain
 separate because their arguments exercise different behavior. The full Python
-lane owns source-unit coverage; readiness no longer repeats its Python subsets.
+lane owns source-unit coverage; readiness does not repeat its Python subsets.
 
 Do not infer complete history from DOM Work-group counts. The reusable
 `scripts/browser_dom_recorder.js` probe reports grouped headers and standalone
@@ -517,7 +611,7 @@ other review, deletion and history protections remain separate and unchanged.
 
 ## Execution and identity
 
-`prepare` selects the same immutable merged application commit as before,
+The publication workflow's `prepare` job selects the immutable merged application commit,
 resolves current host dependencies once, and records their exact requirements.
 Package, frontend and runtime checks share this read-only runner and host graph,
 retaining separate candidate-bound receipts. Package bytes are built and recorded
@@ -525,8 +619,7 @@ before native checks prepare their separate environment; later source or depende
 changes still fail receipt verification. The isolated publication job requires
 qualification to succeed and checks all three receipts plus the original
 wheel/source/checksum bytes before immutable-tag publication. Build/test code
-never receives repository-write credentials. This removes repeated runner queues
-and host installation without removing checks or changing branch protection.
+never receives repository-write credentials.
 
 Qualification tools come from the workflow revision, copied before selecting a
 historical application commit. They are transferred as an artifact within this
@@ -566,10 +659,9 @@ evidence. The frontend lane still issues a fresh receipt for the current release
 candidate and retains a separate artifact stating whether and which proof was
 reused. Broad coverage remains in the nightly/manual owner.
 
-The runtime job checks out the declared loop-live source and current recipe
-source as before. It resolves a new runtime lock with refresh and upgrade before
-any build-cache lookup. Test dependencies, including tool-delegate, are now part
-of this lock instead of being installed by a second unconstrained resolution.
+The runtime checks use the declared loop-live source and current recipe source.
+They resolve a new runtime lock with refresh and upgrade before any build-cache
+lookup. Test dependencies, including tool-delegate, are part of this lock.
 The cache key includes the lock and project digests, loop-live commit, OS/image,
 architecture, Python version/ABI, uv, Rust/C toolchain, Maturin version, and hashes
 of relevant build flags. The recorded Maturin version also constrains isolated
@@ -585,7 +677,7 @@ the dedicated-key checkout does not grant other cache readers its package build.
 
 ## Coverage map
 
-| Previous serial stage | Job |
+| Boundary | Coverage owner |
 |---|---|
 | Full pytest suite | Affected local checks, explicit manual and nightly workflows |
 | Distribution verification, isolated wheel install and import/assets/login probe | Package |
@@ -606,7 +698,7 @@ flags are represented by hashes, not their potentially private values. Only the
 publication job has repository write permission; the existing dedicated read-only
 loop-live key is confined to its checkout step.
 
-## Validation and remaining measurements
+## Release mechanism checks
 
 Regression tests reject changed app commits, dependency records, mixed lane
 receipts, altered wheel bytes and changed worker graphs. Cache tests require
@@ -614,19 +706,12 @@ invalidation when sources, ABI, architecture, toolchain or build flags change.
 Workflow tests require independent lanes, fresh resolution before cache selection,
 and all matching receipts before publication. Actionlint validates the workflow.
 
-The new runtime preparation commands were exercised locally against current
-sources: locking completed in 3.10s, a fresh environment reused the cached Core
-source build, and all 24 real runtime tests passed in 5.59s. These are local
-measurements, not proof of GitHub Actions cache transfer or the complete new
-release duration. No publication workflow was dispatched for validation.
-
-After this workflow is merged, end-to-end validation can
-select an already published tag's full original commit SHA. All jobs execute, and
-the existing publisher leaves that tag and its published assets unchanged. The
-default newer main commit with an already released package version is rejected
-at planning; this guard prevents accidental publication but does not exercise
-the downstream jobs. A new release still requires its own version and all required
-qualification lanes.
+For an explicitly needed publication-mechanism investigation, manual dispatch can
+select an already published tag's full original merged commit SHA. Qualification
+executes while the publisher leaves that tag and its published assets unchanged.
+A newer main commit with an already released package version is rejected at
+planning. This guard does not exercise downstream jobs. Routine releases use their
+own coordinated version and automatic publication, not a second diagnostic dispatch.
 
 The narrow frontend proof reuse described above does not promote an entire
 previous release candidate. Reusing package/native qualification or shared
@@ -636,7 +721,7 @@ prebuilt wheels remains a separate proposal.
 
 The app host, worker project and Work acceptance project require
 `amplifier-core>=2.0.2` from PyPI. This is a minimum supported release, not a
-standing exact-version pin. Core's Git source override is removed. The uv
+standing exact-version pin. App-owned declarations do not override Core with Git. The uv
 `no-build-package` policy forbids compiling Core; other source dependencies can
 still build. The worker uses the same explicit public index as the host so an
 outdated local mirror cannot silently keep it on an older Core release.
@@ -652,7 +737,7 @@ The release's fresh source resolution, exact cache key and frozen runtime graph
 checks remain intact. Rust/Maturin identity and build constraints remain because
 other moving-source packages may require native builds. A Core policy/lock
 change changes the cache key; no old Git-Core cache can make the registry
-selection sticky. Core wheel metadata and its native extension hash now join
+selection sticky. Core wheel metadata and its native extension hash are part of
 the runtime receipt, and qualification fails if amplifier-app-cli is installed.
 No CLI companion is needed by Unified's runtime qualification.
 

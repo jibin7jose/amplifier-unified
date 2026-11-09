@@ -116,8 +116,12 @@ def prepare(root, version, notes_file, build=False):
     result['nextSteps'] = ([] if build else [
         'Run buildCommand once in the owned prepared test environment; retain its generated assets.'
     ]) + [
-        'Review and commit the prepared metadata and generated assets, then push and open the release PR. '
+        'Run uv sync --locked --dry-run --group dev --group artifacts in that environment; '
+        'this checks lock consistency, not that all optional packages are installed.',
+        'Commit the prepared metadata and generated assets in the change PR where practical; push early. '
         'Include the version rationale, authored notes and affected validation.',
+        'While required CI runs, review remaining integration, version, notes and generated-output risks. '
+        'Reuse independent feature review; merge the exact reviewed head through repository protections.',
         'After merge, release.yml publishes automatically; post-release.yml verifies the published package. '
         'Record those results without repeating unchanged checks. Live adoption is separate.'
     ]
@@ -336,10 +340,12 @@ def publish(root, repository, tag, revision, dist):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
-        'Start: prepare --version X.Y.Z --notes-file /path/to/entry.json. '
+        'In an owned prepared isolated environment, start: '
+        'prepare --version X.Y.Z --notes-file /path/to/entry.json --build. '
         'The entry is one JSON object with version, title, changes (a nonempty list), '
-        'and optional notices. Add --build in an owned prepared test environment. '
-        'Output names the remaining steps; merging the release PR starts existing publication '
+        'and optional notices. Then run uv sync --locked --dry-run --group dev --group artifacts. '
+        'Coordinate one owner, version and publisher; reuse matching dependencies. '
+        'Output names the remaining steps; merging the prepared PR starts existing publication '
         'and installed-package smoke workflows. Preparation never commits or publishes. '
         'See docs/validation/release-qualification.md for version choice and recovery.'
         ' For source-record candidates, stage-source and verify also require '

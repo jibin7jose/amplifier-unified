@@ -7,8 +7,8 @@ prior assessment in [new-chat-handoff-786.md](new-chat-handoff-786.md).
 
 ## Owner and execution
 
-`cross-workspace-handoff` belongs to the extended browser-check lane. It runs
-after publication and when that lane is explicitly dispatched. The registry
+`cross-workspace-handoff` belongs to the nightly/manual extended browser-check lane.
+It runs against the selected immutable published revision, not automatically per release. The registry
 adds one scenario (79 extended scenarios, 122 unique source browser scripts)
 without changing the original 65-scenario hash or adding a duplicate foreground
 release gate. Focused affected-change execution uses the same invocation:

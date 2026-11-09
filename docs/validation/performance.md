@@ -136,11 +136,12 @@ CPU time. These checks do not establish a bound on unrelated host persistence wo
 
 ## Keep qualification proportional to risk
 
-Follow the [fast publication policy](release-qualification.md#local-first-fast-publication-policy-updated-november-4-2026).
+Follow the [fast publication policy](release-qualification.md#qualification-policy).
 Run the affected regression and changed user flow; use installed built assets when
 the claim depends on packaging or browser/server integration. Reuse exact applicable
-receipts rather than repeating unrelated suites. Broad post-release checks remain
-background follow-up, and this guide adds no blanket merge or publication gate.
+receipts rather than repeating unrelated suites. Broad checks belong to the
+nightly/manual owner, not a routine per-release campaign. This guide adds no blanket
+merge or publication gate.
 
 Keep budgets and measurements with their executable fixture or exact evidence
 record. Update them when workload or contract changes, with a reason and retained
@@ -463,7 +464,7 @@ checks retain global positions, negative indices, private-state filtering and
 stale-revision refusal. Their SQL budgets measure query work, not constant-time
 global ordering or a guaranteed live-host latency.
 
-The additive Extended browser registration runs after publication. The separate
+The additive Extended browser registration belongs to the nightly/manual lane. The separate
 `Client performance smoke` workflow selects affected PR paths and supports manual
 runs; it is not a required status or a publication dependency. Run it locally in
 the owned test environment with the production client built. Its synthetic runtime
