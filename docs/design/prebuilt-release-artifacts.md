@@ -100,6 +100,56 @@ from the source stamp, or add a parallel installation registry. The source recor
 can ship independently; graph schema, archive feature eligibility and readiness
 must follow the supported delivery path. Preserve exact existing Git receipts.
 
+### Reuse the existing installation records
+
+The proposed path is explicit download verification, installation of that local
+wheel through uv, and observation of the resulting installation. The existing
+update owner already has records for each transition:
+
+| Transition | Existing owner | Artifact information to retain |
+| --- | --- | --- |
+| Prepare a candidate | Generation `validated.json` | Selected official URL/checksum and source, actual local install origin, observed app and dependency graph |
+| Replace or promote | `pendingReplacement.qualification` | The same qualified artifact and target installation; failure or interruption remains unknown |
+| Await the successor | `pendingRestart.qualification` | Exact candidate identity; a successful installer call is not restart acknowledgement |
+| Confirm the serving app | `applicationResult` | The confirmed qualification bound to the actual installation; later component attempts do not replace it |
+
+Keep the canonical app graph independent of a generation's temporary pathname.
+Its optional delivery fields describe the official URL and independently checked
+SHA-256. Check uv's observed local origin against the qualification context, but
+do not copy that changing path into the canonical row: adding a feature creates
+a new generation and must still compare as the same app. Metadata continues to
+describe what uv actually installed; no writer patches `direct_url.json`.
+
+Public version/revision remain source facts, with the same accessor used by the
+host, owner-browser entry and installation-health checks. A source stamp alone
+does not qualify an artifact-backed feature install or establish delivery
+qualification. Keep that eligibility private to the update manager and bind it
+to the actual serving prefix and observed package metadata. A manual replacement
+must not inherit stale artifact eligibility. Preserve an earlier truthful restart
+acknowledgement and legacy Git source/listener semantics; do not turn this into a
+new universal package-tamper or approval gate.
+
+The initial installer can retain its current verified local-wheel path. It has
+no update-generation receipt, and its existing optional-feature limitation must
+remain explicit until an ordinary owned update qualifies that installation.
+This bounded step does not claim first-install feature parity or require a new
+bootstrap enrollment registry.
+
+Installed-payload comparison is useful qualification evidence. A local Linux
+ARM64 check of the published 0.68.5 wheel preserved all 930 shipped non-RECORD
+files; generated metadata and launchers stayed with their existing checks.
+That release predates the source stamp, and this check installed no dependencies
+or running application. It does not qualify the updater. Do not put full payload
+hashing into routine status or browser-entry reads, or expand the existing Git
+contract into continuous integrity monitoring.
+
+Discard incomplete downloads on cancellation or failure. A completed artifact
+belongs to its candidate and any current, previous or explicit recovery consumer.
+The existing retention sweep covers ecosystem releases, not application
+generations; do not claim automatic app-generation cleanup or delete a live
+generation on that assumption. Define and test those holds before extending
+retention. No extra cache or permanent per-file inventory is needed.
+
 ### Batches
 
 | Batch | Change | Evidence before the next batch |
