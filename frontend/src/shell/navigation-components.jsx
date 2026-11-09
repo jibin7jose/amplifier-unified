@@ -190,12 +190,13 @@ export function ChatRow({chat,model,now,showLocation=true,handle,floating=false,
  const {state,choose}=model,title=chat.title,activity=activityFor(chat,state);
  const selected=workSurface(state)==='chat'&&chat.id===state.selectedSessionId;
  const paths=!!state.settings?.workspaces?.showPaths&&showLocation;
- const location=chat.location?.kind==='managed'?'No workspace':paths?chat.workspace:chat.workspaceLabel||chat.workspace;
+ const hasWorkspace=showLocation&&!!chat.workspaceId&&chat.location?.kind!=='managed';
+ const location=chat.location?.kind==='managed'?'No workspace':paths?chat.workspace:chat.workspaceName||chat.workspaceLabel||chat.workspace;
  const content=<>{handle}<button className="a-nav-chat-select" type="button" data-tooltip="off" onPointerEnter={revealNavigationTitles} onFocus={revealNavigationTitles} data-navigation-select data-action="session.select" aria-current={selected?'page':undefined} aria-label={title} onClick={()=>choose(chat.id)}><NavigationStatus activity={activity}/><span className="a-nav-chat-label"><span ref={preview.ref} data-scroll-title className="a-nav-chat-title"><span>{title}</span></span>{(!landing||showLocation)&&<small className="a-nav-chat-workspace" title={showLocation?chat.workspace:undefined}>{showLocation?location:activity.label}</small>}{landing&&chat.description&&<span className="a-landing-description">{chat.description}</span>}{landing&&<small className="a-landing-status">{activity.kind==='idle'?'Saved conversation':activity.label}</small>}</span><ActivityTime at={chat.recentActivityAt} now={now}/></button></>;
  const className='a-nav-chat '+(selected?'is-selected':'')+(landing?' a-landing-chat':'')+(overview?' a-overview-chat':'');
  // The drag preview uses the exact same contents without interactive flyouts.
- if(floating)return <div className={className} data-show-paths={paths}>{content}<MoreHorizontal className="a-navigation-more"/></div>;
- return <NavigationRow contextKey={navigationDetailsContext(state)} className={className} data-show-paths={paths} data-session-id={chat.id} label={title} details={({close})=><ChatDetails chat={chat} model={model} now={now} close={close}/>}>{content}<ChatShortcutBadge id={chat.id}/></NavigationRow>;
+ if(floating)return <div className={className} data-show-paths={paths} data-has-workspace={hasWorkspace}>{content}<MoreHorizontal className="a-navigation-more"/></div>;
+ return <NavigationRow contextKey={navigationDetailsContext(state)} className={className} data-show-paths={paths} data-has-workspace={hasWorkspace} data-session-id={chat.id} label={title} details={({close})=><ChatDetails chat={chat} model={model} now={now} close={close}/>}>{content}<ChatShortcutBadge id={chat.id}/></NavigationRow>;
 }
 function ChatPagination({page,onChange,label='conversations'}){
  if(page.pages<2)return null;

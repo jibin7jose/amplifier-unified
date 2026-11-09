@@ -114,6 +114,8 @@ try{
  await patch('chats',{navRecentView:{navFilter:''}});
  await expect(recent.getByRole('status')).toHaveText('206 chats');assert.deepEqual(await pinnedContents(),contents);
  const third=pinned.locator('[data-order-id="session:'+beta.id+'"]'),first=pinned.locator('[data-order-id="session:'+selected+'"]');
+ await expect(third.locator('.a-nav-chat-workspace')).toBeVisible();
+ await expect(third.locator('.a-nav-chat-workspace')).toHaveText(beta.workspaceName);
  const drag=async()=>{
   const handle=third.getByRole('button',{name:/Reorder/});await handle.scrollIntoViewIfNeeded();
   const a=await handle.boundingBox(),b=await first.boundingBox();
@@ -121,7 +123,8 @@ try{
  };
  await drag();const floating=page.locator('.a-reorder-floating');
  await expect(floating).toBeVisible();assert.ok((await floating.innerText()).includes(beta.title));
- await expect(floating.locator('.a-nav-chat-workspace')).toHaveText(beta.workspaceLabel);assert.equal(await floating.locator('.a-navigation-age').isVisible(),await third.locator('.a-navigation-age').isVisible());
+ await expect(floating.locator('.a-nav-chat-workspace')).toBeVisible();
+ await expect(floating.locator('.a-nav-chat-workspace')).toHaveText(beta.workspaceName);assert.equal(await floating.locator('.a-navigation-age').isVisible(),await third.locator('.a-navigation-age').isVisible());
  await expect(pinned.locator('.a-order-insertion')).toBeVisible();await expect(pinned.locator('.a-order-placeholder')).toHaveCount(1);
  const floatBox=await floating.boundingBox();assert.ok(floatBox.width>150&&floatBox.x>=0);assert.equal(await floating.locator('.a-nav-chat').evaluate(el=>el.offsetHeight),await third.locator('.a-nav-chat').evaluate(el=>el.offsetHeight));
  await page.screenshot({path:out+'/pin-drag.png'});await page.keyboard.press('Escape');await page.mouse.up();

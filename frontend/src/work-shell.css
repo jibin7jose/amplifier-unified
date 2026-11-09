@@ -291,11 +291,13 @@
 #amp-one .a-composer-options-panel summary{color:var(--a-muted);font-size:var(--a-text-sm,13px)}
 #amp-one .a-composer-options-panel .a-composer-options-done{width:100%;margin-top:18px;min-height:40px;justify-content:center}
 
-/* Both sidebar modes and pin drag previews honor the same metadata preference. */
+/* Workspace scope stays visible in both sidebar modes and pin drag previews. */
+#amp-one.a-approachable-shell .a-nav-chat[data-has-workspace=true] .a-nav-chat-label>.a-nav-chat-workspace,
 #amp-one.a-approachable-shell .a-nav-chat[data-show-paths=true] .a-nav-chat-label>small,
 #amp-one.a-approachable-shell .a-workspace-row[data-show-paths=true] .a-workspace-result-path,
 #amp-one.a-approachable-shell[data-interface-detail=detailed] .a-quiet-sidebar .a-nav-chat-label>small,
 #amp-one.a-approachable-shell[data-interface-detail=detailed] :is(.a-pinned-chats,.a-pinned-drag) .a-nav-chat-label>small{display:block}
+#amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-nav-chat[data-has-workspace=true],
 #amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-nav-chat[data-show-paths=true],
 #amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-workspace-row[data-show-paths=true],
 #amp-one.a-approachable-shell[data-interface-detail=detailed] :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-nav-chat{height:54px;min-height:54px;max-height:54px}

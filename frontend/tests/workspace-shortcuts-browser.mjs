@@ -198,7 +198,7 @@ try{
  assert.ok(pinnedGeometry.draft.x+pinnedGeometry.draft.width<=pinnedGeometry.more.x+1);
  const labelGeometry=await row(b).evaluate(node=>{
   const rect=el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}};
-  const label=node.querySelector('.a-workspace-label'),icon=node.querySelector('.a-workspace-select>svg');
+  const label=node.querySelector('.a-workspace-label'),icon=node.querySelector('.a-workspace-select>.a-navigation-status');
   return {row:rect(node),label:rect(label),icon:rect(icon),lines:[...label.children].map(line=>({rect:rect(line),overflow:getComputedStyle(line).overflowX})),overflow:getComputedStyle(label).overflowX};
  });
  assert.ok(labelGeometry.icon.right<=labelGeometry.label.left);

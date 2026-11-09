@@ -82,7 +82,9 @@ try{
   text:node.querySelector('.a-nav-chat-workspace').textContent,
   status:node.querySelector('.a-navigation-status').dataset.kind
  }));
- const statusStyle=await rowStyle();assert.equal(statusStyle.location,'none');
+ const workspaceName=before.state.workspaces.find(row=>row.id===completed.workspaceId).name;
+ const statusStyle=await rowStyle();assert.equal(statusStyle.location,'block');
+ assert.equal(statusStyle.text,workspaceName);assert.equal(statusStyle.height,54);
  await switchTo('Browse');await settled();
  await expect(sidebarView.getByRole('button',{name:'Browse',exact:true})).toHaveAttribute('aria-pressed','true');
  await expect(sidebarView.getByRole('button',{name:'Status',exact:true})).toHaveAttribute('aria-pressed','false');
@@ -101,7 +103,8 @@ try{
   assert.equal((await rowStyle()).text,completed.workspace);
   assert.equal((await rowStyle()).height,54);
   await act('settings.update',{patch:{workspaces:{showPaths:false}}});await settled();
-  await expect(chatRow().locator('.a-nav-chat-workspace')).toBeHidden();
+  await expect(chatRow().locator('.a-nav-chat-workspace')).toBeVisible();
+  assert.equal((await rowStyle()).text,workspaceName);
  }
  for(const level of ['detailed','minimal','standard']){
   const current=await page.evaluate(()=>window.amplifier.getShellState());
@@ -116,14 +119,27 @@ try{
    await switchTo(mode);await settled();styles.push(await rowStyle());
   }
   assert.deepEqual(styles[0],styles[1],level+' keeps the two sidebar presentations aligned');
-  assert.equal(styles[0].location,level==='detailed'?'block':'none');
-  if(level==='detailed')assert.equal(styles[0].height,54);
+  assert.equal(styles[0].location,'block');
+  assert.equal(styles[0].text,workspaceName);assert.equal(styles[0].height,54);
  }
  await act('history.refresh',{});await settled();
  await expect(home).not.toContainText('Updating your work');
  await expect(sidebar).not.toContainText(/Updating|Finding existing chats/);
  assert.deepEqual(await rowStyle(),statusStyle);
  report.checks.push('Browse and Status share row height/status/location; folder-path preference is honored in both; background refresh leaves no updating text');
+ const longName='Customer work — a deliberately long workspace name that must stay on one line in the sidebar';
+ await act('workspace.rename',{id:completed.workspaceId,name:longName});await settled();
+ for(const mode of ['Browse','Status']){
+  await switchTo(mode);await settled();
+  const subtitle=chatRow().locator('.a-nav-chat-workspace');
+  await expect(subtitle).toBeVisible();await expect(subtitle).toHaveText(longName);
+  const style=await subtitle.evaluate(node=>{const css=getComputedStyle(node),title=node.previousElementSibling;return {whiteSpace:css.whiteSpace,overflow:css.overflow,textOverflow:css.textOverflow,smaller:parseFloat(css.fontSize)<parseFloat(getComputedStyle(title).fontSize),below:node.getBoundingClientRect().top>=title.getBoundingClientRect().bottom}});
+  assert.deepEqual(style,{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',smaller:true,below:true});
+  assert.equal((await rowStyle()).height,54);
+ }
+ await page.screenshot({path:join(output,'workspace-subtitle.png')});
+ await act('workspace.rename',{id:completed.workspaceId,name:workspaceName});await settled();
+ report.checks.push('Workspace names stay visible below chat titles in all detail levels; renamed/long names update in Browse and Status with small single-line ellipsis styling');
 
  const idle=sidebar.locator('[data-status-group=idle]');
  await idle.getByRole('button',{name:'Show more pick up again chats',exact:true}).click();
