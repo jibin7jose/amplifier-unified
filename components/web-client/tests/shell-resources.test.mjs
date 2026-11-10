@@ -20,6 +20,16 @@ test('resource assembly preserves context, exact coverage and independent custom
  assert.deepEqual(result.chat.navigationResources,['sidebarSearch']);assert.equal(result.chat.sidebarNavigation.search.items[0].id,'one');
  assert.equal(result.chat.sidebarNavigation.recentView.query,'private');assert.equal(result.button,undefined);assert.deepEqual(result.custom,{ownField:42,generation:3});
 });
+
+test('workspace aggregate age belongs to its resource rather than newer context',()=>{
+ const value=envelope();value.instances.chat.resources.context.value.view.navAge='24h';
+ value.instances.chat.resources.workspaceShortcuts={revision:1,value:{workspaceShortcuts:[{chatCount:25}],navigationAge:'all'}};
+ const wanted={...demand,resources:['workspaceShortcuts']};
+ const snapshot=resourceSnapshots(bootstrap,value,wanted).chat;
+ assert.equal(snapshot.view.navAge,'24h');
+ assert.equal(snapshot.navigationResourceAges.workspaceShortcuts,'all');
+ assert.equal(snapshot.navigationAge,undefined);
+});
 test('missing resources stay uncovered and stale identities or scopes cannot become a baseline',()=>{
  for(const patch of [{clientId:'other'},{hostInstanceId:'other'},{bootstrapKey:'other'},{demandId:2},{scope:['chat','other','chat',null,null]}])assert.equal(resourceSnapshots(bootstrap,{...envelope(),...patch},demand),null);
  const missing=envelope();delete missing.instances.chat.resources.sidebarSearch;
@@ -155,6 +165,8 @@ test('retained sidebar survives pending baseline but clears for new host, module
  assert.deepEqual(resourceSnapshots(bootstrap,moved,changed,waiting).chat.navigationResourceRetained,{});
  const filtered=structuredClone(next);filtered.instances.chat.resources.context.value.view.navShowAgentCreated=true;
  assert.equal(resourceSnapshots(bootstrap,filtered,changed,waiting).chat.navigationResourceRetained.recentNavigation,undefined);
+ const aged=structuredClone(next);aged.instances.chat.resources.context.value.view.navAge='24h';
+ assert.deepEqual(resourceSnapshots(bootstrap,aged,changed,waiting).chat.navigationResourceRetained,{});
  assert.deepEqual(pendingSnapshots(bootstrap,previous,changed,'new-host').chat.navigationResourceRetained,{});
  assert.equal(pendingSnapshots({...bootstrap,instanceGenerations:{...bootstrap.instanceGenerations,chat:2}},previous,changed).chat,undefined);
  assert.deepEqual(pendingSnapshots(bootstrap,previous,{...changed,resources:[]}).chat.navigationResourceRetained,{});

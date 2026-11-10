@@ -8,7 +8,7 @@ import {useChatTitle} from './use-chat-title';
 import {useActivityClock} from './navigation-details';
 import {readItems,unreadChatItems} from './attention';
 import {relativeActivity,activityFor} from './navigation-presentation';
-import {startingWorkView,currentWorkPage,currentWorkContext,workReadingKey,rememberHomeScroll,readFocusCursor,saveFocusCursor,focusPosition,stepFocus} from './adaptive-work.js';
+import {startingWorkView,workspaceChatQuery,currentWorkspaceChatQuery,currentWorkPage,currentWorkContext,workReadingKey,rememberHomeScroll,readFocusCursor,saveFocusCursor,focusPosition,stepFocus} from './adaptive-work.js';
 import {LandingToolbar,WorkLandingFrame,WorkStatusFilters,FocusNavigation} from './work-landing';
 export {WorkViewSwitcher} from './work-landing';
 import {workGroups as groups,workAction} from './work-status';
@@ -30,18 +30,35 @@ function WorkCard({chat,kind,state,act,hero=false,compact=false}){
 }
 
 export function AdaptiveWorkHome({host,state,act,presentation}){
- const model=useNavigationController(host,'chats'),nav=useContext(WorkNavigationContext),view=state.view||{};
- const pinnedScope=model.state.workHomePinnedScope,value=model.state.workHome,ready=hasNavigationResource(model.state,'workHome')&&currentWorkPage(value,view,pinnedScope);
+ const model=useNavigationController(host,'chats');
+ return <AdaptiveWorkChats model={model} state={state} act={act} presentation={presentation}/>;
+}
+
+export function AdaptiveWorkChats({model,state,act,presentation={},workspaceId=null,workspaceView,onWorkspaceView}){
+ const nav=useContext(WorkNavigationContext),view=workspaceId?{...workspaceView,navAge:state.view?.navAge||'all'}:state.view||{};
+ const pinnedScope=workspaceId||model.state.workHomePinnedScope,value=model.state.workHome,ready=(!workspaceId||currentWorkspaceChatQuery(state.view?.workWorkspaceChats,view,workspaceId))&&hasNavigationResource(model.state,'workHome')&&currentWorkPage(value,view,pinnedScope);
  const level=presentation.interfaceDetail||presentation.executionDetail||'standard',mode=view.workHomeView||startingWorkView(presentation);
  const scope=pinnedScope||view.workHomeScope||'all',filter=view.workHomeFilter||'all',query=view.workHomeQuery||'';
  const context=currentWorkContext(model.state.workHomeContext,view,pinnedScope),workspace=context?.workspace;
- const [search,setSearch]=useState(query),timer=useRef(null),pendingSearch=useRef(null),flush=useRef(null),searchInput=useRef(null),pane=useRef(null);
- const [focusCursor,setFocusCursor]=useState(()=>readFocusCursor(window)),focusPending=useRef(null),focusRestore=useRef(null);
+ const pane=useRef(null),identity=workspaceId?'workspace:'+workspaceId+':chats':'home';
+ const focusStorageKey=workspaceId?'amplifier.work-focus.v1:'+identity:undefined;
+ const [search,setSearch]=useState(query),timer=useRef(null),pendingSearch=useRef(null),flush=useRef(null),searchInput=useRef(null);
+ const [focusCursor,setFocusCursor]=useState(()=>readFocusCursor(globalThis.window,focusStorageKey)),focusPending=useRef(null),focusRestore=useRef(null);
  useEffect(()=>{setSearch(query)},[query]);useEffect(()=>()=>flush.current?.(),[]);
- const patch=values=>act('view.update',{patch:values});
+ const patch=values=>workspaceId?onWorkspaceView(values):act('view.update',{patch:values});
+ const requestedQuery=workspaceId?JSON.stringify(workspaceChatQuery(view,workspaceId)):null;
+ useEffect(()=>{
+  // A late request from another workspace is never used as this tab's query.
+  // Reassert only the active bounded request, not any saved browser choices.
+  if(workspaceId&&!currentWorkspaceChatQuery(state.view?.workWorkspaceChats,view,workspaceId))
+   act('view.update',{patch:{workWorkspaceChats:JSON.parse(requestedQuery)}});
+ },[requestedQuery,state.view?.workWorkspaceChats]);
  const readingKey=workReadingKey({...view,workHomeScope:scope},mode);
- useLayoutEffect(()=>{if(ready&&pane.current)return rememberHomeScroll(pane.current,readingKey)},[ready,readingKey]);
- useEffect(()=>{if(!view.workHomeView)patch({workHomeView:mode,navPinned:level==='detailed'})},[view.workHomeView]);
+ useLayoutEffect(()=>{
+  const scrollPane=workspaceId?pane.current?.closest('.a-adaptive-home'):pane.current;
+  if(ready&&scrollPane)return rememberHomeScroll(scrollPane,readingKey,workspaceId?'amplifier.work-reading.v1:'+identity:undefined);
+ },[ready,readingKey,identity]);
+ useEffect(()=>{if(!view.workHomeView)patch({workHomeView:mode,...(!workspaceId?{navPinned:level==='detailed'}:{})})},[view.workHomeView]);
  const flushSearch=()=>{clearTimeout(timer.current);const value=pendingSearch.current;pendingSearch.current=null;if(value!==null)patch({workHomeQuery:value,workHomePages:{}})};
  flush.current=flushSearch;
  const chooseScope=scope=>{if(pinnedScope)return;clearTimeout(timer.current);pendingSearch.current=null;setSearch('');patch({workHomeScope:scope,workHomeQuery:'',workHomePages:{}})};
@@ -63,12 +80,12 @@ export function AdaptiveWorkHome({host,state,act,presentation}){
    {!limit&&page.pages>1&&<div className="a-work-pagination"><button type="button" disabled={!page.index} onClick={()=>patch({workHomePages:{...view.workHomePages,[kind]:page.index-1}})}>Previous</button><span>{page.start+1}–{page.end} of {page.total}</span><button type="button" disabled={page.index+1>=page.pages} onClick={()=>patch({workHomePages:{...view.workHomePages,[kind]:page.index+1}})}>Next</button></div>}
   </section>;
  }
- const focusKey=JSON.stringify([scope,view.workHomeScope||'all',query]);
+ const focusKey=JSON.stringify([scope,view.workHomeScope||'all',query,view.navAge||'all']);
  const savedFocus=focusCursor?.key===focusKey?focusCursor:null;
  const focusKind=filter!=='all'?filter:pages[savedFocus?.kind]?.items.length?savedFocus.kind:Object.keys(groups).find(key=>pages[key]?.items.length);
  const focusPage=pages[focusKind],focus=focusPosition(focusPage,savedFocus?.kind===focusKind?savedFocus:null),focusChat=focus&&focusPage.items[focus.index];
  const focusMode=mode==='focus';
- const rememberFocus=value=>{setFocusCursor(value);saveFocusCursor(window,value)};
+ const rememberFocus=value=>{setFocusCursor(value);saveFocusCursor(window,value,focusStorageKey)};
  useLayoutEffect(()=>{
   // Committed search/scope changes start a pass even with no result or while
   // another Home mode is visible. Otherwise returning revives the old key.
@@ -95,16 +112,13 @@ export function AdaptiveWorkHome({host,state,act,presentation}){
  };
  const lastFocus=focus&&focusPage.start+focus.index+1===focusPage.total;
  const filters=ready&&<WorkStatusFilters value={filter} counts={Object.fromEntries(Object.entries(pages).map(([key,page])=>[key,page.total]))} onChange={setFilter}/>;
- return <WorkLandingFrame paneRef={pane} mode={mode} presentation={presentation}
-  title={mode==='focus'?'One thing at a time.':mode==='brief'?'Your work, at a glance.':'Everything in motion.'}
-  description={level!=='minimal'?(mode==='focus'?'Begin with what needs you.':mode==='brief'?'What needs you, what’s ready, and where you left off.':'Follow the work and find your next step.'):null}
-  toolbar={<LandingToolbar home mode={mode} onMode={workHomeView=>patch({workHomeView})} presentation={presentation} onReset={workHomeView=>patch({workHomeView,workHomeFilter:'all'})} actions={<button type="button" className="a-home-create a-soft" aria-label="New chat" disabled={!canStart} onClick={newChat}><Plus/><span>New chat</span></button>}/>}
- >
+ const toolbar=<LandingToolbar home={!workspaceId} mode={mode} onMode={workHomeView=>patch({workHomeView})} presentation={presentation} onReset={workHomeView=>patch({workHomeView,workHomeFilter:'all'})} actions={<button type="button" className="a-home-create a-soft" aria-label="New chat" disabled={!canStart} onClick={newChat}><Plus/><span>New chat</span></button>}/>;
+ const content=<>
    <div className="a-home-query">
     <label className="a-home-search"><Search size={18}/><input ref={searchInput} type="search" aria-label="Search your work" placeholder="Find your work…" maxLength={500} value={search} onChange={event=>changeSearch(event.target.value)} onBlur={flushSearch}/>{search&&<button type="button" className="a-icon" aria-label="Clear work search" onClick={()=>{changeSearch('');searchInput.current?.focus()}}><X size={16}/></button>}</label>
-    <select aria-label="Work scope" value={scope} disabled={!!pinnedScope} onChange={event=>chooseScope(event.target.value)}>{pinnedScope?<option value={scope}>{projects.find(row=>row.id===scope)?.name||'Unavailable workspace'}</option>:<><option value="all">All work</option><option value="managed">No workspace</option>{projects.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</>}</select>
+    {!workspaceId&&<select aria-label="Work scope" value={scope} disabled={!!pinnedScope} onChange={event=>chooseScope(event.target.value)}>{pinnedScope?<option value={scope}>{projects.find(row=>row.id===scope)?.name||'Unavailable workspace'}</option>:<><option value="all">All work</option><option value="managed">No workspace</option>{projects.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</>}</select>}
    </div>
-   {workspace&&!context.unavailable&&<div className="a-home-project"><Folder/><strong>{workspace.name}</strong><button type="button" onClick={()=>nav.browse('workspace',workspace.id)}>Open workspace<ArrowRight/></button></div>}
+   {!workspaceId&&workspace&&!context.unavailable&&<div className="a-home-project"><Folder/><strong>{workspace.name}</strong><button type="button" onClick={()=>nav.browse('workspace',workspace.id)}>Open workspace<ArrowRight/></button></div>}
    <NavigationResourceStatus state={model.state} resource="workHome" label="your work" refresh={model.refreshResources}/>
    {!ready&&!model.state.navigationResourcePending?.workHome&&<p role="status">Loading your work…</p>}
    {ready&&value.unavailable?<p role="alert">This workspace is unavailable. {!pinnedScope&&<button type="button" onClick={()=>chooseScope('all')}>Show all work</button>}</p>:ready&&<>
@@ -124,5 +138,9 @@ export function AdaptiveWorkHome({host,state,act,presentation}){
      {pages.paused?.total>0&&<div className="a-home-recent">{pageGroup('paused',mode==='brief'?3:4,{compact:true})}</div>}
      <div className="a-home-recent">{pageGroup('idle',mode==='brief'?4:6,{compact:true})}</div></>}
    </>}
- </WorkLandingFrame>;
+ </>;
+ return workspaceId?<section ref={pane} className="a-workspace-chats" aria-label="Workspace chats" data-view={mode}>{toolbar}{content}</section>:<WorkLandingFrame paneRef={pane} mode={mode} presentation={presentation}
+  title={mode==='focus'?'One thing at a time.':mode==='brief'?'Your work, at a glance.':'Everything in motion.'}
+  description={level!=='minimal'?(mode==='focus'?'Begin with what needs you.':mode==='brief'?'What needs you, what’s ready, and where you left off.':'Follow the work and find your next step.'):null}
+  toolbar={toolbar}>{content}</WorkLandingFrame>;
 }

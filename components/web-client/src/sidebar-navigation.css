@@ -36,7 +36,7 @@
 #amp-one .a-chat-list-views{display:flex;align-items:start;flex-wrap:wrap;gap:16px;margin:12px 0;min-width:0}
 #amp-one .a-chat-list-views>label{display:grid;gap:4px;min-width:0;flex:1 1 150px}
 #amp-one .a-chat-list-views select{max-width:100%;min-width:0}
-#amp-one .a-chat-age-filter{flex:2 1 240px;min-width:0}
+#amp-one .a-chat-age-filter{flex:0 0 auto;min-width:0;margin:8px 12px 12px}
 #amp-one .a-chat-age-filter>label{display:flex;justify-content:space-between;gap:8px}
 #amp-one .a-chat-age-filter input[type=range]{display:block;box-sizing:border-box;width:100%;min-width:0;min-height:32px;padding:0;margin:0;accent-color:var(--a-accent)}
 #amp-one .a-chat-age-stops{display:flex;justify-content:space-between;gap:4px;font-size:var(--a-text-sm,13px);color:var(--a-muted)}

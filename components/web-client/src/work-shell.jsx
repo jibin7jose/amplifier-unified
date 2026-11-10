@@ -7,9 +7,9 @@ import React,{useContext,useEffect,useLayoutEffect,useRef,useState} from 'react'
 import {createPortal} from 'react-dom';
 import {Home as HomeIcon,Folder,Plus,Search,ChevronRight,ArrowLeft,Settings,Info,MoreHorizontal,MessageCircle,Pin,Archive,Bug,Pencil,Share2,ChevronDown,Trash2,ScanEye,PanelLeft,FileText,Copy,X,AudioLines,Mic,MicOff,Bell,SlidersHorizontal,CalendarClock} from 'lucide-react';
 import {WorkNavigationContext,workSurface} from './work-navigation';
-import {AdaptiveWorkHome} from './adaptive-work.jsx';
-import {WorkLandingFrame,LandingToolbar,useLandingLayout} from './work-landing';
-import {useNavigationController,ChatList,NavigationEditor,ChatSearch} from './shell/navigation-components';
+import {AdaptiveWorkHome,AdaptiveWorkChats} from './adaptive-work.jsx';
+import {WorkLandingFrame,LandingToolbar,useLandingLayout,useWorkspaceChatView} from './work-landing';
+import {useNavigationController,NavigationEditor,ChatSearch} from './shell/navigation-components';
 import {WorkspaceCleanup} from './storage-settings';
 import {WorkspaceExplorer} from './workspace-explorer';
 import {WorkspaceForm,WorkspacePicker} from './workspace-setup';
@@ -125,17 +125,17 @@ function WorkBrowser({host,workspaceHost,state,act,dispatch,presentation,resourc
  const surface=workSurface(state),workspace=state.workspaces?.find(row=>row.id===state.view.workWorkspaceId)||workspaceModel.workspace,tab=state.view.workWorkspaceTab||'chats',active=!['chat','home'].includes(surface);
  const identity=surface+(surface==='workspace'?':'+state.view.workWorkspaceId:'');
  const [mode,setMode]=useLandingLayout(identity,presentation);
+ const [workspaceView,setWorkspaceView]=useWorkspaceChatView(surface==='workspace'?state.view.workWorkspaceId:null,mode,setMode);
  const workspacePending=surface==='workspace'&&(workspaceModel.state.navigationWorkspacePending||model.state.navigationWorkspacePending);
  const setTab=tab=>act('view.update',{patch:{workWorkspaceTab:tab}});
- const view=surface==='chats'?{...model.view,...model.state.sidebarNavigation?.recentView,...model.view.navRecentView,navChatScope:'all'}:{...model.view,navChatScope:'workspace'};
- const page=surface==='chats'||surface==='workspace'&&tab==='chats'?chatPage({...model.state,view},model.workspace,{section:surface==='chats'?'search':'workspace'}):null;
- const pageResource=surface==='chats'?'sidebarSearch':'sidebarWorkspace';
- const viewAct=(name,args)=>{if(name!=='view.update'||surface!=='chats')return model.act(name,args);const next={...model.state.sidebarNavigation?.recentView,...model.view.navRecentView,...args.patch};if(!Object.hasOwn(args.patch,'navChatPage'))delete next.navChatPage;return model.act(name,{patch:{navRecentView:next}})};
+ const view=surface==='chats'?{...model.view,...model.state.sidebarNavigation?.recentView,...model.view.navRecentView,navAge:model.view.navAge||'all',navChatScope:'all'}:{...model.view,navChatScope:'workspace'};
+ const page=surface==='chats'?chatPage({...model.state,view},model.workspace,{section:'search'}):null;
+ const viewAct=(name,args)=>{if(name!=='view.update'||surface!=='chats')return model.act(name,args);const next={...model.state.sidebarNavigation?.recentView,...model.view.navRecentView,...args.patch};delete next.navAge;if(!Object.hasOwn(args.patch,'navChatPage'))delete next.navChatPage;return model.act(name,{patch:{navRecentView:next}})};
  const title=surface==='workspace'?workspacePending?'Loading workspace…':workspace?.name||'Workspace unavailable':surface==='workspaces'?'All workspaces':'All chats';
  const description=surface==='workspace'?'Your chats, files, and related work in one place.':surface==='workspaces'?'Find a workspace, browse its folders, or start something new.':'Find a conversation or see what needs your attention.';
  const readingKey=JSON.stringify([mode,tab,view.navFilter,view.navStatusFilter,view.navArchive,view.navSort,view.navGroup,view.navAge,view.navLocationFilter,view.navShowAgentCreated,page?.index,workspaceModel.state.workspaceExplorer?.page,workspaceModel.state.workspaceExplorer?.filter,workspaceModel.state.workspaceExplorer?.mode,workspaceModel.state.workspaceExplorer?.archive,workspaceModel.state.workspaceExplorer?.path]);
- return <WorkLandingFrame mode={mode} presentation={presentation} identity={identity} readingKey={readingKey} ready={!page?.pending&&!workspacePending&&(surface!=='workspaces'||hasNavigationResource(workspaceModel.state,'workspaceExplorer'))} title={title} description={description}
-  toolbar={<LandingToolbar mode={mode} onMode={setMode} presentation={presentation} actions={<button type="button" className="a-home-create a-soft" aria-label={surface==='workspaces'?'New workspace':'New chat'} disabled={surface==='workspace'&&(workspacePending||!workspace)} onClick={()=>surface==='workspaces'?nav.create():nav.newChat(surface==='workspace'?workspace?.path:undefined)}><Plus/><span>{surface==='workspaces'?'New workspace':'New chat'}</span></button>}/>}
+ return <WorkLandingFrame mode={mode} presentation={presentation} identity={identity} readingKey={readingKey} ready={!(surface==='workspace'&&tab==='chats')&&!page?.pending&&!workspacePending&&(surface!=='workspaces'||hasNavigationResource(workspaceModel.state,'workspaceExplorer'))} title={title} description={description}
+  toolbar={surface!=='workspace'&&<LandingToolbar mode={mode} onMode={setMode} presentation={presentation} actions={<button type="button" className="a-home-create a-soft" aria-label={surface==='workspaces'?'New workspace':'New chat'} onClick={()=>surface==='workspaces'?nav.create():nav.newChat()}><Plus/><span>{surface==='workspaces'?'New workspace':'New chat'}</span></button>}/>}
  ><NavigationEditor model={model} deleteOwner={active}/><NavigationEditor model={workspaceModel}/>
  <WorkspaceResourcesSlot connect={resourceSlot} workspace={surface==='workspace'&&tab==='details'&&!workspacePending&&workspace?.available!==false?workspace:undefined} unavailableId={surface==='workspace'&&tab==='details'&&!workspacePending&&(!workspace||workspace.available===false)?state.view.workWorkspaceId:undefined}/>{active&&<>
   {surface==='workspace'&&workspace&&tab==='details'&&<WorkspaceBundleDefault key={workspace.id} workspace={workspace} state={state} act={act}/>}
@@ -145,8 +145,8 @@ function WorkBrowser({host,workspaceHost,state,act,dispatch,presentation,resourc
    {surface==='workspace'&&workspace&&<><div className="a-work-tabs" role="group" aria-label="Workspace view">{['chats','work','files','details'].map(key=><button key={key} type="button" aria-pressed={tab===key} data-action="view.update" onClick={()=>setTab(key)}>{key[0].toUpperCase()+key.slice(1)}</button>)}</div>{tab==='details'&&<div className="a-work-details"><CopyDetail label="Folder" value={workspace.path}/><p>Chats are discovered from native Amplifier history for this folder. Files stay in place and are visible from your terminal.</p><button className="a-soft" onClick={()=>workspaceModel.setDraft({mode:'rename',id:workspace.id,name:workspace.name})}>Rename workspace</button><WorkspaceCleanup key={workspace.id} id={workspace.id} act={act}/><WorkspaceConfiguration key={workspace.id} workspace={workspace} state={state} act={act}/></div>}{tab==='files'&&<WorkspaceFiles key={workspace.id} workspace={workspace} state={state} act={act}/>}
     {tab==='work'&&!workspacePending&&<SharedWorkBrowser workspace={workspace} clientId={state.client?.id} hostInstanceId={state.client?.hostInstanceId} dispatch={dispatch} onOpenChat={id=>dispatch('session.select',{id})}/>}</>}
 
-   {page&&<NavigationResourceStatus state={model.state} resource={pageResource} label={surface==='chats'?'chat search':'workspace chats'} refresh={model.refreshResources}/>}
-   {surface==='workspace'&&workspacePending?<p role="status">Loading workspace…</p>:surface==='workspace'&&!workspace?<p>This workspace is no longer available. Choose another workspace from the sidebar.</p>:surface==='chats'?<ChatSearch page={page} model={model} view={view} viewAct={viewAct} now={now} layout={mode} identity={identity}/>:tab==='chats'&&<ChatList layout={mode} identity={identity} planAct={surface==='workspace'?act:undefined} page={page} model={model} view={view} viewAct={viewAct} now={now} showLocation={surface==='chats'}/>}
+   {page&&<NavigationResourceStatus state={model.state} resource="sidebarSearch" label="chat search" refresh={model.refreshResources}/>}
+   {surface==='workspace'&&workspacePending?<p role="status">Loading workspace…</p>:surface==='workspace'&&!workspace?<p>This workspace is no longer available. Choose another workspace from the sidebar.</p>:surface==='chats'?<ChatSearch page={page} model={model} view={view} viewAct={viewAct} now={now} layout={mode} identity={identity}/>:tab==='chats'&&<AdaptiveWorkChats model={model} state={state} act={act} presentation={presentation} workspaceId={state.view.workWorkspaceId} workspaceView={workspaceView} onWorkspaceView={setWorkspaceView}/>}
   </>}
  </>}</WorkLandingFrame>;
 }

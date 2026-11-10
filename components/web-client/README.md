@@ -14,18 +14,17 @@ This repository is for developing the web client as an independent component.
 This experimental extraction preserves the client history from Unified v0.70.0
 (`4854dbd9ec555690269747b7dbe273f008e9e179`, `LICENSE` and `frontend/`).
 Accepted client changes and canonical shared inputs are caught up through
-Unified main `48c006c19ec36dfed6fb87d681d7d5296f99a6d9` (server version
-`0.71.3`, including later backend fixes), including
-workspace identification, session grouping/age views and passive delivery recovery.
-Unmerged navigation proposals are outside this selection.
+Unified main `dab4c703cb781d54ced07fecb382ef9239b87f97` (server version
+`0.72.0`), including workspace identification, shared activity-age filtering,
+Home-style workspace chat views and passive delivery recovery.
 The repository is currently private. Its independent package is
 `@amplifier/client-web`, initially `0.1.0`; no registry release or default
 Unified adoption is claimed. Current source changes remain coordinated with
 Unified until that handoff is accepted. The retained AHP client is separate.
 
-The [family vision](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/docs/architecture/VISION.md),
-[component boundaries](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/contracts/component-boundaries.v1.md) and
-[client development contract](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/contracts/client-development.v1.md)
+The [family vision](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/docs/architecture/VISION.md),
+[component boundaries](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/contracts/component-boundaries.v1.md) and
+[client development contract](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/contracts/client-development.v1.md)
 remain the canonical promises. This first extraction preserves the current wire
 and declares exactly one server revision per artifact; it adds no negotiation,
 compatibility fallback, SDK owner or updater.
@@ -34,7 +33,7 @@ compatibility fallback, SDK owner or updater.
 
 Use Node 22 and an owned test environment. Obtain the 15-file canonical export
 matching the committed `build-inputs.lock.json`; its producer remains
-[Unified's capsule tool](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/scripts/client-capsule.mjs).
+[Unified's capsule tool](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/scripts/client-capsule.mjs).
 Run `npm run prepare:inputs` here to fetch only the pinned public files
 anonymously. No clone, token or private repository access is required. Each
 request has a timeout and locked byte/hash limits; failed retrieval preserves
@@ -48,7 +47,7 @@ npm run prepare:inputs
 # Offline alternative: npm run prepare:inputs -- /path/to/canonical-export
 npm run test:portable
 npm run build
-npm run package:artifact -- /tmp/client-package 48c006c19ec36dfed6fb87d681d7d5296f99a6d9
+npm run package:artifact -- /tmp/client-package dab4c703cb781d54ced07fecb382ef9239b87f97
 (cd /tmp/client-package && npm pack --pack-destination /tmp)
 ```
 
@@ -65,13 +64,13 @@ then run the named fixture from this checkout:
 
 ```sh
 npm install --prefix /tmp/client-consumer --ignore-scripts --no-audit --no-fund /tmp/amplifier-client-web-0.1.0.tgz
-npm run test:artifact -- /tmp/client-consumer/node_modules/@amplifier/client-web 48c006c19ec36dfed6fb87d681d7d5296f99a6d9
+npm run test:artifact -- /tmp/client-consumer/node_modules/@amplifier/client-web dab4c703cb781d54ced07fecb382ef9239b87f97
 ```
 
 This fixture uses real HTTP/SSE and the installed browser assets with synthetic
 state. It checks history, sending, rendered response, reconnect, retained draft
 and no duplicate accepted send. Actual-server qualification remains with
-[Unified's paired-server journey](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/client-paired-server-browser.mjs).
+[Unified's paired-server journey](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/client-paired-server-browser.mjs).
 
 Canonical catalogs, SDK and branding are copied only into ignored `.build-inputs/`.
 The committed lock is the trusted selection, not independent authentication of
@@ -123,7 +122,7 @@ embedded in this record.
 
 App actions use `POST /api/actions`; `window.amplifier.getActions()` and
 `window.amplifier.dispatch(name, args)` expose the same action surface. The
-[live-session contract](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/docs/clients/live-sessions.md) owns attachment,
+[live-session contract](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/docs/clients/live-sessions.md) owns attachment,
 explicit conversation targets, receipts, recovery and device effects. The
 bundled client and server evolve together; independently released clients retain
 their public contracts.
@@ -133,9 +132,9 @@ attached host advertises support, with SSE for hosts that do not. Each stream
 starts with a `state` snapshot and applies `state-delta` updates to its own
 revision baseline. HTTP receipts and recovery reads do not replace that baseline.
 Reconnect starts a fresh stream without replaying commands. See
-[browser state transport](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/docs/browser-state-transport.md) for bounded
+[browser state transport](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/docs/browser-state-transport.md) for bounded
 projections, shell events and recovery behavior; measure construction work as
-well as bytes under the [performance guidance](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/docs/validation/performance.md).
+well as bytes under the [performance guidance](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/docs/validation/performance.md).
 
 `window.amplifier.getState()` exposes this browser's state, including private
 input, plus a redacted rendered view. It is not the model-facing state projection.
@@ -144,15 +143,15 @@ The [browser observation code](src/api.js) excludes private inputs from automati
 excludes unsent composer text, message edits and attachment drafts. User-requested
 inspection uses the exact `/view/draft` or `/view/messageEdit` pointer and an
 explicit `clientId` displaying the calling conversation; a broader read never
-opts in. [The projection owner](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/amplifier_web/agent_private_state.py) and
-[CS2](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/contracts/client-state.v1.md) define this boundary.
+opts in. [The projection owner](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/amplifier_web/agent_private_state.py) and
+[CS2](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/contracts/client-state.v1.md) define this boundary.
 
 Privacy of model readback does not imply client-only storage. The current host
 still stores acknowledged client drafts; the [draft journal](src/draft-journal.js)
 keeps unacknowledged composer edits in browser session storage for recovery.
-The [client vision](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/docs/clients/VISION.md) describes the target local-only
+The [client vision](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/docs/clients/VISION.md) describes the target local-only
 persistence model, not a completed migration. Settings editors have their own
-[draft and credential boundaries](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/docs/SETTINGS.md#boundaries-and-state).
+[draft and credential boundaries](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/docs/SETTINGS.md#boundaries-and-state).
 
 Browser effects (call media, notification permission, and file download) are delivered in `deviceCommands`, with command IDs deduplicated against HTTP responses. Existing effects are not replayed when opening the app. Microphone and notification grants remain browser permission prompts.
 
@@ -161,7 +160,7 @@ Browser effects (call media, notification permission, and file download) are del
 `src/unified.css` is the complete Amplifier Unified skin. It includes an embedded Amplifier logo from microsoft/amplifier and has no external asset dependencies. The build always links a real CSS file in HTML; theme application does not depend on enabling a disabled stylesheet or on `@scope` support. The same source is copied to `dist/unified.amplifier.css` for reset and export.
 
 The stable root is `#amp-one`, with named `data-part` surfaces. A skin can replace
-variables or component styles. See [themes](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/docs/shell/themes.md) for surface
+variables or component styles. See [themes](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/docs/shell/themes.md) for surface
 names, library/editor operations, preview versus Apply, and portable CSS validation.
 Applied skins are validated by the Python service; use embedded data assets rather
 than remote URLs.
@@ -172,6 +171,8 @@ than remote URLs.
 journal, state stream, build identity, branding synchronization, AI connection
 actions, chat rows, navigation/grouping, work rendering, media, explicit and
 passive delivery recovery, canonical-input preparation and copied-source provenance.
+`npm run test:navigation` names the focused shared-age, workspace view,
+resource demand/snapshot and chat-row checks.
 `npm run test:delivery-recovery-browser` exercises passive recovery and new-chat
 source changes against a synthetic HTTP/SSE fixture; it is not an actual server. `npm run test:artifact`
 checks the installed archive. Neither command claims the entire inherited suite.
@@ -184,17 +185,19 @@ remove assertions or describe the selected portable checks as full-suite success
 Known Unified owners were removed from this current tree, with their history
 preserved in the import and their live source/coverage retained upstream:
 
-- [Canonical exporter and producer tests](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/client-build-inputs.test.mjs).
-- [Root DOM-recorder test](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/browser-dom-recorder.test.mjs).
-- [Actual paired-server](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/client-paired-server-browser.mjs),
-  [home sidebar](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/home-sidebar-browser.mjs),
-  [shell](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/shell-browser.mjs),
-  [shell component](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/shell-components-browser.mjs), and
-  [canvas renderer](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/canvas-renderers-browser.mjs) integration.
-- [Chat search](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/chat-search-browser.mjs),
-  [workspace shortcuts](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/workspace-shortcuts-browser.mjs) and
-  [message delivery](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/tests/message-delivery-browser.mjs) require canonical Python server fixtures.
-- [Shell-example builders](https://github.com/microsoft/amplifier-unified/blob/48c006c19ec36dfed6fb87d681d7d5296f99a6d9/frontend/scripts/shell-example-build.mjs),
+- [Canonical exporter and producer tests](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/client-build-inputs.test.mjs).
+- [Root DOM-recorder test](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/browser-dom-recorder.test.mjs).
+- [Actual paired-server](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/client-paired-server-browser.mjs),
+  [home sidebar](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/home-sidebar-browser.mjs),
+  [shell](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/shell-browser.mjs),
+  [shell component](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/shell-components-browser.mjs), and
+  [canvas renderer](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/canvas-renderers-browser.mjs) integration.
+- [Chat search](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/chat-search-browser.mjs),
+  [workspace shortcuts](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/workspace-shortcuts-browser.mjs) and
+  [message delivery](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/message-delivery-browser.mjs) require canonical Python server fixtures.
+- [Shared landing/workspace](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/shared-landing-browser.mjs)
+  and [native media](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/tests/inline-media-browser.mjs) journeys own their server fixtures and platform input drivers upstream.
+- [Shell-example builders](https://github.com/microsoft/amplifier-unified/blob/dab4c703cb781d54ced07fecb382ef9239b87f97/frontend/scripts/shell-example-build.mjs),
   their three wrappers and canonical examples/SDK.
 
 Application builds and browser acceptance follow the owning workspace's DTU

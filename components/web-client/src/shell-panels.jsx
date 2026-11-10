@@ -10,6 +10,7 @@ import {CanvasWorkspace} from './canvas-workspace';
 import {McpAppVisibilityProvider} from './mcp-app-lifecycle';
 import {ShellModules,ShellSlot} from './shell/runtime';
 export {ChatRename} from './shell/navigation-components';
+import {ChatAgeFilter} from './shell/navigation-components';
 import {CanvasTabs,SavedArtifacts,BrowserAddress,chatArtifacts} from './canvas-library';
 import React,{useContext,useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {WorkNavigationContext} from './work-navigation';
@@ -44,6 +45,7 @@ export function WorkspaceRail({state,session,act,selectSession,newSession,shell,
    <div className="a-nav-head a-sidebar-modes">{navigation&&<button type="button" className="a-sidebar-home a-icon" aria-label="Home" title="Home" aria-current={view.workSurface==='home'?'page':undefined} onClick={()=>navigation.home(layout.narrow?{navExpanded:false}:{})}><HomeIcon/></button>}<div className="a-sidebar-organizations" role="group" aria-label="Sidebar view">{supportsStatus?['browse','status'].map(mode=><button type="button" key={mode} aria-pressed={(view.navMode||'browse')===mode} onClick={()=>patch(act,{navMode:mode})}>{mode==='browse'?'Browse':'Status'}</button>):<strong>Browse</strong>}</div></div>
    <button className="a-nav-main" type="button" onClick={add} data-action="session.draft" aria-label="New chat" title="New chat"><Plus/><span className="a-nav-reveal">New chat</span></button>
    {navigation&&<button type="button" className="a-nav-search-launch" data-action="view.update" onClick={()=>navigation.browse('chats')}><Search/>Search chats</button>}
+   {supportsStatus&&<ChatAgeFilter view={view} act={act}/>}
    <div className="a-nav-content a-nav-reveal"><ShellModules shell={shell}/></div>{footer}
   </div>
   {layout.docked&&<PaneResizer layout={layout} pane="nav"/>}

@@ -24,10 +24,11 @@ test('Status requests only open groups, independently of Home filters; hidden na
   ['workStatusAttention','workStatusPaused','workStatusUnread','workStatusWaiting']);
 });
 test('built-in demand includes only the sidebar and visible browsing page',()=>{
- for(const view of [{},{workSurface:'chat'},{workSurface:'workspace',workWorkspaceTab:'files'},{workSurface:'workspace',workWorkspaceTab:'details'}])
+ for(const view of [{},{workSurface:'chat'},{workSurface:'workspace',workWorkspaceTab:'work'},{workSurface:'workspace',workWorkspaceTab:'files'},{workSurface:'workspace',workWorkspaceTab:'details'}])
   assert.deepEqual(navigationResources({view}),sidebar);
- for(const [view,resource] of [[{workSurface:'chats'},'sidebarSearch'],[{workSurface:'workspace'},'sidebarWorkspace'],[{workSurface:'workspaces'},'workspaceExplorer']])
+ for(const [view,resource] of [[{workSurface:'chats'},'sidebarSearch'],[{workSurface:'workspace'},'workHome'],[{workSurface:'workspaces'},'workspaceExplorer']])
   assert.deepEqual(navigationResources({view}),[...sidebar,resource].sort());
+ assert.deepEqual(navigationResources({view:{workSurface:'workspace'}},false),['workHome']);
 });
 test('demand scope changes for workspace/tab but not unrelated drafts or progress',()=>{
  const state={view:{workSurface:'workspace',workWorkspaceId:'one'}};

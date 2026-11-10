@@ -8,7 +8,9 @@ const vite=await createServer({server:{middlewareMode:true,hmr:false},appType:'c
 const {WorkNavigationContext,browsePatch}=await vite.ssrLoadModule('/src/work-navigation.js');
 const {WorkSurface,LiveChatActivity,WorkspaceFiles}=await vite.ssrLoadModule('/src/work-shell.jsx');
 const {ConversationList,PinnedItems,useRecentShortcuts}=await vite.ssrLoadModule('/src/shell/navigation-components.jsx');
-const {WorkspaceExplorer}=await vite.ssrLoadModule('/src/workspace-explorer.jsx');
+const {WorkspaceExplorer,WorkspaceRow}=await vite.ssrLoadModule('/src/workspace-explorer.jsx');
+const {WorkspaceDetails}=await vite.ssrLoadModule('/src/navigation-details.jsx');
+const {useLandingLayout,useWorkspaceChatView}=await vite.ssrLoadModule('/src/work-landing.jsx');
 const {AgentCanvas}=await vite.ssrLoadModule('/src/shell-panels.jsx');
 const {newChatSetup}=await vite.ssrLoadModule('/src/new-chat.jsx');
 const {fitPanels}=await vite.ssrLoadModule('/src/panel-layout.jsx');
@@ -18,7 +20,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>vite.close());
 const workspace={id:'b',path:'/research',name:'Research',available:true};
 const row={workspaceId:'b',path:'/research',name:'Research',chatCount:1};
-const scope={mode:'all',workspaceId:null,filter:'',selectedSessionId:'a',section:'recent',showAgentCreated:false};
+const scope={mode:'all',workspaceId:null,filter:'',age:'all',selectedSessionId:'a',section:'recent',showAgentCreated:false};
 const page={items:[{id:'b-chat',title:'Research ideas',workspace:'/research',workspaceId:'b'}],scope,total:1,pages:1,index:0,start:0,end:1};
 const snapshot={navigationResources:['pinnedNavigation','recentNavigation','workspaceShortcuts','workspaceExplorer','sidebarSearch','sidebarRecent','sidebarPinned'],view:{},selectedSessionId:'a',selectedWorkspaceId:'b',workspaces:[workspace],library:{bounded:true,workspaceCount:1},workspaceShortcuts:[row],recentShortcuts:page.items,recentNavigation:{...page,remaining:0,limit:20,scope:{...scope,section:'shortcuts',showAgentCreated:false,limit:20,viewRevision:0}},workspaceExplorer:{rows:[row],mode:'recent'},sidebarNavigation:{pinned:{items:[],total:0,pages:1},recent:page,search:{...page,scope:{...scope,section:'search',group:'recent',age:'all'}},recentView:{}},sharedHistory:{}};
 const host={instanceId:'chats',getSnapshot:()=>snapshot,subscribe:()=>()=>{},dispatch:async()=>({accepted:true})};
@@ -50,6 +52,7 @@ test('compact sidebar has shortcuts; filtering lives in the main surface',()=>{
  const shell={composition:{instances:[{id:'chats',package:'builtin.chats'}]},hostFor:()=>host};
  const main=renderToStaticMarkup(render(React.createElement(WorkSurface,{shell,state:{view:{workSurface:'chats'}},act:host.dispatch})));
  assert.match(main,/Research ideas/);assert.match(main,/aria-label="Search chats"/);assert.doesNotMatch(main,/a-browser-pins/);
+ assert.match(main,/aria-label="Group conversations"/);assert.doesNotMatch(main,/aria-label="Filter conversations by age"/);
 });
 test('empty Pinned disappears; workspace-only and mixed pins share one section',async()=>{
  const calls=[];
@@ -74,6 +77,17 @@ test('empty Pinned disappears; workspace-only and mixed pins share one section',
  assert.equal(root.root.findAllByProps({'data-sidebar-section':'pinned'}).length,0);
  assert.deepEqual(current.view.navSectionsCollapsed,['pinned']);assert.deepEqual(calls,[]);
  await act(async()=>root.unmount());
+});
+test('pinned workspace stays navigable while mismatched age activity waits for its resource',()=>{
+ const folder={...row,activityCounts:{working:25},chatCount:25};
+ const state={...snapshot,view:{navAge:'24h'}};
+ const props={row:folder,state,act:host.dispatch,now:1,open(){},newChat(){},browse(){},compact:true,pinnedShortcut:true};
+ const stale=renderToStaticMarkup(React.createElement(WorkspaceRow,props));
+ assert.match(stale,/Open chats in \/research/);assert.doesNotMatch(stale,/25 chats working/);
+ const fresh=renderToStaticMarkup(React.createElement(WorkspaceRow,{...props,row:{...folder,navigationAge:'24h'}}));
+ assert.match(fresh,/25 chats working/);
+ const details=renderToStaticMarkup(React.createElement(WorkspaceDetails,{row:folder,countsPending:true,now:1}));
+ assert.match(details,/Updating workspace activity/);assert.doesNotMatch(details,/<dt>Chats|25 working/);
 });
 test('mixed keyboard ordering preserves hidden pins and typed IDs, and workspace opens the browser',async()=>{
  const calls=[],selects=[];
@@ -162,6 +176,70 @@ test('workspace details do not compute the hidden chat page',()=>{
  const shell={composition:{instances:[{id:'chats',package:'builtin.chats'}]},hostFor:()=>scopedHost};
  const main=renderToStaticMarkup(render(React.createElement(WorkSurface,{shell,state:{view:{workSurface:'workspace',workWorkspaceId:'b',workWorkspaceTab:'details'},workspaces:[workspace]},act:host.dispatch})));
  assert.match(main,/Rename workspace/);assert.doesNotMatch(main,/Research ideas/);
+});
+test('workspace Chats reuses scoped Home cards below tabs without a second landing or sidebar page',()=>{
+ const empty={items:[],total:0,pages:1,index:0,start:0,end:0};
+ const current={...snapshot,navigationResources:['workHome'],
+  workHome:{scope:'b',requestedScope:'b',query:'',requestedPages:{},groups:{attention:page,unread:empty,working:empty,waiting:empty,paused:empty,idle:empty}},
+  workHomeContext:{scope:'b',requestedScope:'b',workspace,unavailable:false}};
+ Object.defineProperty(current,'sidebarNavigation',{enumerable:true,get(){throw Error('Superseded workspace page read')}});
+ const scopedHost={...host,getSnapshot:()=>current};
+ const shell={composition:{instances:[{id:'chats',package:'builtin.chats'}]},hostFor:()=>scopedHost};
+ const state={view:{workSurface:'workspace',workWorkspaceId:'b',workHomeScope:'elsewhere',workHomeQuery:'unrelated',
+  workWorkspaceChats:{workspaceId:'b',query:'',pages:{}}},workspaces:[workspace]};
+ const markup=()=>renderToStaticMarkup(render(React.createElement(WorkSurface,{shell,state,act:host.dispatch})));
+ const html=markup();
+ assert.match(html,/a-work-card[^>]*data-session-id="b-chat"/);assert.match(html,/Research ideas/);
+ assert.equal((html.match(/class="a-home-toolbar"/g)||[]).length,1);
+ assert.ok(html.indexOf('aria-label="Workspace view"')<html.indexOf('class="a-home-toolbar"'));
+ assert.equal((html.match(/class="a-home-intro"/g)||[]).length,1);
+ assert.doesNotMatch(html,/a-home-project|aria-label="Work scope"|a-work-layout-label|One thing at a time|Group conversations|Filter conversations by age/);
+ assert.match(html,/aria-label="Work view"/);
+ state.view.navAge='24h';
+ const staleAge=markup();assert.doesNotMatch(staleAge,/Research ideas/);assert.match(staleAge,/Loading your work/);
+ current.workHome={...current.workHome,age:'24h'};
+ assert.match(markup(),/Research ideas/);
+ current.workHome={...current.workHome,scope:'elsewhere'};
+ const stale=markup();assert.doesNotMatch(stale,/Research ideas/);assert.match(stale,/Loading your work/);
+});
+test('All Chats retains local grouping and global age independently of workspace chat choices',()=>{
+ const choices={navGroup:'status'};
+ const current={...snapshot,view:{navAge:'24h',navRecentView:choices},sidebarNavigation:{...snapshot.sidebarNavigation,
+  recentView:choices,search:{...snapshot.sidebarNavigation.search,scope:{...snapshot.sidebarNavigation.search.scope,group:'status',age:'24h'},
+   items:page.items.map(chat=>({...chat,group:{id:'status:idle',title:'Pick up again'}}))}}};
+ const scopedHost={...host,getSnapshot:()=>current};
+ const shell={composition:{instances:[{id:'chats',package:'builtin.chats'}]},hostFor:()=>scopedHost};
+ const state={view:{workSurface:'chats',workWorkspaceId:'b',workWorkspaceChats:{workspaceId:'b',query:'unrelated',pages:{idle:2}}}};
+ const html=renderToStaticMarkup(render(React.createElement(WorkSurface,{shell,state,act:host.dispatch})));
+ assert.match(html,/<option value="status" selected="">Status<\/option>/);
+ assert.doesNotMatch(html,/aria-label="Filter conversations by age"/);
+ assert.match(html,/<h2 class="a-chat-group-heading">Pick up again<\/h2>/);
+ assert.match(html,/Research ideas/);assert.doesNotMatch(html,/a-workspace-chats/);
+ assert.deepEqual(current.view.navRecentView,choices);
+});
+test('workspace view hook restores each destinations original layout key, search, filter and pages',async()=>{
+ const prior={window:globalThis.window,sessionStorage:globalThis.sessionStorage},values=new Map();
+ const storage={getItem:key=>values.get(key),setItem:(key,value)=>values.set(key,value)};
+ globalThis.window={sessionStorage:storage};globalThis.sessionStorage=storage;
+ let current,root;
+ function Legacy(){current=useLandingLayout('workspace:one',{});return null}
+ function Probe({id}){const [mode,setMode]=useLandingLayout('workspace:'+id,{});current=useWorkspaceChatView(id,mode,setMode);return null}
+ const mount=async(id)=>act(async()=>root.update(React.createElement(Probe,{key:id,id})));
+ try{
+  await act(async()=>{root=create(React.createElement(Legacy))});
+  await act(async()=>current[1]('focus'));
+  await mount('one');assert.equal(current[0].workHomeView,'focus','Retain layout chosen before the extraction');
+  await act(async()=>current[1]({workHomeQuery:'alpha',workHomeFilter:'idle',workHomePages:{idle:1}}));
+  const first=structuredClone(current[0]);
+  await mount('two');assert.equal(current[0].workHomeView,'brief');
+  await act(async()=>current[1]({workHomeView:'studio',workHomeQuery:'beta',workHomeFilter:'working',workHomePages:{working:2}}));
+  const second=structuredClone(current[0]);
+  await mount('one');assert.deepEqual(current[0],first);
+  await mount('two');assert.deepEqual(current[0],second);
+  await act(async()=>root.unmount());root=null;
+  await act(async()=>{root=create(React.createElement(Probe,{id:'one'}))});
+  assert.deepEqual(current[0],first,'Reload/remount uses only this workspace saved choices');
+ }finally{if(root)await act(async()=>root.unmount());Object.assign(globalThis,prior)}
 });
 test('Shared Work tab reads only through the rejecting presentation dispatcher and aborts when hidden',async()=>{
  const current={...snapshot},calls=[],acts=[],pending=[];
@@ -471,7 +549,7 @@ test('quiet navigation retains rows without refresh text and keeps failures and 
 function recentFixture(limit=20,showAgentCreated=false,viewRevision=0,total=125){
  const items=Array.from({length:Math.min(limit,total)},(_,i)=>({id:'recent-'+i,title:'Recent '+i,workspace:'/research',workspaceId:'b'}));
  return {items,total,remaining:total-items.length,end:items.length,limit,dataRevision:viewRevision,
-  scope:{mode:'all',workspaceId:null,filter:'',selectedSessionId:'a',section:'shortcuts',showAgentCreated,limit,viewRevision}};
+  scope:{mode:'all',workspaceId:null,filter:'',age:'all',selectedSessionId:'a',section:'shortcuts',showAgentCreated,limit,viewRevision}};
 }
 test('quiet Recent grows past 100 to natural exhaustion with only an explicit keyboard fallback',async()=>{
  let state={...snapshot,recentNavigation:recentFixture(20,false,0,101),view:{navRecentView:{navFilter:'retained'}}},root;
@@ -531,6 +609,25 @@ test('failed Recent read retains rows; explicit Retry reads only current resourc
   assert.equal(api.page.items.length,40);assert.equal(api.error,'');
   assert.equal(calls.length,1);assert.equal(reads.length,1);assert.equal(reads[0],'resources');
  }finally{recentRead=previousRead;await act(async()=>root.unmount())}
+});
+
+test('Recent accepts cached All after a finite range without admitting stale same-query pages',async()=>{
+ let current={...snapshot,view:{navAge:'all'},recentNavigation:{...recentFixture(),dataRevision:10}},api,root;
+ const all=current.recentNavigation,finite={...recentFixture(20,false,0,1),dataRevision:11};
+ finite.scope={...finite.scope,age:'24h'};
+ function Probe(){api=useRecentShortcuts(recentHost({getSnapshot:()=>current}),current,async()=>({accepted:true}));return null}
+ await act(async()=>{root=create(React.createElement(Probe))});
+ assert.equal(api.page.items.length,20);assert.equal(api.busy,false);
+ current={...current,view:{navAge:'24h'},recentNavigation:finite};
+ await act(async()=>root.update(React.createElement(Probe)));
+ assert.equal(api.page.items.length,1);assert.equal(api.busy,false);
+ current={...current,view:{navAge:'all'},recentNavigation:all};
+ await act(async()=>root.update(React.createElement(Probe)));
+ assert.equal(api.page.items.length,20);assert.equal(api.page.dataRevision,10);assert.equal(api.busy,false);
+ current={...current,recentNavigation:{...all,items:[],dataRevision:9}};
+ await act(async()=>root.update(React.createElement(Probe)));
+ assert.equal(api.page.items.length,20);assert.equal(api.page.dataRevision,10);
+ await act(async()=>root.unmount());
 });
 
 test('change and retry share synchronous singleflight; a late response cannot replace a changed scope',async()=>{

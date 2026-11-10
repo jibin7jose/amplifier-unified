@@ -46,3 +46,31 @@ test('an explicitly pinned navigation component retains its workspace scope',()=
  assert.equal(shown.selectedWorkspaceId,'pinned');assert.equal(shown.navigationWorkspacePending,false);
  assert.equal(shown.view.workWorkspaceId,null);
 });
+
+test('a delayed module view cannot restore a different shared activity range',()=>{
+ const old={selectedWorkspaceId:'a',view:{navAge:'all'},sidebarNavigation:{search:{scope:{age:'all'},items:[{id:'old'}]}}};
+ const state={selectedWorkspaceId:'a',view:{navAge:'24h',workSurface:'chats'}};
+ const next=navigationSnapshot(old,state);
+ assert.equal(next.view.navAge,'24h');
+ assert.equal(next.sidebarNavigation,old.sidebarNavigation,'Retain scope evidence, never relabel the old page');
+ assert.equal(next.sidebarNavigation.search.scope.age,'all');
+ assert.equal(navigationSnapshot(next,state),next);
+ assert.equal(navigationSnapshot(old,state,undefined,false).view.navAge,'all',
+  'Independent custom module view stays under its own contract');
+});
+
+test('workspace aggregate witnesses cannot be relabeled by the shared age overlay',()=>{
+ const state={selectedWorkspaceId:'a',view:{navAge:'24h'}};
+ const old={selectedWorkspaceId:'a',view:{navAge:'all'},
+  workspaceExplorer:{rows:[{chatCount:25}]},workspaceShortcuts:[{chatCount:25}],
+  navigationResources:['workspaceExplorer','workspaceShortcuts'],
+  navigationResourceAges:{workspaceExplorer:'all',workspaceShortcuts:'all'}};
+ const waiting=navigationSnapshot(old,state);
+ assert.equal(waiting.workspaceExplorer,undefined);assert.equal(waiting.workspaceShortcuts,undefined);
+ assert.deepEqual(waiting.navigationResources,[]);
+ assert.equal(waiting.navigationResourcePending.workspaceExplorer.status,'pending');
+ assert.equal(navigationSnapshot(waiting,state),waiting);
+ const current={...old,view:{navAge:'24h'},navigationResourceAges:{workspaceExplorer:'24h',workspaceShortcuts:'24h'}};
+ assert.equal(navigationSnapshot(current,state).workspaceShortcuts,current.workspaceShortcuts);
+ assert.equal(navigationSnapshot(old,state,undefined,false).workspaceShortcuts,old.workspaceShortcuts);
+});

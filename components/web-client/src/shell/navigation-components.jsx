@@ -220,11 +220,16 @@ export function useRecentShortcuts(host,state,act){
     instanceId:latest.current.host.instanceId??current.recentScope.instanceId,
     generation:current.generation??current.recentScope.generation
    }:{}),
-   selectedSessionId:current.selectedSessionId??null};
+   age:current.view?.navAge||'all',selectedSessionId:current.selectedSessionId??null};
  };
  const desired=(value,current=latest.current.state)=>({...scopeFor(current),...value});
  const sameQuery=(scope,current)=>Object.entries(scope).every(([key,value])=>key==='selectedSessionId'||scopeFor(current)[key]===value);
- const newer=candidate=>acceptedOwner.current!==owner||(candidate?.scope?.viewRevision??0)>=(accepted.current?.scope?.viewRevision??0)
+ const queryKey=value=>JSON.stringify(['mode','workspaceId','filter','age','section','clientId','instanceId','generation']
+  .map(key=>value?.scope?.[key]??(key==='age'?'all':null)));
+ // Catalog revisions are monotonic only within one query. Returning to a
+ // cached range may legitimately have an older revision than the range left.
+ const newer=candidate=>acceptedOwner.current!==owner||queryKey(candidate)!==queryKey(accepted.current)
+  ||(candidate?.scope?.viewRevision??0)>=(accepted.current?.scope?.viewRevision??0)
   &&((candidate?.scope?.viewRevision??0)>(accepted.current?.scope?.viewRevision??0)
    ||(candidate?.dataRevision??0)>=(accepted.current?.dataRevision??0));
  const accept=candidate=>{
@@ -251,7 +256,7 @@ export function useRecentShortcuts(host,state,act){
    accept(candidate);
    if(intent.current){intent.current=null;setError('')}
   }
- },[state.recentNavigation,state.recentScope,state.selectedSessionId,state.navigationResourceRetained,owner,busy]);
+ },[state.recentNavigation,state.recentScope,state.selectedSessionId,state.view?.navAge,state.navigationResourceRetained,owner,busy]);
  const change=async value=>{
   // This ref is set synchronously, before React renders or dispatch can await.
   // Scroll, fallback, toggle and Retry must all share the same flight.
@@ -398,7 +403,9 @@ export function PinnedItems({page,model,workspaceModel=model,now,navigation,canE
  const owner=useRef({alive:true,version:0,read:null});
  useEffect(()=>{const current=owner.current;current.alive=true;return()=>{current.alive=false;current.version++;current.read?.controller.abort()}},[model.host]);
  const settle=usePinOrderSettlement(model.host);
- const items=page.items.map(item=>({...item,label:item.kind==='workspace'?(item.row.customName||item.row.name):(item.row.title||'Untitled conversation')})),visible=items.map(item=>item.id);
+ const items=page.items.map(item=>({...item,
+  ...(item.kind==='workspace'?{row:{...item.row,navigationAge:model.state.navigationResourceAges?.pinnedNavigation??'all'}}:{}),
+  label:item.kind==='workspace'?(item.row.customName||item.row.name):(item.row.title||'Untitled conversation')})),visible=items.map(item=>item.id);
  const reorder=async(next,{id,basis,target,contextKey})=>{
   const version=++owner.current.version;owner.current.read?.controller.abort();setError(null);setReading(false);
   try{
@@ -455,21 +462,23 @@ function LandingChats({page,model,now,showLocation,planAct,layout,identity,onPag
  return <LandingCollection page={page} layout={layout} identity={identity} queryKey={query} onPage={onPage} className="a-nav-chats" groupHeading={chat=>chat.group&&<h2 className="a-chat-group-heading">{chat.group.title}</h2>} wrap={planAct?(nodes,rows)=><WorkspacePlans ids={rows.map(chat=>chat.id).slice(0,50)} act={planAct}>{nodes}</WorkspacePlans>:undefined}>{chat=><div className="a-landing-chat-item"><ChatRow chat={chat} model={model} now={now} showLocation={showLocation} landing/>{planAct&&<WorkspacePlan id={chat.id}/>}</div>}</LandingCollection>;
 }
 export function ChatListViews({page,view,act}){
- const age=CHAT_AGES.includes(view.navAge)?view.navAge:'all',id=useId();
  const change=value=>patch(act,{...value,navChatPage:{...page.scope,
-  group:value.navGroup??view.navGroup??'recent',age:value.navAge??age,index:0}});
- return <div className="a-chat-list-views" role="group" aria-label="Conversation grouping and age">
+  group:value.navGroup??view.navGroup??'recent',index:0}});
+ return <div className="a-chat-list-views" role="group" aria-label="Conversation grouping">
   <label>Group by<select aria-label="Group conversations" value={view.navGroup||'recent'} data-action="view.update" onChange={e=>change({navGroup:e.target.value})}><option value="recent">Recent / date</option><option value="workspace">Workspace</option><option value="status">Status</option></select></label>
-  <div className="a-chat-age-filter"><label htmlFor={id}>Last activity <strong>{age==='all'?'All':age}</strong></label><input id={id} type="range" min="0" max="5" step="1" value={CHAT_AGES.indexOf(age)} aria-label="Filter conversations by age" aria-valuetext={age==='all'?'All activity dates':`Within the last ${({'24h':'24 hours','7d':'7 days','30d':'30 days','90d':'90 days','1y':'year'})[age]}`} aria-describedby={id+'-help'} data-action="view.update" onChange={e=>change({navAge:CHAT_AGES[Number(e.target.value)]})}/><div className="a-chat-age-stops" aria-hidden="true">{CHAT_AGES.map(value=><span key={value}>{value==='all'?'All':value}</span>)}</div><small id={id+'-help'}>Pins stay visible. Unknown activity dates appear under All.</small></div>
  </div>;
+}
+export function ChatAgeFilter({view,act}){
+ const age=CHAT_AGES.includes(view.navAge)?view.navAge:'all',id=useId();
+ return <div className="a-chat-age-filter"><label htmlFor={id}>Last activity <strong>{age==='all'?'All':age}</strong></label><input id={id} type="range" min="0" max="5" step="1" value={CHAT_AGES.indexOf(age)} aria-label="Filter conversations by age" aria-valuetext={age==='all'?'All activity dates':`Within the last ${({'24h':'24 hours','7d':'7 days','30d':'30 days','90d':'90 days','1y':'year'})[age]}`} aria-describedby={id+'-help'} data-action="view.update" onChange={e=>patch(act,{navAge:CHAT_AGES[Number(e.target.value)]})}/><div className="a-chat-age-stops" aria-hidden="true">{CHAT_AGES.map(value=><span key={value}>{value==='all'?'All':value}</span>)}</div><small id={id+'-help'}>All chat lists. Pins stay visible. Unknown dates appear under All.</small></div>;
 }
 export function ChatSearch({page,model,view,viewAct,now,layout,identity='chats'}){
  const root=useRef(null),input=useRef(null);
  const counts=page.activityCounts||{};
- const active=(view.navArchive||'active')!=='active'||(view.navStatusFilter||'all')!=='all'||view.navLocationFilter==='managed'||(view.navAge||'all')!=='all';
+ const active=(view.navArchive||'active')!=='active'||(view.navStatusFilter||'all')!=='all'||view.navLocationFilter==='managed';
  useEffect(()=>{input.current?.focus()},[]);
  const update=value=>patch(viewAct,value);
- const clear=()=>{update({navFilter:'',navArchive:'active',navStatusFilter:'all',navLocationFilter:'all',navAge:'all'});input.current?.focus()};
+ const clear=()=>{update({navFilter:'',navArchive:'active',navStatusFilter:'all',navLocationFilter:'all'});input.current?.focus()};
  const keyboard=event=>{
   if(event.key==='Escape'&&event.target===input.current){event.preventDefault();if(view.navFilter)update({navFilter:''});return}
   if(!['ArrowDown','ArrowUp'].includes(event.key)||!(event.target===input.current||event.target.matches('.a-nav-chat-select')))return;
@@ -490,7 +499,7 @@ export function ChatSearch({page,model,view,viewAct,now,layout,identity='chats'}
    </div></details>
    <label className="a-search-sort">Sort<select aria-label="Sort conversations" value={view.navSort||'activity'} onChange={e=>update({navSort:e.target.value})}><option value="activity">Recent activity</option><option value="created">Newest created</option><option value="name">Name</option></select></label>
   </div>
-  <div className="a-search-result-summary"><span role="status">{page.unavailable?'Search unavailable':page.pending?'Searching…':`${page.total} ${page.total===1?'chat':'chats'}${view.navFilter?' found':''}`}</span>{active&&<button className="a-link" type="button" onClick={()=>update({navArchive:'active',navStatusFilter:'all',navLocationFilter:'all',navAge:'all'})}>Clear filters</button>}</div>
+  <div className="a-search-result-summary"><span role="status">{page.unavailable?'Search unavailable':page.pending?'Searching…':`${page.total} ${page.total===1?'chat':'chats'}${view.navFilter?' found':''}`}</span>{active&&<button className="a-link" type="button" onClick={()=>update({navArchive:'active',navStatusFilter:'all',navLocationFilter:'all'})}>Clear filters</button>}</div>
   {layout&&<WorkStatusFilters value={view.navStatusFilter||'all'} counts={counts} onChange={navStatusFilter=>update({navStatusFilter})}/>}
   <div aria-label="Search results">{layout?<LandingChats page={page} model={model} now={now} showLocation layout={layout} identity={identity} onPage={index=>update({navChatPage:{...page.scope,index}})}/>:<div className="a-nav-chats" aria-busy={!!page.pending}>{page.items.map((chat,index)=><React.Fragment key={chat.id}>{chat.group&&(index===0||chat.group.id!==page.items[index-1].group?.id)&&<h2 className="a-chat-group-heading">{chat.group.title}</h2>}<ChatRow chat={chat} model={model} now={now} showLocation/></React.Fragment>)}</div>}</div>
   {!page.total&&!page.pending&&!page.unavailable&&<div className="a-search-empty"><h2>No chats found</h2><p>Try another name or workspace, or clear your filters.</p><button type="button" className="a-soft" onClick={clear}>Clear search and filters</button></div>}
@@ -515,7 +524,7 @@ export function ChatList({page,model,view,viewAct,now,showLocation,planAct,layou
   {page.pending&&<p role="status">Loading conversations…</p>}
   {layout&&<WorkStatusFilters value={view.navStatusFilter||'all'} counts={counts} onChange={navStatusFilter=>patch(viewAct,{navStatusFilter})}/>}
   {layout?<LandingChats {...{page,model,now,showLocation,planAct,layout,identity}} onPage={index=>patch(viewAct,{navChatPage:{...page.scope,index}})}/>:<WorkspacePlans ids={page.items.map(chat=>chat.id).slice(0,50)} act={planAct}><div className="a-nav-chats">{page.items.map((chat,index)=><React.Fragment key={chat.id}>{chat.group&&(index===0||chat.group.id!==page.items[index-1].group?.id)&&<h2 className="a-chat-group-heading">{chat.group.title}</h2>}<div><ChatRow chat={chat} model={model} now={now} showLocation={showLocation}/>{planAct&&<WorkspacePlan id={chat.id}/>}</div></React.Fragment>)}</div></WorkspacePlans>}
-  {!page.total&&!page.pending&&!page.unavailable&&<p className="a-nav-empty">{view.navAge&&view.navAge!=='all'?<>No chats in this activity range. <button type="button" className="a-link" onClick={()=>patch(viewAct,{navAge:'all',navChatPage:{...page.scope,age:'all',index:0}})}>Show all activity dates</button></>:view.navFilter||view.navStatusFilter&&view.navStatusFilter!=='all'?'No matching chats.':'Your conversations will appear here.'}</p>}
+  {!page.total&&!page.pending&&!page.unavailable&&<p className="a-nav-empty">{view.navAge&&view.navAge!=='all'?'No chats in this activity range. Choose All under Last activity in the sidebar to see older chats.':view.navFilter||view.navStatusFilter&&view.navStatusFilter!=='all'?'No matching chats.':'Your conversations will appear here.'}</p>}
   {layout!=='focus'&&<ChatPagination page={page} onChange={index=>patch(viewAct,{navChatPage:{...page.scope,index}})}/>}
  </>;
 }
@@ -527,7 +536,7 @@ function LegacyConversationList({host,workspaceHost}){
  const closeCreate=()=>{setCreating(false);requestAnimationFrame(()=>createButton.current?.focus())};
  const sidebar=state.sidebarNavigation;
  const homeView={...HOME_FILTERS,navChatScope:sidebar?.pinned?.scope.mode||'all',navPinnedPage:view.navPinnedPage};
- const recentView={...HOME_FILTERS,...sidebar?.recentView,...view.navRecentView,navShowAgentCreated:view.navShowAgentCreated===true};
+ const recentView={...HOME_FILTERS,...sidebar?.recentView,...view.navRecentView,navAge:view.navAge||'all',navShowAgentCreated:view.navShowAgentCreated===true};
  const pins=state.pinnedNavigation||chatPage({...state,view:homeView},workspace,{section:'pinned'});
  const recent=chatPage({...state,view:{...recentView,navChatScope:homeView.navChatScope}},workspace,{section:'recent'});
  const workspaceChats=chatPage({...state,view:{...view,navChatScope:'workspace'}},workspace,{section:'workspace'});
@@ -566,7 +575,8 @@ function StatusGroup({kind,model,navigation,now}){
  const collapsed=view.navStatusCollapsed||[],expanded=view.navStatusExpanded||[],closed=collapsed.includes(kind),all=expanded.includes(kind);
  const page=model.state[group.resource],requested=view.navStatusPages?.[kind]||0;
  const ready=hasNavigationResource(model.state,group.resource)&&page?.requestedIndex===requested
-  &&page.workScope===(model.state.workHomePinnedScope||'all');
+  &&page.workScope===(model.state.workHomePinnedScope||'all')
+  &&page.scope?.age===(view.navAge||'all');
  const update=navigation.updateSidebar;
  useLayoutEffect(()=>{if(ready&&restore.current){root.current?.querySelector(`[data-status-page="${restore.current}"]`)?.focus();restore.current=null}},[ready,page?.index]);
  const turn=(index,direction)=>{restore.current=direction;update({navStatusPages:{...view.navStatusPages,[kind]:index}})};
