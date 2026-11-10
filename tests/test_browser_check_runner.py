@@ -239,8 +239,10 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     waiting_addition = navigation_waiting_browser_addition(rows, set())
     delivery_addition = delivery_warning_browser_addition(rows, set())
     resume_addition = question_resume_browser_addition(rows, set())
+    navigation_ids = agent_navigation_browser_additions(rows, set())
     historical_rows = [row for row in rows
-                       if not (canvas_additions | breadbin_addition | question_fade_addition | context_addition | immediate_addition | delivery_addition | waiting_addition | resume_addition).intersection(row['command'])]
+                       if row['id'] not in navigation_ids
+                       and not (canvas_additions | breadbin_addition | question_fade_addition | context_addition | immediate_addition | delivery_addition | waiting_addition | resume_addition).intersection(row['command'])]
     # Expanded exact .149 workflow invocations, including compound npm scripts.
     # Deliberate coverage changes must update this migration oracle explicitly.
     additions = {
@@ -334,7 +336,7 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     original = [row for row in historical_rows if row['id'] not in additions and row['id'] not in recovery_ids]
     assert len(original) == 65 and len(historical_rows) == 132
     # Preserve the preceding total after validating all exact additive owners.
-    assert len([row for row in rows if row['id'] not in {'context-inspector-layout', 'delivery-warning', 'delivery-reconciliation', 'delivery-new-chat', 'navigation-waiting', 'canvas-versions', 'question-resume'}]) == 138
+    assert len([row for row in rows if row['id'] not in navigation_ids | {'context-inspector-layout', 'delivery-warning', 'delivery-reconciliation', 'delivery-new-chat', 'navigation-waiting', 'canvas-versions', 'question-resume'}]) == 138
     # Existing scenarios retain their commands; only evidence ownership changes.
     evidence = {
         'bundle': {'AMPLIFIER_BUNDLE_SCREENSHOT': '{root}/output/browser-checks/bundle-mobile.png'},
@@ -810,6 +812,69 @@ def test_question_fade_browser_addition_rejects_missing_duplicate_or_wrong_envir
         question_fade_browser_addition(rows, readiness_scripts)
 
 
+def agent_navigation_browser_additions(rows, readiness_scripts):
+    """Validate the two focused modes without subtracting their legacy script owner."""
+    expected = [
+        {'id': 'agent-chat-navigation',
+         'command': ['node', 'tests/chat-library-browser.mjs', '--agent-navigation-only'],
+         'env': {'AMPLIFIER_TEST_PYTHON': '{root}/.venv/bin/python'}},
+        {'id': 'agent-chat-navigation-settings',
+         'command': ['node', 'tests/settings-drafts-browser.mjs', '--agent-navigation-only'],
+         'env': {'AMPLIFIER_TEST_PYTHON': '{root}/.venv/bin/python'}},
+    ]
+    identities = {row['id'] for row in expected}
+    owners = [row for row in rows
+              if row['id'] in identities or '--agent-navigation-only' in row['command']]
+    assert owners == expected, 'agent-chat-navigation: expected exactly two distinct focused owners and environments'
+    assert not readiness_scripts & {row['command'][1] for row in expected}, \
+        'agent-chat-navigation: focused scripts cannot duplicate a readiness owner'
+    # Settings already had an ordinary broad owner. Keep it; only the two exact
+    # focused invocations are excluded from the preceding frozen inventory.
+    assert [row for row in rows if row['id'] == 'settings-drafts'] == [
+        {'id': 'settings-drafts', 'command': ['node', 'tests/settings-drafts-browser.mjs']}], \
+        'agent-chat-navigation: retain the existing broad Settings owner'
+    return identities
+
+
+@pytest.mark.parametrize('identity', ['agent-chat-navigation', 'agent-chat-navigation-settings'])
+@pytest.mark.parametrize('fault', ['missing', 'duplicate', 'identical-duplicate', 'renamed',
+                                  'command', 'mode', 'extra-argument', 'wrong-mode',
+                                  'environment', 'wrong-python', 'extra-environment',
+                                  'readiness', 'legacy-owner'])
+def test_agent_navigation_browser_owners_are_distinct_and_additive(identity, fault):
+    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    owner = next(row for row in rows if row['id'] == identity)
+    readiness = set()
+    if fault == 'missing':
+        rows.remove(owner)
+    elif fault == 'duplicate':
+        rows.append({**owner, 'id': identity + '-duplicate'})
+    elif fault == 'identical-duplicate':
+        rows.append(json.loads(json.dumps(owner)))
+    elif fault == 'renamed':
+        owner['id'] += '-renamed'
+    elif fault == 'command':
+        owner['command'][1] = 'tests/chat-reference-browser.mjs'
+    elif fault == 'mode':
+        owner['command'].remove('--agent-navigation-only')
+    elif fault == 'extra-argument':
+        owner['command'].append('--extra')
+    elif fault == 'wrong-mode':
+        owner['command'][-1] = '--legacy-touch-only'
+    elif fault == 'environment':
+        owner['env'] = {}
+    elif fault == 'wrong-python':
+        owner['env']['AMPLIFIER_TEST_PYTHON'] = '/unselected/python'
+    elif fault == 'extra-environment':
+        owner['env']['UNEXPECTED'] = 'extra'
+    elif fault == 'readiness':
+        readiness.add(owner['command'][1])
+    else:
+        rows.remove(next(row for row in rows if row['id'] == 'settings-drafts'))
+    with pytest.raises(AssertionError, match='agent-chat-navigation'):
+        agent_navigation_browser_additions(rows, readiness)
+
+
 def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     workflows = ROOT / '.github/workflows'
     readiness = yaml.load((workflows / 'public-readiness.yml').read_text(), Loader=yaml.BaseLoader)
@@ -819,8 +884,9 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     readiness_scripts = {match.group(1) for _, line in commands
                          if (match := re.search(r'node (tests/[^ ]+-browser\.mjs)', line))}
     plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+    navigation_ids = agent_navigation_browser_additions(plan['scenarios'], readiness_scripts)
     extended_scripts = {row['command'][2 if row['command'][1] == '--test' else 1]
-                        for row in plan['scenarios']}
+                        for row in plan['scenarios'] if row['id'] not in navigation_ids}
     source_only = {f'tests/{name}-browser.mjs' for name in (
         'interim-replies', 'draft-reload', 'draft-switch', 'activity-feedback',
         'conversation-navigation', 'workspace-shortcuts', 'inline-media-transition', 'execution-observability',

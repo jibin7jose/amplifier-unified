@@ -5463,7 +5463,20 @@ class AppService:
             if args['action'] == 'session.selection':
                 return await self.dispatch(args['action'], action_args, origin='agent',
                     include_state=False, caller_session_id=session_id)
-            if args['action'] in {'workspace.environments.removal.read', 'workspace.environments.removal.list', 'assignment.brief', 'coordination.list'}:
+            if args['action'] == 'coordination.list':
+                # Retain the compact domain-return contract, but do not run the
+                # general bridge's owner admission, flush or snapshot path.
+                from .agent_receipts import domain_receipt
+                result = await self.dispatch(args['action'], action_args, origin='agent',
+                    command_id=args.get('id'), expected_revision=args.get('expectedRevision'),
+                    include_state=False, caller_session_id=session_id)
+                if receipt_mode:
+                    from .agent_receipts import compact_receipt
+                    return compact_receipt(result, action=args['action'], session_id=session_id,
+                        revision=self.state['revision'], command_id=args.get('id'))
+                return domain_receipt(result, action=args['action'], session_id=session_id,
+                                      revision=self.state['revision'])
+            if args['action'] in {'workspace.environments.removal.read', 'workspace.environments.removal.list', 'assignment.brief'}:
                 # Do not infer nativeProject, flush progress or build a snapshot:
                 # even _session(hydrate=False) admits dormant owners. Each passive
                 # action validates its own caller scope without runtime demand.
@@ -5670,10 +5683,9 @@ class AppService:
                 # The exact domain receipt already carries admission, correlation
                 # and result evidence. Repeating the app overview on each tool
                 # call can exhaust a single, non-compactable human turn.
-                return {**result, 'state': {
-                    'revision': self.state['revision'], 'sessionId': session_id,
-                    '_stateAccess': {'note': 'The domain receipt preserves admission and the full action result when available. A pending operation is not completion. Use get_state with a JSON Pointer for saved results or other state.',
-                        **({'resultPaths': ['/permissions', '/managementResults/' + result['operationId']]} if args['action'].startswith('permissions.') and result.get('operationId') else {})}}}
+                from .agent_receipts import domain_receipt
+                return domain_receipt(result, action=args['action'], session_id=session_id,
+                                      revision=self.state['revision'])
             if compact_smart_tool:
                 context = {'revision': self.state['revision'], 'sessionId': session_id,
                            '_stateAccess': {'note': 'Use smartTools.readResult with the receipt operationId to read status and results. Use get_state with a JSON Pointer for other app state.'}}

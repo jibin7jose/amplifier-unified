@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 
 import pytest
 
@@ -96,6 +97,36 @@ async def test_list_pages_dormant_peers_without_admission_or_body_reads(app, mon
     try:
         assert {row['id'] for row in restored.state['sessions']} == {caller['id']}
         selected, draft = restored.state['selectedSessionId'], restored.state['view']['draft']
+        # Both receipt formats must remain bounded and passive, including when
+        # the calling reader itself is dormant. No generic bridge tail allowed.
+        def forbidden(*args, **kwargs):
+            pytest.fail('Passive list receipt reached admission/history/snapshot/flush')
+        with monkeypatch.context() as patch:
+            for name in ('_session', '_admit_session', '_flush_pending_progress', 'state_context'):
+                patch.setattr(restored, name, forbidden)
+            patch.setattr(restored.history, 'refresh', forbidden)
+            patch.setattr(restored.history, 'ensure_loaded', forbidden)
+            patch.setattr('amplifier_web.agent_canvas.state', forbidden)
+            patch.setattr('amplifier_web.history_query._rows', forbidden)
+            for reader in (caller['id'], peer_id):
+                for mode in (None, 'receipt'):
+                    result = await restored.app_bridge('dispatch', {
+                        'action': 'coordination.list', 'args': {'sessionId': peer_id},
+                        'id': 'passive-list', **({'responseMode': mode} if mode else {})}, reader)
+                    assert result['accepted']
+                    assert result['result']['items'][0]['target']['sessionId'] == peer_id
+                    assert set(result['state']) == {'revision', 'sessionId', '_stateAccess'}
+                    assert result['state']['sessionId'] == reader
+                    assert result['state']['revision'] == restored.state['revision']
+                    access = result['state']['_stateAccess']
+                    if mode:
+                        assert set(access) == {'note', 'readback'}
+                        assert access['readback'] == [] and result['commandId'] == 'passive-list'
+                    else:
+                        assert set(access) == {'note'}
+                        assert 'full action result' in access['note']
+                    assert draft not in json.dumps(result)
+        assert {row['id'] for row in restored.state['sessions']} == {caller['id']}
         admitted = restored._session
         def caller_only(identity=None, *args, **kwargs):
             assert identity in {None, caller['id']}, 'Discovery admitted a dormant peer'
