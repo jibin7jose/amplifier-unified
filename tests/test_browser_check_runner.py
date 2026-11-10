@@ -284,8 +284,9 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     delivery_addition = delivery_warning_browser_addition(rows, set())
     resume_addition = question_resume_browser_addition(rows, set())
     navigation_ids = agent_navigation_browser_additions(rows, set())
+    sidebar_ids = sidebar_controls_browser_addition(rows, set())
     historical_rows = [row for row in rows
-                       if row['id'] not in navigation_ids
+                       if row['id'] not in navigation_ids | sidebar_ids
                        and not (canvas_additions | breadbin_addition | question_fade_addition | context_addition | immediate_addition | delivery_addition | waiting_addition | resume_addition).intersection(row['command'])]
     # Expanded exact .149 workflow invocations, including compound npm scripts.
     # Deliberate coverage changes must update this migration oracle explicitly.
@@ -380,7 +381,7 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     original = [row for row in historical_rows if row['id'] not in additions and row['id'] not in recovery_ids]
     assert len(original) == 65 and len(historical_rows) == 132
     # Preserve the preceding total after validating all exact additive owners.
-    assert len([row for row in rows if row['id'] not in navigation_ids | {'context-inspector-layout', 'delivery-warning', 'delivery-reconciliation', 'delivery-new-chat', 'navigation-waiting', 'canvas-versions', 'question-resume'}]) == 138
+    assert len([row for row in rows if row['id'] not in navigation_ids | sidebar_ids | {'context-inspector-layout', 'delivery-warning', 'delivery-reconciliation', 'delivery-new-chat', 'navigation-waiting', 'canvas-versions', 'question-resume'}]) == 138
     # Existing scenarios retain their commands; only evidence ownership changes.
     evidence = {
         'bundle': {'AMPLIFIER_BUNDLE_SCREENSHOT': '{root}/output/browser-checks/bundle-mobile.png'},
@@ -858,6 +859,58 @@ def test_question_fade_browser_addition_rejects_missing_duplicate_or_wrong_envir
         question_fade_browser_addition(rows, readiness_scripts)
 
 
+def sidebar_controls_browser_addition(rows, readiness_scripts, *, current=False):
+    """Validate the selected client's additive journey before freezing prior owners."""
+    script = 'tests/sidebar-controls-browser.mjs'
+    expected = {
+        'id': 'sidebar-controls', 'command': ['node', script],
+        'env': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/sidebar-controls'},
+    }
+    if current:
+        expected['cwd'] = '.build/web-client'
+    owners = [row for row in rows
+              if row['id'] == 'sidebar-controls' or script in row['command']]
+    assert owners == [expected], 'sidebar-controls: expected one exact selected-client owner'
+    assert script not in readiness_scripts, 'sidebar-controls: duplicate readiness owner'
+    return {'sidebar-controls'}
+
+
+@pytest.mark.parametrize('current', [False, True])
+@pytest.mark.parametrize('fault', [
+    'missing', 'duplicate', 'identical-duplicate', 'renamed', 'command',
+    'extra-argument', 'environment', 'wrong-artifacts', 'extra-environment',
+    'cwd', 'readiness',
+])
+def test_sidebar_controls_browser_owner_is_distinct_and_additive(current, fault):
+    rows = (current_plan() if current else coverage_plan())['scenarios']
+    owner = next(row for row in rows if row['id'] == 'sidebar-controls')
+    readiness = set()
+    if fault == 'missing':
+        rows.remove(owner)
+    elif fault == 'duplicate':
+        rows.append({**owner, 'id': 'sidebar-controls-duplicate'})
+    elif fault == 'identical-duplicate':
+        rows.append(json.loads(json.dumps(owner)))
+    elif fault == 'renamed':
+        owner['id'] += '-renamed'
+    elif fault == 'command':
+        owner['command'][1] = 'tests/home-sidebar-browser.mjs'
+    elif fault == 'extra-argument':
+        owner['command'].append('--extra')
+    elif fault == 'environment':
+        owner['env'] = {}
+    elif fault == 'wrong-artifacts':
+        owner['env']['AMPLIFIER_TEST_ARTIFACTS'] = '{root}/output/browser-checks/home-sidebar'
+    elif fault == 'extra-environment':
+        owner['env']['UNEXPECTED'] = 'extra'
+    elif fault == 'cwd':
+        owner['cwd'] = 'tests/web'
+    else:
+        readiness.add(owner['command'][1])
+    with pytest.raises(AssertionError, match='sidebar-controls'):
+        sidebar_controls_browser_addition(rows, readiness, current=current)
+
+
 def agent_navigation_browser_additions(rows, readiness_scripts, *, current=False):
     """Validate the two focused modes without subtracting their legacy script owner."""
     prefix = 'tests/web/' if current else 'tests/'
@@ -953,8 +1006,9 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
                          if (match := re.search(r'node (tests/[^ ]+-browser\.mjs)', line))}
     plan = coverage_plan()
     navigation_ids = agent_navigation_browser_additions(plan['scenarios'], readiness_scripts)
+    sidebar_ids = sidebar_controls_browser_addition(plan['scenarios'], readiness_scripts)
     extended_scripts = {row['command'][2 if row['command'][1] == '--test' else 1]
-                        for row in plan['scenarios'] if row['id'] not in navigation_ids}
+                        for row in plan['scenarios'] if row['id'] not in navigation_ids | sidebar_ids}
     source_only = {f'tests/{name}-browser.mjs' for name in (
         'interim-replies', 'draft-reload', 'draft-switch', 'activity-feedback',
         'conversation-navigation', 'workspace-shortcuts', 'inline-media-transition', 'execution-observability',
@@ -3336,9 +3390,7 @@ def test_current_composed_registry_owns_every_executable_and_both_mixed_suites()
     assert len(preceding) == len({row['id'] for row in preceding}) == 146
     assert len(plan['scenarios']) == 146 + len(navigation_ids)
     assert sum(row.get('cwd') == '.build/web-client' for row in plan['scenarios']) == 13
-    sidebar = next(row for row in plan['scenarios'] if row['id'] == 'sidebar-controls')
-    assert sidebar['cwd'] == '.build/web-client'
-    assert sidebar['command'] == ['node', 'tests/sidebar-controls-browser.mjs']
+    sidebar_controls_browser_addition(plan['scenarios'], set(), current=True)
     for row in plan['scenarios']:
         for part in row['command']:
             if part.endswith('.mjs'):
