@@ -483,6 +483,58 @@ def is_snapshot(bundle):
     return getattr(bundle, "version", None) == SNAPSHOT_VERSION
 
 
+def _load_agent_definitions(bundle):
+    """Resolve ordinary composed references, never a saved executable plan.
+
+    Foundation's public loader fills false-y fields and logs parse failures.
+    Load into empty records so explicit values (including []/""/False) remain
+    authoritative, and a failed read cannot masquerade as an executable agent.
+    """
+    definitions = {}
+    for name, explicit in bundle.agents.items():
+        if not isinstance(explicit, dict):
+            raise ValueError(f"Invalid agent definition: {name!r}; expected an object.")
+        path = bundle.resolve_agent_path(name)
+        if path is None:
+            if set(explicit) == {"name"}:
+                raise ValueError(f"Missing file-backed agent definition: {name!r}.")
+            definitions[name] = copy.deepcopy(explicit)
+            continue
+        candidate = copy.copy(bundle)
+        candidate.agents = {name: {}}
+        candidate.load_agent_metadata()
+        metadata = candidate.agents[name]
+        # A successful Foundation read always supplies name and description,
+        # even for an instruction-only file. Errors leave this record empty.
+        if "name" not in metadata or not any(value for key, value in metadata.items() if key != "name"):
+            raise ValueError(f"Could not load file-backed agent definition: {name!r}.")
+        effective = {**metadata, **copy.deepcopy(explicit)}
+        try:
+            from amplifier_foundation import Bundle
+            Bundle.from_dict(effective, base_path=path.parent)
+            if not isinstance(effective.get("session", {}), dict):
+                raise ValueError("session must be an object")
+            # The host's preparation/policy walkers require nested rosters.
+            # Refuse unsupported access-filter forms rather than dropping a
+            # delegation ceiling or accidentally advertising a broader agent.
+            if not isinstance(effective.get("agents", {}), dict):
+                raise ValueError("agent access filters are not supported during preparation")
+        except Exception as exc:
+            raise ValueError(f"Malformed file-backed agent definition: {name!r}: {exc}") from exc
+        # Relative sources belong to the definition's selected resource root,
+        # not the final overlay's base_path (which may be another behavior).
+        namespace = name.split(":", 1)[0] if ":" in name else None
+        root = bundle.source_base_paths.get(namespace, bundle.base_path)
+        # Only file-supplied sections inherit this resource root. An inline
+        # replacement's relative source keeps its ordinary bundle semantics.
+        for row in declarations({key: value for key, value in effective.items() if key not in explicit}):
+            source = row.get("source")
+            if isinstance(source, str) and source.startswith(("./", "../")) and root:
+                row["source"] = str((root / source).resolve())
+        definitions[name] = effective
+    bundle.agents = definitions
+
+
 def _expand_module_configuration(node, in_provider=False):
     """Resolve declared configuration, leaving provider config for schema materialization."""
     if isinstance(node, list):
@@ -742,6 +794,16 @@ async def compose_configured_bundle(registry, loaded, config, *, execution_works
         # Routing is now an ordinary opt-out-capable default. A retained matrix
         # setting must not silently restore a behavior the user disabled.
         explicit_context_forwarding(loaded, config.settings, context_defaults)
+        # Host source selection also chooses resource namespaces. Hydrate only
+        # after those roots win, but before settings, policy and preparation see
+        # the declarations. Snapshots/retained child overlays never enter here.
+        components.apply(loaded)
+        _load_agent_definitions(loaded)
+        # Newly visible agent-only modules must honor explicit source choices
+        # too, including local paths beneath a host-selected namespace root.
+        for row in declarations({"agents": loaded.agents}):
+            if row["module"] in config.module_sources:
+                components.select(row["module"], config.module_sources[row["module"]])
         from ..write_policy_refresh import WritePolicySource
         write_policy_source = WritePolicySource(loaded, config, execution_workspace=execution_workspace)
         loaded = _apply_settings(loaded, config)
