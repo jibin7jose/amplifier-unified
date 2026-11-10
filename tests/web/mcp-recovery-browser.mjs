@@ -31,7 +31,7 @@ app.setNotificationHandler('notifications/tools/list_changed',async()=>{
 document.querySelector('#add').onclick=async()=>{try{draw(await app.callServerTool({name:'counter_add',arguments:{amount:1}}))}catch(error){document.querySelector('#error').textContent=error.message}};
 window.fixtureCall=name=>app.callServerTool({name,arguments:{}});
 await app.connect();document.body.dataset.booted='true';`;
-const built=await build({stdin:{contents:source,resolveDir:process.cwd(),sourcefile:'recovery.js'},bundle:true,write:false,format:'esm'});
+const built=await build({stdin:{contents:source,resolveDir:fileURLToPath(new URL('./',import.meta.url)),sourcefile:'recovery.js'},bundle:true,write:false,format:'esm'});
 await writeFile(htmlPath,`<!doctype html><h1>Original saved document</h1><output id="count"></output><output id="recovered"></output><button id="add">Add one</button><input aria-label="Unfinished tool input"><p id="error"></p><script type="module">${built.outputFiles[0].text.replaceAll('</script','<\\/script')}</script>`);
 let fixture,browser,secondBrowser,originalError,cleanupComplete=false;
 async function start(port=0){
