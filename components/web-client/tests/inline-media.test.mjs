@@ -394,6 +394,7 @@ test('actual App Settings-leaving guard cancels GIF admission visibly without a 
  assert.ok(start>=0&&end>start);let confirmations=0,requests=0;
  const dispatch=runInNewContext(`${source.slice(start,end)} },[acceptState,handleEffects,awaitState]);\ndispatch`,{
   useCallback:fn=>fn,acceptState(){},handleEffects(){},awaitState(){},
+  deliveryAuthentication:{current:0},
   isNavigationAction,isCapabilityCardAction,archiveRevision:{current:0},canvasInputRevision:{current:0},
   settingsNavigation:{current:{hasUnsaved:()=>true,confirmClose:async()=>{confirmations++;return false}}},
   request:()=>{requests++;assert.fail('Cancelled Settings navigation issued a host command')}

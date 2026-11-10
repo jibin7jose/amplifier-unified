@@ -231,6 +231,29 @@ test('sort choices use ready time and never reorder pins by activity',()=>{
   assert.deepEqual(chatPage(state).items.map(row=>row.id),['p1','p2',...expected]);
  }
 });
+
+test('catalog grouping and age use ready activity before paging, retain pins and fence changed preferences',()=>{
+ const now=Math.floor(Date.now()/60000)*60;
+ const state={view:{navChatScope:'all',navAge:'24h',navGroup:'status'},workspaces:[{id:'w',path:'/w',name:'Workspace',available:true}],pinnedSessionIds:['old-pin'],sessions:[
+  {id:'old-pin',workspaceId:'w',recentActivityAt:1},
+  {id:'boundary',workspaceId:'w',navigationActivityAt:now-86400,recentActivityAt:now},
+  {id:'outside',workspaceId:'w',navigationActivityAt:now-86401,recentActivityAt:now},
+  {id:'unknown',workspaceId:'w',recentActivityAt:0},
+  ...Array.from({length:120},(_,i)=>({id:'work-'+i,workspaceId:'w',status:'working',recentActivityAt:now-i}))
+ ]};
+ const first=chatPage(state,null,{section:'search'});
+ assert.equal(first.total,122);assert.equal(first.items.length,40);
+ assert.equal(first.items[0].id,'old-pin');assert.equal(first.items[0].group.title,'Pinned');
+ assert.ok(first.items.slice(1).every(row=>row.group.title==='Working'));
+ state.view.navChatPage={...first.scope,index:3};
+ const last=chatPage(state,null,{section:'search'});assert.ok(last.items.some(row=>row.id==='boundary'));
+ state.view.navAge='all';
+ assert.equal(chatPage(state,null,{section:'search'}).index,0);
+ const all=chatPage(state,null,{section:'search'});assert.equal(all.total,124);
+ state.sidebarNavigation={search:all};state.library={bounded:true};
+ state.view.navGroup='workspace';
+ assert.equal(chatPage(state,null,{section:'search'}).pending,true);
+});
 test('moving pins retains every filtered or off-page pin',async()=>{
  const {movePin}=await import('../src/chat-navigation.js');
  const ids=['first','hidden','second','off-page'];

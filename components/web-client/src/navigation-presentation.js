@@ -49,6 +49,10 @@ export function workspaceContext(row){
  return compactParent(row.path);
 }
 
+export function pinnedWorkspaceSubtitle(row,showPaths=false){
+ return 'Workspace'+(showPaths?' · '+row.path:row.nameQualifier?' · '+row.nameQualifier:'');
+}
+
 export function attentionTone(activity){
  if(activity.kind!=='attention')return null;
  return activity.attentionType||({'Work blocked':'blocked','Approval requested':'decision','Answer requested':'decision','Check answer delivery':'error'})[activity.label]||'error';

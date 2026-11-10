@@ -1,2 +1,4 @@
+# Preserve canonical text bytes in standalone and nested source checkouts.
+* text=auto eol=lf
 package-lock.json linguist-generated=true
 build-inputs.lock.json linguist-generated=true

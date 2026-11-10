@@ -31,6 +31,27 @@ test('Git-free and nested copies retain the canonical client identity, including
  assert.throws(()=>createSourceRecord(nested),/nested in another Git repository/);
  assert.equal(createSourceRecord(root).source.revision,git(root,'rev-parse','HEAD'));
 });
+test('autocrlf checkouts preserve canonical text, binary bytes and copied-source identity',t=>{
+ const {home,root,path}=fixture(t),text=Buffer.from('first line\nsecond line\n'),binary=Buffer.from([0,13,10,255,10]);
+ writeFileSync(join(root,'.gitattributes'),readFileSync(new URL('../.gitattributes',import.meta.url)));
+ writeFileSync(join(root,'src/main.js'),text);writeFileSync(join(root,'src/binary.dat'),binary);commit(root);
+ const record=createSourceRecord(root);writeFileSync(path,JSON.stringify(record));
+ function checkout(source,destination){
+  git(home,'-c','core.autocrlf=true','clone','-q','--no-local',source,destination);
+  git(destination,'config','core.autocrlf','true');
+  assert.equal(git(destination,'status','--porcelain'),'');
+ }
+ function verify(directory){
+  assert.deepEqual(verifySource(directory,path),record.source);
+  assert.deepEqual(readFileSync(join(directory,'src/main.js')),text);
+  assert.deepEqual(readFileSync(join(directory,'src/binary.dat')),binary);
+ }
+ const standalone=join(home,'standalone');checkout(root,standalone);verify(standalone);
+ const distribution=join(home,'distribution');repository(distribution);
+ writeFileSync(join(distribution,'.gitattributes'),'* text=auto eol=crlf\n');
+ copy(root,join(distribution,'components/web-client'));commit(distribution);
+ const nested=join(home,'nested');checkout(distribution,nested);verify(join(nested,'components/web-client'));
+});
 test('changed selected source, tools, license, lock and added browser inputs cannot claim the old source',t=>{
  const {root,path}=fixture(t);
  for(const name of ['src/main.js','scripts/client-source.mjs','scripts/package-client.mjs','scripts/prepare-inputs.mjs','LICENSE','build-inputs.lock.json']){

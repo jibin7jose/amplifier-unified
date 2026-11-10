@@ -2,6 +2,18 @@ import {filterList} from './list-filter.js';
 import {activityFor,sessionIdentity} from './navigation-presentation.js';
 
 export const CHAT_PAGE_SIZE=100;
+export const CHAT_AGES=['24h','7d','30d','90d','1y','all'];
+const ageSeconds=[86400,7*86400,30*86400,90*86400,365*86400];
+const dateGroups=['Last 24 hours','1–7 days ago','7–30 days ago','30–90 days ago','90 days–1 year ago','Over 1 year ago','Activity time unavailable'];
+const statusGroups={attention:'Needs you',unread:'Ready for you',working:'Working',waiting:'Waiting',paused:'Paused',idle:'Pick up again'};
+function listGroup(chat,group,now){
+ if(chat.pinned)return {id:'pin',title:'Pinned',rank:-1};
+ if(group==='workspace')return {id:'workspace:'+(chat.workspaceId||''),title:chat.workspaceName||'No workspace',rank:0};
+ if(group==='status'){const kind=Object.hasOwn(statusGroups,chat.activity.kind)?chat.activity.kind:'idle';return {id:'status:'+kind,title:statusGroups[kind],rank:Object.keys(statusGroups).indexOf(kind)}}
+ const index=chat.recentActivityAt>0?ageSeconds.findIndex(seconds=>chat.recentActivityAt>=now-seconds):-1;
+ const rank=chat.recentActivityAt>0?(index<0?5:index):6;
+ return {id:'date:'+rank,title:dateGroups[rank],rank};
+}
 export function recentLimit(value){
  return Number.isSafeInteger(value)&&value>=20&&value%20===0?value:20;
 }
@@ -46,6 +58,8 @@ export function chatPage(state,workspace,{section=null}={}){
  workspace=visibleWorkspaces(state).find(row=>row.id===(workspace?.id??state.selectedWorkspaceId));
  const scope={mode,workspaceId:mode==='all'?null:workspace?.id??null,filter,selectedSessionId};
  if(section)scope.section=section;
+ const grouped=['search','workspace'].includes(section),group=view.navGroup||'recent',age=view.navAge||'all',now=Math.floor(Date.now()/60000)*60;
+ if(grouped)Object.assign(scope,{group,age});
  if(section==='recent'||section==='search')scope.showAgentCreated=view.navShowAgentCreated===true;
  if(view.navSort&&view.navSort!=='activity')scope.sort=view.navSort;
  if(mode==='all'&&view.navLocationFilter==='managed')scope.locationFilter='managed';
@@ -68,10 +82,18 @@ export function chatPage(state,workspace,{section=null}={}){
  let chats=filterList(orderedChats(state,workspace,mode,section!=='recent'),filter,chat=>[chat.title||'Untitled conversation',chat.description||'',chat.id,sessionIdentity(chat),chat.workspace,chat.workspaceName]);
  if(section==='pinned')chats=chats.filter(chat=>chat.pinned);
  if(section==='recent'||section==='search')chats=chats.filter(chat=>scope.showAgentCreated||chat.agentCreated!==true||chat.id===selectedSessionId);
+ const seconds=ageSeconds[CHAT_AGES.indexOf(age)];
+ if(grouped&&seconds)chats=chats.filter(chat=>chat.pinned||chat.recentActivityAt>0&&chat.recentActivityAt>=now-seconds);
  const activityCounts={attention:0,working:0,unread:0,idle:0};
  chats=chats.map(chat=>({...chat,activity:activityFor(chat,state)}));
  for(const chat of chats)activityCounts[chat.activity.kind]=(activityCounts[chat.activity.kind]||0)+1;
  if(statusFilter!=='all')chats=chats.filter(chat=>chat.activity.kind===statusFilter);
+ if(grouped){
+  chats=chats.map(chat=>({...chat,group:listGroup(chat,group,now)}));
+  const compare=(a,b)=>a<b?-1:a>b?1:0;
+  chats.sort((a,b)=>a.group.rank-b.group.rank||(group==='workspace'&&!a.pinned&&!b.pinned?(compare(a.group.title.toLowerCase(),b.group.title.toLowerCase())||compare(a.group.id,b.group.id)):0));
+  chats=chats.map(({group:{rank,...group},...chat})=>({...chat,group}));
+ }
  const pageSize=section?(chats.length>50?40:50):CHAT_PAGE_SIZE;
  const inferred=mode==='all'||section==='recent'?0:Math.floor(Math.max(0,chats.findIndex(chat=>chat.id===selectedSessionId))/pageSize);
  const requested=section==='pinned'?(view.navPinnedPage||0):matches&&Number.isSafeInteger(saved.index)?saved.index:inferred;

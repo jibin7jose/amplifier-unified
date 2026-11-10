@@ -68,7 +68,6 @@
     "test:coordination-browser": "node tests/coordination-browser.mjs",
     "test:schedules-browser": "node tests/schedules-browser.mjs",
     "test:voice-visual-browser": "node tests/voice-visual-frame-browser.mjs && node tests/voice-visual-browser.mjs && node tests/computer-visual-browser.mjs",
-    "test:message-delivery-browser": "node tests/message-delivery-browser.mjs",
     "test:immediate-direction-browser": "node tests/immediate-direction-browser.mjs",
     "test:toolbar-browser": "node tests/app-toolbar-browser.mjs",
     "test:worktrees-browser": "node tests/worktrees-browser.mjs",
@@ -116,8 +115,9 @@
     "test:shared-work-browser": "node tests/shared-work-browser.mjs",
     "prepare:inputs": "node scripts/prepare-inputs.mjs",
     "package:artifact": "node scripts/package-client.mjs",
-    "test:portable": "node --test tests/app-reload.test.mjs tests/draft-journal.test.mjs tests/state-stream.test.mjs tests/build-identity.test.mjs tests/sync-branding.test.mjs tests/ai-connection-actions.test.mjs tests/chat-row.test.mjs tests/prepare-inputs.test.mjs tests/client-source.test.mjs",
-    "test:artifact": "node tests/client-artifact-browser.mjs"
+    "test:portable": "node --test tests/app-reload.test.mjs tests/draft-journal.test.mjs tests/state-stream.test.mjs tests/build-identity.test.mjs tests/sync-branding.test.mjs tests/ai-connection-actions.test.mjs tests/chat-row.test.mjs tests/prepare-inputs.test.mjs tests/client-source.test.mjs tests/chat-navigation.test.mjs tests/navigation-presentation.test.mjs tests/work-shell.test.mjs tests/delivery-reconciliation.test.mjs tests/inline-media.test.mjs tests/message-delivery.test.mjs",
+    "test:artifact": "node tests/client-artifact-browser.mjs",
+    "test:delivery-recovery-browser": "node tests/delivery-reconciliation-browser.mjs && node tests/delivery-new-chat-browser.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.3.1",

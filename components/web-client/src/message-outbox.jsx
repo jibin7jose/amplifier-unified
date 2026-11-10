@@ -3,8 +3,9 @@ const key='amplifier.messageOutbox.v1';
 export function readOutbox(storage){
  try{return JSON.parse(storage?.getItem(key)||'[]').filter(row=>row&&typeof row.id==='string'&&typeof row.commandId==='string'&&(row.sessionId===null||typeof row.sessionId==='string')&&typeof row.text==='string'&&Array.isArray(row.attachmentIds)&&row.attachmentIds.every(id=>typeof id==='string')&&['sending','failed','unknown'].includes(row.status)).map(row=>({...row,status:row.status==='sending'?'unknown':row.status}));}catch{return []}
 }
-export function outboxMessages(messages,entries,sessionId){
- const pending=entries.filter(row=>row.sessionId===(sessionId??null));
+export function outboxMatches(entry,scope){return typeof scope==='string'&&!!scope&&entry.scope===scope}
+export function outboxMessages(messages,entries,sessionId,scope){
+ const pending=entries.filter(row=>row.sessionId===(sessionId??null)&&outboxMatches(row,scope));
  const confirmed=messages.map(message=>{const entry=pending.find(row=>row.commandId===message.inputId);return entry&&!['accepted','queued_for_update','held'].includes(message.delivery?.status)?{...message,localDelivery:{...entry,...(['failed','sending','queued'].includes(message.delivery?.status)?{status:message.delivery.status}:{})}}:message});
  return [...confirmed,...pending.filter(row=>!messages.some(message=>message.inputId===row.commandId)).map(row=>({id:row.id,inputId:row.commandId,role:'user',text:row.text,via:row.via,createdAt:row.createdAt,attachments:row.attachments,replyTo:row.replyTo,localDelivery:row}))];
 }
@@ -17,10 +18,10 @@ export function useMessageOutbox(){
   current.current=next;setEntries(next);try{sessionStorage.setItem(key,JSON.stringify(next));setStorageError(false)}catch{setStorageError(true)}
   return next.find(row=>row.id===id);
  },[]);
- const acknowledge=useCallback((sessionId,inputId,receipt)=>{
+ const acknowledge=useCallback((sessionId,inputId,receipt,scope)=>{
   if(!sessionId||!inputId||receipt?.delivery!=='accepted')return;
   for(const entry of current.current)
-   if(entry.sessionId===sessionId&&entry.commandId===inputId)update(entry.id,null);
+   if(entry.sessionId===sessionId&&entry.commandId===inputId&&outboxMatches(entry,scope))update(entry.id,null);
  },[update]);
  return {entries,current,update,acknowledge,storageError};
 }

@@ -56,7 +56,7 @@ export function FocusNavigation({position,total,onPrevious,onNext,previousDisabl
 
 // Presentation of one already bounded catalog page. No hidden-page loading,
 // classification, acknowledgements or workspace/session mutations live here.
-export function LandingCollection({page,layout,identity,queryKey,onPage,children,wrap,className=''}){
+export function LandingCollection({page,layout,identity,queryKey,onPage,children,wrap,className='',groupHeading}){
  const storageKey='amplifier.work-pass.v1:'+identity;
  const [cursor,setCursor]=useState(()=>readCursor(storageKey)),pending=useRef(null),restore=useRef(true),root=useRef(null);
  const items=page.items.map(row=>({...row,id:row.id||row.workspaceId||row.path}));
@@ -85,6 +85,6 @@ export function LandingCollection({page,layout,identity,queryKey,onPage,children
  };
  const last=focus&&page.start+focus.index+1===page.total;
  const visible=layout==='focus'?(focus?[page.items[focus.index]]:[]):page.items;
- const rendered=visible.map(row=><React.Fragment key={row.id||row.workspaceId||row.path}>{children(row)}</React.Fragment>);
+ const rendered=visible.map((row,index)=><React.Fragment key={row.id||row.workspaceId||row.path}>{groupHeading&&(layout==='focus'||index===0||row.group?.id!==visible[index-1].group?.id)&&groupHeading(row)}{children(row)}</React.Fragment>);
  return <div ref={root} className={'a-landing-collection '+className} data-layout={layout||'list'} aria-busy={!!page.pending}><div className="a-landing-items">{wrap?wrap(rendered,visible):rendered}</div>{layout==='focus'&&focus&&page.total>1&&<FocusNavigation position={page.start+focus.index+1} total={page.total} previousDisabled={!page.start&&!focus.index} onPrevious={()=>move(-1)} onNext={()=>move(1,last)} nextLabel={last?'Start again':'Next'} name={page.items[focus.index].title||page.items[focus.index].name}/>}</div>;
 }

@@ -39,7 +39,8 @@ import {appAppearanceState} from './app-appearance-state';
 import {homePatch} from './adaptive-work.js';
 import {SettingsExperience} from './settings-experience';
 import {useGuardedSettingsPanel,useGuardedSettingsSession} from './settings-drafts';
-import {useMessageOutbox,outboxMessages} from './message-outbox';
+import {useMessageOutbox,outboxMessages,outboxMatches} from './message-outbox';
+import {checkedDelivery,deliveryRecovery,deliveryScope} from './pending-delivery-checks';
 import {clientId,clientUrl,attachClient,draftJournal} from './api';
 import {checkpointSurfaces} from './surface-checkpoint';
 import {useConversationDetail} from './conversation-detail';
@@ -134,7 +135,8 @@ function App(){
  const [streamClient,setStreamClient]=useState(null);
  const [destinationTrail,setDestinationTrail]=useState(null),destinationHistory=useRef(null);
  if(!destinationHistory.current)destinationHistory.current=createDestinationHistory({changed:setDestinationTrail});
- useEffect(()=>onAuthenticationChange(scope=>{destinationHistory.current.invalidate(scope);clearAppearanceCatalogs();setBootAttempt(value=>value+1)}),[]);
+ const deliveryAuthentication=useRef(0);
+ useEffect(()=>onAuthenticationChange(scope=>{deliveryAuthentication.current++;destinationHistory.current.invalidate(scope);clearAppearanceCatalogs();setBootAttempt(value=>value+1)}),[]);
  const [state,setState]=useState(null),[catalog,setCatalog]=useState([]),[error,setError]=useState(''),[connected,setConnected]=useState(false),[busy,setBusy]=useState(false),[bootAttempt,setBootAttempt]=useState(0),[draft,setDraft]=useState(''),[workerDraft,setWorkerDraft]=useState(''),[themeDraft,setThemeDraft]=useState(defaultSkin),[themeName,setThemeName]=useState('Amplifier Unified'),[preview,setPreview]=useState(false),[agentAction,setAgentAction]=useState('view.update'),[agentArgs,setAgentArgs]=useState('{"patch":{"mode":"chat"}}'),[voice,setVoice]=useState({status:'idle'}),[uploading,setUploading]=useState(false);
  const appearanceEditor=useAppearanceEditor(state?.theme,defaultSkin);
  const visualClient=useRef(null),computerClient=useRef(null);const [visual,setVisual]=useState({status:'idle'}),[computerVisual,setComputerVisual]=useState({status:'idle'});
@@ -223,6 +225,14 @@ function App(){
   });
  },[acceptState]);
  const dispatch=useCallback((action,args={},meta={})=>{
+  const creatingConversation=action==='session.create'&&args.fromDraft;
+  const readDeliveryTarget=(frame=latest.current)=>creatingConversation?{scope:deliveryScope(frame,null),connection:frame?.client?.hostInstanceId}:deliveryRecovery(frame,frame?.sessions?.find(row=>row.id===args.sessionId));
+  const deliveryTarget=creatingConversation||['conversation.delivery','conversation.send'].includes(action)?readDeliveryTarget():null,deliveryAuthenticationAtStart=deliveryAuthentication.current;
+  const sameDeliveryTarget=()=>deliveryAuthenticationAtStart===deliveryAuthentication.current&&(!deliveryTarget||JSON.stringify(deliveryTarget)===JSON.stringify(readDeliveryTarget()));
+  const validDeliveryState=frame=>!deliveryTarget||(sameDeliveryTarget()&&
+   (!frame?.client?.hostInstanceId||frame.client.hostInstanceId===deliveryTarget.connection)&&
+   (!frame?.client?.historyScope||!latest.current?.client?.historyScope||frame.client.historyScope===latest.current.client.historyScope)&&
+   (!frame||creatingConversation||JSON.stringify(readDeliveryTarget(frame))===JSON.stringify(deliveryTarget)));
   const capabilityCard=isCapabilityCardAction(action,args,meta);
   const capabilityRead=capabilityCard&&action==='capability.read'?capabilityStopFence.current.beginRead(args):null;
   // Capture eligibility BEFORE passive recovery: this preflight cannot become
@@ -307,6 +317,7 @@ function App(){
   if(stop)meta={...meta,id:stop.commandId};
   let stopPostStarted=false;
   if(action==='conversation.send'&&args.expectedConfigurationRevision===undefined){const target=latest.current?.sessions?.find(row=>row.id===args.sessionId);args={...args,expectedConfigurationRevision:target?.nextMessageRevision||0}}
+  if(action==='conversation.send'&&meta.outboxScope&&meta.outboxAuthentication===undefined)meta={...meta,outboxAuthentication:deliveryAuthentication.current};
   if(action==='conversation.send'&&!meta.checkpointed)return checkpointSurfaces(args.sessionId).then(()=>dispatch(action,args,{...meta,checkpointed:true}));
   if(action==='view.update'&&Object.keys(args.patch||{}).some(key=>key==='draft'||key.startsWith('canvas')))args={sessionId:latest.current?.selectedSessionId,...args};
   const selectedId=action==='session.select'?args.id:action==='shell.command'&&args.action==='session.select'?args.args?.id:null;
@@ -325,6 +336,11 @@ function App(){
   const dirtyBarrier=canvasDirtyBarrier.current;
   const execute=async()=>{
    if(meta.before)await meta.before;
+   if(deliveryTarget&&!sameDeliveryTarget())throw Error('The delivery target changed. The original submission remains saved.');
+   if(action==='conversation.send'&&meta.outboxScope&&(meta.outboxAuthentication!==deliveryAuthentication.current||!outboxMatches({scope:meta.outboxScope},deliveryScope(latest.current,latest.current?.sessions?.find(row=>row.id===args.sessionId)))))
+    throw Error('The original message belongs to a different source. Nothing was sent again.');
+   if(action==='conversation.delivery'&&(!sameDeliveryTarget()||meta.deliveryRecovery&&JSON.stringify(meta.deliveryRecovery)!==JSON.stringify(deliveryTarget)))
+    throw Error('The delivery target changed. Nothing was sent again.');
    if(capabilityRecovery)await capabilityRecovery;
    if(meta.consumePermissionHistory){
     // This is bundled presentation housekeeping, never a saved stale draft.
@@ -365,8 +381,20 @@ function App(){
     }
     // An exact positive delivery receipt is independent of the bounded message
     // window and of a following state read. Never treat generic acceptance as delivery.
+    if(deliveryTarget&&!validDeliveryState(result.state))throw Error('The delivery target changed. The original submission remains saved.');
     if(action==='conversation.delivery'&&result.accepted===true){
-     outbox.acknowledge(args.sessionId,args.inputId,result.result);
+     const returnedHost=result.hostInstanceId||result.state?.client?.hostInstanceId;
+     const returnedSource=result.state?.client?.historyScope,currentSource=latest.current?.client?.historyScope;
+     if(!sameDeliveryTarget()||deliveryTarget&&returnedHost!==deliveryTarget.connection||returnedSource&&currentSource&&returnedSource!==currentSource)throw Error('The delivery target changed. Nothing was sent again.');
+     checkedDelivery(result,args.sessionId,args.inputId);
+     // Compact replies omit state. Their observation still carries the exact
+     // native source: a matching chat/input alone cannot retire another source.
+     const source=result.result.source;
+     if(!source||!(source.workspace===null||typeof source.workspace==='string'&&source.workspace.length>0)||
+        typeof source.nativeIdentity!=='string'||!source.nativeIdentity||
+        deliveryScope(latest.current,{workspace:source.workspace,nativeIdentity:source.nativeIdentity})!==deliveryTarget?.scope)
+      throw Error('The delivery source could not be verified. Nothing was sent again.');
+     outbox.acknowledge(args.sessionId,args.inputId,result.result,deliveryTarget?.scope);
      if(result.result?.delivery==='accepted'){
       try{sessionStorage.removeItem('amplifier.deliveryWarning.v1:'+JSON.stringify([args.sessionId,args.inputId]))}catch{}
      }
@@ -376,7 +404,7 @@ function App(){
      if(result.state)acceptState(result.state);
      // Exact annotation and read-only preview receipts settle locally. Navigation
      // still waits for its authoritative frame and exact history confirmation.
-     else if(!['message.reaction','peer.preview','context.inspect'].includes(action))await awaitState(result);
+     else if(!['message.reaction','peer.preview','context.inspect','conversation.delivery'].includes(action))await awaitState(result);
     }catch(error){
      // An accepted reset is not a refusal when only its following read fails.
      // Keep the exact receipt; the Canvas owner offers a read, never a replay.
@@ -411,7 +439,7 @@ function App(){
   const after=permissionHistory?canvasVisibilityQueue.current:(catalogRead&&!choiceRead||appearanceRead)?commandQueue.current:null;
   // A read-only Canvas reveal must not hold a pending card's guarded read or
   // decision. Keep those individual calls ordered, independent of Canvas work.
-  const queue=capabilityCard?capabilityCardQueue:usesNavigationQueue(action,args)?navigationQueue:action==='call.mute'?voiceControlQueue:localVoiceControl||action.startsWith('coordination.')||meta.presentation||defaultsRead||choiceRead||planRead||appearanceRead?{current:Promise.resolve()}:action==='canvas.visibility'?canvasVisibilityQueue:exactReview?reviewQueue:['conversation.send','message.edit','question.answer'].includes(action)?sendQueue:catalogRead?providerReadQueue:commandQueue;
+  const queue=capabilityCard?capabilityCardQueue:usesNavigationQueue(action,args)?navigationQueue:action==='call.mute'?voiceControlQueue:action==='conversation.delivery'||localVoiceControl||action.startsWith('coordination.')||meta.presentation||defaultsRead||choiceRead||planRead||appearanceRead?{current:Promise.resolve()}:action==='canvas.visibility'?canvasVisibilityQueue:exactReview?reviewQueue:['conversation.send','message.edit','question.answer'].includes(action)?sendQueue:catalogRead?providerReadQueue:commandQueue;
   const queuedAt=performance.now();
   const timedExecute=()=>{const startedAt=performance.now();return Promise.resolve().then(execute).finally(()=>recordActionTiming(action,queuedAt,startedAt))};
   const promise=enqueueSettings.current(queue,timedExecute,settingsDraftKey(action,args,meta),after).then(result=>{
@@ -435,7 +463,7 @@ function App(){
    });
    if(!handledActionResults.current.has(result)){handledActionResults.current.add(result);handleEffects(result.effects)}
    return result;
-  }).catch(error=>{if(stop&&!stopPostStarted)capabilityStopFence.current.settleStop(stop,'not-applied');if(navigationToken){conversationNavigation.current.settle(navigationToken);if(serverState.current){latest.current=conversationNavigation.current.apply(serverState.current);setState(pendingView.current.apply(latest.current))}}if(error.state)acceptState(error.state);if(pending){pendingView.current.settle(pending);if(latest.current)setState(pendingView.current.apply(latest.current))}if(chatReference&&meta.chatReferenceIntent!==archiveRevision.current)error.navigationSuperseded=true;throw error}).finally(()=>{settleTracking();settleFeedback()});
+  }).catch(error=>{if(stop&&!stopPostStarted)capabilityStopFence.current.settleStop(stop,'not-applied');if(navigationToken){conversationNavigation.current.settle(navigationToken);if(serverState.current){latest.current=conversationNavigation.current.apply(serverState.current);setState(pendingView.current.apply(latest.current))}}if(error.state&&validDeliveryState(error.state))acceptState(error.state);if(pending){pendingView.current.settle(pending);if(latest.current)setState(pendingView.current.apply(latest.current))}if(chatReference&&meta.chatReferenceIntent!==archiveRevision.current)error.navigationSuperseded=true;throw error}).finally(()=>{settleTracking();settleFeedback()});
   queue.current=promise.catch(()=>{});
   if(permissionHistory)canvasVisibilityQueue.current=queue.current;
   if(action==='canvas.views.dirty'){
@@ -447,9 +475,9 @@ function App(){
  },[acceptState,handleEffects,awaitState]);
  useEffect(()=>{
   for(const entry of outbox.entries){
-   if(entry.sessionId||!entry.creation?.id)continue;
+   if(entry.sessionId||!entry.creation?.id||!outboxMatches(entry,deliveryScope(state,null)))continue;
    const created=state?.sessions?.find(row=>row.creationCommandId===entry.creation.id);
-   if(created)outbox.update(entry.id,{sessionId:created.id});
+   if(created)outbox.update(entry.id,{sessionId:created.id,scope:deliveryScope(state,created)});
   }
  },[state?.sessions,outbox.entries]);
  // Shell snapshots are server-scoped. An optimistic browse patch can arrive
@@ -520,7 +548,8 @@ function App(){
  const detail=useConversationDetail(state?.sessions?.find(s=>s.id===state.selectedSessionId),()=>{stickToBottom.current=false;const pane=messagesPane.current;if(!pane)return;const top=pane.getBoundingClientRect().top,anchor=[...pane.querySelectorAll('[data-message-id]')].find(node=>node.getBoundingClientRect().bottom>top);if(anchor)historyScrollAnchor.current={sessionId:state.selectedSessionId,messageId:anchor.dataset.messageId,top:anchor.getBoundingClientRect().top}},dispatch);
  useEffect(()=>{if(detail.jumpRequest){const frame=requestAnimationFrame(()=>detail.jumpRequest.id==='latest'?chatScroll.current?.reveal():chatScroll.current?.jump(detail.jumpRequest.id));return()=>cancelAnimationFrame(frame)}},[detail.jumpRequest]);
  const session=detail.session,view=state?.view||{},mode=view.mode||'chat',activity=sessionStatus(session),working=activity.busy;
- const messages=useMemo(()=>outboxMessages(session?.messages||[],outbox.entries,session?.id),[session?.messages,outbox.entries,session?.id]);
+ const outboxSource=deliveryScope(state,session);
+ const messages=useMemo(()=>outboxMessages(session?.messages||[],outbox.entries,session?.id,outboxSource),[session?.messages,outbox.entries,session?.id,outboxSource]);
  const historyPending=conversationHistoryPending(session,state?.navigationPending,messages),ownership=ownershipState(session),executionUnavailable=session?.workspaceAvailable===false||!!session?.historyReadOnlyReason||ownership.blocked;
  // Pending New chat fences input without replacing the current transcript.
  const historyDisplayPending=conversationHistoryPending(session,!!state?.navigationPending&&!state?.draftNavigationPending,messages);
@@ -537,8 +566,8 @@ function App(){
  // Draft/setup/settings surfaces own provider discovery. Reading an existing
  // conversation must not refresh a workspace's complete provider inventory.
  useConnectionSetup(state,session,act);
- const availableAttachments=(session?.draftAttachments||state?.draftAttachments||[]).filter(file=>!outbox.entries.some(row=>row.sessionId===session?.id&&row.attachmentIds.includes(file.id)));
- useEffect(()=>{for(const entry of outbox.entries){const saved=state?.sessions?.find(row=>row.id===entry.sessionId)?.messages?.find(row=>row.inputId===entry.commandId);if(['accepted','queued_for_update','held'].includes(saved?.delivery?.status))outbox.update(entry.id,null)}},[state]);
+ const availableAttachments=(session?.draftAttachments||state?.draftAttachments||[]).filter(file=>!outbox.entries.some(row=>outboxMatches(row,outboxSource)&&row.sessionId===session?.id&&row.attachmentIds.includes(file.id)));
+ useEffect(()=>{for(const entry of outbox.entries){const owner=state?.sessions?.find(row=>row.id===entry.sessionId);if(!outboxMatches(entry,deliveryScope(state,owner)))continue;const saved=owner?.messages?.find(row=>row.inputId===entry.commandId);if(['accepted','queued_for_update','held'].includes(saved?.delivery?.status))outbox.update(entry.id,null)}},[state]);
  const turnEnds=useMemo(()=>completedTurnEnds(session),[session?.messages,session?.sharedHistoryUserTurnOffset,session?.execution?.turns,session?.status]);
  const workPlacement=useMemo(()=>turnPlacements(messages,execution),[messages,execution]),newest=useMemo(()=>newestMessageIds(messages),[messages]);
  const voiceStream=useMemo(()=>voiceWorkStream(session),[session?.streaming,session?.streamingId,session?.streamingInputId]);
@@ -659,7 +688,11 @@ function App(){
   const save=(async()=>{
   // Autosave may become ready before the first conversation has an ID. Keep its
   // original optimistic position, then save against the conversation it created.
-  if(payload.sessionId===null&&creatingSession.current){const current=await creatingSession.current;payload.sessionId=current.id;pendingView.current.bindDraft(token,current.id);draftJournal.bind(draftJournalEntries.current.get(payload),current.id)}
+  if(payload.sessionId===null&&creatingSession.current){
+   const owner=creatingSession.current,current=await owner.promise;
+   owner.assertSource();
+   payload.sessionId=current.id;pendingView.current.bindDraft(token,current.id);draftJournal.bind(draftJournalEntries.current.get(payload),current.id);
+  }
   try{const result=await dispatch('view.update',payload,{pendingViewToken:token});if(draftJournal.acknowledge(draftJournalEntries.current.get(payload)))setDraftStorageError(false);return result}
   catch(error){
    // A failed autosave must leave the current unsent text available for retry.
@@ -681,11 +714,28 @@ function App(){
  }
  async function newChat(workspace){preserveOtherDraft(null);stickToBottom.current=true;await act('session.draft',workspace&&typeof workspace==='object'?workspace:workspace?{workspace}:{})}
  function creationSetup(){return {...newChatSetup(pendingView.current.apply(latest.current)),expectedDraftId:latest.current?.attachmentDraftId}}
- async function ensureSession(creation){const current=!creation&&latest.current?.sessions?.find(row=>row.id===latest.current?.selectedSessionId);if(current)return current;if(!creatingSession.current)creatingSession.current=dispatch('session.create',{...(creation?.setup||creationSetup()),fromDraft:true},{id:creation?.id}).catch(error=>{const created=creation?.id&&latest.current?.sessions?.find(row=>row.creationCommandId===creation.id);if(created)return {sessionId:created.id};throw error}).then(result=>{
-  const created={id:result.sessionId||result.state.selectedSessionId},payload=stagedDraftPayload.current;
-  if(stagedDraft.current&&payload?.sessionId===null){payload.sessionId=created.id;pendingView.current.bindDraft(stagedDraft.current,created.id);draftJournal.bind(draftJournalEntries.current.get(payload),created.id);clearTimeout(draftTimer.current);saveDraft(payload,stagedDraft.current).catch(e=>reportError(e));if(latest.current)setState(pendingView.current.apply(latest.current))}
-  return created;
- }).finally(()=>{creatingSession.current=null});return creatingSession.current}
+ async function ensureSession(creation){
+  const current=!creation&&latest.current?.sessions?.find(row=>row.id===latest.current?.selectedSessionId);
+  if(current)return current;
+  const source=()=>JSON.stringify([deliveryScope(latest.current,null),latest.current?.client?.hostInstanceId,deliveryAuthentication.current]);
+  const binding=source(),assertSource=()=>{if(source()!==binding)throw Error('The delivery target changed. The original submission remains saved.')};
+  if(creatingSession.current&&creatingSession.current.binding!==binding)throw Error('A conversation creation from another source is still settling. Nothing was sent again.');
+  if(!creatingSession.current){
+   const owner={binding,promise:null,assertSource};
+   owner.promise=dispatch('session.create',{...(creation?.setup||creationSetup()),fromDraft:true},{id:creation?.id}).catch(error=>{
+    assertSource();const created=creation?.id&&latest.current?.sessions?.find(row=>row.creationCommandId===creation.id);
+    if(created)return {sessionId:created.id};throw error;
+   }).then(result=>{
+    assertSource();
+    const id=result.sessionId||result.state?.selectedSessionId,created=latest.current?.sessions?.find(row=>row.id===id),payload=stagedDraftPayload.current;
+    if(!created)throw Error('The new conversation is not confirmed in this source. The original submission remains saved.');
+    if(stagedDraft.current&&payload?.sessionId===null){payload.sessionId=created.id;pendingView.current.bindDraft(stagedDraft.current,created.id);draftJournal.bind(draftJournalEntries.current.get(payload),created.id);clearTimeout(draftTimer.current);saveDraft(payload,stagedDraft.current).catch(e=>reportError(e));if(latest.current)setState(pendingView.current.apply(latest.current))}
+    return created;
+   }).finally(()=>{if(creatingSession.current===owner)creatingSession.current=null});
+   creatingSession.current=owner;
+  }
+  return creatingSession.current.promise;
+ }
  function addFiles(files){
   if(!files?.length||executionUnavailable||historyPending)return;
   const target=latest.current?.selectedSessionId??null,selected=Array.from(files),expectedDraftId=target===null?latest.current?.attachmentDraftId:undefined;
@@ -708,14 +758,16 @@ function App(){
  }
  const chatDrop=useChatFileDrop({ownerKey:JSON.stringify([session?.id??null,state?.attachmentDraftId,state?.selectedWorkspaceId]),enabled:!!state&&workSurface(state)==='chat'&&!executionUnavailable&&!historyPending&&!referencingDraft,onFiles:addFiles,onError:setError});
  async function deliver(entry){
+  if(!outboxMatches(entry,deliveryScope(latest.current,latest.current?.sessions?.find(row=>row.id===entry.sessionId))))return;
   if(deliveries.current.has(entry.id))return;
   deliveries.current.add(entry.id);outbox.update(entry.id,{status:'sending',error:''});
   try{
-   if(!entry.sessionId){const current=await ensureSession(entry.creation);entry=outbox.update(entry.id,{sessionId:current.id});}
-   const result=await dispatch('conversation.send',{sessionId:entry.sessionId,text:entry.text,...(entry.document?{document:entry.document}:{}),...(entry.allowNextTurn?{allowNextTurn:true}:{}),...(entry.expectedGenerationId?{expectedGenerationId:entry.expectedGenerationId}:{}),...(Number.isInteger(entry.expectedConfigurationRevision)?{expectedConfigurationRevision:entry.expectedConfigurationRevision}:{}),...(entry.replyTo?.id?{replyId:entry.replyTo.id}:{}),attachmentIds:entry.attachmentIds,via:entry.via,preserveDraft:true},{id:entry.commandId,feedback:false});
+   if(!entry.sessionId){const current=await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,null)))return;entry=outbox.update(entry.id,{sessionId:current.id,scope:deliveryScope(latest.current,current)});}
+   const result=await dispatch('conversation.send',{sessionId:entry.sessionId,text:entry.text,...(entry.document?{document:entry.document}:{}),...(entry.allowNextTurn?{allowNextTurn:true}:{}),...(entry.expectedGenerationId?{expectedGenerationId:entry.expectedGenerationId}:{}),...(Number.isInteger(entry.expectedConfigurationRevision)?{expectedConfigurationRevision:entry.expectedConfigurationRevision}:{}),...(entry.replyTo?.id?{replyId:entry.replyTo.id}:{}),attachmentIds:entry.attachmentIds,via:entry.via,preserveDraft:true},{id:entry.commandId,feedback:false,outboxScope:entry.scope});
+   if(!outboxMatches(entry,deliveryScope(latest.current,latest.current?.sessions?.find(row=>row.id===entry.sessionId)))){outbox.update(entry.id,{status:'unknown',error:'The source changed before acknowledgement. The original submission remains saved.'});return;}
    outbox.update(entry.id,['sending','unknown'].includes(result.delivery)?{status:'unknown',error:'Delivery has not been confirmed. Checking again will not run it twice.'}:null);
   }catch(error){
-   const received=latest.current?.sessions?.find(row=>row.id===entry.sessionId)?.messages?.some(row=>row.inputId===entry.commandId&&['accepted','queued_for_update','held'].includes(row.delivery?.status));
+   const received=outboxMatches(entry,deliveryScope(latest.current,latest.current?.sessions?.find(row=>row.id===entry.sessionId)))&&latest.current?.sessions?.find(row=>row.id===entry.sessionId)?.messages?.some(row=>row.inputId===entry.commandId&&['accepted','queued_for_update','held'].includes(row.delivery?.status));
    if(received&&error.code!=='session_busy')outbox.update(entry.id,null);
    else outbox.update(entry.id,{status:error.receipt?.delivery==='failed'||error.status>=400&&error.status<500&&error.status!==408?'failed':'unknown',error:actionErrorMessage(error)});
   }finally{deliveries.current.delete(entry.id)}
@@ -729,7 +781,7 @@ function App(){
   if(latest.current?.view?.messageEdit?.messageId===message.id)act('view.update',{patch:{messageEdit:null}});
  }
  async function retryMessage(message,text){
-  const previous=outbox.current.current.find(row=>row.id===(message.localDelivery?.id||message.id));if(!previous||previous.status==='sending')return;
+  const previous=outbox.current.current.find(row=>row.id===(message.localDelivery?.id||message.id));if(!previous||previous.status==='sending'||!outboxMatches(previous,deliveryScope(latest.current,latest.current?.sessions?.find(row=>row.id===previous.sessionId))))return;
   if(previous.document&&text!==undefined){setError('Retry this quoted message unchanged, or discard it and compose a correction.');return;}
   if(previous.status==='unknown'&&text!==undefined)return;
   const creation=previous.status==='failed'&&!previous.sessionId?{id:crypto.randomUUID(),setup:creationSetup()}:previous.creation;
@@ -750,7 +802,7 @@ function App(){
   if(detail.focused)detail.latest(false);
   chatScroll.current?.submitted(id);setError('');setQuoteNotice(notice=>quoteNoticeAfterSend(notice,session?.id));editDraft('');clearTimeout(draftTimer.current);
   const blankToken=stagedDraft.current;
-  let entry=outbox.update(id,{commandId:id,sessionId:session?.id??null,allowNextTurn:true,...(expectedGenerationId?{expectedGenerationId}:{}),...(session?{expectedConfigurationRevision:session.nextMessageRevision??0}:{}),...(!session?{creation:{id:crypto.randomUUID(),setup:creationSetup()}}:{}),text:submittedText,...(submittedDocument?{document:submittedDocument,replyTo:{version:2,segments:submittedDocument.segments}}:state.view?.messageReply?{replyTo:state.view.messageReply}:{}),via:mode==='text'?'text':'chat',attachmentIds:attachments.map(file=>file.id),attachments,status:'sending',createdAt:Date.now()/1000});
+  let entry=outbox.update(id,{commandId:id,sessionId:session?.id??null,scope:deliveryScope(latest.current,session),allowNextTurn:true,...(expectedGenerationId?{expectedGenerationId}:{}),...(session?{expectedConfigurationRevision:session.nextMessageRevision??0}:{}),...(!session?{creation:{id:crypto.randomUUID(),setup:creationSetup()}}:{}),text:submittedText,...(submittedDocument?{document:submittedDocument,replyTo:{version:2,segments:submittedDocument.segments}}:state.view?.messageReply?{replyTo:state.view.messageReply}:{}),via:mode==='text'?'text':'chat',attachmentIds:attachments.map(file=>file.id),attachments,status:'sending',createdAt:Date.now()/1000});
   try{
    const clearingDraft=saveDraft(stagedDraftPayload.current,blankToken);
    // The outbox already owns this exact submitted text. A slow/ lost draft
@@ -758,7 +810,8 @@ function App(){
    // their own ordered queue; the send preserves any newer server draft.
    if(session)clearingDraft.catch(error=>reportError(error));
    else await clearingDraft;
-   const current=session||await ensureSession(entry.creation);entry=outbox.update(id,{sessionId:current.id});
+   if(!outboxMatches(entry,deliveryScope(latest.current,session)))throw Error('The delivery target changed. The original submission remains saved.');
+   const current=session||await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,session)))throw Error('The delivery target changed. The original submission remains saved.');entry=outbox.update(id,{sessionId:current.id,scope:deliveryScope(latest.current,current)});
    await deliver(entry);
   }catch(error){outbox.update(id,{status:error.receipt?.delivery==='failed'||error.status>=400&&error.status<500&&error.status!==408?'failed':'unknown',error:actionErrorMessage(error)});}
  }
@@ -793,9 +846,9 @@ function App(){
  useWindowChrome({root,state,shell,mode:themeScheme,css:activeCss});
  useAppearanceCache({root,state,shell,scheme:requestedScheme,mode:themeScheme,preview,css:activeCss});
  useLayoutEffect(()=>bindWindowControlsOverlay(root.current),[shell.ready,!!state]);
- const newChatPending=!session&&outbox.entries.some(row=>row.sessionId===null&&['sending','unknown'].includes(row.status));
+ const newChatPending=!session&&outbox.entries.some(row=>outboxMatches(row,outboxSource)&&row.sessionId===null&&['sending','unknown'].includes(row.status));
  const responseActive=working||(session?.workers||[]).some(worker=>['queued','starting','working','running','stopping'].includes(worker.status));
- const sendingHere=outbox.entries.some(row=>row.sessionId===(session?.id??null)&&row.status==='sending');
+ const sendingHere=outbox.entries.some(row=>outboxMatches(row,outboxSource)&&row.sessionId===(session?.id??null)&&row.status==='sending');
  const primaryAction=composerPrimaryAction({draft,attachments:availableAttachments,uploading,working,responseActive,stopping:session?.status==='stopping',voiceStatus:voice.status,voiceStarting,busy,newChatPending,sending:sendingHere,historyPending,executionUnavailable});
  const appReload=useAppReload({client:streamClient,canvasWorkspace:state?.canvasWorkspace,blocked:callActive||voiceStarting?'Finish your voice call, then reload.':uploading||sendingHere||busy?'Wait for the current upload or send to finish.':'',prepare:async()=>{
   // Before a first state arrives there is no mounted editor to checkpoint.
@@ -880,6 +933,7 @@ function App(){
    <form className="a-composer a-compact-composer" data-part="composer" data-action="conversation.send" onSubmit={send}>
     {draftStorageError&&<p role="alert" className="a-upload-status">This browser could not keep a recovery copy of your draft. Keep this tab open until it is saved.</p>}
     {outbox.storageError&&outbox.entries.length>0&&<p role="alert" className="a-upload-status">This browser could not save the pending message. Keep this tab open until delivery is confirmed.</p>}
+    {outbox.entries.some(row=>!row.scope)&&<p role="status" className="a-upload-status">Earlier pending messages have no verified host identity. They remain saved in this browser and were not sent again.</p>}
     <ComposerOwnership session={session} runtimeAvailable={state.runtime?.available!==false} dispatch={dispatch}>
     {!session&&<ComposerWorkspace state={state} act={act}/>}
     <div className="a-compose-surface" data-part="composer-surface" data-expanded={composerExpanded({draft,attachments:availableAttachments,quote:state.view?.messageReply||state.view?.draftDocument?.segments?.some(part=>part.type==='quote')})}>

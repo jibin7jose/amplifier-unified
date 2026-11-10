@@ -6,6 +6,29 @@ const requests=new Map(),listeners=new Set();
 const subscribe=listener=>{listeners.add(listener);return()=>listeners.delete(listener)};
 const publish=()=>listeners.forEach(listener=>listener());
 
+// The account/history namespace survives a host restart; the connection identity
+// does not. Neither is inferred from the currently selected chat after a wait.
+export function deliveryScope(state,session){
+ const origin=state?.client?.historyScope||state?.client?.hostInstanceId;
+ return origin?JSON.stringify([origin,session?.workspace||null,session?.runtimeSessionId||session?.nativeIdentity||session?.id||null]):null;
+}
+export function deliveryRecovery(state,session){
+ if(!state?.client?.hostInstanceId||!session?.id)return null;
+ return {scope:deliveryScope(state,session),
+  connection:state.client.hostInstanceId};
+}
+
+export function checkedDelivery(result,sessionId,inputId){
+ const report=result?.result;
+ if(result?.accepted!==true||!report||Array.isArray(report)||
+  report.sessionId!==sessionId||report.inputId!==inputId||
+  !['accepted','unknown','failed','sending','held','queued','queued_for_update','not_saved'].includes(report.delivery)||
+  ('accepted' in report&&report.accepted!==true)||report.error||report.code||
+  (report.status!==undefined&&(!Number.isInteger(report.status)||report.status<200||report.status>=300)))
+  throw Error('Delivery evidence could not be verified. Nothing was sent again.');
+ return report;
+}
+
 export function usePendingDeliveryCheck(key){
  const request=useSyncExternalStore(subscribe,()=>requests.get(key)||null,()=>null);
  const [settled,setSettled]=useState(null);
