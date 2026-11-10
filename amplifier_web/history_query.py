@@ -40,26 +40,21 @@ def _rows(session):
         # that may not yet have reached a checkpoint. Repeated messages retain
         # their multiplicity. This is a retrieval view, never a persisted merge.
         if not session.get("historyManaged"):
-            from .automatic_history import alias_peer_inputs, align_expanded_inputs
-            from .peer_attribution import input_identity
+            from .automatic_history import alias_input_originals, align_expanded_inputs
             from .voice_input_projection import align as align_voice_inputs
             current, native = align_voice_inputs(session, result["messages"])
-            current = align_expanded_inputs(current, native, peer_only=True)
-            rows = alias_peer_inputs({**session, "messages": current}, native)
-            # Canonical input IDs already claimed their exact retained peer
-            # bubbles. Other legacy UI rows retain the existing occurrence
-            # merge; a same-text row must never replace a peer identity.
+            current = align_expanded_inputs(current, native)
+            rows = alias_input_originals({**session, "messages": current}, native)
+            # Exact input bindings retain public originals, including attachment
+            # descriptors, instead of returning expanded model-facing inputs.
+            # Unbound originals remain distinct, including ambiguous IDs.
             claimed_ids = {row.get("id") for row in rows}
             visible_ids = {row.get("id") for row in session.get("messages", [])}
-            native_inputs = Counter(row.get("nativeInputId") for row in rows if row.get("nativeInputId"))
             saved = Counter((row.get("role"), row.get("text")) for row in rows
                             if row.get("id") not in visible_ids
                             and not row.get("inputId") and not row.get("nativeInputId"))
             for row in current:
                 if row.get("id") in claimed_ids:
-                    continue
-                identity = input_identity({"inputId": row.get("inputId")})
-                if identity is not None and native_inputs[identity] == 1 and not row.get("peerEnvelope"):
                     continue
                 key = (row.get("role"), row.get("text"))
                 if saved[key] and not row.get("inputId") and not row.get("peerEnvelope") and row.get("via") != "peer":
