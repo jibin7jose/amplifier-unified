@@ -420,3 +420,16 @@ def test_hosted_image_patch_reuse_records_both_without_relaxing_other_inputs(loo
     assert api.facts['proof'] == original
     api.facts['inputs']['tools']['npm'] = 'changed'
     assert not module.find(root, env, api)['reused']
+
+
+def test_manual_historical_release_prepares_client_only_when_selected_source_opts_in():
+    release = yaml.load((ROOT / '.github/workflows/release.yml').read_text(), Loader=yaml.BaseLoader)
+    steps = release['jobs']['prepare']['steps']
+    selected = next(i for i, step in enumerate(steps) if step.get('name') == 'Pin the verified selected commit')
+    prepared = next(i for i, step in enumerate(steps) if step.get('run') ==
+                    'python scripts/web_client_development.py prepare-view')
+    proof = next(i for i, step in enumerate(steps) if step.get('id') == 'frontend-proof')
+    assert selected < prepared < proof
+    # An older selected release owns its legacy frontend and has no assembly
+    # helper, even when today's workflow orchestrates the immutable target.
+    assert steps[prepared]['if'] == "hashFiles('scripts/web_client_development.py') != ''"

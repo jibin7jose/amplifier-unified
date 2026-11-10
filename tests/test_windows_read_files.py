@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -1134,6 +1135,161 @@ async def test_service_publication_during_held_immutable_resource(publication_ap
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows traversal sharing requires NTFS")
+@pytest.mark.parametrize("scope", ["held", "released", "persistent"])
+async def test_service_publication_during_resource_traversal(
+        publication_app, monkeypatch, record_property, scope):
+    """Hold real pre-yield pins, not a substituted handle or injected OS error.
+
+    The cells have independent stores. The held cell releases its reader on
+    the first genuine sharing refusal, within the same atomic write. Persistent
+    contention must fail within the production bound, not acknowledge or replay
+    the event. This proves a mechanism, not the historical holder.
+    """
+    from amplifier_web import windows_read_files
+    from amplifier_web.session_projection import view_path
+
+    app = publication_app
+    session = app._session()
+    sid = session["id"]
+    session["interruptionRevision"] = 7
+    app._save_changes(sessions={sid})
+    before = _publication_snapshot(app)
+    prior = next(row for row in before[0]["sessions"] if row["id"] == sid)
+    source = resources.detach(app.db, prior["$viewPayload"]["$resource"])
+    original = resources.read_detached(source)
+    leaf = windows_read_files.address(source.directory / (source.identity + ".json"))
+    view = view_path(app.data_dir, session)
+    old_view = view.read_bytes()
+    messages = json.dumps(session["messages"], sort_keys=True)
+    opened, release = threading.Event(), threading.Event()
+    pins, closed, result, failures = [], [], [], []
+    real_open = windows_read_files._ReadAPI.open_read
+    real_close = windows_read_files._ReadAPI.close
+    real_signature = windows_read_files._ReadAPI.signature
+    real_replace = os.replace
+    attempts, sharing_errors = [], []
+    target = None
+    gated = False
+
+    def tracked_open(api, path, parent=None, *, directory):
+        handle = real_open(api, path, parent, directory=directory)
+        if threading.current_thread() is thread and directory:
+            pins.append((api, handle))
+        return handle
+
+    def tracked_close(api, handle):
+        try:
+            return real_close(api, handle)
+        finally:
+            if threading.current_thread() is thread and (api, handle) in pins:
+                closed.append((api, handle))
+
+    def gated_signature(api, handle, path=None):
+        nonlocal gated
+        value = real_signature(api, handle, path)
+        if threading.current_thread() is thread and path == leaf and not gated:
+            gated = True
+            assert pins and not closed
+            opened.set()
+            assert release.wait(30), "Traversal release timed out"
+        return value
+
+    def read():
+        try:
+            result.append(resources.read_detached(source))
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            opened.set()
+
+    def observed_replace(temporary, destination):
+        nonlocal target
+        if target is None and Path(destination).parent == source.directory:
+            target = destination
+        if destination != target:
+            return real_replace(temporary, destination)
+        # Observe, never substitute, the real OS outcome. Every retry retains
+        # the exact flushed temporary, destination and prepared bytes.
+        attempts.append((temporary, destination, Path(temporary).read_bytes()))
+        try:
+            return real_replace(temporary, destination)
+        except OSError as error:
+            sharing_errors.append((type(error), error.errno, getattr(error, "winerror", None)))
+            if scope == "held" and getattr(error, "winerror", None) == 32:
+                release.set()  # the independent reader closes its real handles
+            raise
+
+    thread = threading.Thread(target=read, name="resource-traversal", daemon=True)
+    with monkeypatch.context() as patch:
+        patch.setattr(windows_read_files._ReadAPI, "open_read", tracked_open)
+        patch.setattr(windows_read_files._ReadAPI, "close", tracked_close)
+        patch.setattr(windows_read_files._ReadAPI, "signature", gated_signature)
+        patch.setattr(os, "replace", observed_replace)
+        thread.start()
+        try:
+            assert await asyncio.to_thread(opened.wait, 10)
+            assert gated and pins and not closed and not failures
+            if scope == "released":
+                release.set()
+                await asyncio.to_thread(thread.join, 10)
+                assert not thread.is_alive() and not failures
+                assert len(closed) == len(pins) and set(closed) == set(pins)
+            started = time.monotonic()
+            facts = await _observed_publication(app, ("runtime.status", {
+                "sessionId": sid, "status": "working", "detail": "Traversal discriminator",
+            }), "resource.traversal", scope, record_property)
+            elapsed = time.monotonic() - started
+            assert attempts and all(row == attempts[0] for row in attempts)
+            if scope == "persistent":
+                assert thread.is_alive() and not release.is_set() and not closed
+            after = _publication_snapshot(app)
+            if facts["errors"] or facts["truncated"]:
+                # Preserve failure/rollback evidence before asserting the desired
+                # independent-publication behavior. Shutdown is not a retry.
+                assert after == before and view.read_bytes() == old_view
+                assert app._progress_dirty
+                assert session["interruptionRevision"] == 7
+                assert json.dumps(session["messages"], sort_keys=True) == messages
+                assert not app.runtime.attempts
+            if scope == "persistent":
+                assert len(attempts) == 5 and sharing_errors == [(PermissionError, 13, 32)] * 5
+                assert elapsed < 3, "Bounded sharing retry exceeded the fixture budget"
+                assert not Path(attempts[0][0]).exists() and not Path(target).exists()
+                assert facts["truncated"] is False and len(facts["errors"]) == 1
+                error = facts["errors"][0]
+                assert (error["class"], error["errno"], error["winerror"]) == ("PermissionError", 13, 32)
+                assert {"storage.resource", "storage.atomic"} <= {frame["source"] for frame in error["frames"]}
+            else:
+                assert facts == {"errors": [], "truncated": False}
+                if scope == "held":
+                    assert 2 <= len(attempts) <= 5
+                    assert sharing_errors == [(PermissionError, 13, 32)] * (len(attempts) - 1)
+                    assert release.is_set()
+                else:
+                    assert len(attempts) == 1 and not sharing_errors
+                assert Path(target).read_bytes() == attempts[0][2]
+                assert not Path(attempts[0][0]).exists()
+                assert after[0]["revision"] == before[0]["revision"] + 1
+                saved = next(row for row in after[0]["sessions"] if row["id"] == sid)
+                assert saved["$viewPayload"] != prior["$viewPayload"]
+                value = app.state_resource(saved["$viewPayload"]["$resource"])
+                assert value["status"] == "working"
+                assert value["progress"]["detail"] == "Traversal discriminator"
+                assert json.loads(view.read_text()) == value
+                assert not app._progress_dirty
+        finally:
+            release.set()
+            await asyncio.to_thread(thread.join, 10)
+            assert not thread.is_alive(), "Traversal reader did not join"
+            assert not failures, "Traversal reader failed"
+            assert len(closed) == len(pins) and set(closed) == set(pins)
+    assert result == [original]
+    assert resources.read_detached(source) == original
+    record_property("publication_sharing_verified", True)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("scenario", [
     "restore-held", "remove-held", "restore-refused", "remove-refused",
 ])
@@ -1290,4 +1446,181 @@ async def test_service_view_rollback_with_real_presentation_reader(
             if reader.thread is not None:
                 await reader.finish()
     assert reader.retained == reader.result == (writes[0] if absent else original_text)
+    record_property("publication_sharing_verified", True)
+
+
+@native_only
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["release", "persistent"])
+async def test_service_resource_publication_with_held_temporary(
+        publication_app, monkeypatch, record_property, scope):
+    """Retain a real non-delete-sharing SOURCE, not a target or traversal pin.
+
+    The release cell closes its reader only after a genuine rename WinError 32.
+    The persistent cell must preserve the original final rename error even when
+    genuine temporary unlink also fails. Test cleanup happens only after that
+    evidence and reader release; it is not production cleanup or event replay.
+    This characterizes a mechanism, not the historical CI holder.
+    """
+    from amplifier_web.session_projection import view_path
+    from amplifier_web.worker_diagnostics import command_failure_facts, validate_command_failure_facts
+
+    app = publication_app
+    session = app._session()
+    sid = session["id"]
+    session["interruptionRevision"] = 7
+    message = app._message(session, "user", "Keep the unresolved delivery",
+                           inputId="temporary-unknown-input", delivery={"status": "unknown"})
+    app._save_changes(sessions={sid})
+    before = _publication_snapshot(app)
+    prior = next(row for row in before[0]["sessions"] if row["id"] == sid)
+    old_source = resources.detach(app.db, prior["$viewPayload"]["$resource"])
+    old_value = resources.read_detached(old_source)
+    view = view_path(app.data_dir, session)
+    old_view = view.read_bytes()
+    messages = json.dumps(session["messages"], sort_keys=True)
+    directory = resources.root(app.db)
+    owner = threading.get_ident()
+    reader = _PublicationRead()
+    temporary_path = target = None
+    source_identity = []
+    attempts, rename_errors, unlink_attempts, unlink_errors = [], [], [], []
+    real_replace, real_unlink = os.replace, os.unlink
+
+    def hold_source():
+        # Ordinary binary Path.open uses the real CRT sharing mode. No native
+        # flags are replaced, and the fully flushed source remains the same file.
+        with temporary_path.open("rb") as stream:
+            info = os.fstat(stream.fileno())
+            source_identity.append((info.st_dev, info.st_ino))
+            return reader.hold(stream)
+
+    def observed_replace(source, destination, *args, **kwargs):
+        nonlocal temporary_path, target
+        candidate = Path(destination)
+        if (target is None and threading.get_ident() == owner
+                and candidate.parent == directory and candidate.suffix == ".json"
+                and len(candidate.stem) == 64
+                and all(char in "0123456789abcdef" for char in candidate.stem)
+                and not candidate.exists() and not candidate.is_symlink()):
+            temporary_path, target = Path(source), candidate
+            assert temporary_path.parent == directory
+            assert temporary_path.name.startswith(".checkpoint-")
+            reader.start(hold_source)
+            # Synchronous writer is on the app/SQLite owner thread; the reader
+            # needs no event-loop work to acknowledge or release its real handle.
+            assert reader.opened.wait(10), "Temporary reader did not open"
+            assert not reader.failed and reader.opens == 1
+            reader.assert_held()
+        if threading.get_ident() != owner or candidate != target:
+            return real_replace(source, destination, *args, **kwargs)
+        assert Path(source) == temporary_path and not target.exists()
+        data = temporary_path.read_bytes()  # this observation closes before rename
+        assert len(data) < 64 * 1024 and hashlib.sha256(data).hexdigest() == target.stem
+        attempts.append((Path(source), candidate, data))
+        try:
+            return real_replace(source, destination, *args, **kwargs)
+        except OSError as error:
+            rename_errors.append(error)  # exact objects, not reconstructed errors
+            if scope == "release" and len(rename_errors) == 1 and getattr(error, "winerror", None) == 32:
+                reader.release.set()  # reader closes independently during the real retry delay
+            raise
+
+    def observed_unlink(path, *args, **kwargs):
+        if threading.get_ident() != owner or Path(path) != temporary_path:
+            return real_unlink(path, *args, **kwargs)
+        unlink_attempts.append(Path(path))
+        try:
+            return real_unlink(path, *args, **kwargs)
+        except OSError as error:
+            unlink_errors.append(error)
+            raise
+
+    raised = None
+    facts = {"errors": [], "truncated": False}
+    with monkeypatch.context() as patch:
+        # Transparent OS observations only: no synthetic sharing failure,
+        # substituted writer, modified retry delay or input replay.
+        patch.setattr(os, "replace", observed_replace)
+        patch.setattr(os, "unlink", observed_unlink)
+        try:
+            try:
+                await app.on_runtime_event("runtime.status", {
+                    "sessionId": sid, "status": "working",
+                    "detail": "Temporary source discriminator",
+                })  # Non-progress status: synchronous durable publication.
+            except Exception as error:
+                raised = error
+                facts = command_failure_facts(error)
+            assert validate_command_failure_facts(facts) is not None
+            record_property("publication_sharing", json.dumps({
+                "schema": 1, "reader": "resource.temporary", "scope": scope,
+                "platform": "windows", "result": "raised" if raised is not None else "returned",
+                "facts": facts,
+            }, sort_keys=True))
+            assert attempts and all(attempt == attempts[0] for attempt in attempts)
+            assert source_identity and reader.opens == 1
+            assert rename_errors
+            assert all(type(error) is PermissionError and error.errno == 13
+                       and error.winerror == 32 for error in rename_errors)
+            after = _publication_snapshot(app)
+            if scope == "persistent":
+                reader.assert_held()
+                assert len(attempts) == len(rename_errors) == 5
+                assert raised is rename_errors[-1]
+                assert unlink_attempts == [temporary_path] and len(unlink_errors) == 1
+                assert raised is not unlink_errors[0]
+                assert type(unlink_errors[0]) is PermissionError
+                assert (unlink_errors[0].errno, unlink_errors[0].winerror) == (13, 32)
+                assert raised.__notes__ == [
+                    "Temporary cleanup failed; an unpublished temporary may remain."]
+                assert temporary_path.read_bytes() == attempts[0][2]
+                assert not target.exists() and not target.is_symlink()
+                assert after == before and not app.db.in_transaction
+                assert view.read_bytes() == old_view
+                assert app._session_projection_refs[sid] == prior
+                assert app.state["revision"] == app._saved_revision == before[0]["revision"]
+                assert app._progress_dirty and app._progress_scope_known
+                assert app._progress_session_ids == {sid}
+                assert not facts["truncated"] and len(facts["errors"]) == 1
+                assert (facts["errors"][0]["class"], facts["errors"][0]["errno"],
+                        facts["errors"][0]["winerror"]) == ("PermissionError", 13, 32)
+                assert [frame["source"] for frame in facts["errors"][0]["frames"]] == [
+                    "service.event", "storage.projection", "storage.resource", "storage.atomic"]
+            else:
+                assert raised is None and facts == {"errors": [], "truncated": False}
+                assert 2 <= len(attempts) <= 5
+                assert len(rename_errors) == len(attempts) - 1
+                assert reader.release.is_set()
+                assert not unlink_attempts and not unlink_errors
+                assert not temporary_path.exists()
+                assert target.read_bytes() == attempts[0][2]
+                assert after[0]["revision"] == before[0]["revision"] + 1
+                assert not app.db.in_transaction and not app._progress_dirty
+                saved = next(row for row in after[0]["sessions"] if row["id"] == sid)
+                assert saved["$viewPayload"] != prior["$viewPayload"]
+                assert saved["$viewPayload"]["$resource"] == target.stem
+                value = app.state_resource(saved["$viewPayload"]["$resource"])
+                assert value["status"] == "working"
+                assert value["progress"]["detail"] == "Temporary source discriminator"
+                assert value["interruptionRevision"] == 7
+                assert json.dumps(value["messages"], sort_keys=True) == messages
+                assert json.loads(view.read_text()) == value
+            assert session["interruptionRevision"] == 7
+            assert message["delivery"] == {"status": "unknown"}
+            assert json.dumps(session["messages"], sort_keys=True) == messages
+            assert not app.runtime.attempts and not app.runtime.workers
+            assert resources.read_detached(old_source) == old_value
+        finally:
+            if reader.thread is not None:
+                await reader.finish()  # bounded release/join before any fixture unlink
+                if temporary_path.exists():
+                    # Explicit TEST cleanup of the observed owned temporary,
+                    # after the production cleanup failure was preserved above.
+                    info = temporary_path.stat()
+                    assert source_identity == [(info.st_dev, info.st_ino)]
+                    assert attempts and temporary_path.read_bytes() == attempts[0][2]
+                    real_unlink(temporary_path)
+    assert reader.retained == reader.result == attempts[0][2]
+    assert not temporary_path.exists()
     record_property("publication_sharing_verified", True)

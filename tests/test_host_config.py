@@ -320,6 +320,29 @@ class HostSettingsTests(unittest.TestCase):
         self.assertEqual(json.loads(repaired[0]['content'])['status'],'interrupted')
         self.assertEqual(json.loads(rows[0]['content'])['status'],'queued')
 
+    def test_receipt_repair_does_not_clone_unrelated_history_or_mutate_input(self):
+        class Continuation(dict):
+            def __deepcopy__(self, memo):
+                raise AssertionError('Receipt repair must not clone retained provider payloads')
+
+        queued = {'status': 'queued', 'call_id': 'c', 'job_id': 'j'}
+        rows = [
+            {'role': 'assistant', 'content': 'Retained answer', 'continuation': Continuation({'opaque': ['saved']})},
+            {'role': 'tool', 'tool_call_id': 'c', 'content': json.dumps(queued), 'metadata': {'keep': True}},
+            {'role': 'tool', 'tool_call_id': 'other', 'content': json.dumps(queued)},
+            {'role': 'tool', 'content': 'Ordinary output'},
+            {'role': 'tool', 'content': '["not a receipt"]'},
+        ]
+        before = json.loads(json.dumps(rows))
+        repaired = repair_interrupted_receipts(rows)
+        self.assertEqual(rows, before)
+        self.assertEqual(repaired[:1] + repaired[2:], rows[:1] + rows[2:])
+        self.assertEqual(repaired[1]['metadata'], rows[1]['metadata'])
+        receipt = json.loads(repaired[1]['content'])
+        self.assertEqual((receipt['status'], receipt['outcome'], receipt['effects']),
+                         ('interrupted', 'unconfirmed', 'not_rolled_back'))
+        self.assertEqual((receipt['call_id'], receipt['job_id']), ('c', 'j'))
+
     def test_report_redacts_nested_credentials(self):
         value=redact({'providers':[{'config':{'api_key':'private','default_model':'model'}}]})
         self.assertNotIn('private',json.dumps(value))

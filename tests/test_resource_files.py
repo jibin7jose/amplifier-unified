@@ -444,3 +444,201 @@ def test_root_budget_counts_wide_scalar_fields_without_weakening_full_walk():
         list(files.references(value, budget=budget))
     assert error.value.reason == 'fields' and budget.fields == 101
     assert set(files.references(value)) == {'a' * 64}
+
+
+@pytest.fixture
+def atomic_retry_control(tmp_path, monkeypatch):
+    """Real temporary/write/flush/cleanup, modeled rename errors and no sleeps.
+
+    Only storage's module references change. Never mutate global os.name, which
+    would make pathlib choose WindowsPath on a portable test host.
+    """
+    from pathlib import Path
+    from types import SimpleNamespace
+    from amplifier_web.host import storage
+    path = tmp_path / 'resource.json'
+    path.write_bytes(b'original committed bytes')
+    control = SimpleNamespace(
+        storage=storage, path=path, text='{"text":"exact UTF-8 café 雪"}',
+        temporaries=[], streams=[], calls=[], delays=[], syncs=[], removed=[],
+        rename=os.replace, delay=lambda seconds: None)
+    real_mkstemp = storage.tempfile.mkstemp
+
+    def mkstemp(*args, **kwargs):
+        fd, temporary = real_mkstemp(*args, **kwargs)
+        control.temporaries.append(Path(temporary))
+        return fd, temporary
+
+    def fdopen(*args, **kwargs):
+        stream = os.fdopen(*args, **kwargs)
+        control.streams.append(stream)
+        return stream
+
+    def fsync(fd):
+        control.syncs.append(fd)
+        return os.fsync(fd)
+
+    def replace(source, destination):
+        source = Path(source)
+        assert len(control.streams) == len(control.temporaries) == len(control.syncs) == 1
+        assert control.streams[0].closed  # Closed/flushed before every rename attempt.
+        assert source == control.temporaries[0] and destination == path
+        assert source.read_bytes() == control.text.encode('utf-8')
+        assert path.read_bytes() == b'original committed bytes'
+        control.calls.append((source, destination))
+        return control.rename(source, destination)
+
+    def sleep(seconds):
+        control.delays.append(seconds)
+        return control.delay(seconds)
+
+    def unlink(temporary):
+        control.removed.append(Path(temporary))
+        return os.unlink(temporary)
+
+    monkeypatch.setattr(storage, 'os', SimpleNamespace(
+        name='nt', fdopen=fdopen, fchmod=os.fchmod, fsync=fsync,
+        replace=replace, path=os.path, unlink=unlink))
+    monkeypatch.setattr(storage, 'tempfile', SimpleNamespace(mkstemp=mkstemp))
+    monkeypatch.setattr(storage, 'time', SimpleNamespace(sleep=sleep))
+    return control
+
+
+@pytest.mark.parametrize('failures', [1, 4])
+def test_atomic_windows_transient_32_retries_same_closed_utf8_temporary(atomic_retry_control, failures):
+    control = atomic_retry_control
+    def rename(source, destination):
+        if len(control.calls) <= failures:
+            error = PermissionError(13, 'synthetic sharing refusal')
+            error.winerror = 32
+            raise error
+        return os.replace(source, destination)
+    control.rename = rename
+    control.storage.SessionStore._atomic(control.path, control.text)
+    assert len(control.calls) == failures + 1
+    assert control.calls == [(control.temporaries[0], control.path)] * (failures + 1)
+    assert control.delays == pytest.approx([0.02, 0.04, 0.08, 0.16][:failures])
+    assert control.path.read_bytes() == control.text.encode('utf-8')
+    assert not control.temporaries[0].exists() and not control.removed
+    assert list(control.path.parent.iterdir()) == [control.path]
+
+
+def test_atomic_windows_persistent_32_is_five_attempts_then_last_error_and_cleanup(atomic_retry_control):
+    control = atomic_retry_control
+    errors = []
+    def rename(source, destination):
+        error = PermissionError(13, 'synthetic sharing refusal')
+        error.winerror = 32
+        errors.append(error)
+        raise error
+    control.rename = rename
+    with pytest.raises(PermissionError) as caught:
+        control.storage.SessionStore._atomic(control.path, control.text)
+    assert len(control.calls) == len(errors) == 5
+    assert control.calls == [(control.temporaries[0], control.path)] * 5
+    assert caught.value is errors[-1]
+    assert control.delays == pytest.approx([0.02, 0.04, 0.08, 0.16])
+    assert sum(control.delays) == pytest.approx(0.3)
+    assert control.path.read_bytes() == b'original committed bytes'
+    assert control.removed == control.temporaries and not control.temporaries[0].exists()
+    assert list(control.path.parent.iterdir()) == [control.path]
+
+
+@pytest.mark.parametrize('name,kind,errno,winerror', [
+    ('nt', PermissionError, 13, 5),
+    ('nt', OSError, 5, 123),
+    ('nt', PermissionError, 13, None),
+    ('nt', OSError, 32, None),  # errno alone is never WinError 32.
+    ('posix', PermissionError, 13, 32),
+])
+def test_atomic_nonsharing_or_nonwindows_failure_never_retries(
+        atomic_retry_control, name, kind, errno, winerror):
+    control = atomic_retry_control
+    control.storage.os.name = name  # Local SimpleNamespace, never the os module.
+    error = kind(errno, 'synthetic original error')
+    if winerror is not None:
+        error.winerror = winerror
+    def rename(source, destination):
+        raise error
+    control.rename = rename
+    with pytest.raises(kind) as caught:
+        control.storage.SessionStore._atomic(control.path, control.text)
+    assert caught.value is error and len(control.calls) == 1 and not control.delays
+    assert control.path.read_bytes() == b'original committed bytes'
+    assert control.removed == control.temporaries and not control.temporaries[0].exists()
+    assert list(control.path.parent.iterdir()) == [control.path]
+
+
+@pytest.mark.parametrize('kind', [asyncio.CancelledError, KeyboardInterrupt])
+@pytest.mark.parametrize('cancel_on_delay', [1, 3])
+def test_atomic_cancellation_during_backoff_cleans_temp_without_next_attempt(
+        atomic_retry_control, kind, cancel_on_delay):
+    control = atomic_retry_control
+    cancelled = kind('synthetic cancellation during delay')
+    def rename(source, destination):
+        error = PermissionError(13, 'synthetic sharing refusal')
+        error.winerror = 32
+        raise error
+    def delay(seconds):
+        if len(control.delays) == cancel_on_delay:
+            raise cancelled
+    control.rename, control.delay = rename, delay
+    with pytest.raises(kind) as caught:
+        control.storage.SessionStore._atomic(control.path, control.text)
+    assert caught.value is cancelled
+    assert len(control.calls) == len(control.delays) == cancel_on_delay
+    assert control.delays == pytest.approx([0.02, 0.04, 0.08][:cancel_on_delay])
+    assert control.path.read_bytes() == b'original committed bytes'
+    assert control.removed == control.temporaries and not control.temporaries[0].exists()
+    assert list(control.path.parent.iterdir()) == [control.path]
+
+
+@pytest.mark.parametrize('cause', ['win32', 'cancellation'])
+def test_atomic_failed_temp_unlink_keeps_original_failure_and_reports_uncertain_cleanup(
+        atomic_retry_control, monkeypatch, cause):
+    control = atomic_retry_control
+    original = (PermissionError(13, 'original rename refusal') if cause == 'win32'
+                else asyncio.CancelledError('original cancellation'))
+    if cause == 'win32':
+        original.winerror = 32
+    cleanup = OSError(13, 'PRIVATE cleanup detail', '/private/temporary')
+    unlink_attempts = []
+
+    def rename(source, destination):
+        if cause == 'win32':
+            raise original
+        error = PermissionError(13, 'sharing refusal before cancellation')
+        error.winerror = 32
+        raise error
+
+    def delay(seconds):
+        if cause == 'cancellation':
+            raise original
+
+    def refuse_unlink(temporary):
+        assert temporary == str(control.temporaries[0])
+        unlink_attempts.append(temporary)
+        raise cleanup
+
+    control.rename, control.delay = rename, delay
+    monkeypatch.setattr(control.storage.os, 'unlink', refuse_unlink)
+    try:
+        with pytest.raises(type(original)) as caught:
+            control.storage.SessionStore._atomic(control.path, control.text)
+        assert caught.value is original and caught.value is not cleanup
+        assert original.__notes__ == [
+            'Temporary cleanup failed; an unpublished temporary may remain.']
+        assert 'PRIVATE' not in ''.join(original.__notes__)
+        assert len(control.calls) == (5 if cause == 'win32' else 1)
+        assert control.delays == pytest.approx([0.02, 0.04, 0.08, 0.16] if cause == 'win32' else [0.02])
+        assert unlink_attempts == [str(control.temporaries[0])]
+        assert not control.removed  # No successful production cleanup was observed.
+        assert control.temporaries[0].read_bytes() == control.text.encode('utf-8')
+        assert control.path.read_bytes() == b'original committed bytes'
+        assert set(control.path.parent.iterdir()) == {control.path, control.temporaries[0]}
+    finally:
+        # Test-owned cleanup only, after proving that production left the object.
+        for temporary in control.temporaries:
+            if temporary.exists():
+                os.unlink(temporary)
+    assert list(control.path.parent.iterdir()) == [control.path]

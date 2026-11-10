@@ -1646,8 +1646,12 @@ def test_browser_retains_only_the_successfully_built_public_web_payload():
     assert steps[build + 2]['name'] == 'Install browser dependencies'
     # The artifact includes the builder's metadata and is retained before later
     # scenario failure; an unrun/failed build cannot upload the old tracked tree.
-    vite = (ROOT / 'frontend/vite.config.js').read_text()
-    assert 'emptyOutDir:true' in vite and 'static/build.json' in vite
+    selection = json.loads((ROOT / 'components/web-client.source.json').read_text())
+    source = ROOT / selection['delivery']['path']
+    vite = (source / 'vite.config.js').read_text()
+    assert 'emptyOutDir:true' in vite and 'dist/build.json' in vite
+    assembler = (ROOT / 'scripts/web_client_build.py').read_text()
+    assert 'package-client.mjs' in assembler and 'verify_artifact(root' in assembler
 
 
 def browser_runner_commands(steps):

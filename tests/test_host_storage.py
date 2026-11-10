@@ -233,6 +233,34 @@ def test_checkpoint_distinguishes_boolean_and_numeric_continuation_values(tmp_pa
     assert type(store.load('root')[0][0]['continuation']['value']) is int
 
 
+@pytest.mark.parametrize('incremental', [False, True])
+def test_checkpoint_borrows_history_without_mutating_or_caching_it(tmp_path, monkeypatch, incremental):
+    from amplifier_foundation.session.history import SessionHistoryStore
+
+    class Continuation(dict):
+        def __deepcopy__(self, memo):
+            raise AssertionError('Checkpoint must not clone retained provider payloads')
+
+    if not incremental:
+        monkeypatch.delattr(SessionHistoryStore, 'indexed_messages')
+    store = SessionStore(tmp_path / 'sessions')
+    rows = [{'role': 'assistant', 'content': [{'type': 'text', 'text': 'Saved answer'}],
+             'continuation': Continuation({'items': [{'value': True}]})}]
+    expected = json.loads(json.dumps(rows))
+    canonical = store.save('root', rows, {})
+    assert rows == expected
+    assert store.load('root')[0] == expected
+    assert canonical == expected
+
+    # A later in-place change must be saved, even with identical object identity
+    # and length. The previous on-disk checkpoint stays independent until then.
+    rows[0]['continuation']['items'][0]['value'] = 1
+    assert type(store.load('root')[0][0]['continuation']['items'][0]['value']) is bool
+    store.save('root', rows, {})
+    assert type(store.load('root')[0][0]['continuation']['items'][0]['value']) is int
+    assert json.loads((store.directory('root') / 'transcript.jsonl.backup').read_text()) == expected[0]
+
+
 def test_new_app_can_checkpoint_with_pre_index_worker_foundation(tmp_path, monkeypatch):
     """An app update may precede the independently pinned worker update."""
     from amplifier_foundation.session.history import SessionHistoryStore

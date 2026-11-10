@@ -102,9 +102,9 @@ def messages(home, session):
             row['nativeInputAmbiguous'] = True
     from .voice_input_projection import align as align_voice_inputs
     visible, voice_aliases = align_voice_inputs({**session, 'messages': visible}, native)
-    from .automatic_history import alias_peer_inputs, align_expanded_inputs
+    from .automatic_history import alias_input_originals, align_expanded_inputs
     visible = align_expanded_inputs(visible, voice_aliases, peer_only=True)
-    aliases = alias_peer_inputs({**session, 'messages': visible}, voice_aliases)
+    aliases = alias_input_originals({**session, 'messages': visible}, voice_aliases, peer_only=True)
     by_id = {row['id']: row for row in aliases if row.get('nativeMessageId')}
     visible = [by_id.get(row['id'], row) for row in visible]
     # Validate explicit anchors before mixing two different versions of history.

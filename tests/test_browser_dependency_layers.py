@@ -23,7 +23,14 @@ def manifests(prefix='frontend/'):
 
 def test_current_repository_npm_inputs_remain_eligible():
     root = Path(__file__).parents[1]
+    delivery = json.loads((root / 'components/web-client.source.json').read_text())['delivery']
+    client = root / delivery['path'] if delivery['type'] == 'directory' else root / 'frontend/.client'
     files = {name: (root / name).read_bytes() for name in ('frontend/package.json', 'frontend/package-lock.json')}
+    canonical = json.loads((client / 'package.json').read_bytes())
+    prepared = json.loads(files['frontend/package.json'])
+    for field in ('dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'overrides'):
+        assert prepared.get(field) == canonical.get(field), f'Host commands cannot own {field}'
+    assert files['frontend/package-lock.json'] == (client / 'package-lock.json').read_bytes()
     assert layers.browser_inputs(files, {'nodeDirectory': 'frontend'})
 
 
