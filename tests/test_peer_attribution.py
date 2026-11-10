@@ -690,7 +690,7 @@ def test_native_steering_identity_does_not_replace_receipt_binding(store, change
 
 
 def test_partial_native_steering_ambiguity_cannot_alias_or_remove_cached_copy(store):
-    from amplifier_web.automatic_history import align_expanded_inputs, alias_peer_inputs
+    from amplifier_web.automatic_history import align_expanded_inputs, alias_input_originals
     peer, _ = retained(store)
     native = display_message({"role": "user", "content": peer_input(peer["peerEnvelope"], TEXT),
         "metadata": {"amplifier_input": {"version": 1, "kind": "steer", "id": "request"}}},
@@ -700,7 +700,7 @@ def test_partial_native_steering_ambiguity_cannot_alias_or_remove_cached_copy(st
     original = copy.deepcopy([peer, cached])
     session = {"id": "recipient", "messages": original}
     assert align_expanded_inputs(original, [native]) == original
-    assert alias_peer_inputs(session, [native]) == [native]
+    assert alias_input_originals(session, [native]) == [native]
 
 
 @pytest.mark.parametrize("field,value", [
@@ -886,7 +886,7 @@ def test_peer_repair_does_not_change_nonpeer_expanded_export_policy(tmp_path, mo
 @pytest.mark.parametrize("identity", [{"bad": "request"}, ["request"], 1, True, "x" * 201])
 @pytest.mark.parametrize("peer", [False, True])
 def test_malformed_identity_survives_passive_history_and_export(store, tmp_path, monkeypatch, identity, peer):
-    from amplifier_web.automatic_history import alias_peer_inputs, align_expanded_inputs
+    from amplifier_web.automatic_history import alias_input_originals, align_expanded_inputs
     from amplifier_web.history_query import _rows
     row, _ = retained(store)
     native_value = {"role": "user", "content": peer_input(row["peerEnvelope"], TEXT),
@@ -900,7 +900,7 @@ def test_malformed_identity_survives_passive_history_and_export(store, tmp_path,
     monkeypatch.setattr("amplifier_web.automatic_history.directory", lambda row: tmp_path)
     monkeypatch.setattr("amplifier_web.conversation_export.directory", lambda row: tmp_path)
     (tmp_path / "transcript.jsonl").write_text(json.dumps(native_value) + "\n")
-    assert alias_peer_inputs(session, [native]) == [native]
+    assert alias_input_originals(session, [native]) == [native]
     assert align_expanded_inputs([row], [native]) == [row]
     read, _ = _rows(session)
     assert any(item["id"] == row["id"] for item in read)

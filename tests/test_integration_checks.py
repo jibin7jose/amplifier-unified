@@ -47,6 +47,14 @@ def test_changed_feature_selects_its_owner_without_full_matrix():
     assert not {'release-runtime', 'browser-installed'} & {job['lane'] for job in all_jobs}
 
 
+@pytest.mark.parametrize('path', ['components/web-client/src/main.jsx',
+    'components/web-client/public/pwa.js', 'components/web-client.source.json',
+    'scripts/web_client_build.py', 'scripts/web_client_source.py',
+    'scripts/web_client_development.py'])
+def test_selected_client_changes_keep_the_existing_browser_owner(path):
+    assert checks.select_lanes([path]) == [{'lane': 'browser-headless', 'os': 'ubuntu-latest'}]
+
+
 @pytest.fixture
 def release_repository(tmp_path, monkeypatch):
     """Actual Git comparisons, including complete metadata and merge-base semantics."""
@@ -308,6 +316,7 @@ def test_publication_stays_short_and_background_owns_integration():
 
 
 @pytest.mark.parametrize('changed', ['pyproject.toml', 'uv.lock', '.github/workflows/integration.yml',
+    'components/web-client/src/main.jsx', 'components/web-client.source.json',
     'frontend/src/main.jsx', 'frontend/tests/browser.mjs', 'frontend/package.json',
     'frontend/package-lock.json', 'frontend/vite.config.js', 'frontend/index.html',
     'amplifier_web/static/assets/main.js', 'amplifier_web/static/index.html',

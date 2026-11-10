@@ -1,11 +1,11 @@
 {
-  "name": "amplifier-web",
-  "version": "0.1.0",
+  "name": "@amplifier/client-web",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "vite build",
+    "dev": "node scripts/web-client.mjs dev",
+    "build": "node scripts/web-client.mjs build",
     "test": "node --test tests/*.test.mjs",
     "test:multi-quote-browser": "node tests/multi-quote-browser.mjs",
     "test:chat-demand-browser": "node tests/chat-demand-browser.mjs",
@@ -29,8 +29,6 @@
     "test:smart-tools-browser": "node tests/smart-tools-browser.mjs",
     "test:mcp-recovery-browser": "node tests/mcp-recovery-browser.mjs",
     "test:panel-browser": "node tests/panel-layout-browser.mjs",
-    "prebuild": "node scripts/sync-branding.mjs",
-    "predev": "node scripts/sync-branding.mjs",
     "test:pwa-browser": "node tests/pwa-browser.mjs",
     "test:navigation-browser": "node tests/navigation-browser.mjs",
     "test:conversation-navigation-browser": "node tests/conversation-navigation-browser.mjs",
@@ -119,7 +117,11 @@
     "test:shared-landing-browser": "node tests/shared-landing-browser.mjs",
     "test:home-sidebar-browser": "node tests/home-sidebar-browser.mjs",
     "test:focus-navigation-browser": "node tests/focus-navigation-browser.mjs",
-    "test:shared-work-browser": "node tests/shared-work-browser.mjs"
+    "test:shared-work-browser": "node tests/shared-work-browser.mjs",
+    "pretest": "node scripts/web-client.mjs prepare-view",
+    "prepare:view": "node scripts/web-client.mjs prepare-view",
+    "build:development": "node scripts/web-client.mjs build-development",
+    "client:inputs": "node scripts/client-capsule.mjs inputs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.3.1",

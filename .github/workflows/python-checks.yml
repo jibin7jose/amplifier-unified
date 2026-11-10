@@ -104,6 +104,14 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
+        run: python scripts/web_client_development.py prepare-view
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - run: uv sync --locked --group dev --group artifacts
       - name: Resolve the declared live-runtime source
@@ -277,12 +285,6 @@ jobs:
               'loop': subprocess.check_output(['git', '-C', '.ci/loop-live', 'rev-parse', 'HEAD'], text=True).strip(),
               'tests': len(rows), 'nativeTests': len(native), 'modules': modules}, indent=2))
           PY
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        if: ${{ env.CHECK_SUITE == 'question-answer-resume' || env.CHECK_SUITE == 'question-answer-installed' }}
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
       - name: Verify rendered question-answer continuation and package bytes
         if: ${{ env.CHECK_SUITE == 'question-answer-resume' || env.CHECK_SUITE == 'question-answer-installed' }}
         run: |

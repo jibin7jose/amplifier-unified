@@ -35,11 +35,21 @@ def selection(path):
     return record
 
 
-def copy_tracked(source, destination):
-    """Copy authored Git members only; never bring along build outputs or .git."""
-    paths = command('git', '-C', source, 'ls-files', '--cached', '-z', capture=True).stdout
+def copy_tracked(source, destination, *, node='node'):
+    """Copy tracked source, or the client's production manifest in Git-free exports."""
+    git = command('git', '-C', source, 'rev-parse', '--show-toplevel',
+                  capture=True, check=False)
+    if git.returncode == 0:
+        paths = command('git', '-C', source, 'ls-files', '--cached', '-z', capture=True).stdout.split('\0')
+    else:
+        result = command(node, '--input-type=module', '-e',
+                         'const m=await import(process.argv[1]); '
+                         'console.log(JSON.stringify(m.selectedInputs(process.argv[2])));',
+                         (source / 'scripts/client-source.mjs').as_uri(), source,
+                         capture=True, timeout=30)
+        paths = json.loads(result.stdout)
     destination.mkdir()
-    for name in paths.split('\0'):
+    for name in paths:
         if not name:
             continue
         path = source / name
@@ -80,7 +90,7 @@ def prepare(root, record_path, destination, *, node='node'):
             source = stage / 'repository'
             fetch_source(record['source'], source)
         prepared = stage / 'source'
-        copy_tracked(source, prepared)
+        copy_tracked(source, prepared, node=node)
         # Carry the same trusted selection into a Git-free developer checkout.
         copied_record = prepared / '.client-source.json'
         copied_record.write_text(json.dumps(record, indent=2) + '\n')

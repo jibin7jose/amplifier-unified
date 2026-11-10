@@ -143,6 +143,26 @@ class WebClientSourceTests(unittest.TestCase):
             self.prepare()
         self.assertFalse(self.output.exists())
 
+    def test_git_free_export_copies_only_canonical_production_manifest(self):
+        source = self.root / 'export'
+        (source / 'scripts').mkdir(parents=True)
+        (source / 'scripts/client-source.mjs').write_text('// Canonical manifest owner')
+        (source / 'package.json').write_text('{}')
+        (source / 'unrelated-private-file').write_text('Do not copy')
+        actual_command = delivery.command
+
+        def command(*args, **kwargs):
+            if args[0] == 'manifest-node':
+                self.assertIn('selectedInputs', args[3])
+                return subprocess.CompletedProcess(args, 0,
+                    json.dumps(['package.json', 'scripts/client-source.mjs']))
+            return actual_command(*args, **kwargs)
+
+        with patch.object(delivery, 'command', side_effect=command):
+            delivery.copy_tracked(source, self.output, node='manifest-node')
+        self.assertEqual(sorted(str(p.relative_to(self.output)) for p in self.output.rglob('*')
+                                if p.is_file()), ['package.json', 'scripts/client-source.mjs'])
+
 
 if __name__ == '__main__':
     unittest.main()
