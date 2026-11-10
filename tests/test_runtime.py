@@ -3543,6 +3543,89 @@ def test_default_runtime_probe_output_failure_is_not_inferred_inner_preflight(ra
     assert fixture.parse_inner_output(b'', outer_failure=failure)['diagnostic'] == failure
 
 
+@pytest.mark.parametrize('operation', ['create', 'write', 'replace'])
+@pytest.mark.parametrize('writer', ['rename', 'persist'])
+async def test_default_runtime_probe_names_metadata_failure_without_private_payload(
+        tmp_path, monkeypatch, record_property, operation, writer):
+    """A failed naming write identifies its operation, not a failed admission."""
+    import inspect
+    from amplifier_foundation.io import files
+    from amplifier_web.host.storage import SessionStore
+    from amplifier_web.service import AppService
+    fixture = _default_runtime_probe_module()
+    app = AppService(tmp_path / 'app', workspace=tmp_path)
+    try:
+        await app.dispatch('session.create', {})
+        session = app._session()
+        store = SessionStore.for_app(tmp_path / 'app', tmp_path)
+        store.save(session['id'], [{'role': 'user', 'content': 'SECRET content'}], {})
+        target = store.directory(session['id']) / 'metadata.json'
+        before = target.read_bytes()
+        original_temporary, original_replace = files.tempfile.NamedTemporaryFile, Path.replace
+
+        def denied(*args, **kwargs):
+            error = PermissionError(13, 'SECRET exception', str(target))
+            error.winerror = 5
+            raise error
+
+        def temporary(**kwargs):
+            selected = Path(kwargs['dir']) == target.parent
+            if selected and operation == 'create':
+                denied()
+            stream = original_temporary(**kwargs)
+            if selected and operation == 'write':
+                stream.write = denied
+            return stream
+
+        def replace(path, destination):
+            if destination == target and operation == 'replace':
+                denied()
+            return original_replace(path, destination)
+
+        with monkeypatch.context() as fault:
+            fault.setattr(files.tempfile, 'NamedTemporaryFile', temporary)
+            fault.setattr(Path, 'replace', replace)
+            with pytest.raises(OSError) as caught:
+                if writer == 'rename':
+                    await app.dispatch('session.rename', {
+                        'id': session['id'], 'title': 'SECRET new name'})
+                else:
+                    from amplifier_web.naming import persist
+                    persist(tmp_path / 'app', {**session, 'title': 'SECRET new name'},
+                            shared_rename=True)
+        with monkeypatch.context() as baseline:
+            baseline.setattr(fixture, 'CODE_LABELS', {
+                key: value for key, value in fixture.CODE_LABELS.items()
+                if not key.startswith(('naming_', 'service_dispatch'))})
+            assert all(not row['frames'] for row in fixture.failure_facts(
+                caught.value, 'input_admission')['errors'])
+        facts = fixture.failure_facts(caught.value, 'input_admission')
+        fixture.validate_diagnostic(facts)
+        assert [row['class'] for row in facts['errors']] == ['OSError', 'PermissionError']
+        outer, cause = facts['errors']
+        assert cause['errno'] == 13 and cause['winerror'] == 5
+        assert {('naming_metadata_set' if writer == 'persist' else 'naming_policy'),
+                'naming_metadata_save', 'naming_atomic_write'} <= {
+                    frame['source'] for frame in outer['frames']}
+        # The same error wrapper must distinguish temp creation, writing and
+        # replacement using the exact loaded atomic writer's relative offset.
+        lines, _ = inspect.getsourcelines(files._write_atomic)
+        needle = {'create': 'with tempfile.NamedTemporaryFile(',
+                  'write': 'tmp_file.write(content)', 'replace': 'temp_path.replace(path)'}[operation]
+        assert {'source': 'naming_atomic_write', 'offset': next(
+            index for index, line in enumerate(lines) if needle in line)} in cause['frames']
+        public = json.dumps(facts)
+        assert 'SECRET' not in public and str(tmp_path) not in public
+        assert len(public.encode()) < 2048
+        assert target.read_bytes() == before
+        assert not list(target.parent.glob('.metadata_*.tmp'))
+        # This checkpoint describes a failed call, not its admission/effects.
+        assert not any(key in facts for key in ('accepted', 'effectAdmitted', 'retry'))
+        record_property('diagnostic', public)
+    finally:
+        await app.close()
+
+
 def test_default_runtime_probe_diagnostic_privacy_bounds_and_schema(monkeypatch):
     fixture = _default_runtime_probe_module()
 
