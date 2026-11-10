@@ -264,7 +264,7 @@ class UpdateWait:
         if successor:
             self.manager.running_identity = {
                 'version': self.release['version'], 'revision': self.release['revision'],
-                'instanceId': 'new-fixture-process'}
+                'instanceId': self.app.instance_id}
             assert self.app.instance_id != self.old_instance
 
     def health(self, **changes):
@@ -641,6 +641,287 @@ async def enroll_other_owner(h):
         return h.sid
     finally:
         h.sid = original
+
+
+@pytest.mark.parametrize('changed', ['attemptId', 'revision', 'generation', 'withdrawn'])
+async def test_changed_staged_update_continues_checkpointed_goal_once_without_claiming_adoption(waiting, changed):
+    h = waiting
+    await h.ready()
+    original = copy.deepcopy(h.row)
+    task = copy.deepcopy(h.controller.tasks.record())
+    goal = copy.deepcopy(h.controller.coordinator.session_state['goal'])
+    if changed == 'withdrawn':
+        h.app.state['updates']['pendingApp'] = None
+    else:
+        h.app.state['updates']['pendingApp'][changed] = 'e' * len(h.release[changed])
+    await drain.observe_waiters(h.manager)
+    await h.settle()
+    await drain.observe_waiters(h.manager)
+    await h.settle()
+    assert len(h.runtime.admitted) == 1
+    admitted = h.runtime.admitted[0]
+    assert admitted['task'] == task
+    assert admitted['goal'] == goal
+    assert all(admitted['goal'][key] == value for key, value in original['yieldedGoal'].items())
+    assert not h.runtime.sent
+    receipt = (await h.wait())['result']
+    assert receipt['status'] == 'withdrawn'
+    assert receipt['boundary']['boundaryId'] == original['boundaryId']
+    assert receipt['boundary']['updateTarget'] == original['updateTarget']
+    assert receipt['boundary']['continuationRequestId'] == admitted['inputId']
+    assert h.receipts('updates.app')[0]['terminalOutcome']['outcome'] == 'update-withdrawn'
+    assert not h.app.state['updates'].get('applicationResult')
+    assert len(h.receipts('coordination.send')) == 1
+
+
+async def test_changed_update_waits_for_native_checkpoint_before_releasing_its_goal(waiting):
+    h = waiting
+    await h.wait()
+    h.app.state['updates']['pendingApp'] = None
+    await drain.observe_waiters(h.manager)
+    assert not h.runtime.admitted and not any(call[2] for call in h.runtime.boundary_calls)
+    assert h.sid in h.app.state['updates']['drain']['workers']
+    await h.yield_turn(park=False)
+    await drain.observe_waiters(h.manager)
+    assert not h.runtime.admitted and not any(call[2] for call in h.runtime.boundary_calls)
+    h.runtime.native[h.sid].parked = True
+    await drain.observe_waiters(h.manager)
+    await h.settle()
+    assert len(h.runtime.admitted) == 1
+
+
+@pytest.mark.parametrize('failure', ['source', 'publication', 'acknowledgement'])
+@pytest.mark.parametrize('restart', [False, True])
+async def test_withdrawn_update_retains_cancelled_wait_until_continuation_is_durable(waiting, monkeypatch, failure, restart):
+    h = waiting
+    await h.ready()
+    task = copy.deepcopy(h.controller.tasks.record())
+    goal = copy.deepcopy(h.controller.coordinator.session_state['goal'])
+    h.app.state['updates']['pendingApp'] = None
+    insert, publish = h.app.collaboration.insert, h.app._publish_changes
+
+    def fail_source(identity, digest, receipt):
+        if receipt.get('commandAction') == 'updates.app':
+            raise OSError('Synthetic source receipt storage failure')
+        return insert(identity, digest, receipt)
+
+    def fail_publication(*args, **kwargs):
+        if kwargs.get('sessions'):
+            if failure == 'acknowledgement':
+                publish(*args, **kwargs)
+            raise OSError('Synthetic continuation publication failure')
+        return publish(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        if failure == 'source':
+            patch.setattr(h.app.collaboration, 'insert', fail_source)
+        else:
+            patch.setattr(h.app, '_publish_changes', fail_publication)
+        with pytest.raises(OSError, match='Synthetic'):
+            await drain.observe_waiters(h.manager)
+    assert h.row['withdrawn'] and h.row['ready']
+    assert len([call for call in h.runtime.boundary_calls if call[2]]) == 1
+    # The updater can publish its error without losing the retained waiter.
+    h.app._publish_changes(globals={'updates'})
+    await h.settle()
+    assert not h.runtime.admitted
+    if restart:
+        await h.reconnect()
+        assert h.row['withdrawn'] and h.row['ready']
+        assert not h.runtime.workers  # The old cancellation must not be repeated.
+    calls = len(h.runtime.boundary_calls)
+    for _ in range(2):
+        await drain.observe_waiters(h.manager)
+        await h.settle()
+    assert len(h.runtime.boundary_calls) == calls
+    assert len(h.runtime.admitted) == 1
+    assert h.runtime.admitted[0]['task'] == task
+    assert h.runtime.admitted[0]['goal'] == goal
+    assert len(h.receipts('updates.app')) == len(h.receipts('coordination.send')) == 1
+    assert not h.runtime.sent
+    assert h.sid not in h.app.state['updates']['drain']['workers']
+
+
+async def test_withdrawn_update_retains_wait_until_inbox_space_returns(waiting, monkeypatch):
+    from amplifier_web.errors import AppError
+    h = waiting
+    await h.ready()
+    h.app.state['updates']['pendingApp'] = None
+
+    def full(*args, **kwargs):
+        raise AppError('Synthetic full inbox', 429)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(h.app.collaboration, 'require_inbox_slot', full)
+        await drain.observe_waiters(h.manager)
+        await h.settle()
+    assert h.row['withdrawn'] and h.row['ready']
+    assert not h.runtime.admitted
+    assert h.receipts('updates.app')[0]['subscription']['status'] == 'backpressured'
+    await drain.observe_waiters(h.manager)
+    await h.settle()
+    assert len(h.runtime.admitted) == 1
+    assert len([call for call in h.runtime.boundary_calls if call[2]]) == 1
+    assert len(h.receipts('updates.app')) == len(h.receipts('coordination.send')) == 1
+    assert h.sid not in h.app.state['updates']['drain']['workers']
+
+
+@pytest.mark.parametrize('replacements', [('installed',), ('withdrawn',), ('installed', 'installed')])
+async def test_withdrawn_backpressured_wait_survives_other_replacements(waiting, monkeypatch, replacements):
+    h = waiting
+    await h.ready()
+    original = copy.deepcopy(h.row)
+    task = copy.deepcopy(h.controller.tasks.record())
+    goal = copy.deepcopy(h.controller.coordinator.session_state['goal'])
+    cancellations = 0
+
+    def full(*args, **kwargs):
+        raise AppError('Synthetic full inbox', 429)
+
+    with monkeypatch.context() as patch:
+        for index, outcome in enumerate(replacements):
+            # A newer update can proceed while the old wait's continuation
+            # lacks inbox space, including another update after release.
+            h.release = {**h.release, 'attemptId': str(index + 1) * 32,
+                         'revision': str(index + 1) * 40, 'generation': str(index + 1) * 32}
+            h.manager.diagnostics.begin('application', h.release['revision'], h.release['attemptId'])
+            h.app.state['updates']['pendingApp'] = copy.deepcopy(h.release)
+            patch.setattr(h.app.collaboration, 'require_inbox_slot', full)
+            assert await drain.prepare(h.manager, h.release)
+            assert h.row['withdrawn'] and h.row['ready']
+            assert h.row['updateTarget'] == original['updateTarget']
+            h.replace()
+            cancellations += len([call for call in h.runtime.boundary_calls if call[2]])
+            h.runtime.boundary_calls.clear()
+            if outcome == 'installed':
+                await h.reconnect(successor=True)
+                patch.setattr(h.app.collaboration, 'require_inbox_slot', full)
+                await h.confirm()
+            else:
+                h.app.state['updates'].update(phase='error', pendingApp=None, pendingRestart=None, pendingReplacement=None)
+            await drain.finish(h.manager, outcome)
+            await drain.observe_waiters(h.manager)
+            await h.settle()
+            assert h.app.state['updates']['drain']['phase'] == 'released'
+            assert h.row['withdrawn'] and not h.row.get('suppressed')
+            assert not h.runtime.admitted
+            assert (await h.wait())['result']['status'] == 'withdrawn'
+            assert not any(call[2] for call in h.runtime.boundary_calls)
+        if len(replacements) > 1:
+            # Enrollment by another owner must also preserve this recovery
+            # when it opens a new waiting drain after a completed release.
+            h.release = {**h.release, 'attemptId': '3' * 32,
+                         'revision': '3' * 40, 'generation': '3' * 32}
+            h.manager.diagnostics.begin('application', h.release['revision'], h.release['attemptId'])
+            h.app.state['updates'].update(phase='app-staged', pendingApp=copy.deepcopy(h.release))
+            h.app.state['updates']['application']['canInstall'] = True
+            original_sid = h.sid
+            h.sid = await h.new_task('Another owner waiting for a later update')
+            try:
+                await h.wait(args={'sessionId': h.sid, 'expectedRevision': 1,
+                                   'target': target(h.manager)}, command='later-owner-wait')
+            finally:
+                h.sid = original_sid
+            assert len(h.app.state['updates']['drain']['workers']) == 2
+            assert h.row['withdrawn'] and h.row['updateTarget'] == original['updateTarget']
+    for _ in range(2):
+        await drain.observe_waiters(h.manager)
+        await h.settle()
+    assert cancellations == 1
+    assert not any(call[2] for call in h.runtime.boundary_calls)
+    assert len(h.runtime.admitted) == 1
+    assert h.runtime.admitted[0]['task'] == task
+    assert h.runtime.admitted[0]['goal'] == goal
+    assert len(h.receipts('updates.app')) == len(h.receipts('coordination.send')) == 1
+    receipt = (await h.wait())['result']
+    assert receipt['status'] == 'withdrawn'
+    assert receipt['boundary']['updateTarget'] == original['updateTarget']
+    assert receipt['boundary']['continuationRequestId'] == h.runtime.admitted[0]['inputId']
+    source = h.receipts('updates.app')[0]['terminalOutcome']
+    assert source['outcome'] == 'update-withdrawn'
+    assert 'updated app is ready' not in source['text']
+    assert h.sid not in h.app.state['updates']['drain']['workers']
+
+
+@pytest.mark.parametrize('acknowledgement', ['lost', 'missing'])
+async def test_withdrawn_update_needs_positive_boundary_cancellation(waiting, acknowledgement):
+    h = waiting
+    await h.ready()
+    original = copy.deepcopy(h.row)
+    h.app.state['updates']['pendingApp'] = None
+    if acknowledgement == 'lost':
+        h.runtime.lose_boundary_ack = True
+    else:
+        h.runtime.handoff_boundary = AsyncMock(return_value={'ready': True})
+    with pytest.raises((TimeoutError, RuntimeError)):
+        await drain.observe_waiters(h.manager)
+    assert h.row == original
+    assert not h.runtime.admitted and not h.receipts('updates.app')
+
+
+@pytest.mark.parametrize('pending', ['pendingRestart', 'pendingReplacement'])
+async def test_withdrawn_update_does_not_cancel_an_unresolved_replacement(waiting, pending):
+    h = waiting
+    await h.ready()
+    original = copy.deepcopy(h.row)
+    h.app.state['updates'].update(pendingApp=None, **{pending: {'phase': 'unknown'}})
+    await drain.observe_waiters(h.manager)
+    assert h.row == original
+    assert not any(call[2] for call in h.runtime.boundary_calls)
+    assert not h.runtime.admitted and not h.receipts('updates.app')
+
+
+@pytest.mark.parametrize('changed', ['stop', 'completed', 'input', 'access', 'pendingReplacement'])
+async def test_withdrawn_continuation_rechecks_current_authority_before_transport(waiting, changed):
+    h = waiting
+    await h.ready()
+    h.app.state['updates']['pendingApp'] = None
+
+    async def invalidate():
+        if changed == 'stop':
+            await h.app.dispatch('conversation.stop', {'sessionId': h.sid},
+                                 command_id='late-stop', include_state=False)
+        elif changed == 'completed':
+            await h.change_task(changed)
+        elif changed == 'input':
+            h.app._message(h.app._session(h.sid), 'user', 'A new direction',
+                           inputId='later-human-input', inputOrigin='ui', delivery={'status': 'accepted'})
+        elif changed == 'access':
+            await h.app.dispatch('access.set', {
+                'sessionId': h.sid, 'scope': 'session', 'mode': 'ask',
+                'expectedRevision': h.app.access_mode.snapshot(h.app._session(h.sid))['revision'],
+            }, command_id='late-access-change', include_state=False)
+        else:
+            h.app.state['updates'][changed] = {'phase': 'unknown'}
+
+    h.runtime.before_admission = invalidate
+    await drain.observe_waiters(h.manager)
+    await h.settle()
+    assert len(h.runtime.admission_calls) == 1
+    assert len(h.runtime.guard_reasons) == 1 and h.runtime.guard_reasons[0]
+    assert not h.runtime.admitted and not h.runtime.sent
+    requests = h.receipts('coordination.send')
+    assert len(requests) == 1 and requests[0]['delivery'] in {'not_sent', 'suppressed'}
+    await h.app.collaboration.drain(h.sid)
+    await h.settle()
+    assert len(h.runtime.admission_calls) == 1
+
+
+async def test_withdrawn_update_uses_queued_child_result_instead_of_extra_wakeup(waiting):
+    h = waiting
+    created = await h.commission_child()
+    await h.wait()
+    await h.report_child(created)
+    await h.yield_turn()
+    assert await drain.prepare(h.manager, h.release)
+    h.app.state['updates']['pendingApp'] = None
+    await drain.observe_waiters(h.manager)
+    await h.settle()
+    returned = created['subscription']['continuationId']
+    assert [row['inputId'] for row in h.runtime.admitted] == [returned]
+    assert h.app.collaboration.receipt(returned)['delivery'] == 'accepted'
+    assert (await h.wait())['result']['boundary']['continuationRequestId'] == returned
+    assert not h.receipts('updates.app')
 
 
 @pytest.mark.parametrize('already_suppressed', [False, True])
