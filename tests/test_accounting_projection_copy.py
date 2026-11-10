@@ -35,6 +35,18 @@ class CopiedScalar(str):
         return str(self)
 
 
+def test_retired_membership_snapshot_does_not_add_length_hooks():
+    class Rows(list):
+        def __len__(self):
+            raise AssertionError('The original membership iteration did not request a length')
+
+    row = {'id': 'call', 'kind': 'llm', 'sessionId': 'root', 'revision': 1,
+           'usage': {'inputTokens': 2}}
+    tree = {'retiredUsageNodes': Rows([row])}
+    assert accounting_projection(tree) == [row]
+    assert stored_execution(tree)['retiredUsageNodes'] == [row]
+
+
 def test_accounting_projection_detaches_retained_nested_values_and_scalar_subclasses():
     model = MutableString('fixture')
     model.notes = ['original']

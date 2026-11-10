@@ -27,6 +27,7 @@ class ReferenceEntry:
     resource: object
     charge: int
     input_digest: bytes | None = None
+    retired_digest: bytes | None = None
     projection: tuple | None = None
     input_charge: int = 0
 
@@ -71,10 +72,15 @@ def _input_digest(tree):
     if (type(tree) is not dict or any(type(key) is not str or len(key) > 200 for key in tree)):
         return None
     digest = hashlib.sha256()
-    def include(value):
+    retired = None
+    def include(value, field_digest=None):
         witness = _witness(value)
-        digest.update(len(witness).to_bytes(8, 'big'))
+        length = len(witness).to_bytes(8, 'big')
+        digest.update(length)
         digest.update(witness)
+        if field_digest is not None:
+            field_digest.update(length)
+            field_digest.update(witness)
     try:
         for name in sorted(tree):
             if name == 'plan':
@@ -82,14 +88,17 @@ def _input_digest(tree):
             value = tree[name]
             chunked = type(value) is list and len(value) >= ExecutionPreparation.CHUNK
             include((name, chunked))
+            field_digest = hashlib.sha256() if name == 'retiredUsageNodes' and chunked else None
             if chunked:
                 for start in range(0, len(value), ExecutionPreparation.CHUNK):
-                    include(value[start:start + ExecutionPreparation.CHUNK])
+                    include(value[start:start + ExecutionPreparation.CHUNK], field_digest)
             else:
                 include(value)
+            if field_digest is not None:
+                retired = field_digest.digest()
     except (Unsupported, pickle.PicklingError, RecursionError, TypeError, ValueError):
         return None
-    return digest.digest()
+    return digest.digest(), retired
 
 
 def _canonical_retired(rows):
@@ -364,15 +373,26 @@ class ExecutionPreparation:
         large = (type(tree) is dict and all(type(key) is str for key in tree)
                  and sum(len(rows) for rows in (tree.get('nodes'), tree.get('retiredUsageNodes'))
                          if type(rows) is list) >= self.CHUNK)
-        digest = _input_digest(tree) if large or (previous is not None and previous.input_digest is not None) else None
+        witnessed = _input_digest(tree) if large or (previous is not None and previous.input_digest is not None) else None
+        digest, retired_digest = witnessed if witnessed is not None else (None, None)
         if (digest is not None and previous is not None and previous.owner == owner
                 and previous.input_digest == digest and previous.projection is not None):
             resource = resource_files.reuse_reference(db, previous.resource)
             if resource is not None:
                 pending[identity] = previous
                 return None, {**resource, **dict(previous.projection)}
+        validated_retired = None
         def retired(rows):
-            canonical = _canonical_retired(rows) if digest is not None else None
+            nonlocal validated_retired
+            # The existing input pass already witnessed these exact values.
+            # Reuse their shape validation, not a retained copy of old rows.
+            if (retired_digest is not None and previous is not None
+                    and previous.owner == owner and previous.retired_digest == retired_digest):
+                canonical = rows
+            else:
+                canonical = _canonical_retired(rows) if digest is not None else None
+            if canonical is not None:
+                validated_retired = retired_digest
             return canonical if canonical is not None else self.retired(identity, rows, self._reserved(pending))
         value, turns, receipts = _stored_execution_fields(tree, _retired=retired)
         # Encoded nodes are an explicit part of preparation, not a partial
@@ -391,11 +411,12 @@ class ExecutionPreparation:
         if entry is not None and digest is not None:
             summary = tuple((key, projection[key]) for key in (
                 'executionProjection', 'pendingObservation', 'pendingWork', 'pendingVoice'))
-            charge = (sys.getsizeof(digest) + sys.getsizeof(summary)
+            charge = (sys.getsizeof(digest) + sys.getsizeof(validated_retired) + sys.getsizeof(summary)
                       + sum(sys.getsizeof(pair) + sys.getsizeof(pair[0])
                             + sys.getsizeof(pair[1]) for pair in summary))
             difference = charge - entry.input_charge
-            updated = replace(entry, input_digest=digest, projection=summary, input_charge=charge,
+            updated = replace(entry, input_digest=digest, retired_digest=validated_retired,
+                              projection=summary, input_charge=charge,
                               charge=entry.charge + difference)
             reserved = self._reserved({**pending, identity: updated})
             if reserved <= self.MAX_BYTES:

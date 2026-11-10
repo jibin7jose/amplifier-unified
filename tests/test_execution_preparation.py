@@ -154,10 +154,20 @@ def test_retired_custom_values_and_nonstandard_keys_keep_original_projection():
     cache = ExecutionPreparation()
     rows = [{'id': str(i), 'kind': 'llm', 'sessionId': 'a', 'revision': 1} for i in range(130)]
     rows[0]['id'] = Renamed('original-key')
+    rows[0].update(producerId='producer', rootSessionId='a', turnId='turn')
     assert cache.retired('a', rows) is None
-    tree = {'retiredUsageNodes': rows, 'nodes': [{**rows[0], 'revision': 2, 'liveObservation': True}]}
-    assert stored_execution(tree, _retired=lambda snapshot: cache.retired('a', snapshot)) == stored_execution(tree)
+    tree = {'retiredUsageNodes': rows, 'turns': [{'id': 'turn'}],
+            'nodes': [{**rows[0], 'revision': 2, 'liveObservation': True}]}
+    # Placement lookup uses the copied receipt identity. The custom hook changes
+    # that identity, so the original observation must not acquire the new receipt.
+    for project in (lambda: stored_execution(tree), lambda: stored_execution(
+            tree, _retired=lambda snapshot: cache.retired('a', snapshot))):
+        saved = project()
+        assert saved['retiredUsageNodes'][0]['id'] == 'changed-key'
+        assert saved['nodes'] == []
     rows[0]['id'] = '0'
+    tree['nodes'] = [{**rows[0], 'revision': 2, 'liveObservation': True}]
+    assert stored_execution(tree)['nodes'][0]['id'] == '0'
     rows[1]['revision'] = float('nan')
     assert cache.retired('a', rows) is None
     rows[1]['revision'] = 1

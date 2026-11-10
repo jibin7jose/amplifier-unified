@@ -269,6 +269,15 @@ Prefer removing this redundant projection/decode work to retaining another graph
 or increasing a cache budget. `test_execution_references.py` checks this path
 against the canonical encoder and preserves public deep isolation.
 
+When current work changes but retired accounting does not, reuse successful shape
+validation from the existing committed reference only after the fresh builtin-only
+input witness and owner match. Derive that digest during the existing content pass;
+do not add another traversal, decoded history cache or retention budget. Changed
+retired content, owner or custom values must take canonical validation again. The
+same regression checks repeated current updates, nested edits, rejected fields,
+duplicate identities and exact readback. Placement lookup must still use receipt
+identities after canonical copying; custom copy hooks can change those identities.
+
 The fallback retired-accounting preparation cache witnesses independent 128-row fragments
 within the same 8 MiB witness and 64 MiB accounting budgets. It retains compact
 JSON and witness digests, decoding detached rows for each save. Non-JSON values

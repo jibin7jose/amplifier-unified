@@ -367,6 +367,54 @@ def test_current_save_does_not_recopy_canonical_retired_accounting(db, monkeypat
     assert tree['retiredUsageNodes'][128]['assignmentReservation']['tokens'] == [128, 99]
 
 
+def test_current_progress_reuses_retired_validation_without_retaining_rows(db, monkeypatch):
+    from amplifier_web import execution_preparation, session_projection
+    cache, row = ExecutionPreparation(), observed_owner()
+    calls, original = [], execution_preparation._canonical_retired
+    def validate(rows):
+        calls.append(len(rows))
+        return original(rows)
+    monkeypatch.setattr(execution_preparation, '_canonical_retired', validate)
+    tree = row['execution']
+    for step in range(5):
+        tree['nodes'][-1]['revision'] = step + 1
+        tree['turns'][0]['phase'] = 'running' if step % 2 else 'waiting'
+        expected = resource_files.prepare(session_projection.stored_execution(tree))
+        result = save_projected(cache, db, row)
+        assert result['$resource'] == expected.identity
+    assert calls == [300], 'Current progress must not revalidate every unchanged retired receipt'
+    assert type(cache.references[row['id']].retired_digest) is bytes
+    assert len(cache.references[row['id']].retired_digest) == 32
+    assert cache.bytes + cache.accounting_bytes + cache._reserved({}) <= 2 * cache.MAX_BYTES
+
+
+@pytest.mark.parametrize('change', ['extra-field', 'usage-bool', 'duplicate', 'nested', 'owner'])
+def test_retired_validation_reuse_observes_changes_after_warm_save(db, monkeypatch, change):
+    from amplifier_web import execution_preparation, session_projection
+    cache, row = ExecutionPreparation(), observed_owner()
+    save_projected(cache, db, row)
+    tree = row['execution']
+    receipt = tree['retiredUsageNodes'][128]
+    if change == 'extra-field': receipt['prompt'] = 'Must not be retained'
+    elif change == 'usage-bool': receipt['usage']['inputTokens'] = True
+    elif change == 'duplicate': receipt.update(id='0', revision=3)
+    elif change == 'nested': receipt['assignmentReservation']['tokens'].append(99)
+    else: row['runtimeSessionId'] = 'changed-owner'
+    tree['nodes'][-1]['revision'] += 1
+    calls, original = [], execution_preparation._canonical_retired
+    def validate(rows):
+        calls.append(len(rows))
+        return original(rows)
+    monkeypatch.setattr(execution_preparation, '_canonical_retired', validate)
+    expected = resource_files.prepare(session_projection.stored_execution(tree))
+    result = save_projected(cache, db, row)
+    assert result['$resource'] == expected.identity
+    assert resource_files.read_detached(resource_files.detach(db, result['$resource'])) == json.loads(expected.text)
+    assert calls == [300]
+    if change in {'extra-field', 'usage-bool', 'duplicate'}:
+        assert cache.references[row['id']].retired_digest is None
+
+
 @pytest.mark.parametrize('change', ['extra-field', 'usage-extra', 'usage-bool', 'usage-none',
     'empty-id', 'numeric-id', 'wrong-kind', 'duplicate', 'shared-nested', 'tuple', 'numeric-key'])
 def test_accounting_save_preserves_filtering_reduction_and_json_values(db, change):
