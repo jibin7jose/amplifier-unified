@@ -90,6 +90,19 @@ def native_rows(app):
     return [row for row in app.get_state()['sessions'] if row.get('nativeIdentity')]
 
 
+async def refresh_kind(app, native_identity, expected):
+    # Discovery is bounded even for explicit refresh. Advance its slices
+    # without depending on watcher timing or relaxing the exact result.
+    row = None
+    for _ in range(64):
+        await app.history.refresh()
+        row = next((row for row in native_rows(app)
+                    if row['nativeIdentity'] == native_identity), None)
+        if row is not None and row['sessionKind'] == expected:
+            return row
+    assert row is not None and row['sessionKind'] == expected
+
+
 async def finish_actions(app):
     while app.tasks:
         await asyncio.wait_for(asyncio.gather(*list(app.tasks)), timeout=5)
@@ -1161,14 +1174,22 @@ async def test_worker_histories_remain_available_but_counts_only_include_root_ch
     assert restored._session(rows['uuid-worker']['id'])['historyLoaded'] is False
 
 
-async def test_existing_index_classification_refreshes_without_using_ui_fork_parent(tmp_path, app_factory):
+@pytest.mark.parametrize('slice_budget', [None, 1])
+async def test_existing_index_classification_refreshes_without_using_ui_fork_parent(
+        tmp_path, app_factory, monkeypatch, slice_budget):
     workspace = tmp_path / 'cli'
     native_session(workspace, 'web-fork', metadata={'parent_id': None})
     worker_directory = native_session(workspace, 'unclassified-worker')
-    app = app_factory()
-    await app.history.refresh()
-    fork_row = next(row for row in native_rows(app) if row['nativeIdentity'] == 'web-fork')
-    worker_row = next(row for row in native_rows(app) if row['nativeIdentity'] == 'unclassified-worker')
+    def create():
+        app = app_factory()
+        if slice_budget is not None:
+            app.history.index._recovery_budget = slice_budget
+            monkeypatch.setattr(app.history.index, '_invalidations', lambda: (False, set()))
+        return app
+
+    app = create()
+    fork_row = await refresh_kind(app, 'web-fork', 'root')
+    worker_row = await refresh_kind(app, 'unclassified-worker', 'root')
     fork_state = app._session(fork_row['id'])
     fork_state.update(historyManaged=False, parentId='ui-fork-lineage', forkTranscript={'sourceSessionId': 'old-root'})
     worker_state = app._session(worker_row['id'])
@@ -1177,8 +1198,8 @@ async def test_existing_index_classification_refreshes_without_using_ui_fork_par
     metadata = json.loads(metadata_path.read_text()); metadata['parent_id'] = 'web-fork'
     metadata_path.write_text(json.dumps(metadata))
     await app.close()
-    restored = app_factory()
-    await restored.history.refresh()
+    restored = create()
+    await refresh_kind(restored, 'unclassified-worker', 'worker')
     assert restored._session(worker_row['id'])['sessionKind'] == 'worker'
     assert restored._session(worker_row['id'])['parentId'] == fork_row['id']
     assert restored._session(fork_row['id'])['sessionKind'] == 'root'
@@ -1199,26 +1220,14 @@ async def test_internal_classification_refresh_preserves_history_and_diagnostic_
             monkeypatch.setattr(app.history.index, '_invalidations', lambda: (False, set()))
         return app
 
-    async def refresh_kind(app, expected):
-        # Discovery is bounded even for explicit refresh. Advance its slices
-        # without depending on watcher timing or relaxing the exact result.
-        row = None
-        for _ in range(64):
-            await app.history.refresh()
-            row = next((row for row in native_rows(app)
-                        if row['nativeIdentity'] == 'internal-job'), None)
-            if row is not None and row['sessionKind'] == expected:
-                return row
-        assert row is not None and row['sessionKind'] == expected
-
     app = create()
-    row = await refresh_kind(app, 'root')
+    row = await refresh_kind(app, 'internal-job', 'root')
     assert row['sessionKind'] == 'root'  # Unclassified legacy histories remain visible.
     saved = json.loads((directory / 'metadata.json').read_text())
     saved.update(session_visibility='internal', session_purpose='memory.suggestion')
     (directory / 'metadata.json').write_text(json.dumps(saved))
     before = files_snapshot(directory)
-    await refresh_kind(app, 'internal')
+    await refresh_kind(app, 'internal-job', 'internal')
     row = app._session(row['id'])
     assert row['sessionKind'] == 'internal'
     assert row['sessionPurpose'] == 'memory.suggestion'
@@ -1231,7 +1240,7 @@ async def test_internal_classification_refresh_preserves_history_and_diagnostic_
     assert 'read-only' in row['historyReadOnlyReason']
     await app.close()
     restored = create()
-    await refresh_kind(restored, 'internal')
+    await refresh_kind(restored, 'internal-job', 'internal')
     assert restored._session(row['id'])['sessionKind'] == 'internal'
     assert restored._session(row['id'])['sessionPurpose'] == 'memory.suggestion'
     assert files_snapshot(directory) == before
