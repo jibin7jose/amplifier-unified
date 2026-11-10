@@ -110,15 +110,17 @@ async def test_catalog_group_is_local_and_age_is_shared_per_client(service):
     assert service.state['selectedSessionId'] == before['selectedSessionId']
 
 
-@pytest.mark.parametrize('surface,expected', [('chats', '24h'), ('workspace', '7d'), ('home', '7d')])
-async def test_age_import_is_narrow_once_and_survives_reload(service, surface, expected):
+@pytest.mark.parametrize('surface', ['chats', 'workspace', 'home'])
+@pytest.mark.parametrize('list_age', ['7d', '14d', '1y'])
+async def test_age_import_is_narrow_once_and_survives_reload(service, surface, list_age):
+    expected = '24h' if surface == 'chats' else list_age
     saved = service.clients.attach('old-client')
     saved['view'].pop('navAge')
     saved['view'].update(workSurface=surface, draft='Private draft', workHomeQuery='retained')
     saved['drafts'][saved.get('selectedSessionId') or ''] = 'Private draft'
     old_shell = service.shell.client('old-client')
     old_shell['views']['chats'] = {'view': {
-        'navAge': '7d', 'navGroup': 'status',
+        'navAge': list_age, 'navGroup': 'status',
         'navRecentView': {'navAge': '24h', 'navGroup': 'workspace', 'navFilter': 'kept'}}}
     service.shell.put('client', 'old-client', old_shell)
     reloaded = service.clients.attach('reload', resume='old-client')

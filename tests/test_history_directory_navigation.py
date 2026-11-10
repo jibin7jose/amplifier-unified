@@ -118,7 +118,7 @@ def test_shared_age_filters_before_counts_page_and_workspace_aggregates(tmp_path
 
 
 @pytest.mark.parametrize('group', ['recent', 'workspace', 'status'])
-@pytest.mark.parametrize('age', ['24h', '7d', '30d', '90d', '1y', 'all'])
+@pytest.mark.parametrize('age', ['24h', '7d', '14d', '30d', '90d', '1y', 'all'])
 def test_group_and_age_query_filters_complete_catalog_before_paging(tmp_path, monkeypatch, group, age):
     now = 1_800_000_000
     monkeypatch.setattr(chat_navigation.time, 'time', lambda: now)

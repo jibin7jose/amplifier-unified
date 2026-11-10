@@ -1,8 +1,8 @@
 import './composer-test-helpers.mjs';
 import {showFixtureConversation} from './browser-chat-pages.mjs';
 import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
-// Run against the already-built production app. Only navigator's native geometry
-// is simulated; never inject/rewrite the shipped CSS or claim OS drag acceptance.
+// Run against the already-built production app with synthetic runtime/discovery.
+// Simulate navigator's native geometry, not shipped CSS or OS drag acceptance.
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {mkdir,writeFile} from 'node:fs/promises';
@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import {chromium,expect} from '@playwright/test';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
-const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',[root+'tests/fixtures/empty_host_ui_server.py'],{stdio:['ignore','pipe','inherit']});
+const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',[root+'tests/fixtures/empty_host_ui_server.py','--synthetic-discovery'],{stdio:['ignore','pipe','inherit']});
 const stop=ownFixture(fixture,{label:'Window controls geometry fixture'});
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||root+'output/window-controls-overlay';
 const headerOnly=process.argv.includes('--header-clearance-only');
@@ -327,5 +327,8 @@ try{
   assert.deepEqual(errors,[]);
   console.log('SIMULATED WCO GEOMETRY passed against shipped build: left/right/nonzero-y, 320–1280px, off/malformed recovery, menus/dialogs/compact Settings, retained viewer and saved appearance reload. Native installed launch, OS controls and dragging NOT verified.');
   }
+  const footprint=await page.evaluate(()=>fetch('/fixture').then(response=>response.json()));
+  assert.equal(footprint.foundationCachePresent,false,'Geometry must not prepare Foundation bundles');
+  assert.equal(footprint.workerCount,0);assert.deepEqual(footprint.started,[]);assert.deepEqual(footprint.sent,[]);
 }catch(error){failure=error;throw error}
 finally{await finishFixture({label:'Window controls geometry fixture',close:[['Ordinary browser',()=>ordinaryBrowser?.close()],['WCO browser',()=>browser?.close()]],stop,originalError:failure})}

@@ -48,7 +48,7 @@ try{
  assert.equal(await landingTitle.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
  await expect(chatrow(selected).locator('.a-nav-chat-select')).toHaveAccessibleName(await landingTitle.innerText());
  assert.equal(await shortcuts.locator('.a-nav-chat-title').first().evaluate(el=>getComputedStyle(el).whiteSpace),'nowrap');
- assert.deepEqual(await details.locator('code').allTextContents(),[initial.paths.one,'alpha-201']);
+ assert.deepEqual(await details.locator('code').allTextContents(),['alpha-201',initial.paths.one]);
  await page.context().grantPermissions(['clipboard-read','clipboard-write']);
  await details.getByRole('button',{name:'Copy session id',exact:true}).click();
  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'alpha-201');
@@ -58,7 +58,7 @@ try{
  await chatSearch.fill(initial.quietSession);await chatrow(initial.quietSession).waitFor();
  await chatrow(initial.quietSession).hover();
  await chatrow(initial.quietSession).getByRole('button',{name:/Details and actions/}).click();await details.waitFor();
- assert.deepEqual(await details.locator('code').allTextContents(),[initial.paths.one,initial.quietSession]);await page.keyboard.press('Escape');
+ assert.deepEqual(await details.locator('code').allTextContents(),[initial.quietSession,initial.paths.one]);await page.keyboard.press('Escape');
  await chatSearch.fill('');await expect(recent.locator('.a-nav-chat')).toHaveCount(40);
  await recent.getByRole('button',{name:'Show more conversations'}).click();
  await expect.poll(async()=>(await snapshot()).sidebarNavigation.search.index).toBe(1);
@@ -84,11 +84,14 @@ try{
  await page.screenshot({path:out+'/workspace-flyout.png'});await page.keyboard.press('Escape');
  await workspaceBrowser.getByRole('button',{name:'Open chats in '+initial.paths.two,exact:true}).click();
  const workspaceChats=workspaceBrowser;
- await expect(workspaceChats.locator('.a-nav-chat')).toHaveCount(3);
+ const workspaceCards=workspaceChats.locator('.a-work-card[data-session-id]');
+ await expect(workspaceCards).toHaveCount(3);
  assert.equal(await workspaceBrowser.locator('.a-workspace-explorer').count(),0);
- const beta=(await snapshot()).sidebarNavigation.workspace.items[0];
- await workspaceChats.getByRole('searchbox',{name:'Filter conversations'}).fill('Beta 001');
- await expect(workspaceChats.locator('.a-nav-chat')).toHaveCount(1);
+ const workspaceState=(await info()).state;
+ const beta=workspaceState.sessions.find(row=>row.nativeIdentity==='beta-002');
+ const betaWorkspaceName=workspaceState.workspaces.find(row=>row.id===beta.workspaceId).name;
+ await workspaceChats.getByRole('searchbox',{name:'Search your work',exact:true}).fill('Beta 001');
+ await expect(workspaceCards).toHaveCount(1);
  await page.getByRole('button',{name:'Search chats',exact:true}).click();
  await expect(recent.getByRole('status')).toHaveText('206 chats');
  await workspaces.getByRole('button',{name:'All workspaces',exact:true}).click();await search.waitFor();
@@ -115,7 +118,7 @@ try{
  await expect(recent.getByRole('status')).toHaveText('206 chats');assert.deepEqual(await pinnedContents(),contents);
  const third=pinned.locator('[data-order-id="session:'+beta.id+'"]'),first=pinned.locator('[data-order-id="session:'+selected+'"]');
  await expect(third.locator('.a-nav-chat-workspace')).toBeVisible();
- await expect(third.locator('.a-nav-chat-workspace')).toHaveText(beta.workspaceName);
+ await expect(third.locator('.a-nav-chat-workspace')).toHaveText(betaWorkspaceName);
  const drag=async()=>{
   const handle=third.getByRole('button',{name:/Reorder/});await handle.scrollIntoViewIfNeeded();
   const a=await handle.boundingBox(),b=await first.boundingBox();
@@ -124,7 +127,7 @@ try{
  await drag();const floating=page.locator('.a-reorder-floating');
  await expect(floating).toBeVisible();assert.ok((await floating.innerText()).includes(beta.title));
  await expect(floating.locator('.a-nav-chat-workspace')).toBeVisible();
- await expect(floating.locator('.a-nav-chat-workspace')).toHaveText(beta.workspaceName);assert.equal(await floating.locator('.a-navigation-age').isVisible(),await third.locator('.a-navigation-age').isVisible());
+ await expect(floating.locator('.a-nav-chat-workspace')).toHaveText(betaWorkspaceName);assert.equal(await floating.locator('.a-navigation-age').isVisible(),await third.locator('.a-navigation-age').isVisible());
  await expect(pinned.locator('.a-order-insertion')).toBeVisible();await expect(pinned.locator('.a-order-placeholder')).toHaveCount(1);
  const floatBox=await floating.boundingBox();assert.ok(floatBox.width>150&&floatBox.x>=0);assert.equal(await floating.locator('.a-nav-chat').evaluate(el=>el.offsetHeight),await third.locator('.a-nav-chat').evaluate(el=>el.offsetHeight));
  await page.screenshot({path:out+'/pin-drag.png'});await page.keyboard.press('Escape');await page.mouse.up();

@@ -15,14 +15,15 @@ This experimental extraction preserves the client history from Unified v0.70.0
 (`4854dbd9ec555690269747b7dbe273f008e9e179`, `LICENSE` and `frontend/`).
 The browser interface matches accepted Unified main
 `5692ad7bb7b79e0a000ccc7415cd0ac97d58738e`, preserving the current HTTP/SSE
-behavior. This `0.2.0` candidate changes build assembly and source ownership;
-it does not include the pending compact-sidebar or reset-cleanup interface.
+behavior. This `0.3.0` candidate adds the compact-sidebar controls and reset-cleanup
+interface selected for the coordinated Unified release. Backend reset behavior is
+qualified by that paired Unified release, not by standalone client fixtures.
 The 14 canonical shared inputs are selected from accepted Unified main
 `816c7a67dbafc20bfb28723dd317c71d3bd2bb28`; their bytes still match the current
 accepted server. Shared-input provenance and actual server qualification are distinct.
 The repository is currently private. Its independent package is
-`@amplifier/client-web`, currently `0.2.0`; no registry release or default
-Unified adoption is claimed. Current source changes remain coordinated with
+`@amplifier/client-web`, currently `0.3.0`; this candidate's registry publication
+and Unified release adoption remain separate. Current source changes remain coordinated with
 Unified until that handoff is accepted. The retained AHP client is separate.
 
 The [family vision](https://github.com/microsoft/amplifier-unified/blob/816c7a67dbafc20bfb28723dd317c71d3bd2bb28/docs/architecture/VISION.md),

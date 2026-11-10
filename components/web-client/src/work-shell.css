@@ -5,10 +5,10 @@
 #amp-one.a-approachable-shell .a-nav-head{height:36px;gap:5px;padding:0 2px}
 #amp-one.a-approachable-shell .a-sidebar-modes{display:flex;flex-direction:row;flex:none;min-height:40px;margin-bottom:8px;gap:3px}
 #amp-one.a-approachable-shell .a-sidebar-organizations{display:flex;flex:1;min-width:0;gap:3px;background:var(--a-bg);border-radius:8px;box-shadow:inset 0 0 0 1px var(--a-line)}
-#amp-one.a-approachable-shell .a-sidebar-organizations>button{flex:1;justify-content:center;font-size:var(--a-text-sm,13px);min-height:36px;padding:6px 8px;background:none;border:1px solid transparent;border-radius:7px;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-sidebar-organizations>button{flex:1;min-width:0;justify-content:center;font-size:var(--a-text-sm,13px);min-height:36px;padding:6px 4px;background:none;border:1px solid transparent;border-radius:7px;color:var(--a-muted)}
 #amp-one.a-approachable-shell .a-sidebar-organizations>button[aria-pressed=true]{background:var(--a-surface);border-color:var(--a-line);color:var(--a-ink);font-weight:600}
 #amp-one.a-approachable-shell .a-sidebar-modes button:focus-visible{outline:2px solid var(--a-accent);outline-offset:1px}
-#amp-one.a-approachable-shell .a-sidebar-modes>.a-sidebar-home{flex:0 0 36px;min-height:36px;padding:8px;background:none;border:1px solid transparent;border-radius:7px;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-sidebar-modes>:is(.a-sidebar-home,.a-sidebar-new){flex:0 0 32px;width:32px;min-width:32px;min-height:36px;padding:6px;background:none;border:1px solid transparent;border-radius:7px;color:var(--a-muted)}
 #amp-one.a-approachable-shell .a-sidebar-home[aria-current=page]{background:var(--a-soft);color:var(--a-accent)}
 #amp-one.a-approachable-shell .a-nav-main{margin:4px 0;min-height:38px;border-radius:8px}
 #amp-one.a-approachable-shell .a-nav-content{padding:0 0 14px}

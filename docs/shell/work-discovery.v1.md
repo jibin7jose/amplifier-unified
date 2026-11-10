@@ -17,7 +17,9 @@ familiar work or inspect its status while keeping their current context.
 
 ```text
 Home: Focus / Brief / Studio + current search and scope
-Sidebar: Home icon + Browse / Status in one row; New chat and Search chats
+Sidebar: Home icon + Browse / Status + New chat icon in one row
+Scrollable sidebar: Search chats / Last activity / navigation lists
+Footer: connection status + App options (Automation / Activity / Settings and existing entries)
 Browse: Pinned / Workspaces / Recent
 Status: Needs you / Ready for you / Working / Pick up again
 Choose a chat -> existing conversation and its existing action controls
@@ -38,7 +40,8 @@ Return Home -> remembered view, search, scope, reading position and Focus pass
    scope and pages; its reading position and Focus pass survive visits in the same tab.
    Sidebar mode, expansion and pages remain independent under client-state ownership.
    Broken: returning or switching sidebar mode resets the person's other surface.
-4. **Keep navigation consistently available.** Browse/Status shares one row;
+4. **Keep navigation consistently available.** Home, Browse/Status and an
+   accessible icon-only New chat share one row;
    the header owns its toggle; sidebar Search and New chat remain available on Home.
    Both sidebar views reuse chat controls and honor the same display preferences.
    Home is a recognizable header destination elsewhere and an icon in the sidebar’s first row. The current Home header has no redundant Home text or stale chat highlight.
@@ -89,8 +92,23 @@ Appearance detail levels; screen width may change its arrangement.
 
 The **All chats** catalog offers **Recent / date**, **Workspace** and
 **Status** grouping, independently of Focus / Brief / Studio layout. One visible,
-keyboard-operable **Last activity** slider in the sidebar selects **24h, 7d, 30d,
-90d, 1y or All** for the attached client; All is the default. It applies to Home,
+keyboard-operable **Last activity** slider in the sidebar selects **24h, 7d, 14d,
+30d, 90d or All** for the attached client; All is the default. Its two lines show
+the label/current value and a native range with unlabeled, noninteractive ticks.
+Search and age scroll with navigation lists, below the fixed mode row and above
+the fixed footer. Footer App options retains Automation, Activity and Settings
+with their notification badges, alongside its other entries, opening above it.
+Chat flyouts put the copyable native session ID before workspace information,
+omit discovery prose and omit pinned-chat up/down buttons; pin/unpin, saved order,
+drag and grip-keyboard ordering remain supported.
+
+The API and saved `1y` filter retain their existing year meaning, including custom
+module-local values. No broad migration rewrites these preferences. The bundled
+slider truthfully reads **1y** at an unticked position between 90d and All until
+the person explicitly chooses one of its six stops; keyboard arrows move to the
+adjacent 90d/All stop. Existing date-group boundaries and labels remain unchanged.
+
+The selected age applies to Home,
 workspace Chats, All chats/search, Recent, Status and workspace session counts
 before counting or paging. Age uses meaningful navigation activity, not selection,
 rename or intermediate tool progress. Finite ranges include the cutoff, exclude

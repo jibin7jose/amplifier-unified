@@ -2,15 +2,17 @@ import {filterList} from './list-filter.js';
 import {activityFor,sessionIdentity} from './navigation-presentation.js';
 
 export const CHAT_PAGE_SIZE=100;
-export const CHAT_AGES=['24h','7d','30d','90d','1y','all'];
-const ageSeconds=[86400,7*86400,30*86400,90*86400,365*86400];
+export const CHAT_AGES=['24h','7d','14d','30d','90d','all'];
+const ageLimits={'24h':86400,'7d':7*86400,'14d':14*86400,'30d':30*86400,'90d':90*86400,'1y':365*86400};
+// Date groups retain their established boundaries independently of slider stops.
+const dateSeconds=[86400,7*86400,30*86400,90*86400,365*86400];
 const dateGroups=['Last 24 hours','1–7 days ago','7–30 days ago','30–90 days ago','90 days–1 year ago','Over 1 year ago','Activity time unavailable'];
 const statusGroups={attention:'Needs you',unread:'Ready for you',working:'Working',waiting:'Waiting',paused:'Paused',idle:'Pick up again'};
 function listGroup(chat,group,now){
  if(chat.pinned)return {id:'pin',title:'Pinned',rank:-1};
  if(group==='workspace')return {id:'workspace:'+(chat.workspaceId||''),title:chat.workspaceName||'No workspace',rank:0};
  if(group==='status'){const kind=Object.hasOwn(statusGroups,chat.activity.kind)?chat.activity.kind:'idle';return {id:'status:'+kind,title:statusGroups[kind],rank:Object.keys(statusGroups).indexOf(kind)}}
- const index=chat.recentActivityAt>0?ageSeconds.findIndex(seconds=>chat.recentActivityAt>=now-seconds):-1;
+ const index=chat.recentActivityAt>0?dateSeconds.findIndex(seconds=>chat.recentActivityAt>=now-seconds):-1;
  const rank=chat.recentActivityAt>0?(index<0?5:index):6;
  return {id:'date:'+rank,title:dateGroups[rank],rank};
 }
@@ -83,7 +85,7 @@ export function chatPage(state,workspace,{section=null}={}){
  let chats=filterList(orderedChats(state,workspace,mode,section!=='recent'),filter,chat=>[chat.title||'Untitled conversation',chat.description||'',chat.id,sessionIdentity(chat),chat.workspace,chat.workspaceName]);
  if(section==='pinned')chats=chats.filter(chat=>chat.pinned);
  if(section==='recent'||section==='search')chats=chats.filter(chat=>scope.showAgentCreated||chat.agentCreated!==true||chat.id===selectedSessionId);
- const seconds=ageSeconds[CHAT_AGES.indexOf(age)];
+ const seconds=ageLimits[age];
  if(seconds)chats=chats.filter(chat=>chat.pinned||chat.recentActivityAt>0&&chat.recentActivityAt>=now-seconds);
  const activityCounts={attention:0,working:0,unread:0,idle:0};
  chats=chats.map(chat=>({...chat,activity:activityFor(chat,state)}));

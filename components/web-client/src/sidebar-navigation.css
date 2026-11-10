@@ -38,7 +38,9 @@
 #amp-one .a-chat-list-views select{max-width:100%;min-width:0}
 #amp-one .a-chat-age-filter{flex:0 0 auto;min-width:0;margin:8px 12px 12px}
 #amp-one .a-chat-age-filter>label{display:flex;justify-content:space-between;gap:8px}
-#amp-one .a-chat-age-filter input[type=range]{display:block;box-sizing:border-box;width:100%;min-width:0;min-height:32px;padding:0;margin:0;accent-color:var(--a-accent)}
-#amp-one .a-chat-age-stops{display:flex;justify-content:space-between;gap:4px;font-size:var(--a-text-sm,13px);color:var(--a-muted)}
-#amp-one .a-chat-age-filter small{display:block;color:var(--a-muted);font-size:var(--a-text-sm,13px);margin-top:4px}
+#amp-one .a-chat-age-filter input[type=range]{display:block;box-sizing:border-box;width:100%;min-width:0;min-height:32px;padding:0;margin:0;border:0;background:transparent;accent-color:var(--a-accent)}
+#amp-one .a-chat-age-track{position:relative}
+#amp-one .a-chat-age-stops{position:absolute;inset:auto 8px 3px;display:flex;justify-content:space-between;pointer-events:none}
+#amp-one .a-chat-age-stops>span{width:1px;height:5px;background:var(--a-muted)}
+@media(forced-colors:active){#amp-one .a-chat-age-stops>span{background:CanvasText;forced-color-adjust:none}}
 #amp-one .a-chat-group-heading{grid-column:1/-1;margin:16px 0 6px;font-size:var(--a-text-sm,13px);font-weight:600;color:var(--a-muted)}
