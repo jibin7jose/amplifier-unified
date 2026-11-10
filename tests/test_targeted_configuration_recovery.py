@@ -325,6 +325,8 @@ async def test_cross_owner_no_effect_recovery_holds_existing_queued_input(proces
 
 
     await invoke(b, source, 'reconcile')
+    await b.app.collaboration.drain(b.owner['id'])
+    assert b.app.collaboration.receipt('queued-before-recovery')['delivery'] == 'queued'
     await b.runtime._request(b.owner['id'], 'fixture.busy', count=0)
     await invoke(b, source, 'resume')
     task = b.app.management.pending_config_tasks.get(b.owner['id'])
