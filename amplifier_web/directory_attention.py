@@ -57,12 +57,16 @@ class DirectoryAttention:
                 current = make_item({}, key, 'Approval requested · ' + title,
                                     'chats', 'chats', item['detail'])
                 changed.append([owner, slot, current['fingerprint']])
+        # Keep exact review facts scalar and materialize their joins once per
+        # SELECT. Older SQLite planners otherwise flatten this through the
+        # directory UNION and scan every retained receipt for each notice.
+        # Item bodies are joined only by the demanded-items query below.
         sql += ''', corrected_fingerprints AS (
             SELECT json_extract(value,'$[0]') owner,json_extract(value,'$[1]') slot,
                    json_extract(value,'$[2]') fingerprint FROM json_each(?)),
-            current_notices AS (
+            current_notices AS MATERIALIZED (
                 SELECT n.owner,n.slot,n.key,COALESCE(c.fingerprint,n.fingerprint) fingerprint,
-                       n.is_error,n.value,n.title,n.workspace,n.ordinal,
+                       n.is_error,n.title,n.workspace,n.ordinal,
                        COALESCE(r.value=COALESCE(c.fingerprint,n.fingerprint),0) is_read
                 FROM visible_notices n
                 LEFT JOIN corrected_fingerprints c ON c.owner=n.owner AND c.slot=n.slot
@@ -91,12 +95,13 @@ class DirectoryAttention:
         if identities is not None:
             if not identities:
                 return []
-            where = ' WHERE owner IN (SELECT value FROM json_each(?))'
+            where = ' WHERE c.owner IN (SELECT value FROM json_each(?))'
             params += (json.dumps(sorted(identities), separators=(',', ':')),)
         result = []
         for owner, key, value, title, workspace, fingerprint, read in self.directory.db.execute(self.sql +
-                ' SELECT owner,key,value,title,workspace,fingerprint,is_read FROM current_notices' +
-                where + ' ORDER BY ordinal,slot', params):
+                ' SELECT c.owner,c.key,n.value,c.title,c.workspace,c.fingerprint,c.is_read'
+                ' FROM current_notices c JOIN directory_notices n ON n.owner=c.owner AND n.slot=c.slot' +
+                where + ' ORDER BY c.ordinal,c.slot', params):
             item = self.decode(value)
             item.update(sessionId=owner, workspace=workspace, fingerprint=fingerprint, read=bool(read))
             if key.startswith(('completion:', 'unread:')):
@@ -121,7 +126,7 @@ class DirectoryAttention:
             workspace_ids.setdefault(row['path'], []).append(row['id'])
         # Acknowledged owners need no Python row allocation. Presence still
         # preserves the legacy zero-valued chats page when all are reviewed.
-        if self.directory.db.execute(self.sql + ' SELECT 1 FROM current_notices LIMIT 1', self.params).fetchone():
+        if self.directory.db.execute(self.sql + ' SELECT 1 FROM visible_notices LIMIT 1', self.params).fetchone():
             result['pages'].setdefault('chats', 0)
         for owner, workspace, unread, badge in self.directory.db.execute(self.sql + '''
                 SELECT owner,workspace,count(*),sum(key NOT GLOB 'completion:*')

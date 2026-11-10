@@ -549,7 +549,10 @@ class HistoryDirectory:
         requested_fields = set(COLUMNS if fields is None else fields)
         if not requested_fields or not requested_fields.issubset(COLUMNS):
             raise ValueError('Use known directory fields for a scalar projection.')
-        needs_attention = notice_values or bool(requested_fields & {'unread', 'activity_kind', 'activity_label'})
+        # Notice consumers join exact receipts themselves. Only row activity
+        # fields need the extra owner-level aggregation below.
+        needs_notice_status = bool(requested_fields & {'unread', 'activity_kind', 'activity_label'})
+        needs_attention = notice_values or needs_notice_status
         required_fields = set(requested_fields)
         if public_ids is not None and len(public_ids) > PUBLIC_ID_BATCH:
             raise ValueError('Public-ID candidates require one bounded batch.')
@@ -653,7 +656,7 @@ class HistoryDirectory:
                 f"CASE WHEN {quiet} THEN CASE WHEN ns.unread THEN 'New response' ELSE 'Idle' END ELSE l.base_activity_label END" if name == 'activity_label' else f'l.{name}')
             expressions.append(expression + ' AS ' + name)
         local += (', local_rows AS (SELECT ' + ','.join(expressions) + ' FROM raw_local_rows l LEFT JOIN notice_status ns ON ns.owner=l.id)'
-                  if needs_attention else ', local_rows AS (SELECT * FROM raw_local_rows)')
+                  if needs_notice_status else ', local_rows AS (SELECT * FROM raw_local_rows)')
         rows, notices = self._overlay_parameters(include_summary='summary' in requested_fields)
         parameters = scope_params + [rows]
         if needs_attention:

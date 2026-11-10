@@ -33,6 +33,56 @@ def synthetic_notices(number):
             for i in range(number)]
 
 
+def test_current_attention_does_not_repeat_receipt_aggregation(tmp_path):
+    from amplifier_web import directory_attention
+    state, directory = directory_fixture(tmp_path, 600)
+    for row in state['sessions']:
+        row.update(status='idle', completion={'id': 'finished-' + row['id'], 'at': 1})
+    directory.sync(state['sessions'], state)
+    directory.db.commit()
+    state['sessions'] = state['sessions'][:6]
+    selected = {row['id'] for row in state['sessions']}
+    current = legacy(directory, state)
+    reviewed = next(item for item in current['items'] if item['id'].startswith('completion:'))
+    measurements = []
+    for retained in (0, 20_000):
+        state['attentionRead'] = {f'old-notice-{i}': f'fingerprint-{i}' for i in range(retained)}
+        state['attentionRead'][reviewed['id']] = reviewed['fingerprint']
+        expected = legacy(directory, state)
+        expected['items'] = [item for item in expected['items'] if item.get('sessionId') in selected]
+        expected_receipts = [{key: item[key] for key in ('id', 'sessionId', 'fingerprint', 'read')}
+                             for item in expected['items']]
+        for name, operation, oracle in (
+            ('snapshot', lambda: directory_attention.snapshot(directory, state, selected), expected),
+            ('receipts', lambda: directory_attention.receipts(directory, state, selected), expected_receipts),
+        ):
+            vm = 0
+            def progress():
+                nonlocal vm
+                vm += 100
+                return 0
+            directory.db.set_progress_handler(progress, 100)
+            try:
+                assert operation() == oracle
+            finally:
+                directory.db.set_progress_handler(None, 0)
+            measurements.append({'operation': name, 'retainedReceipts': retained, 'vm': vm})
+        # Read status is current, including a changed fingerprint on the same key.
+        state['attentionRead'][reviewed['id']] = 'obsolete fingerprint'
+        actual = directory_attention.snapshot(directory, state, selected)
+        assert actual['unread'] == expected['unread'] + 1
+        assert all(not item['read'] for item in actual['items'] if item['id'] == reviewed['id'])
+    print(json.dumps({'sqliteVersion': sqlite3.sqlite_version, 'currentAttentionReceiptWork': measurements}))
+    # 600 current notices, six admitted/selected owners, 20k historical receipts.
+    # These ceilings permit the necessary exact receipt joins/global counts,
+    # without repeating a whole owner-status aggregation in each SELECT.
+    # Repeated aggregation used 2.02M / 0.51M instructions on SQLite 3.53;
+    # flattening the exact joins used 49.4M / 0.75M on SQLite 3.45.
+    assert max(row['vm'] for row in measurements if row['operation'] == 'snapshot') < 1_400_000
+    assert max(row['vm'] for row in measurements if row['operation'] == 'receipts') < 400_000
+    assert len(state['sessions']) == 6
+
+
 def test_browser_notice_work_does_not_decode_dormant_question_history(tmp_path, monkeypatch):
     state, directory = directory_fixture(tmp_path, 0)
     residents = [{'id': 'selected', 'title': 'Selected', 'status': 'idle', 'completion': {'id': 'selected-response'}},
