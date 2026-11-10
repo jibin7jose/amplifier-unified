@@ -21,6 +21,9 @@ def test_fixed_source_and_installed_selections(tmp_path):
         'compact-composer', 'composer-options', 'composer-primary-action', 'message-delivery',
         'message-interactions', 'mobile-navigation']
     assert all(r['command'][0] == 'node' for r in source['scenarios'])
+    assert all(r['cwd'] == '.build/web-client' for r in source['scenarios'][:2])
+    assert all(r['command'][1] == f"tests/web/{r['id']}-browser.mjs"
+               and 'cwd' not in r for r in source['scenarios'][2:])
     assert source['scenarios'][0]['command'][-2:] == [
         'tests/chat-controls.test.mjs', 'tests/bundle-controls.test.mjs']
     assert all('AMPLIFIER_TEST_ARTIFACTS' in r['env'] for r in installed['scenarios'])
