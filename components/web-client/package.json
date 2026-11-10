@@ -1,6 +1,6 @@
 {
   "name": "@amplifier/client-web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -32,7 +32,6 @@
     "prebuild": "node scripts/sync-branding.mjs",
     "predev": "node scripts/sync-branding.mjs",
     "test:pwa-browser": "node tests/pwa-browser.mjs",
-    "test:navigation-browser": "node tests/navigation-browser.mjs",
     "test:conversation-navigation-browser": "node tests/conversation-navigation-browser.mjs",
     "test:destination-history-browser": "node tests/destination-history-browser.mjs",
     "test:reviewed-error-browser": "node tests/reviewed-error-browser.mjs",

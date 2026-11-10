@@ -1,3 +1,0 @@
-.a-ui-use{display:grid;gap:.75rem}.a-ui-use label{display:grid;gap:.35rem}.a-ui-use select,.a-ui-use input{width:100%;padding:.65rem;border:1px solid var(--border,#555);border-radius:8px;background:var(--panel,#202033);color:inherit}.a-ui-use form{display:flex;gap:.5rem;align-items:end}.a-ui-use form label,.a-ui-use form input{flex:1}.a-ui-browser img{display:block;width:100%;border-radius:8px;cursor:crosshair;border:1px solid #777}.a-ui-browser{display:grid;gap:.6rem}.a-ui-use pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}.a-ui-shortcut{font-size:.8rem;margin:.25rem 1rem}
-
-.a-ui-desktop{display:block;width:100%;border-radius:8px}

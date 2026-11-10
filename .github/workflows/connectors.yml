@@ -2,6 +2,9 @@ name: MCP connector lifecycle
 on:
   pull_request:
     paths:
+      - 'components/web-client.source.json'
+      - 'scripts/web_client_*.py'
+      - 'frontend/commands.json'
       - 'amplifier_web/smart*'
       - 'amplifier_web/mcp_*'
       - 'amplifier_web/auth.py'
@@ -9,7 +12,7 @@ on:
       - 'tests/test_connector_lifecycle.py'
       - 'tests/fixtures/mcp*'
       - 'tests/fixtures/connectors_ui_server.py'
-      - 'frontend/src/smart-tools*'
+      - 'components/web-client/src/smart-tools*'
       - 'frontend/tests/connectors-browser.mjs'
       - '.github/workflows/connectors.yml'
 permissions:
@@ -29,6 +32,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+      - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
+        run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - run: npm run build --prefix frontend
       # Browser coverage is available in browser-checks.yml (manual only).

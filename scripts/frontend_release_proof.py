@@ -17,8 +17,11 @@ from pathlib import Path
 import platform
 import re
 import subprocess
+import sys
 import time
 import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 WORKFLOW = '.github/workflows/work-workflows.yml'
 QUALIFIERS = (WORKFLOW, 'scripts/frontend_release_proof.py', 'scripts/integration_checks.py')
@@ -83,7 +86,8 @@ def identity(root):
                    if key in {'CI', 'NODE_OPTIONS', 'NODE_ENV', 'TZ', 'LANG'}
                    or key.startswith(('VITE_', 'npm_config_', 'NPM_CONFIG_'))}
     env_files = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
-                 for folder in (root, root / 'frontend') for path in folder.glob('.env*') if path.is_file()}
+                 for folder in (root, root / 'frontend', root / 'frontend/.client')
+                 for path in folder.glob('.env*') if path.is_file()}
     return {
         'tree': command('git', 'rev-parse', 'HEAD^{tree}', root=root),
         'assets': hashlib.sha256(json.dumps(assets, sort_keys=True).encode()).hexdigest(),
@@ -109,6 +113,11 @@ def create(root, env, test_scope):
     tested = command('git', 'rev-parse', 'HEAD', root=root)
     if tested != env['GITHUB_SHA']:
         raise ValueError('Checkout is not the triggering PR merge commit')
+    if (root / 'components/web-client.source.json').is_file():
+        from web_client_build import verify
+        from web_client_development import verify_view
+        verify(root)
+        verify_view(root, root / 'frontend/.client')
     return {'schema': 2, 'eligible': True, 'testScope': test_scope, 'inputs': identity(root),
             'repository': env['GITHUB_REPOSITORY'], 'runId': int(env['GITHUB_RUN_ID']),
             'attempt': int(env['GITHUB_RUN_ATTEMPT']), 'pr': pr['number'],

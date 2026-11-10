@@ -110,7 +110,7 @@ def main():
                 assert original.count(needle) == 1
                 entry.write_bytes(original.replace(
                     needle, b"destinationHistory.current.observe(conversationNavigation.current.apply(next),historyOptions);"))
-                run("negative-build", ["npm", "run", "build", "--prefix", "frontend"])
+                run("negative-build", ["npm", "run", "build:development", "--prefix", "frontend"])
                 plan = json.loads((OUTPUT / "plan.json").read_text())
                 plan["scenarios"] = [row for row in plan["scenarios"] if row["id"] == "destination-history"]
                 plan["scenarios"][0]["env"]["AMPLIFIER_TEST_OUTPUT"] = "{root}/output/destination-history/negative-browser"

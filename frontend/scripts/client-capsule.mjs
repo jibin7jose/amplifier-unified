@@ -1,11 +1,10 @@
-// Disposable current-client export, not another maintained source owner.
-// The existing build-input inventory owns which canonical inputs travel.
+// Export the finite Unified-owned inputs consumed by the independent web client.
+// Client source, version and artifact packaging belong to its own repository.
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {copyFileSync,lstatSync,mkdirSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {buildIdentity,buildInputs} from './build-identity.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const repository='https://github.com/microsoft/amplifier-unified';
@@ -14,10 +13,14 @@ const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const read=path=>JSON.parse(readFileSync(path,'utf8'));
 const write=(path,value)=>writeFileSync(path,JSON.stringify(value,null,2)+'\n');
 const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
-const extras=['LICENSE','pyproject.toml','packages/shell-sdk/LICENSE',
- 'frontend/scripts/client-capsule.mjs','frontend/tests/client-artifact-browser.mjs',
- 'frontend/tests/shell-http-fixture.mjs','frontend/tests/shell-host.mjs',
- 'frontend/tests/build-identity.test.mjs'];
+const sharedInputs=[
+ 'LICENSE',
+ 'amplifier_web/ai_services.json','amplifier_web/provider_sources.json','amplifier_web/voice_options.json',
+ 'assets/UPSTREAM-LICENSE','assets/branding/favicons/apple-touch-icon.png',
+ 'assets/branding/favicons/favicon-32.png','assets/branding/favicons/favicon.ico',
+ 'assets/branding/icons/amplifier-icon-128.png','assets/branding/pwa/pwa-192.png','assets/branding/pwa/pwa-512.png',
+ 'packages/shell-sdk/LICENSE','packages/shell-sdk/index.js','packages/shell-sdk/package.json',
+].sort();
 
 export function inventory(directory,prefix=''){
  return Object.fromEntries(readdirSync(join(directory,prefix),{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name)).flatMap(entry=>{
@@ -44,24 +47,10 @@ function copyInputs(destination,files){
  for(const name of files){const path=join(destination,name);mkdirSync(dirname(path),{recursive:true});copyFileSync(join(root,name),path)}
 }
 
-function exportSource(destination,serverRevision){
- const files=[...new Set([...buildInputs(root),...extras])].sort(),revision=committedInputs(files);
- const paired=git('rev-parse','--verify',(serverRevision||revision)+'^{commit}');
- copyInputs(destination,files);
- const identity=buildIdentity(destination);
- write(join(destination,'component.json'),{
-  schema:1,kind:'unified-web-source-capsule',
-  source:{repository,revision},
-  pairedServer:{repository,revision:paired,transport:'current-http-sse',qualification:'unqualified'},
-  build:identity,inputs:inventory(destination),
- });
- console.log(JSON.stringify({directory:destination,source:revision,pairedServer:paired,build:identity,files:files.length}));
-}
-
 function exportBuildInputs(destination){
- // Current build metadata and licenses already travel with the full capsule.
- // Keep the same owner paths; these copies are generated inputs, never sources.
- const files=[...new Set([...buildInputs(root),...extras].filter(name=>!name.startsWith('frontend/')))].sort();
+ // Owner paths stay unchanged; exported copies are generated build inputs.
+ // The independently versioned client does not consume Unified's pyproject.
+ const files=sharedInputs;
  const revision=committedInputs(files);
  copyInputs(destination,files);
  const inputs=inventory(destination);
@@ -88,34 +77,11 @@ function verifyBuildInputs(directory,revision){
  console.log(JSON.stringify({directory,source:revision,files:Object.keys(observed).length,verified:true}));
 }
 
-function packageStatic(destination){
- const capsule=read(join(root,'component.json'));
- if(capsule.kind!=='unified-web-source-capsule')throw Error('Package from an exported source capsule');
- for(const [name,expected] of Object.entries(capsule.inputs)){
-  if(hash(readFileSync(join(root,name)))!==expected.sha256)throw Error('Capsule source changed; export the new committed inputs: '+name);
- }
- const assets=join(root,'amplifier_web/static'),identity=read(join(assets,'build.json'));
- if(JSON.stringify(identity)!==JSON.stringify(capsule.build))throw Error('Build identity differs from the exported inputs');
- mkdirSync(dirname(destination),{recursive:true});mkdirSync(destination);
- for(const name of Object.keys(inventory(assets))){
-  const path=join(destination,'static',name);mkdirSync(dirname(path),{recursive:true});copyFileSync(join(assets,name),path);
- }
- copyFileSync(join(root,'LICENSE'),join(destination,'LICENSE'));
- // The direct SDK import retains its license beside bundled third-party notices.
- copyFileSync(join(root,'packages/shell-sdk/LICENSE'),join(destination,'static/licenses/shell-sdk.txt'));
- writeFileSync(join(destination,'index.mjs'),"import {fileURLToPath} from 'node:url';\nexport const webDirectory=fileURLToPath(new URL('./static/',import.meta.url));\n");
- write(join(destination,'package.json'),{name:'@amplifier/unified-client-web',version:'0.0.0-pilot.'+capsule.source.revision.slice(0,12),
-  private:true,type:'module',license:'MIT',exports:{'.':'./index.mjs','./manifest':'./component.json'},
-  files:['static','index.mjs','component.json','LICENSE']});
- write(join(destination,'component.json'),{...capsule,kind:'unified-web-static-artifact',assets:inventory(join(destination,'static'))});
- console.log(JSON.stringify({directory:destination,build:identity,pairedServer:capsule.pairedServer,assets:Object.keys(inventory(join(destination,'static'))).length}));
-}
-
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- const [command,output,serverRevision]=process.argv.slice(2);
- if(!output||!['export','package','inputs','verify-inputs'].includes(command))throw Error('Usage: node frontend/scripts/client-capsule.mjs export NEW_DIRECTORY [SERVER_REVISION] | package NEW_DIRECTORY | inputs NEW_DIRECTORY | verify-inputs DIRECTORY SOURCE_COMMIT');
- if(command==='export')exportSource(resolve(output),serverRevision);
- else if(command==='inputs')exportBuildInputs(resolve(output));
- else if(command==='verify-inputs')verifyBuildInputs(resolve(output),serverRevision);
- else packageStatic(resolve(output));
+ const [command,output,revision,...extra]=process.argv.slice(2);
+ if(!output||extra.length||!['inputs','verify-inputs'].includes(command)
+   ||(command==='inputs'&&revision)||(command==='verify-inputs'&&!revision))
+  throw Error('Usage: node frontend/scripts/client-capsule.mjs inputs NEW_DIRECTORY | verify-inputs DIRECTORY SOURCE_COMMIT');
+ if(command==='inputs')exportBuildInputs(resolve(output));
+ else verifyBuildInputs(resolve(output),revision);
 }

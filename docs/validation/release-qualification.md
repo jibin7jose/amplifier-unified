@@ -180,13 +180,16 @@ model/tool turns for each version field, hash or repeated readback. A failed bui
 retains prepared metadata: fix the reported failure and rerun that build, rather
 than reconstructing the candidate by hand or treating the failed attempt as passed.
 
-The frontend embeds the package version in both its JavaScript bundle and
-`static/build.json`. Verify `uv sync --locked --dry-run --group dev --group artifacts`
+The extracted frontend embeds its own package version in its JavaScript bundle
+and `static/build.json`; it need not equal Unified's version. The normal build
+verifies the selected client and records its source/input/build provenance in
+`static/client-component.json`. See [client assembly](../../components/README.md).
+Verify `uv sync --locked --dry-run --group dev --group artifacts`
 in the owned environment. Reuse installed dependencies that match the current
 lockfiles and toolchain; run `npm ci --prefix frontend` only when preparation is
 missing or stale. Include the four prepared metadata files and all resulting
-`amplifier_web/static` changes in the release commit: a version-only edit still
-changes generated bundle hashes. Commit:
+`amplifier_web/static` changes in the release commit. A host-only version change
+does not restamp the client identity. Commit:
 
 - `amplifier_web/__init__.py`
 - `pyproject.toml`

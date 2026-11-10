@@ -69,10 +69,28 @@ package-lock.json source-context=locks
 
 # Built delivery, including copied source, vendor resources and license notices.
 # Preserve committed bytes and existing source/build/installed parity checks.
-/amplifier_web/static/** source-context=generated linguist-generated=true
+/amplifier_web/static/** source-context=generated linguist-generated=true -text
 
 # Mechanically refreshed upstream client source; ownership stays discoverable.
 /components/README.md source-context=documentation
 /components/AGENTS.md source-context=guidance
 /components/web-client.source.json source-context=configuration
 /components/web-client/** source-context=generated linguist-vendored=true linguist-generated=true
+
+# Dependency entrypoints are generated from the selected client plus host commands.
+/frontend/package.json source-context=generated linguist-generated=true
+/frontend/package-lock.json source-context=generated linguist-generated=true
+/frontend/commands.json source-context=configuration
+
+# The selected component and locked shared inputs have platform-independent bytes.
+/components/web-client/** -text
+/frontend/package.json -text
+/frontend/package-lock.json -text
+/amplifier_web/ai_services.json text eol=lf
+/amplifier_web/provider_sources.json text eol=lf
+/amplifier_web/voice_options.json text eol=lf
+/assets/UPSTREAM-LICENSE text eol=lf
+/LICENSE text eol=lf
+/packages/shell-sdk/index.js text eol=lf
+/packages/shell-sdk/LICENSE text eol=lf
+/packages/shell-sdk/package.json text eol=lf

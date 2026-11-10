@@ -150,7 +150,7 @@ def source_identity(revision=None):
     # silently escape provenance merely because it is not executable code.
     excluded = {'__pycache__', 'node_modules', '.pytest_cache', '.git', 'output'}
     directories = [*ROOT.glob('amplifier_*'), ROOT / 'scripts', ROOT / 'tests',
-                   ROOT / '.github/workflows', ROOT / 'packages',
+                   ROOT / '.github/workflows', ROOT / 'packages', ROOT / 'components',
                    *(ROOT / 'frontend' / name for name in ('src', 'tests', 'scripts', 'public'))]
     files = sorted({p for parent in directories if parent.is_dir() for p in parent.rglob('*')
                     if p.is_file() and not excluded.intersection(p.relative_to(ROOT).parts)} |
