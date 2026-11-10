@@ -123,6 +123,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Run full frontend units for unfiltered nightly/manual coverage
         if: ${{ !inputs.multi_quote && !inputs.attachment_consumption && !inputs.app004_qualification && !inputs.mcp_boundary }}
@@ -211,6 +213,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - run: npx playwright install --with-deps chromium
         working-directory: frontend
@@ -355,6 +359,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - run: npm run build --prefix frontend
       - name: Install browser dependencies
@@ -491,6 +497,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Install the locked browser
         working-directory: frontend
@@ -532,6 +540,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Build exact candidate
         id: compact-build
@@ -635,6 +645,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        run: python scripts/web_client_development.py prepare-view
       - id: node_dependencies
         run: npm ci --prefix frontend
       - name: Focused backend and runner contracts
@@ -807,6 +819,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Install Chromium
         working-directory: frontend
@@ -849,6 +863,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+      - name: Prepare selected client source for host checks
+        run: python scripts/web_client_development.py prepare-view
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - name: Resolve the exact locked private runtime source
         id: runtime
@@ -915,6 +931,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+      - name: Prepare selected client source for host checks
+        run: python scripts/web_client_development.py prepare-view
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - name: Resolve the exact locked private runtime source
         id: runtime

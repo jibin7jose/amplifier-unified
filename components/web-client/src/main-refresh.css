@@ -14,13 +14,11 @@
 #amp-one.a-approachable-shell .a-nav-rail{border:var(--a-panel-border-width,0px) solid var(--a-panel-line,var(--a-line));border-left:0;border-bottom:0;border-right-width:1px;border-radius:0 var(--a-panel-radius,0px) 0 0;background-color:var(--a-soft);background-image:var(--a-navigation-art,none);background-size:var(--a-navigation-art-size,100% 240px);background-repeat:var(--a-navigation-art-repeat,no-repeat);padding:var(--a-navigation-pad,16px) 10px 0;box-shadow:var(--a-panel-shadow,none)}
 #amp-one.a-approachable-shell .a-nav-main{background:transparent;color:var(--a-ink)}
 #amp-one.a-approachable-shell .a-nav-main:hover{background:var(--a-tint)}
-#amp-one.a-approachable-shell .a-work-footer{display:flex;flex-direction:column;align-items:stretch;gap:2px;padding:10px 0 4px}
-#amp-one.a-approachable-shell .a-footer-action{display:flex;align-items:center;gap:10px;position:relative;min-height:38px;padding:8px 10px;border:0;border-radius:7px;background:transparent;color:var(--a-ink);font-size:13px;text-align:left;justify-content:flex-start}
-#amp-one.a-approachable-shell .a-footer-action:hover{background:var(--a-tint)}
-#amp-one.a-approachable-shell .a-footer-action>.a-attention-badge{position:static;margin-left:auto}
+#amp-one.a-approachable-shell .a-work-footer{display:flex;flex-direction:column;align-items:stretch;gap:2px;padding:4px 0}
 #amp-one.a-approachable-shell .a-footer-status{position:relative;display:flex;align-items:center;gap:8px;padding:2px 10px;font-size:11px;color:var(--a-muted)}
 #amp-one.a-approachable-shell .a-footer-status>.a-work-menu{position:static;margin-left:auto}
-#amp-one.a-approachable-shell .a-footer-status .a-work-menu-items{top:auto;bottom:100%;left:0;right:auto;min-width:min(220px,calc(100vw - 24px))}
+#amp-one.a-approachable-shell .a-footer-status .a-work-menu-items{top:auto;bottom:100%;left:0;right:0;box-sizing:border-box;min-width:0;max-height:calc(100dvh - 140px);overflow:auto}
+#amp-one.a-approachable-shell .a-footer-status .a-work-menu-items .a-attention-badge{position:static;margin-left:auto}
 #amp-one.a-approachable-shell .a-messages{padding:32px max(24px,calc((100% - var(--a-reading-width))/2));gap:var(--a-message-gap,24px)}
 #amp-one.a-approachable-shell .a-messages>*{max-width:var(--a-reading-width)}
 #amp-one.a-approachable-shell .a-user>.a-message-body{padding:11px 16px;max-width:85%;border-radius:var(--a-message-radius,18px) var(--a-message-radius,18px) 4px var(--a-message-radius,18px)}

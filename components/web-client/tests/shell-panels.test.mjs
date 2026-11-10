@@ -232,7 +232,7 @@ test('header sidebar toggle, workspace drill-in and chat selection use shared ac
  await renderAct(async()=>root.unmount());
 });
 
-test('sidebar New chat and Search stay outside the scrollable modules on Home in both modes',async()=>{
+test('sidebar New chat stays with modes while Search scrolls with modules on Home',async()=>{
  const state=initial(),calls=[];
  state.view.workSurface='home';
  const act=async(name,args)=>{calls.push([name,args]);return {accepted:true}};
@@ -246,7 +246,8 @@ test('sidebar New chat and Search stay outside the scrollable modules on Home in
    await renderAct(async()=>{if(root)root.update(element);else root=create(element)});
    const scroll=root.root.findByProps({className:'a-nav-content a-nav-reveal'});
    assert.equal(scroll.findAllByProps({'aria-label':'New chat'}).length,0);
-   assert.equal(scroll.findAllByProps({className:'a-nav-search-launch'}).length,0);
+   assert.equal(scroll.findAllByProps({className:'a-nav-search-launch'}).length,1);
+   assert.equal(root.root.findByProps({className:'a-nav-head a-sidebar-modes'}).findAllByProps({'aria-label':'New chat'}).length,1);
    await renderAct(async()=>root.root.findByProps({className:'a-nav-search-launch'}).props.onClick());
    assert.deepEqual(calls.at(-1),['browse','chats']);
    await renderAct(async()=>root.root.findByProps({'aria-label':'New chat'}).props.onClick());

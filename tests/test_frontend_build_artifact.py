@@ -52,11 +52,15 @@ def test_generated_changes_are_retained_for_exact_source_without_qualifying_it(s
     assert module.verify(source, output) == manifest
 
 
-@pytest.mark.parametrize('change', ['source-dirty', 'source-committed', 'new-source', 'version', 'environment'])
+@pytest.mark.parametrize('change', ['source-dirty', 'source-committed', 'new-source', 'version',
+                                    'environment', 'client-environment'])
 def test_changed_build_inputs_cannot_reuse_old_output(source, tmp_path, change):
     output, _ = capture(source, tmp_path)
-    path = 'package.json' if change == 'version' else '.env.local' if change == 'environment' else (
+    path = 'frontend/.client/.env.local' if change == 'client-environment' else (
+        'package.json' if change == 'version' else '.env.local' if change == 'environment' else (
         'frontend/new.js' if change == 'new-source' else 'frontend/input.js')
+    )
+    (source / path).parent.mkdir(parents=True, exist_ok=True)
     (source / path).write_text('different')
     if change == 'source-committed':
         git(source, 'add', '.'); git(source, 'commit', '-qm', 'new source')

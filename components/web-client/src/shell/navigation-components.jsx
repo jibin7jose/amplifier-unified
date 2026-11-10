@@ -4,7 +4,7 @@ import {useChatTitle} from '../use-chat-title';
 import {WorkNavigationContext,workSurface} from '../work-navigation';
 import {ArchiveButton} from '../archive-feedback.jsx';
 import React,{useEffect,useLayoutEffect,useRef,useState,useContext,useId} from 'react';
-import {MessageCircle,Search,Pencil,Trash2,X,Check,ChevronRight,Pin,RefreshCw,LoaderCircle,AlertCircle,ArrowLeft,ArrowUpRight,Folder,MoreHorizontal,ArrowUp,ArrowDown,Plus} from 'lucide-react';
+import {MessageCircle,Search,Pencil,Trash2,X,Check,ChevronRight,Pin,RefreshCw,LoaderCircle,AlertCircle,ArrowLeft,ArrowUpRight,Folder,MoreHorizontal,Plus} from 'lucide-react';
 import {chatPage,visibleWorkspaces,movePin,recentLimit,recentPageMatches,CHAT_AGES} from '../chat-navigation';
 import {followLaterHistory} from '../history-scroll';
 import {request} from '../api';
@@ -124,7 +124,6 @@ function PairedWorkspaceBrowser({host,onOpen}){
 export function ChatDetails({chat,model,now,close}){
  const {state,act,draft,setDraft,choose,prefix}=model,activity=activityFor(chat,state);
  const title=chat.title||'Untitled conversation',managed=chat.location?.kind==='managed';
- const mixed=state.pinnedItemIds,pins=mixed||state.pinnedSessionIds||[],pinKey=mixed?'session:'+chat.id:chat.id,pinIndex=pins.indexOf(pinKey),orderAction=mixed?'navigation.pinOrder':'session.pinOrder';
  const [pinError,setPinError]=useState(''),[reviewError,setReviewError]=useState(''),[reviewing,setReviewing]=useState(false);
  const [pinning,setPinning]=useState(false),pinFlight=useRef(false),pinOwner=useRef(null),pinAlive=useRef(true);
  const pinContext=chat.id+'|'+navigationDetailsContext(state);pinOwner.current=pinContext;
@@ -154,20 +153,19 @@ export function ChatDetails({chat,model,now,close}){
  };
  const errorItem=state.attention?.items?.find(item=>item.id==='session:'+chat.id&&item.sessionId===chat.id&&!item.read);
  const review=async()=>{if(reviewing||!errorItem)return;setReviewing(true);setReviewError('');try{await readItems(act,[errorItem])}catch(error){setReviewError(error.message||'Could not mark this error reviewed.')}finally{setReviewing(false)}};
- const move=async direction=>{try{setPinError('');const response=await act(orderAction,{ids:movePin(pins,pinKey,pins[pinIndex+direction])});const receipt=response?.result?.accepted!==undefined?response.result:response;if(receipt?.accepted===false)throw Error(receipt.error||'Could not reorder pins.')}catch(error){setPinError(error.message)}};
  return <><div className="a-navigation-detail-heading"><MessageCircle/>Chat details</div><h3>{title}</h3>
   {chat.titlePreviewSource==='first-message'&&<p className="a-caption">Preview from the first message. Rename this chat to give it a permanent name.</p>}
   <div className="a-navigation-detail-status"><NavigationStatus activity={activity}/><strong>{activity.label}</strong></div>
-  <dl><dt>Last activity</dt><dd>{relativeActivity(chat.recentActivityAt,now).long}</dd><dt>Workspace</dt><dd>{managed?'No workspace':chat.workspaceName||chat.workspace?.split(/[\\/]/).filter(Boolean).at(-1)}</dd></dl>
-  <CopyDetail label={managed?"Chat files":"Full workspace path"} value={chat.workspace||'Unavailable'}/>
+  <dl><dt>Last activity</dt><dd>{relativeActivity(chat.recentActivityAt,now).long}</dd></dl>
   <CopyDetail label="Session ID" value={sessionIdentity(chat)}/>
-  <p className="a-caption">{managed?'Files stored in this chat’s managed folder.':'Discovered in this folder’s Amplifier history. Chats started from the CLI or other tools can appear here too.'}</p>
+  <dl><dt>Workspace</dt><dd>{managed?'No workspace':chat.workspaceName||chat.workspace?.split(/[\\/]/).filter(Boolean).at(-1)}</dd></dl>
+  <CopyDetail label={managed?"Chat files":"Full workspace path"} value={chat.workspace||'Unavailable'}/>
+  {managed&&<p className="a-caption">Files stored in this chat’s managed folder.</p>}
   {draft.mode==='chat-rename'&&draft.id===chat.id?<ChatRename inputId={prefix+'-name'} chat={chat} act={act} cancel={()=>setDraft({})}/>:<div className="a-navigation-actions">
    <button type="button" className="a-link" data-action="session.select" onClick={()=>{close();choose(chat.id)}}><ArrowUpRight/>Open chat</button>
    {errorItem&&<button type="button" className="a-link" data-action="attention.read" disabled={reviewing} onClick={review}>{reviewing?'Marking reviewed…':'Mark error reviewed'}</button>}
    {reviewError&&<span role="alert">{reviewError}</span>}
    <button type="button" aria-label={`${chat.pinned?'Unpin':'Pin'} ${title}`} aria-pressed={!!chat.pinned} aria-busy={pinning||undefined} disabled={pinning} data-action="session.pin" onClick={togglePin}><Pin/>{chat.pinned?'Unpin':'Pin'}</button>
-   {chat.pinned&&<><button type="button" aria-label={'Move '+title+' up'} data-action={orderAction} disabled={pinIndex<1} onClick={()=>move(-1)}><ArrowUp/>Move up</button><button type="button" aria-label={'Move '+title+' down'} data-action={orderAction} disabled={pinIndex<0||pinIndex===pins.length-1} onClick={()=>move(1)}><ArrowDown/>Move down</button></>}
    {pinError&&<span role="alert">{pinError}</span>}
    <button type="button" aria-label={'Rename '+title} data-action="view.update" onClick={()=>setDraft({mode:'chat-rename',id:chat.id,name:title})}><Pencil/>Rename</button>
    <button type="button" disabled={reading||readUnavailable} data-action={markedUnread?'attention.read':'session.markUnread'} onClick={changeRead}>{reading?'Saving…':markedUnread?'Mark read':'Mark unread'}</button>
@@ -469,8 +467,11 @@ export function ChatListViews({page,view,act}){
  </div>;
 }
 export function ChatAgeFilter({view,act}){
- const age=CHAT_AGES.includes(view.navAge)?view.navAge:'all',id=useId();
- return <div className="a-chat-age-filter"><label htmlFor={id}>Last activity <strong>{age==='all'?'All':age}</strong></label><input id={id} type="range" min="0" max="5" step="1" value={CHAT_AGES.indexOf(age)} aria-label="Filter conversations by age" aria-valuetext={age==='all'?'All activity dates':`Within the last ${({'24h':'24 hours','7d':'7 days','30d':'30 days','90d':'90 days','1y':'year'})[age]}`} aria-describedby={id+'-help'} data-action="view.update" onChange={e=>patch(act,{navAge:CHAT_AGES[Number(e.target.value)]})}/><div className="a-chat-age-stops" aria-hidden="true">{CHAT_AGES.map(value=><span key={value}>{value==='all'?'All':value}</span>)}</div><small id={id+'-help'}>All chat lists. Pins stay visible. Unknown dates appear under All.</small></div>;
+ const age=CHAT_AGES.includes(view.navAge)||view.navAge==='1y'?view.navAge:'all',id=useId();
+ // Preserve an existing/API year filter without silently widening it. Its
+ // unticked current position retires on the first explicit six-stop choice.
+ const legacy=age==='1y';
+ return <div className="a-chat-age-filter"><label htmlFor={id}>Last activity <strong>{age==='all'?'All':age}</strong></label><div className="a-chat-age-track"><input id={id} type="range" min="0" max="10" step={legacy?1:2} value={legacy?9:CHAT_AGES.indexOf(age)*2} aria-label="Filter conversations by age" aria-valuetext={age==='all'?'All activity dates':`Within the last ${({'24h':'24 hours','7d':'7 days','14d':'14 days','30d':'30 days','90d':'90 days','1y':'year'})[age]}`} data-action="view.update" onChange={e=>patch(act,{navAge:CHAT_AGES[Math.round(Number(e.target.value)/2)]})}/><div className="a-chat-age-stops" aria-hidden="true">{CHAT_AGES.map(value=><span key={value}/>)}</div></div></div>;
 }
 export function ChatSearch({page,model,view,viewAct,now,layout,identity='chats'}){
  const root=useRef(null),input=useRef(null);

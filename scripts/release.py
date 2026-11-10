@@ -10,6 +10,7 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import sys
 import tarfile
 import time
 import tomllib
@@ -17,6 +18,7 @@ import zipfile
 
 VERSION = re.compile(r"\d+\.\d+\.\d+\Z")
 RELEASE_SOURCE = "amplifier_web/release-source.json"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def run(*args, cwd=None):
@@ -110,7 +112,12 @@ def prepare(root, version, notes_file, build=False):
         if completed.returncode:
             raise ValueError(f'Frontend build failed (exit {completed.returncode}); prepared metadata retained. Fix the build issue and rerun the build command.')
         identity = json.loads((root / 'amplifier_web/static/build.json').read_text())
-        if identity.get('version') != version:
+        if (root / 'components/web-client.source.json').is_file():
+            # Client versions are independent. Verify its selected source and
+            # built artifact, rather than restamping it with the host version.
+            from web_client_build import verify
+            verify(root)
+        elif identity.get('version') != version:
             raise ValueError('Built frontend version does not match the prepared candidate')
         result.update(buildStatus='passed', build=identity, buildSeconds=round(time.monotonic() - started, 3))
     result['nextSteps'] = ([] if build else [
