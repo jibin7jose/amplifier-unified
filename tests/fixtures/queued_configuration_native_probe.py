@@ -243,7 +243,7 @@ async def until(predicate, *, seconds=30):
             await asyncio.sleep(.02)
 
 
-async def probe(root, mutant, continuation=False, targeted=False):
+async def probe(root, mutant, continuation=False, targeted=False, update_held=False):
     root.mkdir(parents=True, exist_ok=False)
     workspace, shared, home = (root / name for name in ("workspace", "shared", "app"))
     workspace.mkdir()
@@ -372,6 +372,9 @@ async def probe(root, mutant, continuation=False, targeted=False):
         await until(lambda: owner.get("pendingConfiguration", {}).get("phase") == "error"
             and sid not in app.management.pending_config_tasks)
         record = app.management.configuration_record(sid, owner["pendingConfiguration"]["operationId"])
+        if update_held:
+            await update_terminal_held(app, runtime, owner, root, calls, record, report)
+            return
         if targeted:
             await targeted_saved(app, runtime, owner, action, root, bundle, scenario, calls, record, processes, report)
             return
@@ -607,7 +610,58 @@ async def targeted_saved(app, runtime, owner, action, root, bundle, scenario, ca
         nativeId=record['attempts'][0]['nativeSessionId'], mountedPlanVerified=True)
 
 
-async def bounded_probe(root, mutant, continuation=False, targeted=False):
+async def update_terminal_held(app, runtime, owner, root, calls, record, report):
+    """Real saved native boundary + synthetic app replacement, never recover it."""
+    from unittest.mock import AsyncMock, patch
+    from amplifier_web import app_updates
+    from amplifier_web.updates import UpdateManager
+    from amplifier_web.configuration_recovery import receipt_path
+    from amplifier_web.update_drain import finish
+    sid = owner['id']
+    assert record['state']['effect'] == 'saved_not_mounted' and len(record['attempts']) == 1
+    assert sid not in runtime.workers
+    files = [app.management.configuration_record_path(sid, record['id']),
+             app.management.queued_path(sid),
+             app.data_dir / 'sessions' / record['attempts'][0]['nativeSessionId'] / 'configuration.json',
+             receipt_path(record['attempts'][0], home=app.data_dir)]
+    before = {str(path): path.read_bytes() for path in files}
+    messages, pending, provider_calls = copy.deepcopy(owner['messages']), copy.deepcopy(owner['pendingConfiguration']), calls.read_bytes()
+    manager = UpdateManager(app)
+    app.update_manager = manager
+    revision = 'a' * 40
+    intent = {'id': 'native-held-app-only', 'scope': 'app'}
+    folder = manager.directory / 'applications' / revision
+    folder.mkdir(parents=True)
+    (folder / 'validated.json').write_text(json.dumps({'revision': revision, 'version': '99.0.0'}))
+    helper = folder / 'tools/amplifier-unified/bin/python'
+    helper.parent.mkdir(parents=True)
+    helper.touch()
+    app.state['updates'].update(phase='app-staged', pendingApp={
+        'revision': revision, 'latest': 'v99.0.0', 'attemptId': 'd'*32, 'updateIntent': intent},
+        applicationIntent=intent, sequence={'stage': 'application', 'install': False})
+    async def target():
+        return '/synthetic/uv', '/synthetic/launcher', Path('/synthetic/python'), {'version': 'old', 'source': None}
+    restart = AsyncMock()
+    with patch.object(app_updates, 'installed_extras', lambda: []), \
+         patch.object(app_updates, 'installed_target', target), \
+         patch.object(app_updates, 'process', AsyncMock(return_value='99.0.0')), \
+         patch.object(app_updates, 'request_managed_restart', restart), \
+         patch('amplifier_web.deployment_service.current_process_is_unit_managed', lambda _: True):
+        assert not manager.app_busy(), owner
+        await app_updates.activate(manager)
+    assert app.state['updates']['pendingRestart']['updateIntent'] == intent
+    restart.assert_awaited_once()
+    assert owner['configurationBusy'] and owner['configurationOperationFence'] == record['id']
+    assert owner['pendingConfiguration'] == pending and owner['messages'] == messages
+    assert {str(path): path.read_bytes() for path in files} == before
+    assert calls.read_bytes() == provider_calls and not runtime.workers
+    report.update(updateTerminalHeld=True, attempts=1, oneSettingsSave=True,
+                  noTargetProviderCalls=True, originalAuthorityPreserved=True,
+                  originalFailurePreserved=True, syntheticAppReplacement=True,
+                  nativeId=record['attempts'][0]['nativeSessionId'])
+
+
+async def bounded_probe(root, mutant, continuation=False, targeted=False, update_held=False):
     # Parent timeout asks for ordinary cancellation so the probe's finally can
     # close real workers and release their writer before the process exits.
     loop, task = asyncio.get_running_loop(), asyncio.current_task()
@@ -619,7 +673,7 @@ async def bounded_probe(root, mutant, continuation=False, targeted=False):
         loop.add_signal_handler(signum, cancel_once)
     try:
         async with asyncio.timeout(150):
-            await probe(root, mutant, continuation, targeted)
+            await probe(root, mutant, continuation, targeted, update_held)
     finally:
         for signum in signals:
             loop.remove_signal_handler(signum)
@@ -631,4 +685,4 @@ if __name__ == "__main__":
             "--targeted-saved" in sys.argv))
     else:
         asyncio.run(bounded_probe(Path(sys.argv[1]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv,
-            "--targeted-saved" in sys.argv))
+            "--targeted-saved" in sys.argv or "--update-held" in sys.argv, "--update-held" in sys.argv))

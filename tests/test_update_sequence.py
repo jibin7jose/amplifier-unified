@@ -112,6 +112,73 @@ async def test_completed_sequence_has_no_repeated_background_check(manager,monke
     await manager.tick()
 
 
+@pytest.mark.parametrize('action', ['app', 'install'])
+async def test_explicit_app_scope_replaces_old_whole_install_without_changing_policy(manager, monkeypatch, action):
+    import copy
+    import time
+    state = manager.service.state['updates']
+    settings = manager.service.state['settings']['updates']
+    before = copy.deepcopy(settings)
+    state.update(phase='available', appAvailable=True,
+                 pendingApp={'revision': 'a'*40, 'latest': 'v99.0.0'},
+                 sequence={'stage': 'included', 'nextStage': 'other', 'install': True},
+                 lastCheck=time.time(), available=2)
+    called = []
+    async def app(): called.append(copy.deepcopy(state.get('applicationIntent')))
+    monkeypatch.setattr(manager, 'app', app)
+    await manager.command(action, command_id='exact-'+action)
+    assert called == [{'id': 'exact-'+action, 'scope': 'app' if action == 'app' else 'whole'}]
+    assert state['pendingApp']['updateIntent'] == called[0]
+    assert state['sequence']['install'] is (action == 'install')
+    assert ('nextStage' in state['sequence']) is (action == 'install')
+    assert settings == before
+    restored = UpdateManager(manager.service)
+    assert restored.service.state['updates']['applicationIntent'] == called[0]
+
+
+async def test_app_only_tick_cannot_consume_stale_component_intent(manager, monkeypatch):
+    import time
+    state = manager.service.state['updates']
+    state.update(applicationIntent={'id': 'app-only', 'scope': 'app'}, phase='installed',
+                 sequence={'stage': 'included', 'install': True, 'nextStage': 'included'},
+                 available=3, lastCheck=time.time(), lastAttempt=time.time(),
+                 pendingSmartTools=[{'previous': 'old', 'target': 'new'}])
+    async def forbidden(*args, **kwargs): pytest.fail('App-only must not continue old component installation')
+    monkeypatch.setattr(manager, 'check', forbidden)
+    monkeypatch.setattr(manager, 'install', forbidden)
+    monkeypatch.setattr(manager, 'activateSmartTools', forbidden)
+    await manager.tick()
+
+
+@pytest.mark.parametrize('phase', ['error', 'interrupted'])
+async def test_app_only_scope_does_not_retry_failed_preparation(manager, monkeypatch, phase):
+    import time
+    state = manager.service.state['updates']
+    manager.service.state['settings']['updates']['autoInstall'] = False
+    state.update(applicationIntent={'id': 'failed-app', 'scope': 'app'}, phase=phase,
+                 appAvailable=True, lastCheck=time.time())
+    async def forbidden(): pytest.fail('Failed preparation requires an explicit new request')
+    monkeypatch.setattr(manager, 'app', forbidden)
+    for _ in range(3):
+        await manager.tick()
+
+
+async def test_busy_app_only_candidate_still_refreshes_due_release_channel(manager, monkeypatch):
+    state = manager.service.state['updates']
+    intent = {'id': 'app-only', 'scope': 'app'}
+    state.update(applicationIntent=intent, phase='app-staged',
+                 pendingApp={'revision': 'a'*40, 'latest': 'v99.0.0', 'updateIntent': intent},
+                 sequence={'stage': 'application', 'install': False}, lastCheck=0, lastAttempt=0)
+    calls = []
+    async def check(**kwargs): calls.append(('check', kwargs))
+    async def app(): calls.append(('app', None))
+    monkeypatch.setattr(manager, 'check', check)
+    monkeypatch.setattr(manager, 'app', app)
+    await manager.tick()
+    assert calls == [('check', {'fresh': True, 'automatic': True}), ('app', None)]
+    assert state['applicationIntent'] == intent
+
+
 def test_missing_included_sources_and_cold_worker_are_installable_without_writes(tmp_path,monkeypatch):
     monkeypatch.setattr(update_sequence,'included_sources',lambda:({'declared-provider'},[{'url':'https://example.invalid/skills','ref':'main'}]))
     rows=update_sequence.classify(tmp_path,[])

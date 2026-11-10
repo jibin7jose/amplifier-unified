@@ -101,6 +101,28 @@ async def test_constructor_waits_for_real_listener_readiness(tmp_path,monkeypatc
         await service.close()
 
 
+@pytest.mark.parametrize('scope', ['app', 'whole'])
+async def test_exact_restart_intent_controls_component_continuation(tmp_path, monkeypatch, scope):
+    intent = {'id': 'explicit-request', 'scope': scope}
+    target = {**TARGET, 'updateIntent': intent}
+    service, manager = make_manager(tmp_path, monkeypatch, state={
+        'phase': 'activating', 'pendingRestart': target,
+        'applicationIntent': intent, 'sequence': {'stage': 'application', 'install': True, 'nextStage': 'other'}})
+    try:
+        assert await manager.confirm_readiness(health(manager))
+        sequence = service.state['updates']['sequence']
+        if scope == 'app':
+            assert sequence['stage'] == 'complete' and sequence['install'] is False
+            assert 'nextStage' not in sequence
+            assert service.state['updates']['applicationIntent'] == intent
+        else:
+            assert sequence['stage'] == 'included' and sequence['nextStage'] == 'included'
+            assert sequence['install'] is True
+        assert not await manager.confirm_readiness(health(manager))
+    finally:
+        await service.close()
+
+
 @pytest.mark.parametrize('outcome', ['pass','failed','changed-target'])
 async def test_successor_of_old_updater_proves_browser_recovery_before_clearing_attention(tmp_path,monkeypatch,outcome):
     from amplifier_web import app_updates, app_replacement

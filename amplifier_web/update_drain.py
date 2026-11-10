@@ -320,7 +320,7 @@ async def prepare(manager, release):
         await observe_waiters(manager)
         if any(not row.get('ready') and not row.get('suppressed') for row in prior['workers'].values()):
             return False
-    return not held(service) and not manager.busy()
+    return not held(service) and not manager.app_busy()
 
 
 def begin_replacement(manager, release):
