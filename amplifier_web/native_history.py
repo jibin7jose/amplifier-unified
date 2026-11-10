@@ -833,7 +833,11 @@ class NativeHistory:
         if bounded:
             rows.sort(key=lambda row: row['nativeIdentity'])
         if partial and lazy:
-            rows = CatalogPatchRows(prior['sessions'], rows, transcript_ids - {row['nativeIdentity'] for row in rows})
+            absent = transcript_ids - {row['nativeIdentity'] for row in rows}
+            # Diagnostic directories may never have entered the chat catalog.
+            # Their continued absence is not a removal or a client change.
+            removed = {identity for identity in absent if previous_rows.get(identity) is not None}
+            rows = CatalogPatchRows(prior['sessions'], rows, removed)
         return {'workspace': workspace, 'sessions': rows}
 
     def _safe_project(self, project):

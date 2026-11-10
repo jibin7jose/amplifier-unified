@@ -173,6 +173,48 @@ def test_activity_counts_skip_idle_native_library_without_decoding_or_changing_m
         observations.close()
 
 
+def test_activity_counts_do_not_process_notice_receipts(tmp_path):
+    """Counting busy owners is independent of retained attention history."""
+    import time
+    from amplifier_web.client_observations import DirectoryFacts
+
+    complete, directory, observations = observation_fixture(tmp_path, 600)
+    for row in complete['sessions']:
+        row['manualUnread'] = 'notice-' + row['id']
+        row['preparation'] = {'detail': 'retained-detail ' * 1024}
+    directory.sync(complete['sessions'], complete)
+    directory.db.commit()
+    state = observations.service._state
+    measurements, results = [], []
+    try:
+        for receipt_count in (0, 20_000):
+            state['attentionRead'] = {f'old-notice-{i}': f'old-fingerprint-{i}'
+                                      for i in range(receipt_count)}
+            reader = directory.read_snapshot(state)
+            facts = DirectoryFacts(observations, reader, reader._frozen_state)
+            statements, steps = [], []
+            reader.db.set_trace_callback(lambda sql: statements.append(len(sql.encode())))
+            reader.db.set_progress_handler(lambda: steps.append(1) or 0, 1000)
+            started = time.thread_time_ns()
+            try:
+                results.append(facts.activity_counts())
+            finally:
+                measurements.append({'receipts': receipt_count, 'vm': len(steps) * 1000,
+                                     'statementBytes': max(statements, default=0),
+                                     'cpuMs': (time.thread_time_ns() - started) / 1e6})
+                facts.close()
+        print(json.dumps({'activityCountCost': measurements}))
+        assert results[0] == results[1]
+        assert sum(row['executionCount'] for row in results[0].values()) == 27
+        # Old acknowledgements cannot change current execution/preparation/loading
+        # counts. Guard query work and bound bytes, not just the small response.
+        assert measurements[1]['vm'] == measurements[0]['vm']
+        assert measurements[1]['statementBytes'] == measurements[0]['statementBytes']
+        assert state['sessions'] == []
+    finally:
+        observations.close()
+
+
 def test_notice_membership_avoids_activity_join_work(tmp_path):
     """Read receipts only need canonical owner identity and role, not bodies."""
     from amplifier_web.history_directory_observations import visible_ids

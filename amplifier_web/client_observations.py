@@ -155,7 +155,8 @@ class DirectoryFacts:
     def activity_counts(self):
         result = {role:dict(executionCount=0,preparingCount=0,loadingCount=0,
                             attentionCount=0,requiresActionCount=0) for role in ('roots','delegates')}
-        rows = self.directory.db.execute(self.sql+" SELECT session_kind,SUM(execution),SUM(preparing),SUM(loading) FROM directory_rows WHERE session_kind!='internal' AND (execution OR preparing OR loading) GROUP BY session_kind",self.base)
+        sql, params = self.directory.effective(self.state, fields={'session_kind', 'execution', 'preparing', 'loading'})
+        rows = self.directory.db.execute(sql+" SELECT session_kind,SUM(execution),SUM(preparing),SUM(loading) FROM directory_rows WHERE session_kind!='internal' AND (execution OR preparing OR loading) GROUP BY session_kind",params)
         for kind,execution,preparing,loading in rows:
             count = result['roots' if kind=='root' else 'delegates']
             for key,value in zip(('executionCount','preparingCount','loadingCount'),(execution,preparing,loading)):

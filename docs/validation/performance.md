@@ -99,6 +99,11 @@ as rows and preserve the authorized full-detail read.
 Membership-only counts also have no dependency on historical read receipts.
 Hold catalog membership and current notices fixed while growing that history;
 root, child and archive counts should keep the same query work and bound bytes.
+Current execution, preparation and loading counts likewise exclude notice bodies
+and historical read receipts. Catalog discovery must not publish removals for
+directories that were never admitted as chats. Exercise both notifications and
+missed-notification recovery, followed by a real first transcript and deletion;
+quiet repeated discovery must not hide those actual membership changes.
 Attention projections must still observe current read fingerprints and reviewed
 errors, including when they request only scalar fields alongside notice values.
 Notice-detail and receipt consumers should not repeat owner activity aggregation

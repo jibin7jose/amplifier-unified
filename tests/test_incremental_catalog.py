@@ -112,6 +112,66 @@ def test_missed_notifications_recover_in_bounded_slices_and_keep_sources(tmp_pat
     index.close()
 
 
+@pytest.mark.parametrize('notification', [True, False])
+def test_unadmitted_probe_directories_do_not_publish_chat_removals(tmp_path, monkeypatch, notification):
+    import shutil
+
+    home, workspace = tmp_path / 'native', tmp_path / 'workspace'
+    workspace.mkdir()
+    saved = session(home, workspace, 'saved', {'working_dir': str(workspace), 'bundle': 'anchors'})
+    probes = [session(home, workspace, f'probe-{n:03d}',
+                      {'working_dir': str(workspace), 'turn_count': 0}, transcript=False)
+              for n in range(80)]
+    index = NativeHistory(home, cache_path=tmp_path / 'cache.sqlite3', directory=True)
+    dirty = set()
+    monkeypatch.setattr(index, '_invalidations', lambda: (True, set(dirty)))
+    token, first = index.scan_changes(force=True)
+    for _ in range(200):
+        if first['reconciliation']['phase'] == 'complete':
+            break
+        token, first = index.scan_changes(since=token)
+    else:
+        pytest.fail('initial bounded discovery did not finish')
+    assert first['sessionCount'] == 1
+    before = (saved / 'transcript.jsonl').read_bytes()
+    index._recovery_budget = 12
+
+    def scan():
+        nonlocal token
+        changes = []
+        index._reconcile_at = time.monotonic() + 60 if notification else 0
+        for _ in range(200):
+            token, delta = index.scan_changes(since=token)
+            changes.append(delta)
+            dirty.clear()
+            if not index._pending_invalidations and not index._recovery_urgent and index._recovery is None:
+                return changes
+        pytest.fail('bounded scan did not finish')
+
+    if notification:
+        dirty.update((project_slug(workspace), path.name, 'metadata') for path in probes)
+    changes = scan()
+    assert not [row for delta in changes for row in delta['sessions']]
+    assert not [row for delta in changes for row in delta['removed']]
+    assert (saved / 'transcript.jsonl').read_bytes() == before
+
+    # An ignored directory can later become a real chat; do not cache its
+    # absence forever. Actual removal of an admitted chat must still propagate.
+    (probes[0] / 'transcript.jsonl').write_text('new saved conversation\n')
+    if notification:
+        dirty.add((project_slug(workspace), probes[0].name, 'transcript'))
+    changes = scan()
+    assert any(row['nativeIdentity'] == probes[0].name
+               for delta in changes for row in delta['sessions'])
+    shutil.rmtree(saved)
+    if notification:
+        dirty.add(project_slug(workspace))
+    changes = scan()
+    assert (project_slug(workspace), 'saved') in [row for delta in changes for row in delta['removed']]
+    assert changes[-1]['sessionCount'] == 1
+    index.close()
+
+
 def test_transient_catalog_save_failure_reconnects_without_restart(tmp_path, monkeypatch):
     home, workspace = tmp_path / 'native', tmp_path / 'workspace'
     workspace.mkdir()
@@ -649,10 +709,14 @@ async def test_refresh_error_publication_failure_does_not_terminate_discovery(tm
     assert not any(row.get('nativeIdentity') == 'saved-root' for row in app.state['sessions'])
 
 
-async def test_actual_save_failure_retains_discovery_dirty_union(tmp_path, app_factory, monkeypatch):
+@pytest.mark.parametrize('full_scope', [False, True])
+async def test_actual_save_failure_retains_discovery_dirty_union(tmp_path, app_factory, monkeypatch, full_scope):
     workspace = tmp_path / 'cli'
     native_session(workspace, 'saved-root')
     app = app_factory()
+    if full_scope:
+        # A prior unknown writer must survive discovery's narrow global save.
+        app._publish_progress(session_ids=None)
     original = app._save
     attempts = []
     def refused(**kwargs):
@@ -666,7 +730,8 @@ async def test_actual_save_failure_retains_discovery_dirty_union(tmp_path, app_f
     assert len(attempts) == 2
     assert app.history._native_revision is None
     assert app._progress_dirty and app._progress_scope_known
-    assert app._progress_session_ids is None  # Unknown full scope survives both errors.
+    assert app._progress_session_ids == (None if full_scope else set())
+    assert 'sharedHistory' in app._progress_global_keys
     assert app.state['sharedHistory']['error']
     await app.history.refresh(force=False)
     assert app.history._native_revision is not None
