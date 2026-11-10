@@ -127,6 +127,33 @@ and detaches observation, preserving the canonical request and accepted work.
 It cannot silently wait, manufacture a decision, cancel work or authorize replay.
 User-question interaction also needs separate qualification.
 
+The trusted launcher may opt into standard stdio and HTTP MCP attachments when
+its selected bundle contains the qualified canonical `tool-mcp` module. ACP
+session setup remains metadata-only; the first prompt prepares the worker and
+requires confirmation of every requested server before admitting model work.
+The native host supplies `mcp.ephemeral_servers` through `before_initialize`,
+separately from the mount plan. The module uses its one manager, preserves
+configured servers, consumes the temporary input and confirms only installed
+names through `mcp.ephemeral_ready`. Missing or older module support fails
+explicitly; the adapter neither installs another manager nor invents readiness.
+
+These descriptors belong to the trusted attachment and native worker lifetime.
+They travel through private worker IPC and survive that worker's remount, but do
+not enter durable session/configuration plans, retirement snapshots or history.
+Observation release does not stop admitted work or dispose tools it still uses;
+new input or direct tool use cannot borrow that released attachment's live
+credentials. Passive inspection and existing Stop/reply paths remain available.
+Rebinding a live worker is refused without replacing or cancelling it. A fresh
+owner must supply its own connection descriptors rather than restoring secrets
+from saved history. Worker/coordinator shutdown owns transport cleanup.
+
+This path retains standing Full and existing tool/source authorization. Enabling
+MCP is a trusted launcher configuration choice, not an ACP prompt assertion or a
+new per-call approval. Source membership and Instance leases remain authoritative
+for future reads; revocation does not erase previously authorized context.
+Qualification distinguishes an Instance owner-authorized lease from an opaque
+current-room grant, and does not claim arbitrary third-party logging is secret-free.
+
 This is an experimental in-process boundary around a composite legacy owner,
 not yet a remote authority protocol, a lightweight broker or a new shared
 conversation implementation. Its first evidence must distinguish a failed

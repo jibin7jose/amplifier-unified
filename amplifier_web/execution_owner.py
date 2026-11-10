@@ -71,33 +71,45 @@ class Projection:
 
 
 class ExecutionOwner:
-    def __init__(self, service, *, workspace, bundle, origin):
+    def __init__(self, service, *, workspace, bundle, origin, enable_mcp=False):
         self.service = service
         self.workspace = Path(workspace).resolve(strict=True)
         self.bundle = bundle
         # Trusted construction supplies the principal; peer input cannot change it.
         self.origin = origin
+        self.mcp_capabilities = {"http": True} if enable_mcp else None
+        self._attachment_id = str(uuid.uuid4())
         self.attached = set()
         self.pending = {}
         self.original_events = service.on_runtime_event
         service.on_runtime_event = EventSink(self.event, self.events)
 
-    async def create(self, cwd):
+    async def create(self, cwd, *, mcp_servers=None):
+        if mcp_servers is not None and self.mcp_capabilities is None:
+            raise ValueError("MCP attachment is not enabled by this trusted launcher")
+        if mcp_servers is not None and not isinstance(mcp_servers, dict):
+            raise ValueError("Ephemeral MCP servers must be a mapping")
         if Path(cwd).resolve(strict=True) != self.workspace:
             raise ValueError("This execution owner is bound to a different workspace")
         receipt = await self.service.dispatch("session.create", {
             "workspace": str(self.workspace), "bundle": self.bundle, "select": False,
         }, origin=self.origin, include_state=False)
         identity = receipt["result"]["sessionId"]
+        if self.mcp_capabilities is not None:
+            await self.service.runtime.bind_ephemeral_mcp(identity, self._attachment_id, mcp_servers or {})
         self.attached.add(identity)
         return identity
 
-    async def attach(self, identity, cwd):
+    async def attach(self, identity, cwd, *, mcp_servers=None):
         """Attach to saved metadata; prompt admission still owns native resume.
 
         Reading an attachment must not hydrate history, select a browser chat,
         start a runtime or imply that its exclusive writer has been acquired.
         """
+        if mcp_servers is not None and self.mcp_capabilities is None:
+            raise ValueError("MCP attachment is not enabled by this trusted launcher")
+        if mcp_servers is not None and not isinstance(mcp_servers, dict):
+            raise ValueError("Ephemeral MCP servers must be a mapping")
         if not isinstance(identity, str) or not identity:
             raise ValueError("An exact saved conversation identity is required")
         requested = Path(cwd).resolve(strict=True)
@@ -114,7 +126,9 @@ class ExecutionOwner:
             location = source.get("workingDirectory") or workspace
             if requested != Path(location).resolve(strict=True):
                 raise ValueError("cwd does not match the saved execution location")
-            self.attached.add(identity)
+        if self.mcp_capabilities is not None:
+            await self.service.runtime.bind_ephemeral_mcp(identity, self._attachment_id, mcp_servers or {})
+        self.attached.add(identity)
         return identity
 
     def require_attachment(self, identity):
@@ -196,6 +210,8 @@ class ExecutionOwner:
     async def release(self, identity):
         """Detach observation only; neither Stop nor history deletion is implied."""
         self.attached.discard(identity)
+        if self.mcp_capabilities is not None:
+            self.service.runtime.release_ephemeral_mcp(identity, self._attachment_id)
         if identity in self.pending:
             self.pending[identity]["delivery"].fail("Observation detached; native work may continue. Inspect retained owner state.")
 

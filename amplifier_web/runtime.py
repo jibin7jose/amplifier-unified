@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass
+import copy
 import json
 import logging
 import os
@@ -19,7 +20,7 @@ import time
 import uuid
 from typing import Any, Awaitable, Callable
 
-from .runtime_protocol import MAX_MESSAGE_BYTES, encode_message
+from .runtime_protocol import INPUT_CONTROLS, MAX_MESSAGE_BYTES, encode_message
 from .performance_diagnostics import measure, measured
 
 _CURRENT_GENERATION = object()
@@ -349,12 +350,49 @@ class RuntimeManager:
         self._locks: dict[str, asyncio.Lock] = {}
         self._closed = False
         self._retired = {}
+        self._ephemeral_mcp = {}  # Current trusted attachments only; never durable session configuration.
         self._execution_state = None
         self._configuration_revision = lambda: 0
         self._input_configuration = None
         self.home = None
         from .runtime_retention import WorkerRetention
         self.retention = WorkerRetention(self, retention)
+
+    async def bind_ephemeral_mcp(self, session_id, attachment_id, servers):
+        """Bind one trusted attachment without starting or replacing execution."""
+        # Copy only this attachment's descriptors; callers cannot mutate mounted
+        # credentials later. No history/state snapshot or persisted config changes.
+        if not isinstance(servers, dict):
+            raise ValueError("Ephemeral MCP servers must be a mapping")
+        servers = copy.deepcopy(servers)
+        async with self._admission(session_id):
+            prior = self._ephemeral_mcp.get(session_id)
+            row = self.workers.get(session_id)
+            if row and row["process"].returncode is None:
+                if row.get("ephemeral_mcp_binding"):
+                    if prior == (attachment_id, servers):
+                        return
+                    raise ValueError("The existing worker still owns another MCP attachment; wait for its retirement before reattaching")
+                if servers:
+                    raise ValueError("MCP attachment requires a fresh native worker; existing work was not stopped")
+            if prior and prior[0] != attachment_id:
+                raise ValueError("This native session already has an MCP attachment")
+            if servers:
+                self._ephemeral_mcp[session_id] = (attachment_id, servers)
+            else:
+                self._ephemeral_mcp.pop(session_id, None)
+
+    def release_ephemeral_mcp(self, session_id, attachment_id):
+        """Release future use; an admitted worker owns cleanup of its live tools."""
+        prior = self._ephemeral_mcp.get(session_id)
+        if prior and prior[0] == attachment_id:
+            self._ephemeral_mcp.pop(session_id)
+
+    def _check_mcp_attachment(self, session_id, row):
+        binding = row.get("ephemeral_mcp_binding")
+        current = self._ephemeral_mcp.get(session_id)
+        if binding and (current is None or current[0] != binding):
+            raise RuntimeError("The worker's MCP attachment was released. Existing work may continue; new work requires its retirement and a fresh attachment.")
 
     def bind_execution_state(self, read):
         """Host-owned synchronous authority; never supplied by a model command."""
@@ -510,6 +548,7 @@ class RuntimeManager:
         self._check_execution(sid, session)
         configuration_revision = self._configuration_revision()
         self._retired.pop(sid, None)
+        mcp_attachment = self._ephemeral_mcp.get(sid)
         current = self.workers.get(sid)
         if current and current["process"].returncode is None:
             if session.get('bundleReplacement') is not None:
@@ -710,6 +749,8 @@ class RuntimeManager:
         if session.get('bundleReplacement', {}).get('deferred'):
             row['configuration_guard'] = guard
         row['generation_lease'] = lease
+        if mcp_attachment is not None:
+            row["ephemeral_mcp_binding"] = mcp_attachment[0]
         row["reader"] = asyncio.create_task(self._read(sid, row))
         row["stderr_task"] = startup_stderr_task or asyncio.create_task(self._drain_stderr(row))
         row["heartbeat"] = asyncio.create_task(self._progress(sid, row))
@@ -726,6 +767,10 @@ class RuntimeManager:
         row['start_session'].pop('replaceSavedSelection', None)
         row['start_session'].pop('bundleReplacement', None)
         row['start_session'].pop('_preserveConfiguration', None)
+        # The retired/start-session view remains credential-free. Only the
+        # private worker command receives this attachment's transient settings.
+        if mcp_attachment is not None:
+            config['ephemeralMcpServers'] = mcp_attachment[1]
         row['parked'] = False
         self.retention.wake()
         if session.get('forkContext'):
@@ -735,6 +780,7 @@ class RuntimeManager:
                 raise RuntimeStartupError("Runtime preparation was stopped before input admission.")
             try:
                 if guard is not None: guard()
+                self._check_mcp_attachment(sid, row)
                 await self._write(row, {"op": "start", "session": config})
             except (BrokenPipeError, ConnectionResetError) as exc:
                 # A worker can exit between spawn and stdin.drain(). Let the
@@ -1337,6 +1383,9 @@ class RuntimeManager:
         row = self.workers.get(sid)
         if not row or row["process"].returncode is not None:
             raise RuntimeError("Session is not running")
+        if op in {"send", "retry", "resume", "worker.message", "worker.steer"} or (
+                op == "control" and args.get("operation") in INPUT_CONTROLS | {"tool.invoke"}):
+            self._check_mcp_attachment(sid, row)
         peer_admission = None
         if op == 'control' and args.get('operation') in {
                 'coordination.submit', 'coordination.deliver', 'coordination.steer'}:
@@ -2032,6 +2081,7 @@ class RuntimeManager:
         await self.retention.close()
         await asyncio.gather(*(self.stop(sid, reason='shutdown') for sid in set(self.workers) | set(self._preparations)), return_exceptions=True)
         self._retired.clear()
+        self._ephemeral_mcp.clear()
 
     async def spawn_worker(self, session, instruction, input_id, emit):
         """Ask the configured root to delegate through its normal tool hooks."""

@@ -995,7 +995,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
                           application_host="Amplifier Unified", shared_handle=None,
                           shared_handle_getter=None, shared_snapshot=None,
                           write_guard=None, resolved_root=None, execution_workspace=None, owner_session_id=None,
-                          refresh_dependencies=False, install_overrides=None, qualification_readonly=False, global_only=False, runtime_plan=None, startup_timing=None, **kwargs):
+                          refresh_dependencies=False, install_overrides=None, qualification_readonly=False, global_only=False, runtime_plan=None, startup_timing=None, ephemeral_mcp_servers=None, **kwargs):
     from ..worker_diagnostics import StartupTimings
     startup_timing = startup_timing or StartupTimings()
     if refresh_dependencies and resume:
@@ -1170,13 +1170,18 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             nonlocal session
             session = constructing
         initialization = initialization_hooks(isolation=isolation, decision_accounts=decision_accounts,
-                                              routing=routing, retain=retain_session)
+                                              routing=routing, retain=retain_session,
+                                              ephemeral_servers=ephemeral_mcp_servers)
         with startup_timing.phase('manager.session.create'):
             session = await prepared.create_session(session_id=runtime.session_id,
                 session_cwd=execution_workspace, approval_system=approvals, is_resumed=messages is not None,
                 **initialization)
         decision_accounts.require_complete()
         coordinator = session.coordinator
+        if ephemeral_mcp_servers is not None:
+            ready = coordinator.get_capability("mcp.ephemeral_ready")
+            if ready != sorted(ephemeral_mcp_servers):
+                raise RuntimeError("The selected bundle did not install the requested ephemeral MCP servers. No task input was sent.")
         source = getattr(loaded, '_host_write_policy_source', None)
         if source is not None:
             coordinator.register_capability('web.write_policy.source', source)
