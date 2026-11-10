@@ -125,7 +125,7 @@ def artifact_context(manager):
 def valid_update_intent(value):
     return (value is None or isinstance(value, dict) and set(value) == {'id', 'scope'}
             and isinstance(value['id'], str) and 0 < len(value['id']) <= 200
-            and value['scope'] in {'app', 'whole'})
+            and isinstance(value['scope'], str) and value['scope'] in {'app', 'whole'})
 
 
 def valid_target(value):

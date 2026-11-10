@@ -45,6 +45,12 @@ def fake_distribution(monkeypatch,*,located=None,payload=None):
     return distribution
 
 
+@pytest.mark.parametrize('scope', [[], {}, 1, None, 'other'])
+def test_invalid_saved_update_intent_refuses_without_throwing(scope):
+    assert not update_readiness.valid_update_intent({'id': 'request', 'scope': scope})
+    assert not update_readiness.valid_target({**TARGET, 'updateIntent': {'id': 'request', 'scope': scope}})
+
+
 def test_running_identity_attests_only_own_installed_revision(monkeypatch):
     fake_distribution(monkeypatch)
     first=update_readiness.running_identity()
