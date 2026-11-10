@@ -1232,6 +1232,7 @@
     "provider-native",
     "immediate-direction",
     "draft-discovery-recovery",
+    "sidebar-controls",
     "new-chat-recovery",
     "feedback",
     "feedback-followup",

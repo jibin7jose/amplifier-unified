@@ -3333,9 +3333,12 @@ def test_current_composed_registry_owns_every_executable_and_both_mixed_suites()
     plan = current_plan()
     navigation_ids = agent_navigation_browser_additions(plan['scenarios'], set(), current=True)
     preceding = [row for row in plan['scenarios'] if row['id'] not in navigation_ids]
-    assert len(preceding) == len({row['id'] for row in preceding}) == 145
-    assert len(plan['scenarios']) == 145 + len(navigation_ids)
-    assert sum(row.get('cwd') == '.build/web-client' for row in plan['scenarios']) == 12
+    assert len(preceding) == len({row['id'] for row in preceding}) == 146
+    assert len(plan['scenarios']) == 146 + len(navigation_ids)
+    assert sum(row.get('cwd') == '.build/web-client' for row in plan['scenarios']) == 13
+    sidebar = next(row for row in plan['scenarios'] if row['id'] == 'sidebar-controls')
+    assert sidebar['cwd'] == '.build/web-client'
+    assert sidebar['command'] == ['node', 'tests/sidebar-controls-browser.mjs']
     for row in plan['scenarios']:
         for part in row['command']:
             if part.endswith('.mjs'):
