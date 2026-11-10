@@ -1,2 +1,2 @@
 """Amplifier's local web host."""
-__version__ = "0.72.5"
+__version__ = "0.73.0"
