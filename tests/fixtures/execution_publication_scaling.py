@@ -32,8 +32,11 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
     from test_automatic_history import native_session
     from amplifier_web.session_files import project_slug
 
-    workers, receipts_count, live_count, tools, turns_count = (
-        (700, 20000, 5000, 10000, 200) if size == 'large' else (2, 4, 4, 6, 1))
+    workers, receipts_count, live_count, tools, turns_count = {
+        'small': (2, 4, 4, 6, 1),
+        'large': (700, 20000, 5000, 10000, 200),
+        'manager': (700, 26451, 13747, 24096, 136),
+    }[size]
     def io_bytes():
         path = Path('/proc/self/io')
         return {key: int(value) for key, value in
@@ -55,7 +58,8 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
                 reportReceipts=[dict(id=f'report-{i}', text='Retained result. ' * 64)])
                 for i in range(workers)]
             receipts = [dict(id=f'call-{i}', kind='llm', revision=1,
-                producerId='native', turnId=f'old-{i // 100}', sessionId=sid, rootSessionId=sid,
+                producerId='native', turnId=f'old-{i // (200 if size == "manager" else 100)}',
+                sessionId=sid, rootSessionId=sid,
                 phase='completed', provider='synthetic', model='none', startedAt=i, endedAt=i + 1,
                 usage=dict(inputTokens=1000, outputTokens=100, totalTokens=1100, costUsd=.01))
                 for i in range(receipts_count)]
@@ -74,6 +78,28 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
                         toolObservationId=str(uuid.uuid5(uuid.NAMESPACE_URL, f'scaling-{number}-{i}')),
                         liveObservation=True, revision=1, endedAt=i + 1)
                     for i in range(tools)])
+            if size == 'manager':
+                # Synthetic shape of a long-lived manager: mostly ASCII
+                # identifiers/accounting, with a sparse non-BMP current label.
+                for collection in ('retiredUsageNodes', 'nodes'):
+                    for i, node in enumerate(row['execution'][collection]):
+                        node['id'] = str(uuid.uuid5(uuid.NAMESPACE_URL, f'{number}:{node["id"]}'))
+                        node.update(producerId=str(uuid.uuid5(uuid.NAMESPACE_URL, f'producer-{number}')),
+                            parentId=str(uuid.uuid5(uuid.NAMESPACE_URL, f'parent-{i // 20}')),
+                            assignmentId=str(uuid.uuid5(uuid.NAMESPACE_URL, f'assignment-{i // 20}')),
+                            assignmentRevision=17,
+                            assignmentReservation=str(uuid.uuid5(uuid.NAMESPACE_URL, f'reservation-{i}')),
+                            budgetRevision=13, admittedAt=1794348000.123456,
+                            startedAt=1794348000.123456 + i, endedAt=1794348001.123456 + i,
+                            lifecycle='completed', model='synthetic-no-provider')
+                        if node['kind'] == 'llm':
+                            node['usage'].update(cacheReadTokens=900, cacheWriteTokens=0,
+                                grossInputTokens=1000, grossTotalTokens=1100, reasoningTokens=10,
+                                costType='estimated', costSource='synthetic')
+                        if collection == 'nodes':
+                            node.update(label='Retained work',
+                                runId=str(uuid.uuid5(uuid.NAMESPACE_URL, f'run-{i // 20}')))
+                row['execution']['turns'][0]['label'] = 'Current synthetic task — 日本語 🔍'
             owners.append(row)
             app._state['sessions'].append(row)
             if operation == 'history-load':
@@ -207,7 +233,7 @@ if __name__ == '__main__':
     parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument('--owners', type=int, default=3, choices=range(1, 7))
     parser.add_argument('--reservation-bytes', type=int, default=0, choices=(0, 512))
-    parser.add_argument('--size', choices=('small', 'large'), default='large')
+    parser.add_argument('--size', choices=('small', 'large', 'manager'), default='large')
     parser.add_argument('--cycles', type=int, default=1)
     parser.add_argument('--profile', action='store_true')
     parser.add_argument('--operation', choices=('publication', 'history-load', 'catalog-refresh'), default='publication')

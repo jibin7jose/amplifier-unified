@@ -21,16 +21,22 @@ def root(db):
 
 @dataclass(frozen=True)
 class Prepared:
-    text: str
+    encoded: bytes
     identity: str
     size: int
+
+    @property
+    def text(self):
+        # Only inline SQLite resources need text. Keep the normal file path in
+        # its final UTF-8 form through hashing and atomic publication.
+        return self.encoded.decode('utf-8')
 
 
 def prepare(value):
     """Pure canonical preparation, safe to run without a database in a worker."""
     text = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     encoded = text.encode()
-    return Prepared(text, hashlib.sha256(encoded).hexdigest(), len(encoded))
+    return Prepared(encoded, hashlib.sha256(encoded).hexdigest(), len(encoded))
 
 
 def write_prepared(directory, prepared):
@@ -45,7 +51,7 @@ def write_prepared(directory, prepared):
             raise ValueError('Existing artifact file conflicts with its content identity; file preserved.')
     else:
         from .host.storage import SessionStore
-        SessionStore._atomic(path, prepared.text)
+        SessionStore._atomic(path, prepared.encoded)
 
 
 def _stage(db, prepared):

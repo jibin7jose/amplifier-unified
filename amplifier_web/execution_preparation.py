@@ -260,7 +260,7 @@ class ExecutionPreparation:
             witness = hashlib.sha256(_witness(value)).digest()
         except (Unsupported, pickle.PicklingError, RecursionError, TypeError, ValueError):
             projected = project(value) if project else value
-            return (json.dumps(projected, ensure_ascii=False, sort_keys=True, separators=(',', ':')),
+            return (json.dumps(projected, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode(),
                     None, summarize(projected) if summarize else None)
         old = self.entries.get(key)
         if old is not None and old[0] == witness:
@@ -270,16 +270,16 @@ class ExecutionPreparation:
         # the graph between witnessing it and applying the original encoder.
         projected = project(value) if project else value
         summary = summarize(projected) if summarize else None
-        text = json.dumps(projected,
-                          ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        encoded = json.dumps(projected,
+                             ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
         token = object()
-        charge = sys.getsizeof(witness) + sys.getsizeof(text) + sys.getsizeof(key) + sys.getsizeof(summary) + 256
+        charge = sys.getsizeof(witness) + sys.getsizeof(encoded) + sys.getsizeof(key) + sys.getsizeof(summary) + 256
         if old is not None:
             self.bytes -= self.entries.pop(key)[2]
         if charge + reserved + self.accounting_bytes <= 2 * self.MAX_BYTES:
             while self.entries and self.bytes + charge + reserved + self.accounting_bytes > 2 * self.MAX_BYTES:
                 self.bytes -= self.entries.popitem(last=False)[1][2]
-            self.entries[key] = (witness, text, charge, token, summary)
+            self.entries[key] = (witness, encoded, charge, token, summary)
             self.bytes += charge
             # Most new fragments enter at the eviction end, protecting reuse
             # from large one-pass scans. Once a cache's worth of new bytes has
@@ -291,8 +291,8 @@ class ExecutionPreparation:
                     self.admission_bytes = 0
                 else:
                     self.entries.move_to_end(key, last=False)
-            return text, token, summary
-        return text, None, summary
+            return encoded, token, summary
+        return encoded, None, summary
 
     def placements(self, owner, rows, turns, receipts, reserved):
         """Reuse canonical JSON, within the existing encoding budget.
@@ -315,14 +315,14 @@ class ExecutionPreparation:
             dependencies = [(row.get('turnId') in turns,
                 receipts.get((row.get('sessionId'), row.get('id')))
                 if row.get('kind') in ('llm', 'worker') else None) for row in fragment]
-            text, token, summary = self._part((owner, 'nodes', start, 'projection'),
+            encoded, token, summary = self._part((owner, 'nodes', start, 'projection'),
                 (fragment, dependencies), reserved,
                 project=lambda value: _stored_nodes(value[0], turns, receipts),
                 summarize=pending_execution_nodes)
             observation |= summary[0]
             voice |= summary[1]
-            if text != '[]':
-                parts.append((text, token))
+            if encoded != b'[]':
+                parts.append((encoded, token))
         return parts, (observation, voice)
 
     def prepare(self, owner, tree):
@@ -333,7 +333,7 @@ class ExecutionPreparation:
         if (type(owner) is not str or len(owner) > 200 or type(tree) is not dict
                 or any(type(key) is not str or len(key) > 200 for key in tree)):
             if node_parts is not None:
-                tree = {**tree, 'nodes': [row for text, _ in node_parts for row in json.loads(text)]}
+                tree = {**tree, 'nodes': [row for encoded, _ in node_parts for row in json.loads(encoded)]}
             return prepare(tree), None
         fragments, signature = [], []
         cacheable = True
@@ -357,12 +357,13 @@ class ExecutionPreparation:
             return None, signature
         fields = []
         for name, chunked, parts in fragments:
-            text = ('[' + ','.join(part[1:-1] for part, _ in parts) + ']'
-                    if chunked else parts[0][0])
-            fields.append(json.dumps(name, ensure_ascii=False) + ':' + text)
-        text = '{' + ','.join(fields) + '}'
-        encoded = text.encode()
-        return Prepared(text, hashlib.sha256(encoded).hexdigest(), len(encoded)), signature
+            encoded = (b'[' + b','.join(part[1:-1] for part, _ in parts) + b']'
+                       if chunked else parts[0][0])
+            fields.append(json.dumps(name, ensure_ascii=False).encode('utf-8') + b':' + encoded)
+        # A single non-BMP character must not widen copies of an otherwise
+        # ASCII execution history. Fragments already contain canonical UTF-8.
+        encoded = b'{' + b','.join(fields) + b'}'
+        return Prepared(encoded, hashlib.sha256(encoded).hexdigest(), len(encoded)), signature
 
     def stored(self, db, session, tree, pending):
         """Prepare or reuse the existing committed execution projection.

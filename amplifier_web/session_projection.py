@@ -351,7 +351,7 @@ def persist(home, state, cache, *, session_ids=None, by_id=None, references=None
             # view.json remains a compatible presentation, never the authority
             # for a newer transaction that failed before its pointer committed.
             encoded = text.encode()
-            payload = put_prepared(db, Prepared(text, hashlib.sha256(encoded).hexdigest(), len(encoded)))
+            payload = put_prepared(db, Prepared(encoded, hashlib.sha256(encoded).hexdigest(), len(encoded)))
         if cache.get(str(path)) != text:
             if undo is not None:
                 # Restore the pre-transaction presentation if SQLite rejects its

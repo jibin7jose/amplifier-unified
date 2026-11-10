@@ -1,5 +1,6 @@
 import copy
 import json
+import tracemalloc
 
 import pytest
 
@@ -33,6 +34,27 @@ def test_canonical_output_and_mutable_nested_aliases(monkeypatch):
     assert result == resource_files.prepare(value)
     value['nodes'].reverse()
     assert cache.prepare('a', value) == resource_files.prepare(value)
+
+
+def test_sparse_unicode_does_not_widen_whole_history_copies(tmp_path):
+    value = {'nodes': [{'id': str(i), 'text': 'a' * 1024} for i in range(2048)],
+             'turns': [{'label': 'Current task — 日本語 🔍'}]}
+    cache = ExecutionPreparation()
+    cache.prepare('owner', value)
+    value['nodes'][-1]['text'] = 'changed nested text'
+    expected = resource_files.prepare(value)
+    tracemalloc.start()
+    try:
+        actual = cache.prepare('owner', value)
+        resource_files.write_prepared(tmp_path, actual)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert actual == expected
+    assert (tmp_path / (actual.identity + '.json')).read_bytes() == expected.text.encode('utf-8')
+    # Allows several full-size buffers, but not four-byte-wide copies of the
+    # entire ASCII history at every join followed by another encoding on write.
+    assert peak < 6 * expected.size
 
 
 @pytest.mark.parametrize('before,after', [(True, 1), (1, 1.0), (0.0, -0.0), ('x', 'y')])

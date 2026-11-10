@@ -37,6 +37,14 @@ reuse one canonical encoding. Keep resource identity and transaction/rollback
 ownership unchanged. Qualify changed and unchanged saves, exact readback and
 borrowed nested edits; skipping writes alone must not conceal duplicate encoding.
 
+Keep prepared file content in its final UTF-8 representation through hashing and
+publication. A sparse emoji or non-Latin label must not multiply the allocation
+for an otherwise ASCII history. Pair allocation checks with exact canonical
+readback, mutable nested edits, inline-resource reads and atomic-write failure
+handling. The publication fixture's `manager` size covers this mixed-script
+shape across interleaved large owners; its timings are measurements, not a new
+universal release gate.
+
 A synchronous checkpoint can borrow its caller-owned transcript while the writer
 validates and encodes it without mutation. Do not deep-copy the entire history
 solely to produce immediately consumed checkpoint anchors. Recovery should copy

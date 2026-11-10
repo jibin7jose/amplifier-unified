@@ -446,8 +446,8 @@ def test_root_budget_counts_wide_scalar_fields_without_weakening_full_walk():
     assert set(files.references(value)) == {'a' * 64}
 
 
-@pytest.fixture
-def atomic_retry_control(tmp_path, monkeypatch):
+@pytest.fixture(params=('text', 'bytes'))
+def atomic_retry_control(tmp_path, monkeypatch, request):
     """Real temporary/write/flush/cleanup, modeled rename errors and no sleeps.
 
     Only storage's module references change. Never mutate global os.name, which
@@ -459,9 +459,10 @@ def atomic_retry_control(tmp_path, monkeypatch):
     path = tmp_path / 'resource.json'
     path.write_bytes(b'original committed bytes')
     control = SimpleNamespace(
-        storage=storage, path=path, text='{"text":"exact UTF-8 café 雪"}',
+        storage=storage, path=path, text='{"text":"exact UTF-8 café 雪 🔍"}',
         temporaries=[], streams=[], calls=[], delays=[], syncs=[], removed=[],
         rename=os.replace, delay=lambda seconds: None)
+    control.payload = control.text.encode('utf-8') if request.param == 'bytes' else control.text
     real_mkstemp = storage.tempfile.mkstemp
 
     def mkstemp(*args, **kwargs):
@@ -514,7 +515,7 @@ def test_atomic_windows_transient_32_retries_same_closed_utf8_temporary(atomic_r
             raise error
         return os.replace(source, destination)
     control.rename = rename
-    control.storage.SessionStore._atomic(control.path, control.text)
+    control.storage.SessionStore._atomic(control.path, control.payload)
     assert len(control.calls) == failures + 1
     assert control.calls == [(control.temporaries[0], control.path)] * (failures + 1)
     assert control.delays == pytest.approx([0.02, 0.04, 0.08, 0.16][:failures])
@@ -533,7 +534,7 @@ def test_atomic_windows_persistent_32_is_five_attempts_then_last_error_and_clean
         raise error
     control.rename = rename
     with pytest.raises(PermissionError) as caught:
-        control.storage.SessionStore._atomic(control.path, control.text)
+        control.storage.SessionStore._atomic(control.path, control.payload)
     assert len(control.calls) == len(errors) == 5
     assert control.calls == [(control.temporaries[0], control.path)] * 5
     assert caught.value is errors[-1]
@@ -562,7 +563,7 @@ def test_atomic_nonsharing_or_nonwindows_failure_never_retries(
         raise error
     control.rename = rename
     with pytest.raises(kind) as caught:
-        control.storage.SessionStore._atomic(control.path, control.text)
+        control.storage.SessionStore._atomic(control.path, control.payload)
     assert caught.value is error and len(control.calls) == 1 and not control.delays
     assert control.path.read_bytes() == b'original committed bytes'
     assert control.removed == control.temporaries and not control.temporaries[0].exists()
@@ -584,7 +585,7 @@ def test_atomic_cancellation_during_backoff_cleans_temp_without_next_attempt(
             raise cancelled
     control.rename, control.delay = rename, delay
     with pytest.raises(kind) as caught:
-        control.storage.SessionStore._atomic(control.path, control.text)
+        control.storage.SessionStore._atomic(control.path, control.payload)
     assert caught.value is cancelled
     assert len(control.calls) == len(control.delays) == cancel_on_delay
     assert control.delays == pytest.approx([0.02, 0.04, 0.08][:cancel_on_delay])
@@ -624,7 +625,7 @@ def test_atomic_failed_temp_unlink_keeps_original_failure_and_reports_uncertain_
     monkeypatch.setattr(control.storage.os, 'unlink', refuse_unlink)
     try:
         with pytest.raises(type(original)) as caught:
-            control.storage.SessionStore._atomic(control.path, control.text)
+            control.storage.SessionStore._atomic(control.path, control.payload)
         assert caught.value is original and caught.value is not cleanup
         assert original.__notes__ == [
             'Temporary cleanup failed; an unpublished temporary may remain.']

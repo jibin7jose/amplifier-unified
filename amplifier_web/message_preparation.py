@@ -147,7 +147,7 @@ class MessagePreparation:
             # Unsupported values retain the original encoder/error behavior.
             return resource_files.prepare(messages)
         prepared = resource_files.prepare(snapshot)
-        charge = remaining - budget[1] + sys.getsizeof(prepared.text) + sys.getsizeof(prepared) + 256
+        charge = remaining - budget[1] + sys.getsizeof(prepared.encoded) + sys.getsizeof(prepared) + 256
         if charge <= remaining:
             pending[identity] = Entry(id(session), snapshot, prepared, charge)
         return prepared

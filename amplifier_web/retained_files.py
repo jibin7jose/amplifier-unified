@@ -57,7 +57,8 @@ class Piece:
             encoded = stream.read(CHUNK_JSON + 1)
         if len(encoded) != self.size or hashlib.sha256(encoded).hexdigest() != self.identity:
             raise ValueError('Prepared file chunk changed before retention.')
-        return resource_files.Prepared(encoded.decode(), self.identity, self.size)
+        encoded.decode('utf-8')  # Preserve validation before adopting a spooled chunk.
+        return resource_files.Prepared(encoded, self.identity, self.size)
 
 
 def capture(root, path, expected, batch):
@@ -82,7 +83,7 @@ def capture(root, path, expected, batch):
             else:
                 prepared = resource_files.prepare({'encoding': 'base64', 'data': base64.b64encode(block).decode()})
                 target = Path(batch.directory) / (prepared.identity + '.json')
-                target.write_text(prepared.text)
+                target.write_bytes(prepared.encoded)
                 pieces.append(Piece(target, prepared.identity, prepared.size))
         after = os.fstat(stream.fileno())
         if size != before.st_size or any(getattr(before, key) != getattr(after, key) for key in EVIDENCE):

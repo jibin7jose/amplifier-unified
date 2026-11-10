@@ -103,7 +103,8 @@ class SessionStore:
         fd, temporary = tempfile.mkstemp(prefix=".checkpoint-", dir=path.parent)
         failure = None
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            binary = isinstance(text, bytes)
+            with os.fdopen(fd, "wb" if binary else "w", encoding=None if binary else "utf-8") as stream:
                 os.fchmod(stream.fileno(), 0o600)
                 stream.write(text)
                 stream.flush()

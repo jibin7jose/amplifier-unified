@@ -24,6 +24,16 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def test_spooled_chunk_rejects_invalid_utf8_before_adoption(tmp_path):
+    path = tmp_path / 'chunk.json'
+    encoded = b'{"data":"\xff"}'
+    path.write_bytes(encoded)
+    piece = retained_files.Piece(path, hashlib.sha256(encoded).hexdigest(), len(encoded))
+    with pytest.raises(UnicodeDecodeError):
+        piece.load()
+    assert path.read_bytes() == encoded
+
+
 def wheel(path, megabytes=40):
     with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_STORED) as archive:
         with archive.open('large_fixture/data.bin', 'w') as output:
