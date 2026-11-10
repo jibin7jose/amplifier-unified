@@ -144,7 +144,8 @@ async def test_missing_source_staging_verifies_exact_checked_revision(tmp_path,m
 
 
 @pytest.mark.parametrize('case', ['pin', 'exact', 'transport', 'interrupted'])
-async def test_checked_source_failure_retry_disposition_survives_checks_and_restart(manager, monkeypatch, case):
+@pytest.mark.parametrize('wake', ['check', 'timer'])
+async def test_checked_source_failure_retry_disposition_survives_checks_and_restart(manager, monkeypatch, case, wake):
     """Real check/install/tick/receipts; only remote I/O and costly qualification
     are fixtures. The actual source guard, not an injected typed error, rejects.
     This is scheduling proof, not installed-package qualification.
@@ -212,7 +213,8 @@ async def test_checked_source_failure_retry_disposition_survives_checks_and_rest
     await manager.publish()
     manager.diagnostics = UpdateDiagnostics(manager)
     for _ in range(3):
-        await manager.check()
+        if wake == 'check':
+            await manager.check()
         await manager.tick()
     assert len(calls) == 1
     assert manager.diagnostics.state['lastFailure'] == failure
@@ -225,7 +227,20 @@ async def test_checked_source_failure_retry_disposition_survives_checks_and_rest
             await manager.install()
         return
     manager.diagnostics.state['batch']['retry']['retryAt'] = 0
-    await manager.check()
+    if case == 'transport' and wake == 'timer':
+        settings = manager.service.state['settings']['updates']
+        sequence = manager.service.state['updates']['sequence']
+        settings['autoInstall'] = False
+        sequence['install'] = False
+        await manager.tick()
+        assert len(calls) == 1  # A timer cannot create installation intent.
+        settings['autoInstall'] = True
+        sequence['manualHandoff'] = True
+        await manager.tick()
+        assert len(calls) == 1  # A manual app handoff also needs component intent.
+        sequence.pop('manualHandoff')
+    if wake == 'check':
+        await manager.check()
     await manager.tick()
     assert len(calls) == (2 if case == 'transport' else 1)
     if case == 'transport':
