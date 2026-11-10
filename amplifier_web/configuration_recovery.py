@@ -331,7 +331,7 @@ def public(record, observed=None):
         "sessionId": record["request"]["sessionId"], "revision": record["revision"],
         "state": {key: value for key, value in record["state"].items() if key in fields},
         "history": [{key: value for key, value in row.items() if key in fields} for row in record["history"][-32:]],
-        "historyTruncated": len(record["history"]) > 32,
+        **({"historyTruncated": True} if len(record["history"]) > 32 else {}),
         "nativeEffect": observed["effect"] if observed else "unconfirmed",
         "attempts": len(record.get("attempts", [])), "workReplayed": False,
     }

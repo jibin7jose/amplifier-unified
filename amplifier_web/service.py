@@ -2073,7 +2073,7 @@ class AppService:
             async with self.lock:
                 try:
                     result = recovery_command(self.management, action, args, origin, caller_session_id,
-                        operator=recovery_operator)
+                        **({'operator': recovery_operator} if recovery_operator is not None else {}))
                 except (ValueError, OSError, KeyError, TypeError):
                     raise AppError('The retained configuration operation cannot be verified. Nothing was retried.', 409) from None
             return {'accepted': True, 'result': result}
@@ -3716,18 +3716,19 @@ class AppService:
                 caller_authority(self.management, args, origin, caller_session_id, active=True)
                 try:
                     diagnostic_result = recovery_command(self.management, action, args, origin, caller_session_id,
-                        operator=recovery_operator)
+                        **({'operator': recovery_operator} if recovery_operator is not None else {}))
                 except (ValueError, OSError, KeyError, TypeError, AppError) as exc:
                     message = ('Configuration recovery refused: ' + str(exc) if isinstance(exc, (ValueError, AppError))
                         else 'Configuration recovery could not verify authority or retained evidence. Nothing was retried.')
+                    status = exc.status if isinstance(exc, AppError) else 409
                     if command_id:
-                        rejected = {'accepted': False, 'status': 409, 'error': message,
+                        rejected = {'accepted': False, 'status': status, 'error': message,
                             'configurationRecovery': {'action': action, 'sessionId': args['sessionId'],
                                 'operationId': args['operationId'], 'expectedRevision': args['expectedRevision'],
                                 'errorCategory': 'recovery_refused'}}
                         self.db.execute('INSERT INTO commands VALUES(?,?,?)', (command_id, fingerprint, json.dumps(rejected)))
                         self.db.commit()
-                    raise AppError(message, 409) from None
+                    raise AppError(message, status) from None
             elif action.startswith(("bundle.","bundles.","configuration.","runtime.","permissions.","history.","maintenance.","notifications.","providers.","routing.","modules.","sources.","locations.")):
                 if not self.management: raise AppError("Management service is unavailable.")
                 values = (action, copy.deepcopy(args), command_id, configuration_authority)
