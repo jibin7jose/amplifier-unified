@@ -1892,7 +1892,7 @@ def require_no_child_cleanup_fallback(report):
         report["cleanupFallbackSignals"])
 
 
-@pytest.mark.parametrize("variant", ["original", "skip-save-regression", "settings-continuation"])
+@pytest.mark.parametrize("variant", ["original", "skip-save-regression", "settings-continuation", "targeted-saved"])
 async def test_real_native_recovery_and_deliberately_regressed_save_witness(tmp_path, variant):
     """No importorskip: the admitted fixed workflow owns native prerequisites."""
     import os
@@ -1907,6 +1907,8 @@ async def test_real_native_recovery_and_deliberately_regressed_save_witness(tmp_
         command.append("--skip-save")
     if variant == "settings-continuation":
         command.append("--settings-continuation")
+    if variant == "targeted-saved":
+        command.append("--targeted-saved")
     # Retain finite structured proof and logs in the existing workflow artifact.
     # No homes, provider scenario, grants, native transcript or receipt keys.
     output = (Path(os.environ["GITHUB_WORKSPACE"]) / "output/python-checks"
@@ -1969,14 +1971,21 @@ async def test_real_native_recovery_and_deliberately_regressed_save_witness(tmp_
     report = json.loads(evidence_path.read_text())
     (output / "evidence.json").write_text(json.dumps(report, indent=2) + "\n")
     require_no_child_cleanup_fallback(report)  # Applies to both original and save-skipping variant.
-    assert len(report["processes"]) == 2
+    assert len(report["processes"]) == (3 if variant == 'targeted-saved' else 2)
     assert all(row["returncode"] is not None for row in report["processes"])
     assert not report["cleanupErrors"] and report["runtimeRowsAfterClose"] == 0
     assert report["heldWriterControl"] and report["writerAvailableAfterClose"] is True
-    assert len(report["workerSources"]) == 2
+    assert len(report["workerSources"]) == (3 if variant == 'targeted-saved' else 2)
     assert all(row["mutant"] is mutant for row in report["workerSources"])
     assert all((row["originalFunction"] != row["executedFunction"]) is mutant
         for row in report["workerSources"])
+    if variant == 'targeted-saved':
+        assert process.returncode == 0, stderr.decode(errors='replace')[-6000:]
+        assert report['targetedSaved'] and report['noTargetProviderCalls']
+        assert report['oneSettingsSave'] and report['actualManagerTool']
+        assert report['originalAuthorityPreserved'] and report['attempts'] == 1
+        assert report['mountedPlanVerified']
+        return
     if variant == "settings-continuation":
         assert process.returncode == 0, stderr.decode(errors="replace")[-6000:]
         assert report["automaticContinuation"] and report["taskAndBudgetPreserved"]

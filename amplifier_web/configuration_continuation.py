@@ -159,6 +159,8 @@ def publish_outcome(management, session, operation):
         # Recovery retains the original failure; an unreadable operation cannot
         # authorize a follow-up and must not mask the original command outcome.
         return
+    if record.get('recoveryNoInput'):
+        return  # Explicit cross-owner recovery observes/mounts; never wakes its task.
     intent = record['request']['source'].get('continuation')
     boundary = record.get('boundary', {})
     goal = boundary.get('yieldedGoal')

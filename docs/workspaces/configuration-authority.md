@@ -157,7 +157,9 @@ This is configuration control authority, not an operating-system sandbox.
 Arbitrary shell programs and external modules can bypass supported settings
 APIs. General update/install/deploy authority and real-time provider effects are
 not covered by this grant slice. Neither a root grant nor assignment membership
-grants stop/steer/settings authority over an independent peer.
+grants stop/steer/settings authority over an independent peer. The explicit
+same-workspace Full operator recovery exception below inspects or continues only
+the original configuration operation; it does not administer that peer's grants.
 
 ## Active tasks changing their own settings
 
@@ -429,6 +431,34 @@ native principal/generation/input coverage to the existing private history; they
 also record the Full revision used for operator-origin recovery. Public operation
 views omit this attribution. Recovery does not relabel the original actor or
 replace the retained effect authority.
+
+An authenticated current **Full root operator** can also use these same three
+actions with an explicit other root `sessionId` and `operationId` on this
+installation in the same workspace, within its assigned recovery objective.
+It keeps its actual caller identity, generation and authenticated input lineage;
+it never borrows the target or browser identity. Ask, native children, unbound or
+forged callers, trusted systems without this root binding, and cross-workspace
+targets cannot use this exception. Owner-local root, qualified-child and trusted
+system behavior remains unchanged. Grant reading/editing remains owner-local.
+
+The operator's captured Full revision and peer-source authority are additional
+ceilings, not replacements for the original operation's authority. Stop,
+revocation (including Full off/on), changed execution/task controls, another fence
+owner or parallel operation, stale revisions and unknown/partial native evidence
+refuse recovery. Mutations require an exclusively idle target. Saved Resume
+observes its exact existing worker or mounts only when absent; it never performs
+the native settings write again. Cross-owner recovery neither delivers inputs nor
+wakes the target's model, including through a saved settings continuation or a
+queued peer input. Ordinary own-task settings continuation is unchanged.
+
+`configuration.operation.read` accepts an optional exact recovery `commandId`
+with the explicit target and operation. It returns only target-bound recovery
+admission, expected/observed revision, phase and a bounded error category from
+retained command evidence. No global command listing, private plan, grant,
+native credential, receipt body or raw error is exposed. Missing or older
+unbound command evidence is **unconfirmed**, not proof of rejection or no effect.
+The current operation and sealed native evidence remain canonical. Read this
+status after an uncertain Resume; do not invoke the mutation to obtain its result.
 
 For an already executing Full native child, the exact operation read, reconcile
 and resume calls can reach the recovery owner even when that same settled pending
