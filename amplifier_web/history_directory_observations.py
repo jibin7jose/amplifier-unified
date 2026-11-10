@@ -171,7 +171,9 @@ def visible_ids(directory, state, identities, *, notices=False, roots=False):
 def revision(directory,state):
     # effective freezes each admitted row once; a snapshot uses its already
     # frozen overlay and pinned DB views, never mutable service state.
-    sql,params = directory.effective(state, fields={'id'})
+    # Attention revisions depend on current receipts even when row identity is
+    # the only projected field; membership-only readers omit that history.
+    sql,params = directory.effective(state, fields={'id'}, notice_values=True)
     native = (0,0,0,0,0)
     if directory._native_path:
         saved = directory.db.execute('SELECT observation_sessions,observation_membership,navigation,workspace,root_navigation '
@@ -228,7 +230,8 @@ def revision(directory,state):
         # role in the same scalar join, using the already materialized receipts.
         # Repeating exact-ID queries for every batch reparses the live overlay
         # and receipts, twice, even though both answers come from the same rows.
-        notice_sql, notice_params = directory.effective(state, fields={'id', 'session_kind'}, local_only=True)
+        notice_sql, notice_params = directory.effective(state, fields={'id', 'session_kind'},
+                                                         notice_values=True, local_only=True)
         for owner, key, fingerprint, kind in directory.db.execute(notice_sql + '''
                 SELECT n.owner,n.key,n.fingerprint,d.session_kind FROM directory_notices n
                 JOIN read_receipts r ON r.key=n.key AND r.value=n.fingerprint

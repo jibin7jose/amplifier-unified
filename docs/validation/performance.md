@@ -96,6 +96,12 @@ count can still hide repeated parsing of large bound JSON parameters. Scalar
 queries should not bind unused bodies; measure parameter/statement bytes as well
 as rows and preserve the authorized full-detail read.
 
+Membership-only counts also have no dependency on historical read receipts.
+Hold catalog membership and current notices fixed while growing that history;
+root, child and archive counts should keep the same query work and bound bytes.
+Attention projections must still observe current read fingerprints and reviewed
+errors, including when they request only scalar fields alongside notice values.
+
 Prefer stable work assertions at the affected boundary: rows read or visited,
 records copied/encoded, queries, publications, frames/bytes, retained cache bytes
 or runtime starts. Pick the counts that expose the regression; avoid tests that

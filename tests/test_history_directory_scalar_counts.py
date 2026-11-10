@@ -6,6 +6,44 @@ from test_history_directory_navigation import directory_fixture
 
 
 @pytest.mark.parametrize('kind,expected', [('roots', 120), ('children', 2), ('archived', 3)])
+def test_membership_counts_do_not_read_attention_history(tmp_path, kind, expected):
+    """Old read receipts cannot make a root/child/archive count more expensive."""
+    results = []
+    for receipt_count in (0, 20_000):
+        path = tmp_path / str(receipt_count)
+        path.mkdir()
+        state, directory = directory_fixture(path, 124)
+        parent = state['sessions'][1]
+        for index in (31, 62):
+            state['sessions'][index]['parentId'] = parent['id']
+        state['conversationOrganization']['archived'].update(s31=1, unknown=1)
+        directory.sync(state['sessions'], state)
+        directory.db.commit()
+        state['sessions'] = state['sessions'][:6]
+        state['attentionRead'] = {f'old-notice-{i}': f'fingerprint-{i}'
+                                  for i in range(receipt_count)}
+        readers = {
+            'roots': lambda: directory.root_count(state),
+            'children': lambda: directory.child_count(state, parent),
+            'archived': lambda: archived_count(directory, state),
+        }
+        statement_bytes = []
+        steps = []
+        directory.db.set_trace_callback(lambda sql: statement_bytes.append(len(sql.encode())))
+        directory.db.set_progress_handler(lambda: steps.append(1) or 0, 100)
+        try:
+            assert readers[kind]() == expected
+        finally:
+            directory.db.set_trace_callback(None)
+            directory.db.set_progress_handler(None, 0)
+            directory.db.close()
+        results.append((max(statement_bytes), len(steps)))
+    # Membership has no dependency on read receipts. Guard both pre-SQL JSON
+    # encoding and actual query work; a small response alone misses this cost.
+    assert results[1] == results[0]
+
+
+@pytest.mark.parametrize('kind,expected', [('roots', 120), ('children', 2), ('archived', 3)])
 def test_count_queries_do_not_bind_retained_summary_bodies(tmp_path, kind, expected):
     state, directory = directory_fixture(tmp_path, 124)
     parent = state['sessions'][1]

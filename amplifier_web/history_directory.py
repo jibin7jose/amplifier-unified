@@ -536,9 +536,10 @@ class HistoryDirectory:
         exact_parent uses the child candidate indexes but preserves the agent
         overview's exact effective parent equality, including self-parent rows.
         fields limits the final UNION projection, after retaining every scalar
-        needed by its canonical membership/suppression predicates.
-        notice_values exposes existing item payloads only to the attention
-        reader; ordinary catalog/count queries retain scalar notice columns.
+        needed by its canonical membership/suppression predicates. Membership
+        counts do not need current notice/read-receipt joins.
+        notice_values supplies notice/read-receipt CTEs and existing item
+        payloads to attention readers, even for a scalar row projection.
         local_only retains canonical native metadata and suppression for local
         owners, but excludes native-only rows. Notices belong to local owners;
         joining them must not materialize unrelated native catalog rows first.
@@ -548,6 +549,7 @@ class HistoryDirectory:
         requested_fields = set(COLUMNS if fields is None else fields)
         if not requested_fields or not requested_fields.issubset(COLUMNS):
             raise ValueError('Use known directory fields for a scalar projection.')
+        needs_attention = notice_values or bool(requested_fields & {'unread', 'activity_kind', 'activity_label'})
         required_fields = set(requested_fields)
         if public_ids is not None and len(public_ids) > PUBLIC_ID_BATCH:
             raise ValueError('Public-ID candidates require one bounded batch.')
@@ -594,13 +596,14 @@ class HistoryDirectory:
         # Extract the admitted scalar overlay once per statement. Inlining it
         # makes native ownership/parent lookups parse each live row's summary
         # again for every catalog row, even when the query only needs counts.
-        # Materialize this query's receipts so SQLite can index their keys;
-        # joining json_each directly rescans every receipt for every notice.
         local = prefix + f'''live_rows AS MATERIALIZED (SELECT {live_columns} FROM json_each(?)), stored_local_rows AS (
             SELECT {columns} FROM live_rows {'WHERE ' + live_lookup if scoped else ''} UNION ALL
             SELECT {columns} FROM history_local_rows l
-            WHERE {'(' + stored_lookup + ') AND ' if scoped else ''}l.id NOT IN (SELECT id FROM live_rows)),
-            directory_notices AS (
+            WHERE {'(' + stored_lookup + ') AND ' if scoped else ''}l.id NOT IN (SELECT id FROM live_rows))'''
+        if needs_attention:
+            # Materialize receipts only for a current attention projection. A
+            # membership count must not encode or scan unrelated read history.
+            local += f''', directory_notices AS (
                 SELECT json_extract(value,'$[0]') owner,json_extract(value,'$[2]') key,
                        json_extract(value,'$[3]') fingerprint,json_extract(value,'$[4]') is_error
                        {",json_extract(value,'$[1]') slot,json_extract(value,'$[5]') value" if notice_values else ''}
@@ -649,9 +652,12 @@ class HistoryDirectory:
                 f"CASE WHEN {quiet} THEN CASE WHEN ns.unread THEN 'unread' ELSE 'idle' END ELSE l.base_activity_kind END" if name == 'activity_kind' else
                 f"CASE WHEN {quiet} THEN CASE WHEN ns.unread THEN 'New response' ELSE 'Idle' END ELSE l.base_activity_label END" if name == 'activity_label' else f'l.{name}')
             expressions.append(expression + ' AS ' + name)
-        local += ', local_rows AS (SELECT ' + ','.join(expressions) + ' FROM raw_local_rows l LEFT JOIN notice_status ns ON ns.owner=l.id)'
-        parameters = scope_params + [*self._overlay_parameters(include_summary='summary' in requested_fields),
-                      json.dumps(state.get('attentionRead', {}), separators=(',', ':'))]
+        local += (', local_rows AS (SELECT ' + ','.join(expressions) + ' FROM raw_local_rows l LEFT JOIN notice_status ns ON ns.owner=l.id)'
+                  if needs_attention else ', local_rows AS (SELECT * FROM raw_local_rows)')
+        rows, notices = self._overlay_parameters(include_summary='summary' in requested_fields)
+        parameters = scope_params + [rows]
+        if needs_attention:
+            parameters += [notices, json.dumps(state.get('attentionRead', {}), separators=(',', ':'))]
         if self._native_path:
             parameters.append(self._native_namespace)
         if self._native_path and not local_only:

@@ -7,7 +7,7 @@ from test_history_directory_exact_ids import native_fixture
 
 
 def reference_receipts(directory, state):
-    sql, params = directory.effective(state, fields={'id'})
+    sql, params = directory.effective(state, fields={'id'}, notice_values=True)
     rows = [tuple(row) for row in directory.db.execute(sql +
         ' SELECT n.owner,n.key,n.fingerprint FROM directory_notices n JOIN json_each(?) r '
         'ON r.key=n.key AND r.value=n.fingerprint ORDER BY n.owner,n.key,n.fingerprint',
