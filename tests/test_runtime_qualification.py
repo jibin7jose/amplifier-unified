@@ -287,6 +287,83 @@ async def test_staged_source_policy_uses_the_same_windows_checkout_eol_policy(tm
     assert dict(os.environ) == before_env
 
 
+@pytest.mark.parametrize('change', ['none', 'text', 'staged', 'shared-pin'])
+async def test_anonymous_windows_candidate_checkout_preserves_eol_and_guards(tmp_path, monkeypatch, change):
+    import hashlib
+    import shutil
+    from amplifier_web import updates
+    from amplifier_web.update_diagnostics import CommandFailure
+    source, _, isolated, git = _windows_eol_fixture(tmp_path, monkeypatch)
+    old = git('rev-parse', 'HEAD').decode()
+    (source / 'tracked.txt').write_bytes(b'updated\nsecond\n')
+    git('-c', 'core.autocrlf=false', 'add', 'tracked.txt')
+    git('commit', '-m', 'successor')
+    new = git('rev-parse', 'HEAD').decode()
+    git('-c', 'core.autocrlf=true', 'checkout', '--detach', old)
+    stage = tmp_path / 'candidate'
+    target = stage / 'foundation/cache/repository'
+    shutil.copytree(source, target)
+    if change in {'text', 'staged'}:
+        (target / 'tracked.txt').write_bytes(b'actual user edit\r\nsecond\r\n')
+        if change == 'staged':
+            await updates.process('git', '-c', 'core.autocrlf=true', 'add', 'tracked.txt', cwd=target)
+    elif change == 'shared-pin':
+        (stage / 'foundation/registry.json').write_text(json.dumps({'bundles': {
+            'pinned': {'uri': 'git+https://example.invalid/fixture@' + old,
+                       'local_path': str(target)}}}))
+    before = {p.relative_to(target).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in target.rglob('*') if p.is_file()}
+    if change == 'none':
+        # Exact old boundary: preflight accepts CRLF, but checkout without the
+        # scalar rejects it. Keep this real Git red discriminator in the test.
+        assert await updates.cache_changes(target) == ([], [])
+        with pytest.raises(CommandFailure):
+            await updates.process('git', '-c', 'core.hooksPath=/dev/null',
+                                  'checkout', '--detach', new, cwd=target)
+    commands = []
+    original = updates.process
+    async def process(*args, **kwargs):
+        commands.append(args)
+        if 'fetch' in args:
+            # Real offline fetch, not a network/auth fixture. EOL policy must
+            # stay off this command and all personal auth/includes stay isolated.
+            assert not any('autocrlf' in str(arg) for arg in args)
+            args = tuple(str(source) if arg == 'https://example.invalid/fixture' else arg for arg in args)
+        return await original(*args, **kwargs)
+    monkeypatch.setattr(updates, 'process', process)
+    class Diagnostics:
+        state = {'attemptId': 'fixture'}
+        async def run(self, phase, function, *args, **kwargs):
+            return await function(*args, **kwargs)
+        def record(self, *args, **kwargs):
+            pass
+    async def publish(**kwargs):
+        pass
+    manager = SimpleNamespace(diagnostics=Diagnostics(), publish=publish)
+    row = {'path': 'cache/repository', 'url': 'https://example.invalid/fixture',
+           'ref': 'main', 'current': old, 'latest': new, 'label': 'Fixture'}
+    if change == 'none':
+        await updates.UpdateManager.stage_cache_sources(manager, stage, [row])
+        checkout = next(args for args in commands if 'checkout' in args)
+        assert 'core.autocrlf=true' in checkout
+        assert (target / 'tracked.txt').read_bytes() == b'updated\r\nsecond\r\n'
+        assert await original('git', 'rev-parse', 'HEAD', cwd=target) == new
+        assert json.loads((target / '.amplifier_cache_meta.json').read_text())['commit'] == new
+    else:
+        with pytest.raises(ValueError):
+            await updates.UpdateManager.stage_cache_sources(manager, stage, [row])
+        assert not any('fetch' in args or 'checkout' in args for args in commands)
+        # Git may refresh copied candidate index stat metadata while inspecting a
+        # real edit. No tracked/untracked content, ref or configuration may change.
+        after = {p.relative_to(target).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                 for p in target.rglob('*') if p.is_file()}
+        assert {k: v for k, v in after.items() if k != '.git/index'} == {
+            k: v for k, v in before.items() if k != '.git/index'}
+    assert git('rev-parse', 'HEAD').decode() == old
+    assert (source / 'tracked.txt').read_bytes() == b'original\r\nsecond\r\n'
+    assert isolated['GIT_CONFIG_GLOBAL'] != str(tmp_path / 'user/.gitconfig')
+
+
 @pytest.mark.parametrize('platform', ['linux', 'darwin'])
 def test_checkout_eol_lookup_does_not_change_posix_policy(tmp_path, monkeypatch, platform):
     monkeypatch.setattr(runtime_qualification, 'sys', SimpleNamespace(platform=platform))
@@ -323,6 +400,10 @@ async def test_fresh_probe_freezes_then_uses_an_ordinary_resolver(tmp_path, monk
     class Diagnostics:
         state = {'attemptId': release}
         async def run(self, phase, function, *command, **kwargs):
+            if phase == 'ecosystem-source-policy' and function.__name__ == 'reconcile':
+                # The owner now wraps collection in reconciliation. Keep this
+                # fixture's subprocess oracle on the actual inner collect call.
+                return await function(*command, **kwargs)
             if phase == 'ecosystem-source-preflight':
                 assert calls[-1] == 'collect'
                 assert kwargs == {'selection': selection}
@@ -564,6 +645,8 @@ async def test_one_batch_and_readonly_offered_profiles_exclude_history(tmp_path,
     class Diagnostics:
         state = {'attemptId': release}
         async def run(self, phase, function, *command, **kwargs):
+            if phase == 'ecosystem-source-policy' and function.__name__ == 'reconcile':
+                return await function(*command, **kwargs)
             if phase == 'ecosystem-runtime-policy':
                 return await function(*command, **kwargs)
             if phase == 'ecosystem-source-preflight':

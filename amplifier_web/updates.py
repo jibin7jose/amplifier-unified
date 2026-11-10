@@ -310,6 +310,20 @@ date. Do not hand-edit; it is overwritten on the next build.
 '''
 
 
+async def cache_checkout_options(root):
+    """Read the validated local EOL scalar, never personal transport policy."""
+    from .runtime_qualification import _installed_git_environment, _installed_checkout_environment
+    isolated = _installed_git_environment()
+    checkout = await asyncio.to_thread(_installed_checkout_environment, root, isolated)
+    if checkout is not isolated:
+        # Reuse installed provenance's validated scalar, not personal auth,
+        # includes or rewrites. process() re-sanitizes anonymous environments,
+        # so carry only this local-checkout value as an explicit Git argument.
+        last = int(checkout['GIT_CONFIG_COUNT']) - 1
+        return ['-c', 'core.autocrlf=' + checkout[f'GIT_CONFIG_VALUE_{last}']]
+    return []
+
+
 async def cache_changes(root):
     """Return protected changes and proven cache artifacts, without editing files.
 
@@ -319,16 +333,7 @@ async def cache_changes(root):
     inside an isolated staging copy. Untracked files are never removed.
     """
     root = Path(root).resolve()
-    from .runtime_qualification import _installed_git_environment, _installed_checkout_environment
-    isolated = _installed_git_environment()
-    checkout = await asyncio.to_thread(_installed_checkout_environment, root, isolated)
-    options = []
-    if checkout is not isolated:
-        # Reuse installed provenance's validated scalar, not personal auth,
-        # includes or rewrites. process() re-sanitizes anonymous environments,
-        # so carry this metadata-only value as an explicit Git argument.
-        last = int(checkout['GIT_CONFIG_COUNT']) - 1
-        options = ['-c', 'core.autocrlf=' + checkout[f'GIT_CONFIG_VALUE_{last}']]
+    options = await cache_checkout_options(root)
     records = (await process('git',*options,'--no-optional-locks','status','--porcelain=v1','-z','--untracked-files=no',cwd=root,timeout=10,raw=True)).split(b'\0')
     changed = None
     if options and any(record.startswith(b' M ') for record in records):
@@ -1238,6 +1243,7 @@ class UpdateManager:
             current=await self.diagnostics.run(phase,process,'git','rev-parse','HEAD',cwd=target)
             dirty,artifacts=await self.diagnostics.run(phase,cache_changes,target)
             if dirty or current!=row['current']: raise ValueError('Source changed since check')
+            options = await cache_checkout_options(target)
             meta=owned_path(target/'.amplifier_cache_meta.json', stage/'foundation')
             data=json.loads(meta.read_text())
             if source_key(data['git_url'], data.get('ref') or 'HEAD') != source_key(row['url'], row['ref']):
@@ -1246,7 +1252,7 @@ class UpdateManager:
                 # Restore only verified tracked artifacts in this copy.
                 # Rechecking here also protects edits made after check.
                 await guard()
-                await self.diagnostics.run(phase,process,'git','--literal-pathspecs','-c','core.hooksPath=/dev/null','restore','--source=HEAD','--worktree','--',*artifacts,cwd=target)
+                await self.diagnostics.run(phase,process,'git',*options,'--literal-pathspecs','-c','core.hooksPath=/dev/null','restore','--source=HEAD','--worktree','--',*artifacts,cwd=target)
             await self.publish(detail='Downloading '+row['label']+'…')
             await guard()
             try:
@@ -1257,7 +1263,7 @@ class UpdateManager:
                 error.source_fetch_failed = True
                 raise
             await guard()
-            await self.diagnostics.run('ecosystem-checkout',process,'git','-c','core.hooksPath=/dev/null','checkout','--detach',row['latest'],cwd=target)
+            await self.diagnostics.run('ecosystem-checkout',process,'git',*options,'-c','core.hooksPath=/dev/null','checkout','--detach',row['latest'],cwd=target)
             data.update(commit=row['latest'],cached_at=time.strftime('%Y-%m-%dT%H:%M:%S'))
             owned_path(meta, stage/'foundation').write_text(json.dumps(data))
         tasks = [asyncio.create_task(stage_one(row)) for row in rows]

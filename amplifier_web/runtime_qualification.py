@@ -38,7 +38,9 @@ def _installed_checkout_environment(root, env):
     A local status read still needs the checkout's ordinary core.autocrlf
     value. Read only that scalar, without includes, and pass only its validated
     value to the already isolated metadata child. Never change Git configuration
-    or use this exception for fetching/installing sources.
+    or pass personal configuration to fetching/installing sources. The updater
+    may carry this same validated scalar as an explicit option for a guarded
+    local checkout/restore inside its unpublished candidate, never for fetch.
     """
     if sys.platform != 'win32' or not env or env.get('AMPLIFIER_GITHUB_ACCESS') != 'anonymous':
         return env
