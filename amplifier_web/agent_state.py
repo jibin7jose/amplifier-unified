@@ -5,6 +5,7 @@ responses point to data they omit;
 large mount plans and model catalogs must not swamp the model's context.
 """
 import json
+from itertools import islice
 
 
 def _pointer(path, key):
@@ -15,8 +16,44 @@ def _size(value):
     return len(json.dumps(value, ensure_ascii=False))
 
 
+def _fits_preview(value, budget):
+    """Reject oversized values without encoding their omitted history.
+
+    Count a cheap JSON character lower bound first. Only potentially fitting
+    values need exact encoding (including escapes, numbers and Unicode).
+    """
+    def members(mapping):
+        # Keep lazy display records lazy: items() may hydrate every field.
+        for key in mapping:
+            yield key
+            yield mapping[key]
+
+    remaining = budget
+    stack = [iter((value,))]
+    while stack:
+        try:
+            item = next(stack[-1])
+        except StopIteration:
+            stack.pop()
+            continue
+        if isinstance(item, str):
+            remaining -= len(item) + 2
+        elif isinstance(item, (dict, list, tuple)):
+            remaining -= 2 + max(0, len(item) - 1) * 2
+            if isinstance(item, dict):
+                remaining -= len(item) * 2  # Colon and space per member.
+                stack.append(iter(members(item)))
+            else:
+                stack.append(iter(item))
+        else:
+            remaining -= 1
+        if remaining < 0:
+            return False
+    return _size(value) <= budget
+
+
 def _preview(value, path, budget=2500, depth=0, *, reference_key='$statePath'):
-    if _size(value) <= budget:
+    if _fits_preview(value, budget):
         return value
     ref = {reference_key:path,'type':type(value).__name__,'size':len(value) if isinstance(value,(dict,list,str)) else None}
     if depth >= 4 or budget < 250:
@@ -27,7 +64,7 @@ def _preview(value, path, budget=2500, depth=0, *, reference_key='$statePath'):
         count = min(5,len(value))
         return {**ref,'preview':[_preview(v,_pointer(path,i),max(100,(budget-250)//count),depth+1,reference_key=reference_key) for i,v in enumerate(value[:count])]}
     if isinstance(value, dict):
-        keys=list(value)[:10]
+        keys=list(islice(value, 10))
         return {**ref,'preview':{k:_preview(value[k],_pointer(path,k),max(100,(budget-250)//len(keys)),depth+1,reference_key=reference_key) for k in keys}}
     return ref
 

@@ -377,6 +377,15 @@ hydration path outside the frame. The directory frame checks cover exceptions,
 inherited task/thread contexts, admission and durable/native changes. This bounds
 duplicate preparation, not the cost of one preparation or all historical reads.
 
+State preview budgets apply before encoding, not just to the returned payload.
+Reject oversized histories and text using bounded inspection before measuring
+exact JSON size; retain existing character limits, omitted-value pointers and
+explicit paging. The same test file grows message history on repeated reads
+after the canonical notification projection is prepared, and grows individual
+text values while bounding visits and encoding work. This does not qualify the
+initial notification scan as bounded. Nested edits must remain visible
+on the next read without a new publication or preview cache.
+
 `tests/test_runtime_progress_backpressure.py` grows retained worker reports from
 one to 475 with a large saved task body. Bridge diagnostics must produce zero
 conversation saves/publications while remaining inspectable in pending and
