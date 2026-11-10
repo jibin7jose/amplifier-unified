@@ -338,7 +338,8 @@ def configure_skill_cache(bundle, registry_home):
                 # settings, instructions and native history share that root.
                 if config.get("cache_dir") is None:
                     config["cache_dir"] = str(Path(registry_home) / "cache/skills")
-        for child in agents.values():
+        from .components import agent_roster
+        for child in agent_roster(agents).values():
             if isinstance(child, dict):
                 apply(child.get("tools", []), child.get("agents", {}))
     apply(getattr(bundle, "tools", []), getattr(bundle, "agents", {}))

@@ -228,6 +228,16 @@ def child_plan(parent, overlay, *, tool_inheritance=None, hook_inheritance=None,
         result["agents"] = {**agents, **agent_filter}
     else:
         result["agents"] = copy.deepcopy(agents)
+    # A descendant's dictionary roster may add declarations, but cannot restore
+    # names removed by an ancestor access selector. Overlay markers are not grants.
+    ceiling = parent.get("_unified_agent_ceiling")
+    if agent_filter == "none" or isinstance(agent_filter, list):
+        ceiling = list(result["agents"]) if ceiling is None else [
+            name for name in ceiling if name in result["agents"]]
+    result.pop("_unified_agent_ceiling", None)
+    if ceiling is not None:
+        result["_unified_agent_ceiling"] = copy.deepcopy(ceiling)
+        result["agents"] = {name: value for name, value in result["agents"].items() if name in ceiling}
     return copy.deepcopy(result)
 
 
@@ -426,6 +436,9 @@ class Children:
         if use_subprocess:
             raise ValueError(_SUBPROCESS_UNSUPPORTED)
         configs = agent_configs or parent_session.coordinator.config.get("agents", {})
+        ceiling = parent_session.coordinator.config.get("_unified_agent_ceiling")
+        if agent_name != "self" and ceiling is not None and agent_name not in ceiling:
+            raise ValueError(f"Agent is outside the inherited access ceiling: {agent_name}")
         if agent_name == "self":
             overlay = {}
         elif agent_name in configs and isinstance(configs[agent_name], dict):
@@ -449,6 +462,10 @@ class Children:
         actual_parent = metadata.get("parent_id") or metadata.get("parent_session_id")
         if actual_parent and actual_parent != parent_session.session_id:
             raise ValueError("This saved session belongs to a different parent")
+        ceiling = getattr(getattr(parent_session, "coordinator", None), "config", {}).get("_unified_agent_ceiling")
+        agent = metadata.get("agent_name", "resumed")
+        if agent != "self" and ceiling is not None and agent not in ceiling:
+            raise ValueError(f"Agent is outside the inherited access ceiling: {agent}")
         overlay = copy.deepcopy(metadata.get("agent_overlay", {}))
         if model_role is not None:
             overlay["model_role"] = model_role

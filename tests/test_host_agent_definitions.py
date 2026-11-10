@@ -138,7 +138,7 @@ async def test_inline_replacements_are_validated_after_file_defaults(specialist)
     ("---\nmeta: [broken\n---\nBody", "Could not load"),
     ("---\ntools: invalid\n---\nBody", "Malformed file-backed"),
     ("---\nmeta: {description: ''}\n---\n", "Could not load"),
-    ("---\nagents: none\n---\nBody", "Malformed file-backed"),
+    ("---\nagents: invalid\n---\nBody", "Could not load"),
 ])
 async def test_missing_and_malformed_file_definitions_refuse_composition(specialist, content, message):
     if content is None:
@@ -260,6 +260,169 @@ async def test_retained_incomplete_child_overlay_is_not_hydrated(specialist, mon
     assert "tools" not in execute.call_args.args[4]
 
 
+@pytest.mark.parametrize("selector", ["none", "all", [], ["specialists:analyst"]])
+async def test_file_access_selectors_survive_composition_and_descendant_ceiling(specialist, selector):
+    from amplifier_web.host.children import child_plan
+    from amplifier_web.host.session import live_plan
+    from amplifier_web.host.config import configure_skill_cache
+    from amplifier_web.provider_environment import iter_provider_rows, rebind_provider_credentials
+    specialist.definition.write_text("---\n" + yaml.safe_dump({"agents": selector}) + "---\nSelector body\n")
+    loaded = await compose(specialist)
+    assert loaded.agents["specialists:analyst"]["agents"] == selector
+    configure_skill_cache(loaded, specialist.config.registry_home)
+    plan = loaded.to_mount_plan()
+    plan["session"] = {"orchestrator": {"module": "loop-live"}}
+    live_plan(plan)
+    assert list(iter_provider_rows(plan)) == []
+    bound, _ = rebind_provider_credentials(plan, plan)
+    assert bound["agents"] == plan["agents"]
+    child = child_plan(plan, plan["agents"]["specialists:analyst"])
+    expected = {} if selector == "none" or selector == [] else plan["agents"]
+    assert child["agents"] == expected
+    grandchild = child_plan(child, {"agents": {
+        "forbidden": {"instruction": "Must not erase an ancestor selector"}},
+        "_unified_agent_ceiling": None})
+    if selector != "all":
+        assert "forbidden" not in grandchild["agents"]
+    assert child_plan(child, {"agents": "all"})["agents"] == expected
+
+
+@pytest.mark.parametrize("file_roster", [False, True])
+async def test_nested_dictionary_rosters_use_selected_files_and_overrides(specialist, file_roster, monkeypatch):
+    (specialist.root / "agents/deep.md").write_text("""---
+model_role: [coding, general]
+tools:
+  - module: tool-deep
+    source: ./modules/tool-deep
+---
+Deep file instructions.
+""")
+    nested = {"include": ["specialists:deep"]}
+    if file_roster:
+        # Foundation's public agent-file loader preserves meta fields, but
+        # deliberately does not forward top-level dictionary rosters.
+        specialist.definition.write_text("---\n" + yaml.safe_dump({"meta": {
+            "agents": nested}}) + "---\nOuter file instructions\n")
+    else:
+        selected = await specialist.registry.load(str(specialist.behavior))
+        selected.agents["specialists:analyst"]["agents"] = nested
+        specialist.config.app_bundles = []
+    specialist.config.module_sources = {"tool-deep": "/selected/deep"}
+    calls = []
+    original = Bundle.load_agent_metadata
+    def counted(bundle):
+        calls.extend(bundle.agents)
+        return original(bundle)
+    monkeypatch.setattr(Bundle, "load_agent_metadata", counted)
+    loaded = await compose(specialist) if file_roster else await compose_configured_bundle(
+        specialist.registry, selected, specialist.config)
+    deep = loaded.agents["specialists:analyst"]["agents"]["specialists:deep"]
+    assert deep["instruction"] == "Deep file instructions."
+    assert deep["model_role"] == ["coding", "general"]
+    assert deep["tools"][0]["source"] == "/selected/deep"
+    assert calls.count("specialists:deep") == 1
+    assert not loaded.tools
+
+
+async def test_nested_cycle_refuses_atomically_with_bounded_file_reads(specialist, monkeypatch):
+    specialist.definition.write_text("""---
+meta:
+  agents:
+    include: [specialists:analyst]
+---
+Recursive file.
+""")
+    root = Bundle(name="cycle", agents={"specialists:analyst": {"name": "specialists:analyst"}},
+                  source_base_paths={"specialists": specialist.root})
+    before = copy.deepcopy(root.agents)
+    calls = []
+    original = Bundle.load_agent_metadata
+    def counted(bundle):
+        calls.extend(bundle.agents)
+        return original(bundle)
+    monkeypatch.setattr(Bundle, "load_agent_metadata", counted)
+    with pytest.raises(ValueError, match="Cyclic.*specialists:analyst"):
+        _load_agent_definitions(root)
+    assert calls == ["specialists:analyst"]
+    assert root.agents == before
+
+
+async def test_explicit_terminal_roster_can_end_a_self_reference(specialist):
+    specialist.definition.write_text("""---
+meta:
+  agents:
+    specialists:analyst:
+      agents: {}
+---
+Finite self reference.
+""")
+    loaded = await compose(specialist)
+    assert loaded.agents["specialists:analyst"]["agents"]["specialists:analyst"]["agents"] == {}
+
+
+@pytest.mark.parametrize("file_roster", [False, True])
+async def test_nested_inline_sources_keep_file_provenance_not_final_overlay(specialist, tmp_path, file_roster):
+    inline = {"helper": {"tools": [{"module": "tool-helper", "source": "./modules/helper"}],
+                          "agents": {"deep": {"tools": [{"module": "tool-deep", "source": "../deep"}]}}}}
+    if file_roster:
+        specialist.definition.write_text("---\n" + yaml.safe_dump({"meta": {"agents": inline}}) + "---\nOuter\n")
+    else:
+        selected = await specialist.registry.load(str(specialist.behavior))
+        selected.agents["specialists:analyst"]["agents"] = inline
+        specialist.config.app_bundles = []
+    other = tmp_path / "other"
+    other.mkdir()
+    overlay = other / "bundle.yaml"
+    overlay.write_text("bundle: {name: unrelated}\n")
+    specialist.config.app_bundles.append(str(overlay))
+    loaded = await compose(specialist) if file_roster else await compose_configured_bundle(
+        specialist.registry, selected, specialist.config)
+    helper = loaded.agents["specialists:analyst"]["agents"]["helper"]
+    assert helper["tools"][0]["source"] == (str(specialist.root / "modules/helper") if file_roster else "./modules/helper")
+    assert helper["agents"]["deep"]["tools"][0]["source"] == (str(tmp_path / "deep") if file_roster else "../deep")
+    assert loaded.base_path == other
+
+
+async def test_current_ceiling_refuses_spawn_override_and_resume_without_history_mutation(monkeypatch):
+    from unittest.mock import AsyncMock
+    from amplifier_web.host.children import Children
+    saved = ([{"role": "user", "content": "old"}], {
+        "parent_id": "parent", "agent_name": "forbidden",
+        "agent_overlay": {"instruction": "frozen", "agents": "all"},
+    })
+    before = copy.deepcopy(saved)
+    children = Children(None, SimpleNamespace(load=lambda _: saved), None)
+    execute = AsyncMock()
+    monkeypatch.setattr(children, "_execute", execute)
+    parent = SimpleNamespace(session_id="parent", coordinator=SimpleNamespace(config={
+        "_unified_agent_ceiling": ["allowed"], "agents": {"allowed": {}},
+    }))
+    with pytest.raises(ValueError, match="access ceiling"):
+        await children.spawn("forbidden", "new", parent, agent_configs={"forbidden": {}})
+    with pytest.raises(ValueError, match="access ceiling"):
+        await children.resume("old", "new", parent)
+    execute.assert_not_called()
+    assert saved == before
+
+
+async def test_nested_preparation_preserves_provider_failure_attribution_and_plan(tmp_path):
+    from amplifier_web.host.components import prepare_bundle
+    spec = {"module": "provider-missing-fixture", "source": str(tmp_path / "missing-provider")}
+    root = Bundle(name="failures", agents={"outer": {"agents": {
+        "deep": {"providers": [spec], "agents": "none"}}}})
+    before = root.to_mount_plan()
+    failures = []
+    async def failed(failure):
+        failures.append(failure)
+    prepared = await prepare_bundle(root, install_deps=False, strict=True,
+                                    cache_dir=tmp_path / "cache", provider_failure_policy=failed)
+    assert len(failures) == 1
+    assert failures[0].agent_name == "deep" and failures[0].provider_spec == spec
+    assert prepared.provider_preparation_failures == tuple(failures)
+    assert prepared.mount_plan == before and root.to_mount_plan() == before
+    assert not root.providers
+
+
 TOOL = '''__amplifier_module_type__ = "tool"
 from amplifier_core import ToolResult
 class Specialist:
@@ -332,6 +495,101 @@ async def test_real_preparation_and_fresh_native_child_expose_specialist_only_to
             "parentHasTool": False, "childToolExecuted": True,
             "approvalDenied": True,
             "instructions": "file-backed", "modelRole": ["reasoning", "general"],
+        }, sort_keys=True))
+    finally:
+        await parent.cleanup()
+
+
+DRIVER = '''__amplifier_module_type__ = "orchestrator"
+class Driver:
+    async def execute(self, prompt, context, providers, tools, hooks, coordinator):
+        assert "specialist_probe" not in tools
+        assert coordinator.config["instruction"] == "Outer instructions."
+        deep = coordinator.config["agents"]["specialists:deep"]
+        assert "fixture specialist" in deep["instruction"]
+        spawn = coordinator.get_capability("session.spawn")
+        result = await spawn("specialists:deep", "grandchild probe",
+                             coordinator.session, sub_session_id="deep-child")
+        assert result["output"] == "specialist verified"
+        resume = coordinator.get_capability("session.resume")
+        result = await resume("deep-child", "explicit grandchild follow-up")
+        assert result["output"] == "specialist verified"
+        return "grandchild verified"
+async def mount(coordinator, config):
+    await coordinator.mount("orchestrator", Driver())
+'''
+
+
+@pytest.mark.parametrize("selector", ["none", "all", [], ["specialists:deep"]])
+@pytest.mark.parametrize("batched", [False, True])
+async def test_nested_installed_preparation_and_native_grandchild(specialist, tmp_path, selector, batched):
+    import hashlib
+    from amplifier_foundation.modules.batch import DependencyBatch
+    from amplifier_module_loop_live.runtime import Runtime
+    from amplifier_web.host.components import prepare_bundle
+    from amplifier_web.host.children import install_children, child_plan
+    from amplifier_web.host.storage import SessionStore
+    from amplifier_web.host.approvals import Approvals
+    # Core refuses one module identity loaded from two source roots in a process.
+    # These independent fixture sources must therefore have distinct identities.
+    suffix = hashlib.sha256(str(tmp_path).encode()).hexdigest()[:12]
+    tool_id, loop_id, driver_id = (name + "-" + suffix for name in
+                                   ("tool-nested", "loop-nested", "loop-driver"))
+    deep = specialist.root / "agents/deep.md"
+    deep.write_text("---\n" + yaml.safe_dump({
+        "model_role": ["reasoning", "general"], "agents": selector,
+        "tools": [{"module": tool_id, "source": "./wrong-unselected-module"}],
+        "session": {"orchestrator": {"module": loop_id, "source": "./modules/" + loop_id}},
+    }) + "---\nYou are the fixture specialist, nested definition.\n")
+    specialist.definition.write_text("---\n" + yaml.safe_dump({
+        "meta": {"agents": {"include": ["specialists:deep"]}},
+    }) + "---\nOuter instructions.\n")
+    for module, source in ((tool_id, TOOL), (loop_id, ORCHESTRATOR), (driver_id, DRIVER)):
+        folder = specialist.root / "modules" / module
+        folder.mkdir(parents=True)
+        (folder / "__init__.py").write_text(source)
+    selected_source = str(specialist.root / "modules" / tool_id)
+    specialist.config.module_sources = {tool_id: selected_source}
+    loaded = await compose(specialist)
+    context = Path(importlib.util.find_spec("amplifier_module_context_simple").origin).parent
+    loaded.session = {"orchestrator": {"module": driver_id, "source": str(specialist.root / "modules" / driver_id)},
+                      "context": {"module": "context-simple", "source": str(context)}}
+    loaded.hooks = []
+    original = loaded.to_mount_plan()
+    batch = DependencyBatch() if batched else None
+    prepared = await prepare_bundle(loaded, install_deps=False, strict=True, cache_dir=tmp_path / "cache",
+                                    **({"dependency_batch": batch} if batch is not None else {}))
+    if batch is not None:
+        await batch.install()  # Empty, local-module batch: no dependency process.
+    assert prepared.bundle is loaded and prepared.mount_plan == original
+    assert loaded.to_mount_plan() == original
+    assert prepared.resolver.resolve(tool_id).resolve() == Path(selected_source)
+    async def deny(*args):
+        return "deny"
+    approvals = Approvals(None, deny)
+    parent = await prepared.create_session(session_id="parent", approval_system=approvals)
+    store = SessionStore(tmp_path / "sessions")
+    try:
+        assert "specialist_probe" not in parent.coordinator.get("tools")
+        children = await install_children(parent, prepared, Runtime("parent"), store, approvals)
+        result = await children.spawn("specialists:analyst", "drive", parent, sub_session_id="outer-child")
+        assert result["output"] == "grandchild verified"
+        _, metadata = store.load("deep-child")
+        overlay, plan = metadata["agent_overlay"], metadata["mount_plan"]
+        assert overlay["agents"] == selector
+        assert overlay["model_role"] == ["reasoning", "general"]
+        assert "fixture specialist" in overlay["instruction"]
+        assert overlay["tools"][0]["source"] == selected_source
+        expected = set() if selector == "none" or selector == [] else (
+            {"specialists:deep"} if isinstance(selector, list) else {"specialists:analyst", "specialists:deep"})
+        assert set(plan["agents"]) == expected
+        descendant = child_plan(plan, {"agents": {"blocked": {"instruction": "not authorized"}},
+                                       "_unified_agent_ceiling": ["blocked"]})
+        if selector != "all":
+            assert "blocked" not in descendant["agents"]
+        print("NESTED_SPECIALIST_PROBE " + json.dumps({
+            "batched": batched, "selector": selector, "grandchildExecuted": True,
+            "selectedSource": True, "parentHasTool": False, "approvalDenied": True,
         }, sort_keys=True))
     finally:
         await parent.cleanup()

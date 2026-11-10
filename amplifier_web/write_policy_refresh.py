@@ -24,9 +24,10 @@ def _rows(rows):
 
 
 def _agents(agents):
+    from .host.components import agent_roster
     return {name: {'tools': _rows(agent.get('tools', [])),
                    'agents': _agents(agent.get('agents', {}))}
-            for name, agent in agents.items() if isinstance(agent, dict)}
+            for name, agent in agent_roster(agents).items() if isinstance(agent, dict)}
 
 
 def _without_writes(settings):
@@ -124,7 +125,8 @@ class LiveWritePolicy:
                                 row.setdefault('config', {})[key] = copy.deepcopy(policy['config'][key])
                             else:
                                 row.get('config', {}).pop(key, None)
-                for name, agent in agents.items():
+                from .host.components import agent_roster
+                for name, agent in agent_roster(agents).items():
                     if isinstance(agent, dict) and name in fresh_agents:
                         fresh_agent = fresh_agents[name]
                         update(agent.get('tools', []), fresh_agent['tools'],

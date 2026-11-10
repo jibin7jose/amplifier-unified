@@ -45,6 +45,16 @@ def merge_modules(*groups):
     return result
 
 
+def agent_roster(value):
+    """Access selectors are not declaration mappings; never rewrite the selector."""
+    if isinstance(value, dict):
+        return value
+    if value in ("all", "none") or (
+            isinstance(value, list) and all(isinstance(name, str) for name in value)):
+        return {}
+    raise ValueError('Agent declarations must be a mapping, "all", "none", or a list of names.')
+
+
 def declarations(plan):
     for section in ('providers', 'tools', 'hooks'):
         yield from plan.get(section, [])
@@ -52,9 +62,52 @@ def declarations(plan):
         if isinstance(row, dict) and 'module' in row:
             yield row
     yield from plan.get('spawn', {}).get('tools', [])
-    for agent in plan.get('agents', {}).values():
+    for agent in agent_roster(plan.get('agents', {})).values():
         if isinstance(agent, dict):
             yield from declarations(agent)
+
+
+async def prepare_bundle(bundle, **kwargs):
+    """Activate nested declarations without treating access selectors as rosters.
+
+    Foundation's ordinary preparation visits immediate agents only; its batched
+    walk assumes every nested agents value is a mapping. Flatten an activation-
+    only copy, then retain the exact executable plan and original bundle.
+    """
+    projected = copy.copy(bundle)
+    projected.agents = {}
+    agent_names = {}
+
+    def visit(values, path=()):
+        for name, definition in agent_roster(values).items():
+            if not isinstance(definition, dict):
+                continue
+            key = json.dumps((*path, name))
+            agent_names[key] = name
+            projected.agents[key] = {k: copy.deepcopy(v) for k, v in definition.items() if k != 'agents'}
+            visit(definition.get('agents', {}), (*path, name))
+
+    # Leave ordinary/mock bundles on their existing direct preparation path.
+    if not any(isinstance(agent, dict) and 'agents' in agent for agent in getattr(bundle, 'agents', {}).values()):
+        return await bundle.prepare(**kwargs)
+    visit(bundle.agents)
+    # Preparation-only keys must not leak into host provider failure policy or
+    # retained diagnostics. Foundation reports the declared agent's own name.
+    from dataclasses import replace
+    def attribution(failure):
+        return replace(failure, agent_name=agent_names.get(failure.agent_name, failure.agent_name))
+    policy = kwargs.get('provider_failure_policy')
+    if policy is not None:
+        async def failed(failure):
+            await policy(attribution(failure))
+        kwargs['provider_failure_policy'] = failed
+    prepared = await projected.prepare(**kwargs)
+    if hasattr(prepared, 'provider_preparation_failures'):
+        prepared.provider_preparation_failures = tuple(attribution(failure)
+            for failure in prepared.provider_preparation_failures)
+    prepared.bundle = bundle
+    prepared.mount_plan = bundle.to_mount_plan()
+    return prepared
 
 
 def git_source(source):
@@ -184,7 +237,7 @@ class HostComponents:
                     node[section] = merge_modules(node[section])
             if isinstance(node.get('spawn', {}).get('tools'), list):
                 node['spawn']['tools'] = merge_modules(node['spawn']['tools'])
-            for agent in node.get('agents', {}).values():
+            for agent in agent_roster(node.get('agents', {})).values():
                 if isinstance(agent, dict):
                     visit(agent)
         visit(result)

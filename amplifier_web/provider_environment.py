@@ -253,9 +253,10 @@ def rebind_provider_credentials(edited, authorized):
                 raise ValueError("No authorized host credential binding for the inherited provider instance/source.")
             row["config"] = restore(row["config"], matches[0].get("config", {}))
             bound = True
-        for name, agent in node.get("agents", {}).items():
+        from .host.components import agent_roster
+        for name, agent in agent_roster(node.get("agents", {})).items():
             if isinstance(agent, dict):
-                visit(agent, host.get("agents", {}).get(name, {}))
+                visit(agent, agent_roster(host.get("agents", {})).get(name, {}))
 
     visit(result, authorized)
     return result, bound
@@ -272,10 +273,8 @@ def iter_provider_rows(node):
         if not isinstance(row, dict) or not isinstance(row.get("module"), str):
             raise ValueError("Provider declarations need a module identifier")
         yield row
-    agents = node.get("agents", {})
-    if not isinstance(agents, dict):
-        raise ValueError("Agent declarations must be a mapping")
-    for agent in agents.values():
+    from .host.components import agent_roster
+    for agent in agent_roster(node.get("agents", {})).values():
         if isinstance(agent, dict):
             yield from iter_provider_rows(agent)
 
