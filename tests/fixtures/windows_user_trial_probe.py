@@ -2379,6 +2379,11 @@ STORAGE_CONTROLS = {
     "rollback_remove": "test_windows_read_files.py::test_service_view_rollback_with_real_presentation_reader[remove-held]",
     "restore_refused": "test_windows_read_files.py::test_service_view_rollback_with_real_presentation_reader[restore-refused]",
     "remove_refused": "test_windows_read_files.py::test_service_view_rollback_with_real_presentation_reader[remove-refused]",
+    "traversal_held": "test_windows_read_files.py::test_service_publication_during_resource_traversal[held]",
+    "traversal_released": "test_windows_read_files.py::test_service_publication_during_resource_traversal[released]",
+    "traversal_persistent": "test_windows_read_files.py::test_service_publication_during_resource_traversal[persistent]",
+    "temporary_release": "test_windows_read_files.py::test_service_resource_publication_with_held_temporary[release]",
+    "temporary_persistent": "test_windows_read_files.py::test_service_resource_publication_with_held_temporary[persistent]",
 }
 STORAGE_ROLLBACK_SCOPES = {"rollback_restore": "restore-held", "rollback_remove": "remove-held",
                            "restore_refused": "restore-refused", "remove_refused": "remove-refused"}
@@ -2387,6 +2392,11 @@ STORAGE_READERS = {"held_view": ("naming.initial_name", "held"), "held_naming": 
                    "released_naming": ("naming.legacy", "released"), "held_resource": ("resource.project", "held"),
                    "ordinary_view": ("naming.initial_name", "ordinary"),
                    "ordinary_naming": ("naming.legacy", "ordinary"),
+                   "traversal_held": ("resource.traversal", "held"),
+                   "traversal_released": ("resource.traversal", "released"),
+                   "traversal_persistent": ("resource.traversal", "persistent"),
+                   "temporary_release": ("resource.temporary", "release"),
+                   "temporary_persistent": ("resource.temporary", "persistent"),
                    **{label: ("naming.presentation", scope) for label, scope in STORAGE_ROLLBACK_SCOPES.items()}}
 STORAGE_FILES = ("conftest.py", "test_windows_read_files.py")
 STORAGE_STAGES = frozenset({"binding", "fixture", "installed", "selection", "verify", "complete"})
@@ -2402,8 +2412,9 @@ def validate_publication_sharing(value, label):
             return None
         if type(value["schema"]) is not int or value["schema"] != 1:
             return None
-        for key, choices in (("reader", ("naming.initial_name", "naming.legacy", "resource.project", "naming.presentation")),
-                             ("scope", ("held", "released", "ordinary", *STORAGE_ROLLBACK_SCOPES.values())),
+        for key, choices in (("reader", ("naming.initial_name", "naming.legacy", "resource.project",
+                                       "naming.presentation", "resource.traversal", "resource.temporary")),
+                             ("scope", ("held", "released", "release", "persistent", "ordinary", *STORAGE_ROLLBACK_SCOPES.values())),
                              ("platform", ("windows", "posix")),
                              ("result", ("raised", "returned"))):
             if type(value[key]) is not str or len(value[key]) > 32 or value[key] not in choices:
@@ -2468,12 +2479,13 @@ def publication_sharing_passed(value, label):
         return (value["result"] == "raised" and facts["truncated"] is False
                 and len(facts["errors"]) == 1 and facts["errors"][0]["class"] == "other"
                 and set(facts["errors"][0]) == {"class", "frames"})
-    if label in {"ordinary_view", "ordinary_naming"}:
+    if label in {"ordinary_view", "ordinary_naming", "traversal_persistent", "temporary_persistent"}:
         facts = value["facts"]
+        expected_winerror = 32 if label in {"traversal_persistent", "temporary_persistent"} else 5
         return (value["result"] == "raised" and facts["truncated"] is False
                 and len(facts["errors"]) == 1
                 and (facts["errors"][0]["class"], facts["errors"][0].get("errno"),
-                     facts["errors"][0].get("winerror")) == ("PermissionError", 13, 5))
+                     facts["errors"][0].get("winerror")) == ("PermissionError", 13, expected_winerror))
     return value["result"] == "returned" and value["facts"] == {"errors": [], "truncated": False}
 
 
@@ -2513,7 +2525,7 @@ class StorageResults(NativeResults):
         label = self.node_labels.get(item.nodeid)
         if label is not None and call.when in PHASES - {"outside"} and call.excinfo is not None:
             from amplifier_web.worker_diagnostics import command_failure_facts
-            if len(self.failure_facts) < 33:
+            if len(self.failure_facts) < 48:
                 self.failure_facts.append({"case": label, "phase": call.when,
                                           "facts": command_failure_facts(call.excinfo.value)})
         return None  # Never replace the pytest outcome.
@@ -2624,7 +2636,7 @@ def validate_storage_public(report):
                 assert case["publicationSharingVerified"] is True
                 assert publication_sharing_passed(observation, label)
         facts = selection.get("failureFacts", [])
-        assert type(facts) is list and len(facts) <= 33
+        assert type(facts) is list and len(facts) <= 48
         if facts:
             from amplifier_web.worker_diagnostics import validate_command_failure_facts
             for fact in facts:
@@ -2646,7 +2658,7 @@ def validate_storage_public(report):
 
 
 def storage_run(wheel, receipt, candidate_receipt):
-    """Eleven installed storage cells in this isolated interpreter; no cold journey."""
+    """Sixteen installed storage cells in this isolated interpreter; no cold journey."""
     if receipt.resolve() in {wheel.resolve(), candidate_receipt.resolve()}:
         return 1  # Never overwrite an input, including on an invalid invocation.
     report = {"schema": 1, "qualification": "installed-storage-sharing-not-runtime-or-device",
