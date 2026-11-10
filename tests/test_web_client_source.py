@@ -166,7 +166,7 @@ class WebClientSourceTests(unittest.TestCase):
     def test_git_free_development_copies_only_production_and_test_support(self):
         source = self.root / 'export'
         authored = ['package.json', 'scripts/client-source.mjs', 'scripts/build-identity.mjs']
-        for name in [*authored, 'tests/example.test.mjs', 'tests/support/fixture.json',
+        for name in [*authored, '.gitattributes', 'tests/example.test.mjs', 'tests/support/fixture.json',
                      'private-local-note', 'node_modules/private-dependency/index.js']:
             path = source / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,11 +188,11 @@ class WebClientSourceTests(unittest.TestCase):
         with patch.object(delivery, 'command', side_effect=command):
             delivery.prepare(self.root, record, self.output, node='development-node', development=True)
         actual = sorted(str(p.relative_to(self.output)) for p in self.output.rglob('*') if p.is_file())
-        self.assertEqual(actual, sorted([*authored, 'tests/example.test.mjs', 'tests/support/fixture.json',
+        self.assertEqual(actual, sorted([*authored, '.gitattributes', 'tests/example.test.mjs', 'tests/support/fixture.json',
                                        '.client-source.json', '.client-development.json']))
         guard = json.loads((self.output / '.client-development.json').read_text())
         self.assertEqual(guard['generatedPublic'], ['branding-fixture'])
-        self.assertEqual(set(guard['files']), {*authored, 'tests/example.test.mjs', 'tests/support/fixture.json'})
+        self.assertEqual(set(guard['files']), {*authored, '.gitattributes', 'tests/example.test.mjs', 'tests/support/fixture.json'})
         delivery.verify_development(self.output)
 
     def test_git_free_development_rejects_linked_test_support(self):

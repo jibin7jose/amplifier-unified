@@ -66,7 +66,10 @@ def copy_tracked(source, destination, *, node='node', development=False):
                         tests.append(path.relative_to(source).as_posix())
                     else:
                         raise ValueError('Expected regular test source: ' + str(path))
-            paths = sorted(set(paths) | set(tests))
+            # Source-normalization tests use the selected client's Git rules
+            # even when the development source itself has no Git metadata.
+            metadata = ['.gitattributes'] if (source / '.gitattributes').exists() else []
+            paths = sorted(set(paths) | set(tests) | set(metadata))
     destination.mkdir()
     for name in paths:
         if not name:
