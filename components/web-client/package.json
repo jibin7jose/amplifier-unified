@@ -1,6 +1,6 @@
 {
   "name": "@amplifier/client-web",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "test:typing-audit-browser": "node tests/typing-audit-browser.mjs",
     "test:activity-feedback-browser": "node tests/activity-feedback-browser.mjs",
     "test:message-outbox-browser": "node tests/message-outbox-browser.mjs",
+    "test:legacy-outbox-notice-browser": "node tests/legacy-outbox-notice-browser.mjs",
     "test:new-chat-recovery-browser": "node tests/new-chat-recovery-browser.mjs",
     "prepare:inputs": "node scripts/prepare-inputs.mjs",
     "package:artifact": "node scripts/package-client.mjs",

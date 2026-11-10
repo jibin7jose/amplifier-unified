@@ -43,6 +43,16 @@
       }
     },
     {
+      "id": "legacy-outbox-notice",
+      "command": [
+        "node",
+        "tests/legacy-outbox-notice-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/legacy-outbox-notice"
+      }
+    },
+    {
       "id": "delivery-reconciliation",
       "command": [
         "node",

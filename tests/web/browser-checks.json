@@ -1268,6 +1268,7 @@
     "attachment-experience",
     "message-delivery",
     "delivery-warning",
+    "legacy-outbox-notice",
     "delivery-reconciliation",
     "delivery-new-chat",
     "canvas-media",
