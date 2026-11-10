@@ -101,16 +101,36 @@ class SessionStore:
     @staticmethod
     def _atomic(path, text):
         fd, temporary = tempfile.mkstemp(prefix=".checkpoint-", dir=path.parent)
+        failure = None
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 os.fchmod(stream.fileno(), 0o600)
                 stream.write(text)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, path)
+            # Brief Windows reader pins can deny rename sharing. Retry only
+            # that definite refusal, with the same fully flushed temporary.
+            # Five attempts add at most 300ms of delay; all other errors and
+            # persistent contention retain the existing failure/cleanup path.
+            for attempt in range(5):
+                try:
+                    os.replace(temporary, path)
+                    break
+                except OSError as error:
+                    if os.name != "nt" or getattr(error, "winerror", None) != 32 or attempt == 4:
+                        raise
+                    time.sleep(0.02 * 2 ** attempt)
+        except BaseException as error:
+            failure = error
+            raise
         finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+            try:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            except OSError:
+                if failure is None:
+                    raise
+                failure.add_note("Temporary cleanup failed; an unpublished temporary may remain.")
 
     def history(self, session_id, *, events_path=None):
         return SessionHistoryStore(self.directory(session_id), events_path=events_path,
@@ -122,8 +142,14 @@ class SessionStore:
                    ("transcript.jsonl", "transcript.jsonl.backup"))
 
     def save(self, session_id, messages, metadata, *, preserve_system=False):
+        """Synchronously persist owned context; returned rows borrow its values.
+
+        Foundation validates and encodes without mutating messages. Callers keep
+        execution ownership through this call; no detached history snapshot is
+        needed for the immediately consumed checkpoint anchors.
+        """
         history = self.history(session_id)
-        rows = [copy.deepcopy(m if isinstance(m, dict) else m.model_dump()) for m in messages]
+        rows = [m if isinstance(m, dict) else m.model_dump() for m in messages]
         from ..naming import adopt, initial_name
         previous = history.load_metadata()
         saved_metadata = _metadata({**previous, **copy.deepcopy(metadata or {})})

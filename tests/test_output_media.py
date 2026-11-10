@@ -789,7 +789,7 @@ async def test_media_index_conflict_recaptures_fresh_proof_and_warm_descriptor(
         assert revisions[:2] == [initial, fresh] and initial != fresh
         proof = proofs[0]
         assert proof['revision'] == fresh
-        assert proof['fact'] == (old, 'assistant', True, 1, None)
+        assert proof['fact'] == (old, 'assistant', True, 1, None, None)
         assert len(proof['canonicalIds']) == 241 and appended_id in proof['canonicalIds']
         assert proof['snapshot']['nativeRevision'] == initial
         # Canonical and detached display caches remain lazy on the next lookup.
@@ -1697,6 +1697,97 @@ def cold_alias_corpus(app, *, native_message_id=True):
     return session, corpus, store, directory, canonical
 
 
+@pytest.mark.parametrize('cold', [False, True])
+@pytest.mark.parametrize('spelling', ['canonical', 'retained'])
+async def test_private_block_projection_keeps_actual_media_attachment(media_app, monkeypatch, cold, spelling):
+    from amplifier_foundation.session.jsonl import TranscriptIndex
+    from amplifier_web.automatic_history import display_message
+    app = media_app
+    session, corpus, store, directory, _ = canonical_corpus(app)
+    corpus[1]['content'] = [
+        {'type': 'text', 'text': 'Public reply'},
+        {'type': 'text', 'text': 'Private detail', 'visibility': 'internal'},
+        {'type': 'text', 'text': 'Developer detail', 'visibility': 'developer'},
+    ]
+    store.save(session['id'], corpus, {}, preserve_system=True)
+    displayed = display_message(corpus[1], 1, session)
+    canonical = displayed['id']
+    if spelling == 'retained':
+        displayed = {**displayed, 'id': 'retained-public-reply', 'source': 'amplifier'}
+    session.update(historyManaged=spelling == 'canonical', messages=[displayed])
+    before = (directory / 'transcript.jsonl').read_bytes()
+    if cold:
+        session, _ = await freeze_alias_display(app, session)
+    args = {**media_args_without_hydration(session), 'messageId': displayed['id']}
+    record = (await app.outputs.media.attach(args, 'ui', 'public-block-media'))['result']
+    assert app.outputs.store.read(record['id'])['origin']['messageId'] == displayed['id']
+    app.clients.attach('public-block-browser')
+    with app.clients.bind('public-block-browser'):
+        proof = await app.outputs.media.identity(session['id'], displayed['id'], scoped=True)
+        assert proof['fact'][0] == canonical and proof['fact'][5] != canonical
+        with monkeypatch.context() as warm:
+            warm.setattr(TranscriptIndex, 'read_positions', lambda *a, **k: pytest.fail('Media reread canonical bodies'))
+            descriptions = await app.outputs.media.describe(session['id'], displayed['id'])
+            assert descriptions['items'][0]['id'] == record['id']
+            assert await app.outputs.media.bytes({**record, 'messageId': displayed['id']}) == gif()
+    assert (directory / 'transcript.jsonl').read_bytes() == before
+
+
+@pytest.mark.parametrize('view', ['raw', 'public'])
+@pytest.mark.parametrize('change', [None, 'text', 'binding', 'index', 'duplicate', 'native-alias',
+                                    'rewrite-private', 'unbound-alias', 'unbound-rewrite'])
+def test_media_public_projection_qualifies_body_and_preserves_raw_guards(tmp_path, monkeypatch, view, change):
+    import copy
+    import io
+    import json
+    from amplifier_web.automatic_history import display_message
+    from amplifier_web.conversation_navigation import source
+    from amplifier_web.media_message_identity import snapshot, resolve
+    from amplifier_web.media_saved_aliases import discover
+    monkeypatch.setenv('AMPLIFIER_HOME', str(tmp_path))
+    directory = tmp_path / 'projects/project/sessions/native'
+    directory.mkdir(parents=True)
+    raw = {'role': 'assistant', 'content': [
+        {'type': 'text', 'text': 'Public reply'},
+        {'type': 'text', 'text': 'Private detail', 'visibility': 'internal'},
+    ]}
+    scope = {'id': 'conversation', 'nativeIdentity': 'native', 'nativeProject': 'project', 'historyManaged': True}
+    displayed = display_message(raw, 0, scope, include_internal=view == 'raw')
+    requested = displayed['id']
+    rows = [copy.deepcopy(displayed)]
+    if change == 'text':
+        rows[0]['text'] += ' forged'
+    elif change == 'binding':
+        rows[0]['nativeMessageId'] = '0' * 32
+    elif change == 'index':
+        rows[0]['nativeIndex'] = 7
+    elif change == 'duplicate':
+        rows.append(copy.deepcopy(rows[0]))
+    elif change == 'native-alias':
+        rows[0]['id'] = requested = 'forged-native-spelling'
+    elif change in ('unbound-alias', 'unbound-rewrite'):
+        rows[0].update(id='retained-alias', source='amplifier')
+        rows[0].pop('nativeMessageId', None)
+        requested = 'retained-alias'
+        scope['historyManaged'] = False
+    if change in ('rewrite-private', 'unbound-rewrite'):
+        raw['content'][1]['text'] = 'Private rewrite'
+    path = directory / 'transcript.jsonl'
+    path.write_text(json.dumps(raw) + '\n')
+    before = path.read_bytes()
+    facts, _ = source({**scope, 'historyManaged': True})
+    session = {**scope, 'messages': rows}
+    if change and not (change == 'unbound-alias' and view == 'raw'):
+        with pytest.raises(ValueError):
+            resolve(snapshot(session, requested), requested)
+        with pytest.raises(ValueError):
+            discover(io.BytesIO(json.dumps(rows).encode()), scope, requested, facts)
+    else:
+        assert resolve(snapshot(session, requested), requested)['fact'][0] == displayed['id']
+        assert discover(io.BytesIO(json.dumps(rows).encode()), scope, requested, facts)[0][0] == displayed['id']
+    assert path.read_bytes() == before
+
+
 async def freeze_alias_display(app, session, *, rows=None, hints=False):
     """Synthetic legacy reference, not a substitute for real producer tests."""
     from amplifier_web.cold_display import ColdRecord
@@ -2171,7 +2262,7 @@ def test_saved_alias_projection_bounded_memory_full_hash_and_streamed_history(tm
         source = detach(db, reference['$resource'])
         value['coldMessages'] = reference
         del rows, text
-        facts = [(canonical, 'assistant', True, 1, None)]
+        facts = [(canonical, 'assistant', True, 1, None, None)]
         aliases = SavedAliases()
         tracemalloc.start()
         try:
@@ -2243,7 +2334,7 @@ def test_saved_alias_cache_coalesces_workers_and_bounds_retained_descriptors(tmp
         value = {'id': 'synthetic', 'nativeIdentity': 'native-scope'}
         rows = [{'id': 'alias-' + str(i), 'role': 'assistant', 'nativeIndex': i, 'text': 'full text'}
                 for i in range(40)]
-        facts = [(display_identity(value, i, 'assistant', 'full text'), 'assistant', True, i, None)
+        facts = [(display_identity(value, i, 'assistant', 'full text'), 'assistant', True, i, None, None)
                  for i in range(40)]
         reference = put(db, rows)
         db.commit()
@@ -2332,13 +2423,13 @@ def test_saved_alias_projection_requires_unique_visible_assistant_canonical_fact
                               'role': 'assistant', 'text': 'full text'}])
         db.commit()
         source = detach(db, reference['$resource'])
-        facts = [(canonical, 'assistant', True, 1, None)]
+        facts = [(canonical, 'assistant', True, 1, None, None)]
         if defect == 'duplicate-fact':
             facts *= 2
         elif defect == 'hidden-fact':
-            facts = [(canonical, 'assistant', False, 1, None)]
+            facts = [(canonical, 'assistant', False, 1, None, None)]
         else:
-            facts = [(canonical, 'user', True, 1, None)]
+            facts = [(canonical, 'user', True, 1, None, None)]
         with pytest.raises(ValueError, match='assistant'):
             SavedAliases().resolve(source, value, 'saved-web-assistant', [1, 2], facts)
     finally:
@@ -2610,12 +2701,12 @@ def test_saved_alias_warm_cache_rechecks_current_canonical_id_collisions(
         db.commit()
         value['coldMessages'] = reference
         source = detach(db, reference['$resource'])
-        fact = (canonical, 'assistant', True, 1, None)
+        fact = (canonical, 'assistant', True, 1, None, None)
         requested = canonical if message_spelling == 'canonical' else 'retained-alias'
         aliases = SavedAliases()
         assert aliases.resolve(source, value, requested, [1, 2], [fact])[0] == fact
         # Same revision tuple is not permission to ignore changed index facts.
-        changed = [fact, ('retained-alias', 'assistant', True, 7, None)]
+        changed = [fact, ('retained-alias', 'assistant', True, 7, None, None)]
         with pytest.raises(ValueError, match='assistant'):
             aliases.resolve(source, value, requested, [1, 2], changed)
         with pytest.raises(ValueError, match='assistant'):
@@ -2646,7 +2737,7 @@ def test_large_legacy_inline_saved_alias_warm_requests_require_no_body_reads(mon
         source = resource_files.detach(db, reference['$resource'])
         assert source.directory is None and len(source.indexed) > 1024
         value['coldMessages'] = reference  # Bare legacy reference, no hints.
-        facts = [(canonical, 'assistant', True, 1, None)]
+        facts = [(canonical, 'assistant', True, 1, None, None)]
         aliases = media_saved_aliases.SavedAliases()
         for requested in (canonical, 'legacy-inline-alias'):
             assert aliases.resolve(source, value, requested, [1, 2], facts)[0] == facts[0]
@@ -2700,7 +2791,7 @@ def test_legacy_inline_alias_warm_cache_fresh_evidence_rejects_same_length_suffi
         value['coldMessages'] = reference
         source = resource_files.detach(db, prepared.identity)
         assert (source.directory is not None) == file_backed and len(source.indexed) > 1024
-        fact = (canonical, 'assistant', True, 1, None)
+        fact = (canonical, 'assistant', True, 1, None, None)
         requested = canonical if message_spelling == 'canonical' else 'legacy-inline-alias'
         aliases = media_saved_aliases.SavedAliases()
         assert aliases.resolve(source, value, requested, [1, 2], [fact])[0] == fact
@@ -2795,7 +2886,7 @@ def test_large_legacy_inline_alias_cache_coalesces_and_evicts_without_retaining_
         text = 'full text 雪😀' * 64
         rows = [{'id': 'alias-' + str(i), 'role': 'assistant', 'nativeIndex': i, 'text': text}
                 for i in range(40)]
-        facts = [(display_identity(value, i, 'assistant', text), 'assistant', True, i, None)
+        facts = [(display_identity(value, i, 'assistant', text), 'assistant', True, i, None, None)
                  for i in range(40)]
         prepared = resource_files.prepare(rows)
         db.execute('INSERT INTO state_resources VALUES (?, ?)', (prepared.identity, prepared.text))

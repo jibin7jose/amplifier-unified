@@ -7,5 +7,6 @@ inside this copy. Its nested guides, including `AGENTS.md`, describe development
 in the upstream repository; this wrapper governs maintenance of the copy.
 
 Read [README.md](README.md) and the small source record before opting into copied
-contents. `frontend/` remains the shipped client owner until an explicitly
-qualified distribution transition. This copy is not a new runtime or authority.
+contents. Unified builds this selected client through `scripts/web_client_build.py`.
+`frontend/` owns integration tests and commands; its ignored source view is generated
+for those tests and local experiments. It is not another authored client.

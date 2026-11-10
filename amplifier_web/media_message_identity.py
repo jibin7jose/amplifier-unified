@@ -1,7 +1,7 @@
 """Media-only canonical identity facts; never hydrate transcript bodies."""
 import copy
 
-from .media_saved_aliases import valid_id
+from .media_saved_aliases import matches_body, valid_id
 
 
 class StaleMediaIdentityError(ValueError):
@@ -81,7 +81,7 @@ def check_claimants(value, message_id, fact, rows, canonical_ids):
                 or type(row.get('nativeIndex')) is not int or row['nativeIndex'] != fact[3]
                 or row.get('nativeMessageId') not in (None, fact[0])
                 or not isinstance(text, str)
-                or display_identity(value, row['nativeIndex'], 'assistant', text) != fact[0]):
+                or not matches_body(fact, row, display_identity(value, row['nativeIndex'], 'assistant', text))):
             raise ValueError(ERROR)
         if row['id'] == fact[0]:
             canonical += 1
@@ -160,18 +160,21 @@ def resolve(value, message_id, saved=None, aliases=None):
             raise ValueError(ERROR)
         if type(row.get('nativeIndex')) is int:
             identity = display_identity(value, row['nativeIndex'], row['role'], row.get('text') or '')
-            if row.get('nativeMessageId') not in (None, identity):
-                raise ValueError(ERROR)
-            if value.get('historyManaged') and row.get('source') == 'native' and row['id'] != identity:
-                raise ValueError(ERROR)
         elif row.get('nativeMessageId'):
             raise ValueError(ERROR)
-    matches = [fact for fact in facts if fact[0] == identity]
+    matches = [fact for fact in facts if fact[0] == identity
+               or value['rows'] and identity == fact[5]]
     if (before is None or revision(value) != before or len(matches) != 1
             or matches[0][1] != 'assistant' or not matches[0][2]
             or value['rows'] and type(value['rows'][0].get('nativeIndex')) is int
             and matches[0][3] != value['rows'][0]['nativeIndex']):
         raise ValueError(ERROR)
+    if value['rows']:
+        row = value['rows'][0]
+        if (row.get('nativeMessageId') not in (None, matches[0][0])
+                or value.get('historyManaged') and row.get('source') == 'native'
+                and row['id'] != matches[0][0]):
+            raise ValueError(ERROR)
     canonical_ids = tuple(item[0] for item in facts)
     check_claimants(value, message_id, matches[0],
                     [*value['rows'], *value.get('claimants', [])], canonical_ids)

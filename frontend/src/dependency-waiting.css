@@ -1,8 +1,0 @@
-#amp-one .a-dependency-waiting{display:flex;align-items:flex-start;gap:8px;margin:6px 16px;color:var(--a-muted);font-size:var(--a-text-sm,13px);line-height:1.5;min-width:0}
-#amp-one .a-dependency-waiting>svg{width:16px;height:20px;flex:0 0 16px}
-#amp-one .a-dependency-waiting :is(span,details){min-width:0;overflow-wrap:anywhere}
-#amp-one .a-dependency-waiting button{display:inline;text-align:left;white-space:normal;overflow-wrap:anywhere}
-#amp-one .a-dependency-waiting summary{cursor:pointer}
-#amp-one .a-dependency-waiting ul{margin:6px 0;padding-left:18px;max-height:180px;overflow:auto}
-#amp-one .a-dependency-waiting li{padding:3px 0}
-@media(pointer:coarse){#amp-one .a-dependency-waiting button,#amp-one .a-dependency-waiting summary{min-height:44px;padding-block:10px}}

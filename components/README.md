@@ -1,21 +1,51 @@
 # Independent web client source
 
-The extracted [Amplifier web client](https://github.com/microsoft/amplifier-client-web)
-is maintained separately. While that repository awaits public availability,
-[`web-client/`](web-client/) supplies the same source here. The small
+The [Amplifier web client](https://github.com/microsoft/amplifier-client-web) owns
+its source and dependencies. While that repository awaits public availability,
+[`web-client/`](web-client/) supplies the selected source here.
 [`web-client.source.json`](web-client.source.json) selects its canonical commit,
-authored build-input digest, and current delivery location. This is a temporary
-delivery copy, not a second place to maintain the client.
+build-input digest and delivery location. Maintain changes in the client repository
+and refresh this whole snapshot; it is not another place to author the client.
 
-The existing `frontend/` still builds the shipped application. This pilot has its
-own version and pinned shared inputs; it is not automatically compatible with
-the latest server. Its package command requires an exact paired server commit,
-and that declaration alone is not qualification. Current HTTP/SSE behavior and
-the later ACP/AHP work are separate boundaries.
+## Normal build and tests
 
-## Prepare and build
+In the owned development environment:
 
-From the Unified checkout, with Python, Git and Node available:
+```sh
+npm ci --prefix frontend
+npm run prepare:view --prefix frontend
+npm test --prefix frontend
+npm run build --prefix frontend
+```
+
+The build prepares and verifies `frontend/.client`, checks the current catalogs,
+SDK and branding against its lock offline, runs the client's own build, then
+installs its artifact in `amplifier_web/static`. The client has an independent
+version. Released wheels and source distributions contain complete assets and
+need no Node or component checkout to run or reinstall. Source development
+requires Node. Current HTTP/SSE and the later ACP work remain separate boundaries.
+
+`static/client-component.json` records the canonical client source, shared inputs,
+build and asset hashes. Its paired-server declaration is the shared-input source
+revision, explicitly unqualified; actual compatibility comes from Unified's
+exact-source test/release evidence. This metadata does not hash itself; the
+existing whole-static release/package checks include it.
+
+Unified owns `frontend/tests` and `frontend/commands.json`. Its package and lock
+entrypoints are generated from the client and those commands. `prepare:view`
+creates ignored copies at `frontend/src`, `public` and the small build helper
+paths so existing integration tests exercise selected source without a second
+authored client. It refuses to overwrite experiments.
+
+`npm run dev --prefix frontend` and `npm run build:development --prefix frontend`
+use that editable view. The latter supports deliberate negative browser tests;
+its changed output cannot supply the selected component's release receipt. A
+normal build restores selected production assets. Move desired changes into the
+client repository, then refresh its selection.
+
+## Prepare a standalone copy
+
+With Python, Git and Node available in the owned environment:
 
 ```sh
 python scripts/web_client_source.py /tmp/my-web-client
@@ -24,49 +54,38 @@ npm ci
 npm run prepare:inputs
 npm run test:portable
 npm run build
-```
-
-Choose a new task-owned directory. Follow workspace isolation requirements for
-application builds and tests. Preparation copies only tracked source, verifies
-the selected client inputs and carries `.client-source.json` into the output.
-It does not copy Git metadata, dependencies, build output or local state.
-`prepare:inputs` retrieves the exact public files pinned by the client's lock;
-see the [client README](web-client/README.md) for offline input preparation and
-the supported fixture scope.
-
-Package the built copy with its source record:
-
-```sh
 npm run package:artifact -- /tmp/my-web-package PAIRED_SERVER_COMMIT \
   --source-record /tmp/my-web-client/.client-source.json
 ```
 
-The artifact keeps the canonical client commit, rather than reporting the
-containing Unified commit as client authorship. The record is a trusted input
-selection, not independent authentication if both source and record are replaced.
-Edited copies can be used for development; package them only after selecting the
-corresponding committed client source and refreshing its record.
+Choose a new task-owned directory. Preparation copies tracked source, verifies
+its selection and carries `.client-source.json` into the output. Git-free source
+exports supply only the client's bounded production manifest; use its repository
+for standalone tests. No Git metadata, dependencies or local state is copied.
+`prepare:inputs` retrieves the exact public files pinned by the client; its README
+also documents offline input preparation. An exact paired server declaration is
+not a compatibility claim. The source record selects trusted inputs; it is not
+independent authentication when both source and record are replaced.
 
 ## Refresh and retire the copy
 
-Maintain changes in the client repository. From its clean selected commit, run
+From the clean selected client commit, run
 `node scripts/client-source.mjs record /tmp/client-source.json`, then export its
-tracked tree with `git archive HEAD`. Replace only `components/web-client/` with
-that export and update `web-client.source.json` from the new record, retaining
-`delivery: {"type": "directory", "path": "components/web-client"}`. Review the
-upstream change and qualify the affected build/peer behavior before adoption.
-No shared input catalog or normative contract gets a new owner in the copy.
+tracked tree with `git archive HEAD`. Replace only `components/web-client/` and
+update its source record, retaining
+`delivery: {"type":"directory","path":"components/web-client"}`. Regenerate
+dependency entrypoints with `python scripts/web_client_development.py manifests`.
+Save or discard local experiments deliberately before refreshing the test view.
+Review the upstream changes and qualify affected build and peer behavior.
+Shared catalogs, SDK and normative contracts retain their existing owners.
 
-Once repository access is available, change `delivery` to `{"type":"repository"}`
-and remove `web-client/` in the same review. The preparation command then fetches
-the exact canonical commit using Unified's existing repository-access policy.
-The client verifier, artifact format and runtime need no delivery-specific change.
-Publishing the client repository and changing Unified's shipped client are
-separate decisions.
+When repository access is available, change delivery to `{"type":"repository"}`
+and remove the copied tree in the same review. Preparation fetches the exact
+commit through Unified's repository-access policy. The client verifier, artifact
+format and runtime need no delivery-specific changes.
 
 The copied tree is opt-in source-review context and excluded from Unified's
-Python source distribution. Its wrapper and selection stay visible. Inspect it
-with `python scripts/source_context.py --all --format paths --under components/web-client`.
-Ordinary searches do not apply those attributes. Adding or refreshing this copy
-still changes the full-tree release identity; existing release evidence is not
-relabelled or exempted.
+Python source distribution. Wrapper and selection remain visible. Inspect the
+copy with `python scripts/source_context.py --all --format paths --under components/web-client`.
+Ordinary searches do not apply those attributes. Refreshing the copy changes the
+full-tree release identity; historical evidence is never relabelled or exempted.

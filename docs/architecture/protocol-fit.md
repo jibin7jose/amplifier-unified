@@ -124,6 +124,13 @@ each consumer before reading another batch. This is infrastructure for a future
 complete conversation projection: raw model-context records are not themselves
 the public conversation. It adds no execution-owner API or ACP Load capability.
 
+The existing native display projection excludes text blocks explicitly marked
+internal or developer while retaining their raw native identity for anchoring.
+This public-text correction does not make its text view a complete media view;
+media-only identity, resource routing and complete recorded-activity replay remain
+separate prerequisites for full Load. Raw and recent-window readers keep their
+existing contracts and are not a substitute for that conversation projection.
+
 Interactive approval forwarding is a separate limitation of this first path.
 The existing access-mode owner resolves standing Full; the adapter may join its
 actual settlement without becoming another policy evaluator. A genuinely pending
