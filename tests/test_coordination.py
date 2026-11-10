@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 
 import pytest
 
@@ -96,11 +97,44 @@ async def test_list_pages_dormant_peers_without_admission_or_body_reads(app, mon
     try:
         assert {row['id'] for row in restored.state['sessions']} == {caller['id']}
         selected, draft = restored.state['selectedSessionId'], restored.state['view']['draft']
+        # Both receipt formats must remain bounded and passive, including when
+        # the calling reader itself is dormant. No generic bridge tail allowed.
+        def forbidden(*args, **kwargs):
+            pytest.fail('Passive list receipt reached admission/history/snapshot/flush')
+        with monkeypatch.context() as patch:
+            for name in ('_session', '_admit_session', '_flush_pending_progress', 'state_context'):
+                patch.setattr(restored, name, forbidden)
+            patch.setattr(restored.history, 'refresh', forbidden)
+            patch.setattr(restored.history, 'ensure_loaded', forbidden)
+            patch.setattr('amplifier_web.agent_canvas.state', forbidden)
+            patch.setattr('amplifier_web.history_query._rows', forbidden)
+            for reader in (caller['id'], peer_id):
+                for mode in (None, 'receipt'):
+                    result = await restored.app_bridge('dispatch', {
+                        'action': 'coordination.list', 'args': {'sessionId': peer_id},
+                        'id': 'passive-list', **({'responseMode': mode} if mode else {})}, reader)
+                    assert result['accepted']
+                    assert result['result']['items'][0]['target']['sessionId'] == peer_id
+                    assert set(result['state']) == {'revision', 'sessionId', '_stateAccess'}
+                    assert result['state']['sessionId'] == reader
+                    assert result['state']['revision'] == restored.state['revision']
+                    access = result['state']['_stateAccess']
+                    if mode:
+                        assert set(access) == {'note', 'readback'}
+                        assert access['readback'] == [] and result['commandId'] == 'passive-list'
+                    else:
+                        assert set(access) == {'note'}
+                        assert 'full action result' in access['note']
+                    assert draft not in json.dumps(result)
+        assert {row['id'] for row in restored.state['sessions']} == {caller['id']}
         admitted = restored._session
         def caller_only(identity=None, *args, **kwargs):
             assert identity in {None, caller['id']}, 'Discovery admitted a dormant peer'
             return admitted(identity, *args, **kwargs)
         monkeypatch.setattr(restored, '_session', caller_only)
+        exact = await restored.app_bridge('dispatch', {'action': 'coordination.list',
+            'args': {'sessionId': peer_id}}, caller['id'])
+        assert exact['result']['items'][0]['target']['sessionId'] == peer_id
         import amplifier_web.session_projection as projection
         original_hydrate = projection.hydrate
         monkeypatch.setattr(projection, 'hydrate', lambda *args, **kwargs: pytest.fail('Root discovery loaded saved views'))
@@ -165,6 +199,107 @@ async def test_list_none_workspace_scope_filters_before_one_row_pages(app, monke
     finally:
         for row in (caller, peer):
             row['workspace'] = original[row['id']]
+
+
+async def test_metadata_query_filters_before_paging_and_fences_catalog(app, monkeypatch):
+    caller, peer = app.state['sessions']
+    peer.update(title='Exact known backend title', runtimeSessionId='native-backend-identity')
+    duplicate = app._new_session({'title': peer['title']})
+    unrelated = [app._new_session({'title': f'Unrelated {n}'}) for n in range(120)]
+    app.state['sessions'].extend([*unrelated, duplicate])
+    app.state['conversationOrganization'] = {'archived': {peer['id']: {'at': 1}}}
+    app._save()
+    residents = {row['id'] for row in app.state['sessions']}
+    decoded = []
+    from amplifier_web.history_directory import HistoryDirectory
+    decode = HistoryDirectory.decode
+    def counted(self, row):
+        decoded.append(row[0])
+        return decode(self, row)
+    monkeypatch.setattr(HistoryDirectory, 'decode', counted)
+    def forbidden(*args, **kwargs):
+        pytest.fail('Metadata discovery must not read transcripts or admit a runtime')
+    monkeypatch.setattr('amplifier_web.history_query._rows', forbidden)
+    monkeypatch.setattr(app, '_admit_session', forbidden)
+    monkeypatch.setattr(app.history, 'refresh', forbidden)
+    async def lookup(**args):
+        receipt = await app.app_bridge('dispatch', {'action': 'coordination.list', 'args': args}, caller['id'])
+        return receipt['result']
+    first = await lookup(query='Exact known backend title', limit=1)
+    assert first['nextOffset'] == 1
+    # The revision owner visits current live overlays once; final query decode
+    # is page + lookahead. Dormant bodies/transcripts remain untouched.
+    assert len(decoded) <= len(residents) + 2
+    second = await lookup(query='Exact known backend title', limit=1, offset=1,
+                          directoryRevision=first['directoryRevision'])
+    assert {first['items'][0]['target']['sessionId'], second['items'][0]['target']['sessionId']} == {peer['id'], duplicate['id']}
+    assert second['nextOffset'] is None
+    exact = await lookup(query='native-backend-identity')
+    assert [row['target']['sessionId'] for row in exact['items']] == [peer['id']]
+    assert exact['items'][0]['sessionRef']['sessionId'] == 'native-backend-identity'
+    archived = await lookup(query='Exact known backend title', archive='archived')
+    assert [row['target']['sessionId'] for row in archived['items']] == [peer['id']]
+    assert archived['items'][0]['archived'] is True
+    active = await lookup(query='Exact known backend title', archive='active')
+    assert [row['target']['sessionId'] for row in active['items']] == [duplicate['id']]
+    app.state['conversationOrganization']['archived'].pop(peer['id'])
+    with pytest.raises(AppError, match='directory'):
+        await lookup(query='Exact known backend title', archive='active',
+                     directoryRevision=active['directoryRevision'])
+    restored = await lookup(query='Exact known backend title', archive='active')
+    app.state['conversationOrganization']['archived'][peer['id']] = {'at': 2}
+    with pytest.raises(AppError, match='directory'):
+        await lookup(query='Exact known backend title', archive='active',
+                     directoryRevision=restored['directoryRevision'])
+    with pytest.raises(AppError, match='filters changed'):
+        await lookup(query='different title', directoryRevision=first['directoryRevision'])
+    duplicate['title'] = 'Changed catalog'
+    app._save_changes(sessions={duplicate['id']}, globals=set())
+    with pytest.raises(AppError, match='directory'):
+        await lookup(query='Exact known backend title', limit=1, offset=1,
+                     directoryRevision=first['directoryRevision'])
+    app.state['sharedHistory'] = {'loading': False, 'issueCount': 1, 'reconciliation': {'phase': 'incomplete'}}
+    missing = await lookup(query='not registered here')
+    assert not missing['items'] and missing['discovery']['complete'] is False
+    assert {row['id'] for row in app.state['sessions']} == residents
+    assert not app.runtime.sent and not app.runtime.messages and not app.runtime.stops
+
+
+async def test_metadata_lookup_preserves_managed_and_workspace_scope(app):
+    caller, peer = app.state['sessions']
+    peer['title'] = 'Scoped unique title'
+    receipt = await app.dispatch('session.create', {'title': peer['title'], 'location': {'kind': 'managed'}, 'select': False})
+    managed = next(row for row in app.state['sessions'] if row['id'] == receipt['sessionId'])
+    app._save()
+    own = app.coordination.list({'query': peer['title']}, caller['id'])
+    assert [item['target']['sessionId'] for item in own['items']] == [peer['id']]
+    all_roots = app.coordination.list({'query': peer['title'], 'scope': 'all'}, caller['id'])
+    assert {item['target']['sessionId'] for item in all_roots['items']} == {peer['id'], managed['id']}
+    found = next(item for item in all_roots['items'] if item['target']['sessionId'] == managed['id'])
+    assert found['location']['kind'] == 'managed'
+    assert found['workspace'] == managed['workspace'] != caller['workspace']
+    assert found['workspaceLabel'] == 'No workspace'
+
+
+async def test_exact_native_lookup_rejects_ambiguity_without_admitting(app, monkeypatch):
+    caller, peer = app.state['sessions']
+    peer.update(nativeProject='project-one', nativeIdentity='duplicate-native')
+    other = app._new_session({'title': 'Same native ID in another project'})
+    other.update(nativeProject='project-two', nativeIdentity='duplicate-native')
+    app.state['sessions'].append(other)
+    app._save()
+    before = {row['id'] for row in app.state['sessions']}
+    monkeypatch.setattr(app, '_admit_session', lambda *a, **kw: pytest.fail('Metadata lookup admitted an owner'))
+    async def lookup(**args):
+        return (await app.app_bridge('dispatch', {'action': 'coordination.list', 'args': args}, caller['id']))['result']
+    with pytest.raises(AppError, match='more than one project'):
+        await lookup(sessionId='duplicate-native')
+    exact = await lookup(sessionId='duplicate-native', nativeProject='project-two')
+    assert exact['items'][0]['target']['sessionId'] == other['id']
+    assert exact['items'][0]['sessionRef']['nativeProject'] == 'project-two'
+    found = await lookup(query='duplicate-native')
+    assert {row['target']['sessionId'] for row in found['items']} == {peer['id'], other['id']}
+    assert {row['id'] for row in app.state['sessions']} == before
 
 
 async def wait(app, targets, **args):

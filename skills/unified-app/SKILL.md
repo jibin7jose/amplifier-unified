@@ -14,6 +14,7 @@ Read only the companion needed for the next action, relative to this skill's pat
 
 | Task | Reference |
 | --- | --- |
+| Find a chat by title/ID, read saved history, or open it on an intended client | [chats.md](chats.md) |
 | Settings, appearance, bundles or runtime configuration | [settings.md](settings.md) |
 | Peers, independent workers, tasks, questions, schedules or handoffs | [collaboration.md](collaboration.md) |
 | File access, dependencies, resource ownership or isolated checks | [testing.md](testing.md) |

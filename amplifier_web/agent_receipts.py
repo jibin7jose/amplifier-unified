@@ -2,6 +2,17 @@
 from __future__ import annotations
 
 
+def domain_receipt(result, *, action, session_id, revision):
+    """Add the established compact domain context without reading app state."""
+    access = {
+        'note': 'The domain receipt preserves admission and the full action result when available. A pending operation is not completion. Use get_state with a JSON Pointer for saved results or other state.',
+    }
+    if action.startswith('permissions.') and result.get('operationId'):
+        access['resultPaths'] = ['/permissions', '/managementResults/' + result['operationId']]
+    return {**result, 'state': {
+        'revision': revision, 'sessionId': session_id, '_stateAccess': access}}
+
+
 def compact_receipt(result, *, action, session_id, revision, client_id=None, command_id=None):
     """Keep domain evidence intact; omit the unrelated application overview.
 

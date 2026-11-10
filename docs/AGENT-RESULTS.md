@@ -29,6 +29,37 @@ mutation is never replayed merely to print less text. Large arbitrary domain
 results still require domain-owned paging or retained receipts; this change does
 not claim a generic persistent result store for every tool.
 
+## Chat discovery and client navigation
+
+`coordination.list` is the metadata-only title/ID finder. `query` filters before
+paging; an exact `sessionId` resolves public/native identity with the ordinary
+`nativeProject` ambiguity guard. Workspace is the canonical history association,
+not the execution folder. Default scope remains the calling workspace; explicit
+`all` includes registered own-history and managed roots. Archive state is visible
+and defaults to all; browser Recent places and agent-created filters do not limit
+this lookup. `history.search` remains full-text retrieval, not this metadata query.
+
+Keep `directoryRevision` and identical filters with `nextOffset`; a changed
+directory refuses stale continuation. Returned discovery coverage distinguishes
+incomplete indexing from a confirmed empty lookup. Root lookup does not load
+transcripts, admit dormant owners, select clients, warm runtimes or send input.
+
+For user-requested navigation, `session.select` uses the originating connected
+client or an explicit `clientId` displaying the calling chat. Missing, ambiguous,
+disconnected or foreign targets require a choice; there is no global-view
+fallback. UI-only reference proofs are not agent addresses. Ordinary navigation
+and dirty-view guards still apply, and another client's selection is unchanged.
+
+Its saved result binds source conversation, client, selected conversation and
+selection revision. The compact bridge omits destination private state, even
+after success; ordinary `get_state.selectedSessionId` still describes the calling
+chat. Follow the receipt's `session.selection {commandId}` readback for current
+selection metadata. Only the originating conversation may use that command
+receipt. `changed`/`disconnected` are not confirmation; `selected` is host state,
+not rendered browser evidence (`rendering:unverified`). An exact command retry
+returns the original receipt without navigating again; a changed payload still
+conflicts. Selection never sends input or prepares an agent.
+
 Validation covers exact catalog reconstruction including oversized Unicode
 schemas, stale catalog rejection, and the actual session-scoped permissions read
 without repeated visible state. Tool-exec separately verifies a completed mutation

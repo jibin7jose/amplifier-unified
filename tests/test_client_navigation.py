@@ -146,3 +146,151 @@ async def test_saved_canvas_restores_without_shared_writes(app, monkeypatch):
         assert app.state['canvas']['content'] == 'Keep this saved artifact'
         assert app.state['canvas']['view']['scrollTop'] == 42
         assert app._state['canvasArtifacts'] == shared
+
+
+async def navigation(app, source, destination, *, command='agent-navigation', client='one', transport=None):
+    return await app.app_bridge('dispatch', {'action': 'session.select', 'id': command,
+        'responseMode': 'receipt', 'args': {'id': destination, **({'clientId': client} if client else {})},
+        **(transport or {})}, source)
+
+
+async def test_agent_navigation_binds_client_receipt_not_calling_snapshot(app, monkeypatch):
+    first, source = [next(row['id'] for row in app._state['sessions'] if row['title'] == title)
+                     for title in ('First', 'Second')]
+    with app.clients.bind('one'):
+        app.clients.draft(source, 'Unsubmitted source draft')
+        app.clients.draft(first, 'Private destination draft')
+        own = app.subscribe()
+    with app.clients.bind('two'):
+        other = app.subscribe()
+    before = deepcopy(app.clients.records['two'])
+    sessions = deepcopy(app._state['sessions'])
+    try:
+        result = await navigation(app, source, first)
+        assert result['accepted']
+        proof = result['result']
+        assert proof['clientId'] == 'one' and proof['sourceSessionId'] == source
+        assert proof['selectedSessionId'] == first and proof['rendering'] == 'unverified'
+        assert proof['selectionRevision'] == app.clients.records['one']['selectionRevision']
+        with pytest.raises(AppError, match='different contents'):
+            await navigation(app, first, first)
+        assert 'selectedSessionId' not in result['state']  # caller != navigated client
+        assert 'Private destination draft' not in json.dumps(result)
+        assert own.get_nowait()['selectedSessionId'] == first and other.empty()
+        assert app.clients.records['two'] == before and app._state['sessions'] == sessions
+        assert app._state['selectedSessionId'] == source
+        assert app.clients.records['one']['drafts'][source] == 'Unsubmitted source draft'
+        # get_state still truthfully describes the caller, not another chat's private UI.
+        caller_state = await app.app_bridge('get_state', {}, source)
+        assert caller_state['selectedSessionId'] == source
+        request = result['state']['_stateAccess']['readback'][0]
+        readback = await app.app_bridge(request['operation'], request['args'], source)
+        assert readback['result']['status'] == 'selected'
+        assert readback['result']['selectedSessionId'] == first
+        # Exact transport recovery reads the receipt; it never navigates again.
+        with app.clients.bind('one'):
+            await app.dispatch('session.select', {'id': source})
+        duplicate = await navigation(app, source, first)
+        assert duplicate['duplicate'] and duplicate['result'] == proof
+        assert app.clients.records['one']['selectedSessionId'] == source
+        changed = await app.app_bridge(request['operation'], request['args'], source)
+        assert changed['result']['status'] == 'changed'
+        app.unsubscribe(own)
+        disconnected = await app.app_bridge(request['operation'], request['args'], source)
+        assert disconnected['result']['status'] == 'disconnected'
+        with pytest.raises(AppError, match='No selection receipt'):
+            await app.app_bridge(request['operation'], request['args'], first)
+    finally:
+        app.unsubscribe(own); app.unsubscribe(other)
+
+
+@pytest.mark.parametrize('kind', ['detached', 'ambiguous', 'foreign', 'saved-disconnected'])
+async def test_agent_navigation_does_not_guess_a_client(app, kind):
+    destination, source = [next(row['id'] for row in app._state['sessions'] if row['title'] == title)
+                           for title in ('First', 'Second')]
+    with app.clients.bind('one'):
+        own = app.subscribe()
+    with app.clients.bind('two'):
+        other = app.subscribe()
+    if kind == 'saved-disconnected':
+        app.unsubscribe(own)
+    if kind == 'foreign':
+        with app.clients.bind('one'):
+            await app.dispatch('session.select', {'id': destination})
+    before = deepcopy(app.clients.records)
+    try:
+        with pytest.raises(AppError) as error:
+            await navigation(app, source, destination, client='one' if kind in {'foreign', 'saved-disconnected'} else None,
+                             transport={'_inputClients': []})
+        assert error.value.code == 'ui_client_required'
+        assert app.clients.records == before
+    finally:
+        app.unsubscribe(own); app.unsubscribe(other)
+
+
+async def test_agent_navigation_uses_origin_and_rechecks_after_lock(app, monkeypatch):
+    import asyncio
+    destination, source = [next(row['id'] for row in app._state['sessions'] if row['title'] == title)
+                           for title in ('First', 'Second')]
+    with app.clients.bind('one'):
+        own = app.subscribe()
+    try:
+        result = await navigation(app, source, destination, client=None,
+            transport={'_inputClients': ['one']})
+        assert result['result']['clientId'] == 'one'
+        with app.clients.bind('one'):
+            await app.dispatch('session.select', {'id': source})
+        entered = asyncio.Event()
+        dispatch = app.dispatch
+        async def observed(action, *args, **kwargs):
+            if action == 'session.select':
+                entered.set()
+            return await dispatch(action, *args, **kwargs)
+        monkeypatch.setattr(app, 'dispatch', observed)
+        async with app.lock:
+            pending = asyncio.create_task(navigation(app, source, destination, command='wait-navigation'))
+            await asyncio.wait_for(entered.wait(), 2)
+            app.clients.records['one']['selectedSessionId'] = destination
+        with pytest.raises(AppError, match='connected client'):
+            await pending
+    finally:
+        app.unsubscribe(own)
+
+
+async def test_agent_navigation_keeps_dirty_canvas(app):
+    destination, source = [next(row['id'] for row in app._state['sessions'] if row['title'] == title)
+                           for title in ('First', 'Second')]
+    with app.clients.bind('one'):
+        own = app.subscribe()
+        await app.dispatch('canvas.show', {'kind': 'text', 'content': 'Unsaved editor'})
+        view = app.canvas_views.summary('primary')
+        target = {key: view[key] for key in ('viewId', 'resourceId', 'resourceRevision', 'generation')}
+        await app.dispatch('canvas.views.dirty', {**target, 'dirty': True})
+    before = deepcopy(app.clients.records['one'])
+    try:
+        with pytest.raises(AppError, match='viewer edit'):
+            await navigation(app, source, destination)
+        assert app.clients.records['one'] == before
+    finally:
+        app.unsubscribe(own)
+
+
+async def test_raw_agent_selection_cannot_change_default_or_borrow_a_client(app):
+    destination, source = [next(row['id'] for row in app._state['sessions'] if row['title'] == title)
+                           for title in ('First', 'Second')]
+    with app.clients.bind('one'):
+        own = app.subscribe()
+    before = deepcopy(app.clients.records)
+    try:
+        with pytest.raises(AppError, match='explicit connected'):
+            await app.dispatch('session.select', {'id': destination}, origin='agent', caller_session_id=source)
+        with app.clients.bind('one'):
+            with pytest.raises(AppError, match='registered calling'):
+                await app.dispatch('session.select', {'id': destination}, origin='agent')
+            with pytest.raises(AppError, match='attached client'):
+                await app.dispatch('session.select', {'id': destination, 'clientId': 'two'},
+                                   origin='agent', caller_session_id=source)
+        assert app._state['selectedSessionId'] == source
+        assert app.clients.records == before
+    finally:
+        app.unsubscribe(own)

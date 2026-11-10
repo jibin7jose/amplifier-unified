@@ -3,8 +3,24 @@ import json
 
 import pytest
 
-from amplifier_web.agent_receipts import compact_receipt
+from amplifier_web.agent_receipts import compact_receipt, domain_receipt
 from test_agent_canvas_scope import app, caller, command, publish
+
+
+@pytest.mark.parametrize('accepted,status', [(True, 'pending'), (False, 'denied'), (True, 'unknown')])
+def test_domain_receipt_keeps_all_nonstate_fields_without_effect_projection(accepted, status):
+    original = {'accepted': accepted, 'operationId': 'exact-operation', 'revision': 7,
+                'result': {'status': status}, 'effects': [{'id': 'one', 'type': 'effect', 'payload': 'kept'}],
+                'state': {'private': 'must-not-copy'}}
+    before = copy.deepcopy(original)
+    result = domain_receipt(original, action='permissions.request', session_id='caller', revision=8)
+    assert original == before
+    assert {key: value for key, value in result.items() if key != 'state'} == {
+        key: value for key, value in original.items() if key != 'state'}
+    assert result['state']['revision'] == 8 and result['state']['sessionId'] == 'caller'
+    assert result['state']['_stateAccess']['resultPaths'] == [
+        '/permissions', '/managementResults/exact-operation']
+    assert 'private' not in json.dumps(result)
 
 
 @pytest.mark.parametrize('accepted,status', [(True, 'pending'), (False, 'denied'), (True, 'unknown')])
