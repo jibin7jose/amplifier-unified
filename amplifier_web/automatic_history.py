@@ -134,6 +134,21 @@ def _public_text(row, raw_text):
     return text_content({'content': _public_blocks(row, text_only=True)['blocks']})
 
 
+def native_input_id(row):
+    """Validated input provenance, independent of whether its body is visible."""
+    if not isinstance(row, dict) or row.get('role') != 'user':
+        return None
+    metadata = row.get('metadata')
+    provenance = metadata.get('amplifier_input') if isinstance(metadata, dict) else None
+    # Steering keeps the canonical input ID. Media-only and empty occurrences
+    # also participate in uniqueness; display text never proves provenance.
+    if (isinstance(provenance, dict) and provenance.get('version') == 1
+            and provenance.get('kind') in ('user', 'steer')
+            and isinstance(provenance.get('id'), str) and 0 < len(provenance['id']) <= 200):
+        return provenance['id']
+    return None
+
+
 def display_message(row, index, session, *, include_internal=False):
     if not isinstance(row, dict) or row.get('role') not in {'user', 'assistant'}:
         return None
@@ -152,14 +167,8 @@ def display_message(row, index, session, *, include_internal=False):
         # Read that host metadata; matching text alone is never provenance.
         provenance={'version':1,'kind':'service','id':recovery,'source':'local-job-recovery'}
     observation={}
-    input_identity = {}
-    # Request-boundary steering persists the same canonical input ID under a
-    # different delivery kind. Keep it for exact web/native reconciliation;
-    # neither the role nor a host-looking text envelope proves peer authorship.
-    if (row['role'] == 'user' and isinstance(provenance, dict)
-            and provenance.get('version') == 1 and provenance.get('kind') in ('user', 'steer')
-            and isinstance(provenance.get('id'), str) and 0 < len(provenance['id']) <= 200):
-        input_identity = {'nativeInputId': provenance['id']}
+    input_id = native_input_id(row)
+    input_identity = {'nativeInputId': input_id} if input_id is not None else {}
     if isinstance(provenance,dict) and provenance.get('version')==1 and provenance.get('kind')=='service' and all(isinstance(provenance.get(key),str) and 0<len(provenance[key])<=128 for key in ('id','source')):
         observation={'observation':{key:provenance[key] for key in ('id','source','call_id') if key in provenance}}
         from .recovery_observations import recovery_facts
@@ -227,10 +236,10 @@ def read_transcript(session, *, before=None, limit=100, diagnostics=None, includ
         row = display_message(value, index, session)
         internal = row or display_message(value, index, session, include_internal=True)
         return (row['id'] if row else None, internal['id'] if internal else None,
-                value.get('role'), internal.get('nativeInputId') if internal else None)
+                value.get('role'), native_input_id(value))
 
     with measure(service, 'history.transcript.facts', synchronous=True, session_id=session['id']):
-        facts = (messages.project('unified-display-v5:' + str(native_id), project)
+        facts = (messages.project('unified-display-v6:' + str(native_id), project)
                  if isinstance(messages, TranscriptIndex)
                  else [project(value, index) for index, value in enumerate(messages)])
     input_counts = Counter(fact[3] for fact in facts if fact[3])
