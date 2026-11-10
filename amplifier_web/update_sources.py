@@ -6,7 +6,9 @@ import asyncio
 import json
 import os
 import shutil
+import stat
 import subprocess
+import sys
 from pathlib import Path
 
 from .staged_sources import owned_git_checkout, owned_path, retarget_registry
@@ -130,6 +132,30 @@ async def stage_binding(manager, stage, row):
                       store.checkout(row["url"], row["current"]), target)
 
 
+def _remove_adopted_checkout(root, base):
+    """Dispose only the already-adopted staged copy, including read-only Git objects."""
+    root = owned_path(root, base)
+
+    def retry_readonly_object(function, path, error):
+        if sys.platform != "win32" or function is not os.unlink or not isinstance(error, PermissionError):
+            raise error
+        path = owned_path(Path(path), root)
+        relative = path.relative_to(root)
+        info = path.lstat()
+        attributes = getattr(info, "st_file_attributes", 0)
+        if (relative.parts[:2] != (".git", "objects") or not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1 or attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                or not attributes & stat.FILE_ATTRIBUTE_READONLY):
+            raise error
+        # Git marks object files read-only on Windows. The exclusive regular
+        # leaf belongs to this disposable staged copy, not a shared hardlink.
+        # Never repair ACLs, writable-file failures, directories or link targets.
+        os.chmod(path, stat.S_IWRITE, follow_symlinks=False)
+        function(path)  # A genuine second failure remains a failed preparation.
+
+    shutil.rmtree(root, onexc=retry_readonly_object)
+
+
 async def adopt_clean_sources(manager, stage, *, selection=None):
     """Legacy checkouts remain intact in the serving and rollback generations.
 
@@ -198,4 +224,4 @@ async def adopt_clean_sources(manager, stage, *, selection=None):
         # A local/pinned registration can share this cache path. Its authored
         # choice still needs the staged copy, even when a moving binding adopts.
         if not retained:
-            await asyncio.to_thread(shutil.rmtree, root)
+            await asyncio.to_thread(_remove_adopted_checkout, root, base)
