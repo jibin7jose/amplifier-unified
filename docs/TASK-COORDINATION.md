@@ -121,9 +121,10 @@ mint or recursively forward this scope. The origin can be in another registered
 workspace; the owner and its existing member must share their assignment/workspace.
 
 The receiving owner sees peer input, **not** `humanInput`. It assesses the actual
-canonical human instruction supplied in the bounded envelope (following its
-exact-message reference if truncated), rather than inferring intent from sender
-prose. Only after positive admission of this exact handoff in the owner's current
+canonical human instruction supplied in full in the bounded envelope, rather than
+inferring intent from sender prose. Instructions longer than 4,000 characters
+refuse issuance rather than losing qualifications or tail restrictions. Only
+after positive admission of this exact handoff in the owner's current
 authenticated native generation may it deliberately send one fresh member input
 using `resume: {sourceRequestId, expectedInterruptionRevision}`. Specify exactly
 one of `sourceRequestId` and the existing direct `sourceMessageId` alternative.

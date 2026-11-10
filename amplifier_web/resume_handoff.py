@@ -52,6 +52,8 @@ def prepare(app, origin, owner, value, lineage):
     if (not human or human['id'] != value['sourceMessageId']
             or human['inputId'] not in lineage.get('sourceInputIds', [])):
         raise ValueError('Resume handoff requires the latest direct human input in the current native generation.')
+    if len(human.get('text', '')) > 4000:
+        raise ValueError('The complete human instruction exceeds the bounded resume handoff; use a concise direct human request.')
     member = app._session(value['memberSessionId'])
     if len({origin['id'], owner['id'], member['id']}) != 3:
         raise ValueError('Use ordinary owner resume for your own member; handoffs require three distinct roots.')
@@ -147,8 +149,7 @@ def view(app, scope):
     return {**{key: copy.deepcopy(scope[key]) for key in (
         'version', 'sourceSessionId', 'sourceMessageId', 'sourceInputId',
         'ownerSessionId', 'memberSessionId', 'assignment')},
-        'humanInstruction': {'text': human['text'][:4000],
-            'truncated': len(human['text']) > 4000,
+        'humanInstruction': {'text': human['text'], 'truncated': False,
             'readRef': {'action': 'coordination.read', 'args': {
                 'sessionId': scope['sourceSessionId'], 'messageId': scope['sourceMessageId'],
                 'scope': 'all', 'textLimit': 4000}}}}

@@ -322,10 +322,16 @@ async def test_saved_next_message_application_normalizes_only_exact_ack(app, pha
     deliver = app.runtime.collaboration_input
     async def preparing(session, args, guard, emit):
         if session['id'] == row['id']:
-            session['bundle'] = 'wrong-choice' if ack == 'wrong_bundle' else 'saved-choice'
-            session['appliedConfigurationRevision'] = 2 if ack == 'missing' else 3
-            session.pop('pendingBundleSelection', None)
-            if ack == 'later_edit': session['nextMessageRevision'] = 4
+            if ack != 'missing':
+                await emit('runtime.nextMessageApplied', {'sessionId': row['id'], 'revision': 3,
+                                                         'bundle': 'saved-choice'})
+                assert row['appliedConfigurationRevision'] == 3
+                assert not row.get('pendingBundleSelection')
+            else:
+                row['bundle'] = 'saved-choice'
+                row.pop('pendingBundleSelection', None)
+            if ack == 'wrong_bundle': row['bundle'] = 'wrong-choice'
+            if ack == 'later_edit': row['nextMessageRevision'] = 4
             if ack != 'exact':
                 assert guard()
                 return {'accepted': False, 'effect': 'none', 'reason': guard()}
@@ -340,6 +346,15 @@ async def test_saved_next_message_application_normalizes_only_exact_ack(app, pha
     await consume(app, owner, member)
     await settled(app, 'member-resume', 'accepted' if ack == 'exact' else 'suppressed')
     assert len(app.runtime.inputs) == (1 if ack == 'exact' else 0)
+
+
+async def test_long_human_instruction_never_drops_tail_restrictions(app):
+    origin, owner, member, human = await roots(app)
+    human['text'] = 'Resume only as scoped. ' * 220 + 'IMPORTANT: keep this member stopped.'
+    with pytest.raises(AppError, match='complete human instruction exceeds'):
+        await issue(app, origin, owner, member, human)
+    assert not app.runtime.inputs
+    assert not app.db.execute("SELECT 1 FROM commands WHERE id='handoff'").fetchone()
 
 
 async def test_auto_handoff_and_owner_completion_before_member_admission(app):

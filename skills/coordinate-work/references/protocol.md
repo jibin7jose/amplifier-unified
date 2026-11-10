@@ -128,8 +128,9 @@ compare those exact links, not equal message text.
    the actual commissioning owner an explicit `resumeHandoff` naming its
    `sourceMessageId`, the exact `memberSessionId` and
    `expectedInterruptionRevision` (auto/queue). The receiving owner keeps
-   `humanInput:null`: assess the host-supplied canonical `humanInstruction`, using
-   its exact-message read reference when truncated, not peer prose. Only in the
+   `humanInput:null`: assess the host-supplied complete canonical `humanInstruction`,
+   not peer prose. Instructions over 4,000 characters refuse rather than truncate.
+   Only in the
    current native generation containing that positively admitted input may the
    owner send `resume:{sourceRequestId:<handoff inputId>,
    expectedInterruptionRevision}`. Do not also supply `sourceMessageId`, forward
