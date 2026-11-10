@@ -49,6 +49,7 @@ def command_fingerprint(action, args, origin, client_id, *, caller_session_id=No
     # attached. This is a stable replay identity, not a fresh permission check.
     if (origin in {'agent', 'system'} and caller_session_id and
             (action.startswith('feedback.attachments.') or
+             action.startswith('configuration.operation.') and args.get('sessionId') != caller_session_id or
              action in {'feedback.attachment.add', 'feedback.attachment.remove'} and args.get('feedbackId'))):
         values.append({'sourceSessionId': caller_session_id})
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
@@ -2009,6 +2010,16 @@ class AppService:
             raise AppError(str(exc)) from None
         from .workspace_work_effects import guard as work_effect_guard
         work_effect_guard(self, action, args, origin, caller_session_id)
+        recovery_operator = None
+        if (action in {'configuration.operation.read', 'configuration.operation.reconcile', 'configuration.operation.resume'}
+                and origin not in {'ui', 'user'} and args.get('sessionId') != caller_session_id):
+            from .configuration_recovery import caller_authority
+            # Capture the actual caller before routing/lock waits. A later Full
+            # off/on or placement/task change cannot renew this invocation.
+            try:
+                recovery_operator = caller_authority(self.management, args, origin, caller_session_id, active=True)
+            except (ValueError, OSError, KeyError, TypeError):
+                raise AppError('Targeted recovery requires a current authenticated Full root, exact operation and same workspace. Nothing was retried.', 403) from None
         if action == 'canvas.openGif' and (origin != 'ui' or client_id is None
                 or args.get('clientId', client_id) != client_id
                 or self.clients.record().get('kind') != 'web'):
@@ -2062,9 +2073,10 @@ class AppService:
             from .configuration_recovery import command as recovery_command
             async with self.lock:
                 try:
-                    result = recovery_command(self.management, action, args, origin, caller_session_id)
-                except (ValueError, OSError, KeyError, TypeError) as exc:
-                    raise AppError('The retained configuration operation cannot be read: ' + str(exc), 409) from None
+                    result = recovery_command(self.management, action, args, origin, caller_session_id,
+                        **({'operator': recovery_operator} if recovery_operator is not None else {}))
+                except (ValueError, OSError, KeyError, TypeError):
+                    raise AppError('The retained configuration operation cannot be verified. Nothing was retried.', 409) from None
             return {'accepted': True, 'result': result}
         if action.startswith("session.handoff."):
             return await self.handoffs.dispatch(action, args, origin, caller_session_id,
@@ -3699,11 +3711,25 @@ class AppService:
                 except (OSError, KeyError, TypeError):
                     raise AppError('Patch configuration cannot be verified; no binding was admitted.', 409) from None
             elif action in {'configuration.operation.reconcile', 'configuration.operation.resume'}:
-                from .configuration_recovery import command as recovery_command
+                from .configuration_recovery import command as recovery_command, caller_authority
+                # Authenticate before retaining a target-bound rejection. A
+                # claimed target or command ID alone grants no receipt access.
+                caller_authority(self.management, args, origin, caller_session_id, active=True)
                 try:
-                    diagnostic_result = recovery_command(self.management, action, args, origin, caller_session_id)
-                except (ValueError, OSError, KeyError, TypeError) as exc:
-                    raise AppError('Configuration recovery refused: ' + str(exc), 409) from None
+                    diagnostic_result = recovery_command(self.management, action, args, origin, caller_session_id,
+                        **({'operator': recovery_operator} if recovery_operator is not None else {}))
+                except (ValueError, OSError, KeyError, TypeError, AppError) as exc:
+                    message = ('Configuration recovery refused: ' + str(exc) if isinstance(exc, (ValueError, AppError))
+                        else 'Configuration recovery could not verify authority or retained evidence. Nothing was retried.')
+                    status = exc.status if isinstance(exc, AppError) else 409
+                    if command_id:
+                        rejected = {'accepted': False, 'status': status, 'error': message,
+                            'configurationRecovery': {'action': action, 'sessionId': args['sessionId'],
+                                'operationId': args['operationId'], 'expectedRevision': args['expectedRevision'],
+                                'errorCategory': 'recovery_refused'}}
+                        self.db.execute('INSERT INTO commands VALUES(?,?,?)', (command_id, fingerprint, json.dumps(rejected)))
+                        self.db.commit()
+                    raise AppError(message, status) from None
             elif action.startswith(("bundle.","bundles.","configuration.","runtime.","permissions.","history.","maintenance.","notifications.","providers.","routing.","modules.","sources.","locations.")):
                 if not self.management: raise AppError("Management service is unavailable.")
                 values = (action, copy.deepcopy(args), command_id, configuration_authority)
@@ -3939,6 +3965,9 @@ class AppService:
                     receipt['navigationPost'] = copy.deepcopy(message['navigationPost'])
             if action == 'conversation.retry':receipt['result']={'delivery':'sending', 'message':'The saved message is being checked and sent. No additional resend was started.'}
             if diagnostic_result is not None:receipt['result']=diagnostic_result
+            if action in {'configuration.operation.reconcile', 'configuration.operation.resume'}:
+                receipt['configurationRecovery'] = {'action': action, 'sessionId': args['sessionId'],
+                    'operationId': args['operationId'], 'expectedRevision': args['expectedRevision']}
             if action in {"locations.create", "notifications.save"} or action.startswith("providers.") or action.startswith("smartTools.") and action != "smartTools.context" or action.startswith('permissions.') and args.get('scope') == 'session':
                 receipt["operationId"] = command_id
             if action in {"feedback.submit", "feedback.get", "feedback.comment", "feedback.reconcile", "feedback.update", "feedback.close", "feedback.reopen",

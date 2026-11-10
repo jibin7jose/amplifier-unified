@@ -406,6 +406,95 @@ class ConfigurationAuthority:
             return self._capture(action, args, origin, caller, ('host_defaults', 'global'))
         return self._capture(action, args, origin, caller)
 
+    def full_peer_authorities(self, source, inputs):
+        """Recovery's Full caller ceiling includes authenticated peer ancestry.
+
+        Reuse retained collaboration lineage and Full revisions, not a grant
+        copied to the recipient or a claim in peer text.
+        """
+        from .collaboration import valid_binding, participant_matches
+        checked, authorities = set(), []
+        def visit(owner, identities, depth=0, authorized=()):
+            if depth > 8 or len(checked) > 64:
+                self.error('Recovery peer authority lineage exceeds its supported bound.')
+            for identity in identities:
+                if identity in authorized:
+                    continue  # Exact inputs the user already reviewed for this grant.
+                key = (owner['id'], identity)
+                if key in checked:
+                    continue
+                checked.add(key)
+                if len(checked) > 64:
+                    self.error('Recovery peer authority lineage exceeds its supported bound.')
+                row = self.service.db.execute('SELECT receipt FROM commands WHERE id=?', (identity,)).fetchone()
+                receipt = json.loads(row[0]) if row else {}
+                if receipt.get('commandAction') != 'coordination.send':
+                    continue
+                if receipt.get('target', {}).get('sessionId') != owner['id'] or not valid_binding(receipt):
+                    self.error('Recovery peer input has an invalid authenticated target.')
+                if receipt.get('origin') in {'ui', 'user'}:
+                    continue
+                if receipt.get('origin') == 'system' and receipt.get('dependencyRequestId'):
+                    original = self.service.collaboration.receipt(receipt['dependencyRequestId'])
+                    if original.get('senderSessionId') == owner['id']:
+                        if original.get('commandAction') == 'configuration.apply':
+                            ancestry, retained = self.configuration_continuation_inputs(owner, original)
+                            authorities.extend(retained)
+                        else:
+                            ancestry = self.continuation_inputs(original)
+                        visit(owner, ancestry, depth+1)
+                        continue
+                sender = self.service._session(receipt['senderSessionId'], hydrate=False)
+                if (not participant_matches(receipt, owner) or not participant_matches(receipt, sender)
+                        or receipt.get('delivery') not in {'accepted', 'applied', 'notified'}
+                        or receipt.get('sourceInterruptionRevision') != sender.get('interruptionRevision', 0)):
+                    self.error('The originating peer cannot supply current recovery authority.')
+                authority = {'sessionId': sender['id'], 'workspace': sender['workspace'],
+                    'interruptionRevision': sender.get('interruptionRevision', 0),
+                    'effect': 'runtime_configuration', 'scope': 'session'}
+                reviewed = ()
+                if self.service.access_mode.full(sender):
+                    authority['accessRevision'] = self.service.access_mode.snapshot(sender)['revision']
+                else:
+                    grant = next((row for row in self.eligible(sender) if self.valid(row, sender)
+                        and 'runtime_configuration' in row['effects'] and 'session' in row['scopes']), None)
+                    if grant is None:
+                        self.error('The originating peer cannot supply current recovery authority.')
+                    authority.update(grantId=grant['id'], grantRevision=grant['revision'])
+                    reviewed = grant.get('authorizedInputIds', [])
+                authorities.append(authority)
+                visit(sender, self.continuation_inputs(receipt), depth+1, reviewed)
+        visit(source, inputs)
+        return authorities
+
+    def configuration_continuation_inputs(self, owner, original):
+        """Resolve a known own-settings return from its immutable operation."""
+        management = self.service.management
+        operation = original.get('configurationOperationId')
+        if (not operation or original.get('requestId') != 'configuration-wait:' + operation
+                or original.get('origin') != 'system'
+                or original.get('target', {}).get('sessionId') != owner['id']
+                or original.get('workspace') != owner['workspace']):
+            self.error('The settings continuation has no verified original input lineage.')
+        record = management.configuration_record(owner['id'], operation)
+        request = record['request']
+        source, intent = request['source'], request['source'].get('continuation') or {}
+        generation = source.get('generation') or {}
+        inputs = generation.get('inputIds')
+        if (source.get('origin') != 'agent' or source.get('callerSessionId') != owner['id']
+                or not generation.get('id') or intent.get('generationId') != generation['id']
+                or source.get('target') != management.configuration_target_binding(owner)
+                or not isinstance(inputs, list) or not inputs or len(inputs) > 128
+                or any(not isinstance(item, str) or not item for item in inputs)
+                or request.get('authorization') != 'grant' or not request.get('authority')
+                or record['state']['phase'] not in {'ready', 'error'}
+                or record['state']['effect'] not in {'mounted', 'none'}):
+            self.error('The settings continuation has no verified original input lineage.')
+        retained = [request['authority'], *record.get('resumptions', [])]
+        for authority in retained:
+            self.check(authority)
+        return inputs, retained
+
     def _capture(self, action, args, origin, caller, needed=None):
         if origin in {'ui', 'user'}:
             return None
@@ -470,6 +559,9 @@ class ConfigurationAuthority:
                     or scope is not None and scope != authority['scope']
                     or scope != 'global' and workspace is not None and str(workspace) != authority['workspace']):
                 self.error('Full access changed or the conversation was stopped or moved. The delayed change was not repeated.')
+            if 'recoveryCaller' in authority:
+                from .configuration_recovery import check_caller
+                check_caller(self.service, authority)
             return
         grant = self.record(authority['grantId'])
         if (grant['sessionId'] != session['id'] or grant['revision'] != authority['grantRevision']

@@ -1036,13 +1036,18 @@ class Collaboration:
             return revision <= wait.get('lastClaimedRevision', 0) and identity == receipt.get('requestId')
         return wait.get('status') == 'claimed' and wait.get('continuationId') == receipt.get('requestId')
 
-    def fair_rows(self, sid, *, active=False):
+    def fair_rows(self, sid, *, active=False, accepted_after=None):
         # Pick the least recently served sender across the complete pending set,
         # using indexed scalar metadata. A long FIFO from one sender must not
         # hide another sender beyond the first receipt page. NULL senders (host
         # notifications) form their own group and receive the same fair turn.
         eligible = (" AND (json_extract(receipt,'$.mode')='auto' OR json_extract(receipt,'$.automaticDelivery')=1)"
                     if active else "")
+        cutoff = ()
+        if accepted_after is not None:
+            eligible += (" AND coalesce(json_extract(receipt,'$.acceptedAt'),0)>?"
+                         " AND json_extract(receipt,'$.dependencyRequestId') IS NULL")
+            cutoff = (accepted_after,)
         index = 'coordination_automatic_sender' if active else 'coordination_queued_sender'
         sender = self.service.db.execute(f"""WITH pending AS (
             SELECT json_extract(receipt,'$.senderSessionId') AS sender, min(rowid) AS first_row
@@ -1058,7 +1063,7 @@ class Collaboration:
                 AND json_extract(receipt,'$.target.sessionId')=?
                 AND json_extract(receipt,'$.senderSessionId') IS pending.sender
                 AND json_extract(receipt,'$.admissionOrder') IS NOT NULL),0), first_row LIMIT 1""",
-            (sid, sid)).fetchone()
+            (sid, *cutoff, sid)).fetchone()
         if sender is None:
             return []
         return self.service.db.execute(f"""SELECT id,receipt FROM commands INDEXED BY {index}
@@ -1066,7 +1071,7 @@ class Collaboration:
             AND json_extract(receipt,'$.target.sessionId')=?
             AND json_extract(receipt,'$.senderSessionId') IS ?
             AND json_extract(receipt,'$.delivery')='queued' {eligible} ORDER BY rowid LIMIT 64""",
-            (sid, sender[0])).fetchall()
+            (sid, sender[0], *cutoff)).fetchall()
 
     def refresh_inboxes(self):
         """Reconsider saved work after a relaxed inbox policy, never replay it."""
@@ -1095,8 +1100,13 @@ class Collaboration:
         freed_return = False
         try:
             async with self.service.lock:
-                self.resume_outcomes(sid)
-                rows = self.fair_rows(sid, active=self.service._session(sid).get('status') in BUSY)
+                from .configuration_recovery import suppress_input
+                current = self.service._session(sid)
+                holding = suppress_input(current)
+                if not holding:
+                    self.resume_outcomes(sid)
+                rows = self.fair_rows(sid, active=current.get('status') in BUSY,
+                    accepted_after=current['pendingConfiguration']['recoveryNoInput']['acceptedAt'] if holding else None)
             for identity, encoded in rows:
                 async with self.service.lock:
                     receipt = self.receipt(identity)
@@ -1104,6 +1114,8 @@ class Collaboration:
                         self.cancel_expiry(identity)
                         continue
                     target = self.service._session(sid)
+                    if suppress_input(target, receipt):
+                        continue  # Retain older input; fresh explicit work may run.
                     from .update_drain import held, owner_waiting
                     if held(self.service) or owner_waiting(self.service, sid):
                         break
@@ -1196,10 +1208,14 @@ class Collaboration:
             # The newest outcome may have been backpressured by the old queued
             # return. Reuse the released slot now; no unrelated event is needed.
             async with self.service.lock:
-                self.resume_outcomes(sid)
+                if not suppress_input(self.service._session(sid)):
+                    self.resume_outcomes(sid)
 
     def admission(self, sid, args):
         receipt = self.receipt(args["inputId"])
+        from .configuration_recovery import suppress_input
+        if suppress_input(self.service._session(sid), receipt):
+            return {'admitted': False, 'reason': 'Operator configuration recovery did not authorize conversation input.'}
         binding = intake_task_binding(receipt)
         if (receipt.get("commandAction") != "coordination.send" or receipt.get("delivery") != "submitting"
                 or receipt.get("protocol") != PROTOCOL or receipt["target"]["sessionId"] != sid
@@ -1612,6 +1628,13 @@ class Collaboration:
         if self.service.db.execute('SELECT 1 FROM commands WHERE id=?', (identity,)).fetchone():
             return
         sender = self.service._session(request['senderSessionId'])
+        from .configuration_recovery import suppress_input
+        if suppress_input(sender):
+            # The result remains retained, including backpressured settings
+            # waits. A newly materialized return is not fresh explicit work.
+            self.save(request['requestId'], request)
+            self.service.db.commit()
+            return
         if (self.service.assignments.blocked(sender, request.get('assignmentId'))
                 or self.service.assignments.request_membership_reason(request)
                 or wait.get('interruptionRevision') != sender.get('interruptionRevision', 0)):

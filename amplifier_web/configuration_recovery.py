@@ -24,8 +24,9 @@ def definitions(schema, string):
     properties = {"sessionId": string(200), "operationId": string(200)}
     return {
         "configuration.operation.read": (
-            "Observe this owner's retained configuration operation without starting a runtime. No payload, grant or secret is returned.",
-            schema({**properties, "includeRecovery": {"type": "boolean"}}, ["sessionId"])),
+            "Observe an explicitly targeted retained configuration operation without starting a runtime. Current Full root operators may target another root in the same workspace. commandId reads only an exact recovery command's redacted admission; missing evidence is unknown, not permission to retry. No payload, grant or secret is returned.",
+            schema({**properties, "includeRecovery": {"type": "boolean"},
+                    "commandId": string(200)}, ["sessionId"])),
         **{f"configuration.operation.{name}": (
             description, schema({**properties, "expectedRevision": {"type": "integer", "minimum": 1}}))
             for name, description in {
@@ -33,6 +34,105 @@ def definitions(schema, string):
                 "resume": "Continue the original operation under its still-valid authority and target. Proven no effect may apply; a confirmed saved plan may only finish loaded readback or mount if its worker is absent. Exclusive idle admission; unknown or partial writes refuse. No new plan, grant or input.",
             }.items()},
     }
+
+
+def caller_authority(management, args, origin, caller, *, active=False):
+    """Keep grant administration owner-only; recovery has a narrow target route."""
+    service = management.service
+    if origin in {'ui', 'user'} or args['sessionId'] == caller:
+        if origin not in {'ui', 'user'}:
+            service.configuration_authority.source(args, origin, caller,
+                active=active, allow_descendant=True)
+        return None
+    from .collaboration import BINDING
+    if origin != 'agent' or not caller or not args.get('operationId') or '_childOrigin' in (BINDING.get() or {}):
+        raise ValueError('Cross-conversation recovery requires an explicit operation and an authenticated Full root caller.')
+    source = service.configuration_authority.source({'sessionId': caller}, origin, caller, active=True)
+    target = service.collaboration.authorize(source, args, hydrate=False)
+    authority = service.access_mode.capture_full(source, origin)
+    if authority is None or authority.get('inputCoverage') != 'complete':
+        raise ValueError('Cross-conversation recovery requires current Full access and authenticated assigned inputs.')
+    from .task_binding import continuation_epoch
+    task = source.get('task') or service.coordination.task(source['id'])
+    authority.update(workspace=source['workspace'], effect='runtime_configuration', scope='session',
+        interruptionRevision=source.get('interruptionRevision', 0),
+        recoveryCaller={**management.configuration_target_binding(source),
+            'nativeSessionId': source.get('runtimeSessionId') or source.get('nativeIdentity') or source['id'],
+            'configurationPendingRevision': source.get('configurationPendingRevision', 0),
+            'taskId': task.get('id'), 'taskContinuationEpoch': continuation_epoch(task),
+            'assignmentId': source.get('assignmentId')},
+        recoveryTarget={**management.configuration_target_binding(target),
+            'nativeSessionId': target.get('runtimeSessionId') or target.get('nativeIdentity') or target['id'],
+            'operationId': args['operationId']})
+    check_caller(service, authority)
+    peers = service.configuration_authority.full_peer_authorities(source, authority['inputIds'])
+    # Target identity is never used as the caller, even for an operator original.
+    return {'chain': [authority, *peers]}
+
+
+def check_caller(service, authority):
+    """Accepted recovery may outlive a turn, not its caller's execution controls."""
+    saved = authority['recoveryCaller']
+    source = service._session(saved['sessionId'], hydrate=False)
+    task = source.get('task') or service.coordination.task(source['id'])
+    from .task_binding import continuation_epoch
+    from .updates import work_paused
+    if (service.management.configuration_target_binding(source) != {
+            key: saved[key] for key in ('sessionId', 'workspace', 'workingDirectory',
+                                      'executionRevision', 'interruptionRevision')}
+            or (source.get('runtimeSessionId') or source.get('nativeIdentity') or source['id']) != saved['nativeSessionId']
+            or source.get('configurationPendingRevision', 0) != saved['configurationPendingRevision']
+            or source.get('status') in {'stopped', 'stopping', 'interrupted'}
+            or source.get('configurationBusy') or source.get('fileAccessPending')
+            or service.management.unresolved_configuration(source)
+            or source.get('ownership', {}).get('status') in {'blocked', 'yielding', 'yielded', 'yield-failed', 'taking-over'}
+            or work_paused(service.state) or service.assignments.blocked(source)
+            or task.get('id') != saved['taskId']
+            or continuation_epoch(task) != saved['taskContinuationEpoch']
+            or source.get('assignmentId') != saved['assignmentId']
+            or task.get('status') in {'paused', 'blocked', 'completed'}):
+        raise ValueError('The recovery caller was stopped, moved, fenced or its task authority changed.')
+    target_saved = authority['recoveryTarget']
+    target = service._session(target_saved['sessionId'], hydrate=False)
+    if (service.management.configuration_target_binding(target) != {
+            key: target_saved[key] for key in ('sessionId', 'workspace', 'workingDirectory',
+                                             'executionRevision', 'interruptionRevision')}
+            or (target.get('runtimeSessionId') or target.get('nativeIdentity') or target['id']) != target_saved['nativeSessionId']
+            or target.get('pendingConfiguration', {}).get('operationId') != target_saved['operationId']
+            or target.get('configurationOperationFence') not in {None, target_saved['operationId']}
+            or target.get('status') in {'stopped', 'stopping', 'interrupted'}
+            or target.get('fileAccessPending') or service.assignments.blocked(target)
+            or target.get('ownership', {}).get('status') in {'blocked', 'yielding', 'yielded', 'yield-failed', 'taking-over'}):
+        raise ValueError('The recovery target was stopped, moved or fenced by a different owner.')
+
+
+def command_status(service, record, identity):
+    """One exact ledger projection, never an arbitrary receipt/plan read."""
+    result = {'commandId': identity, 'status': 'unconfirmed', 'accepted': None,
+              'reason': 'No target-bound recovery receipt is available. Do not infer no effect or retry.'}
+    row = service.db.execute('SELECT receipt FROM commands WHERE id=?', (identity,)).fetchone()
+    receipt = json.loads(row[0]) if row else {}
+    binding = receipt.get('configurationRecovery') or {}
+    if (binding.get('sessionId') != record['request']['sessionId']
+            or binding.get('operationId') != record['id']
+            or binding.get('action') not in {'configuration.operation.reconcile', 'configuration.operation.resume'}):
+        return result
+    return {**result, 'status': 'accepted' if receipt.get('accepted') is True else 'rejected',
+        'accepted': receipt.get('accepted') is True,
+        **{key: binding[key] for key in ('action', 'sessionId', 'operationId', 'expectedRevision')},
+        'operationRevision': (receipt.get('result') or {}).get('revision'),
+        'phase': (receipt.get('result') or {}).get('state', {}).get('phase'),
+        'errorCategory': binding.get('errorCategory'),
+        'reason': 'Retained command admission only; current operation and native evidence remain authoritative.'}
+
+
+def suppress_input(session, receipt=None):
+    """Hold old queued inputs, not new explicit work after operator recovery."""
+    marker = session.get('pendingConfiguration', {}).get('recoveryNoInput')
+    return (isinstance(marker, dict)
+        and marker.get('generationId') == (session.get('collaborationGeneration') or {}).get('id')
+        and (receipt is None or receipt.get('dependencyRequestId')
+             or receipt.get('acceptedAt', 0) <= marker.get('acceptedAt', 0)))
 
 
 def recovery_child(service, session, request=None):
@@ -230,7 +330,8 @@ def public(record, observed=None):
         "operationId": record["id"], "commandId": record["request"]["commandId"],
         "sessionId": record["request"]["sessionId"], "revision": record["revision"],
         "state": {key: value for key, value in record["state"].items() if key in fields},
-        "history": [{key: value for key, value in row.items() if key in fields} for row in record["history"]],
+        "history": [{key: value for key, value in row.items() if key in fields} for row in record["history"][-32:]],
+        **({"historyTruncated": True} if len(record["history"]) > 32 else {}),
         "nativeEffect": observed["effect"] if observed else "unconfirmed",
         "attempts": len(record.get("attempts", [])), "workReplayed": False,
     }
@@ -312,7 +413,7 @@ async def finish_saved(management, identity, operation):
             CURRENT.reset(token)
 
 
-def validate_recovery(management, session, record, attempt, observed, action, args, origin):
+def validate_recovery(management, session, record, attempt, observed, action, args, origin, operator=None):
     """One validation path for mutations and observational UI availability."""
     service = management.service
     pending = session.get("pendingConfiguration", {})
@@ -326,9 +427,23 @@ def validate_recovery(management, session, record, attempt, observed, action, ar
     task = management.pending_config_tasks.get(session["id"])
     if task is not None and not task.done() or management.lock.locked():
         raise ValueError("The original configuration task has not settled.")
+    if (session.get('configurationOperationFence') not in {None, record['id']}
+            or session.get('configurationBusy') and session.get('configurationOperationFence') != record['id']):
+        raise ValueError('Another configuration operation owns this conversation.')
+    if operator is not None:
+        service.configuration_authority.check(operator)
+        if (not management.configuration_idle({**session, 'pendingConfiguration': {}, 'configurationBusy': False})
+                or session.get('status') in {'stopped', 'stopping', 'interrupted'}
+                or service.assignments.blocked(session)):
+            raise ValueError('Targeted operator recovery requires the original target to be exclusively idle.')
+        if session.get('ownership', {}).get('status') in {'blocked', 'yielding', 'yielded', 'yield-failed', 'taking-over'}:
+            raise ValueError('The original target does not own execution here.')
+        if attempt and attempt.get('nativeSessionId') != (
+                session.get('runtimeSessionId') or session.get('nativeIdentity') or session['id']):
+            raise ValueError('The original native configuration target changed.')
     management.check_configuration_operation(session, record)
-    recovery_authority = None
-    if origin not in {"ui", "user"}:
+    recovery_authority = operator
+    if origin not in {"ui", "user"} and operator is None:
         authority = record["request"]["authority"]
         if record["request"]["authorization"] != "grant":
             if not service.access_mode.full(session):
@@ -370,17 +485,17 @@ def validate_recovery(management, session, record, attempt, observed, action, ar
     return effect, recovery_authority
 
 
-def recovery_status(management, session, record, attempt, observed, origin):
+def recovery_status(management, session, record, attempt, observed, origin, operator=None):
     from .errors import AppError
     status = {"canReconcile": False, "canResume": False,
               "reason": "This change remains held. Its original permission, target or evidence is not currently valid."}
     for verb, key in (("reconcile", "canReconcile"), ("resume", "canResume")):
         try:
-            if origin not in {"ui", "user"}:
+            if origin not in {"ui", "user"} and operator is None:
                 management.service.configuration_authority.source(
                     {"sessionId": session["id"]}, origin, session["id"], active=True, allow_descendant=True)
             validate_recovery(management, session, record, attempt, observed,
-                "configuration.operation." + verb, {"expectedRevision": record["revision"]}, origin)
+                "configuration.operation." + verb, {"expectedRevision": record["revision"]}, origin, operator)
             status[key] = True
         except (ValueError, OSError, KeyError, TypeError, AttributeError, AppError):
             pass  # Never publish raw errors, private paths, plan or authority.
@@ -401,13 +516,17 @@ def recovery_status(management, session, record, attempt, observed, origin):
     return status
 
 
-def command(management, action, args, origin, caller):
+def command(management, action, args, origin, caller, *, operator=None):
     """Run under service.lock; use the existing shared command ledger for dedup."""
     service = management.service
+    if operator is None:
+        operator = caller_authority(management, args, origin, caller, active=not action.endswith(".read"))
+    else:
+        service.configuration_authority.source({'sessionId': caller}, origin, caller, active=True)
+        service.configuration_authority.check(operator)
+    if args.get('commandId') and not args.get('operationId'):
+        raise ValueError('An exact command read requires an explicit operation.')
     session = service._session(args["sessionId"])
-    if origin not in {"ui", "user"}:
-        service.configuration_authority.source(args, origin, caller,
-            active=not action.endswith(".read"), allow_descendant=True)
     pending = session.get("pendingConfiguration", {})
     operation = args.get("operationId") or pending.get("operationId")
     include_recovery = action.endswith(".read") and args.get("includeRecovery")
@@ -417,7 +536,9 @@ def command(management, action, args, origin, caller):
         observed = evidence(attempt, home=service.data_dir) if attempt else None
         if include_recovery:
             result = public(record, observed)
-            result["recovery"] = recovery_status(management, session, record, attempt, observed, origin)
+            result["recovery"] = recovery_status(management, session, record, attempt, observed, origin, operator)
+            if args.get('commandId'):
+                result['command'] = command_status(service, record, args['commandId'])
             return result
     except (ValueError, OSError, KeyError, TypeError, AttributeError):
         if include_recovery:
@@ -426,21 +547,37 @@ def command(management, action, args, origin, caller):
                         "reason": "The original operation or its evidence cannot be verified. Changes remain held; nothing was retried."}}
         raise
     if action.endswith(".read"):
-        return public(record, observed)
+        result = public(record, observed)
+        if args.get('commandId'):
+            if not args.get('operationId'):
+                raise ValueError('An exact command read requires an explicit operation.')
+            result['command'] = command_status(service, record, args['commandId'])
+        return result
     effect, recovery_authority = validate_recovery(
-        management, session, record, attempt, observed, action, args, origin)
+        management, session, record, attempt, observed, action, args, origin, operator)
     from .collaboration import BINDING, PRINCIPAL
     native_binding = (BINDING.get() or {}) if origin not in {"ui", "user"} else {}
     input_ids = [row["inputId"] for row in native_binding.get("_inputBindings", []) if row.get("inputId")]
     # Attribute this explicit recovery in private transition history. The
     # original request and its authority remain immutable, including its actor.
-    recovery_source = {"action": action, "origin": origin, "sessionId": session["id"],
+    actor = service._session(caller, hydrate=False) if operator is not None else session
+    recovery_source = {"action": action, "origin": origin, "sessionId": actor["id"],
         "runtimeSessionId": PRINCIPAL.get() if origin not in {"ui", "user"} else None,
         "generationId": native_binding.get("_generationId"),
-        "interruptionRevision": session.get("interruptionRevision", 0),
+        "interruptionRevision": actor.get("interruptionRevision", 0),
         "inputIds": input_ids, "inputCoverage": "complete" if input_ids else "unavailable"}
     if recovery_authority is not None and "accessRevision" in recovery_authority:
         recovery_source["accessRevision"] = recovery_authority["accessRevision"]
+    elif operator is not None:
+        recovery_source["accessRevision"] = operator['chain'][0]['accessRevision']
+    if operator is not None:
+        # Reconcile can release a proven no-effect fence. Hold older inputs
+        # before that release too, not only when Resume is later accepted.
+        record['recoveryNoInput'] = True
+        session['pendingConfiguration']['recoveryNoInput'] = {
+            'generationId': (session.get('collaborationGeneration') or {}).get('id'),
+            'acceptedAt': time.time()}
+        write_private(management.configuration_record_path(session['id'], operation), json.dumps(record))
     if action.endswith(".reconcile"):
         # Cancellation leaves its original applying/interrupted evidence intact
         # until the host task settles and an explicit reconciliation observes

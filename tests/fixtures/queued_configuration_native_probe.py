@@ -47,6 +47,34 @@ class RecoveryProvider:
         with Path(scenario["calls"]).open("a") as out:
             out.write(json.dumps({"pid":os.getpid(), "tools":tools,
                 "evaluation":evaluation})+"\n")
+        users = [str(m.content) for m in request.messages
+                 if m.role == "user" and not (m.metadata or {}).get("ephemeral")]
+        if users and "RECOVERY_MANAGER" in users[-1]:
+            def output(identity):
+                message = next((m for m in request.messages
+                    if m.role == "tool" and m.tool_call_id == identity), None)
+                if message is None: return None
+                value = json.loads(text(message))
+                while isinstance(value, dict) and "operationId" not in value:
+                    value = value.get("output", value.get("result"))
+                assert isinstance(value, dict) and value.get("operationId") == scenario["operation"], value
+                return value
+            def call(verb, revision=None):
+                args = {"sessionId":scenario["sid"], "operationId":scenario["operation"]}
+                if revision is not None: args["expectedRevision"] = revision
+                else: args["includeRecovery"] = True
+                return ChatResponse(content=[], tool_calls=[ToolCall(
+                    id="manager-"+verb, name="app_control", arguments={"operation":"dispatch",
+                    "args":{"action":"configuration.operation."+verb,
+                        "id":"native-manager-"+verb, "args":args}})])
+            if output("manager-resume") is not None:
+                return ChatResponse(content=[TextBlock(text="targeted-recovery-finished")])
+            reconciled = output("manager-reconcile")
+            if reconciled is not None: return call("resume", reconciled["revision"])
+            read = output("manager-read")
+            if read is None: return call("read")
+            assert read["nativeEffect"] == "saved_not_mounted" and read["recovery"]["canResume"], read
+            return call("reconcile", read["revision"])
         if scenario.get("continuation"):
             resumed = Path(scenario["calls"]).with_name("continued.json")
             if evaluation:
@@ -169,7 +197,7 @@ def finish_cleanup_evidence(root, report, primary_failure):
             raise AssertionError(detail)
 
 
-async def worker(root, mutant, continuation=False):
+async def worker(root, mutant, continuation=False, targeted=False):
     from amplifier_web import configuration_recovery
     from amplifier_web.runtime_controls import RuntimeControls, override_path
     from amplifier_web.runtime_worker import Worker, configure_protocol
@@ -187,7 +215,7 @@ async def worker(root, mutant, continuation=False):
             raise ValueError("Synthetic one-shot pre-write refusal")
         return plan
 
-    if not continuation:
+    if not continuation and not targeted:
         RuntimeControls.prepare_configuration = refuse_once
     source = inspect.getsource(configuration_recovery.native_apply)
     needle = "    controls.save_configuration(plan)\n"
@@ -215,7 +243,7 @@ async def until(predicate, *, seconds=30):
             await asyncio.sleep(.02)
 
 
-async def probe(root, mutant, continuation=False):
+async def probe(root, mutant, continuation=False, targeted=False):
     root.mkdir(parents=True, exist_ok=False)
     workspace, shared, home = (root / name for name in ("workspace", "shared", "app"))
     workspace.mkdir()
@@ -273,6 +301,8 @@ async def probe(root, mutant, continuation=False):
         command.append("--skip-save")
     if continuation:
         command.append("--settings-continuation")
+    if targeted:
+        command.append("--targeted-saved")
     runtime = RuntimeManager(command=command, startup_timeout=45,
         retention={"prewarm_on_select": False})
     web_app = await create_app(home, workspace=workspace, runtime=runtime,
@@ -301,6 +331,14 @@ async def probe(root, mutant, continuation=False):
         await action("session.naming", {"id": sid, "automatic": False}, "native-disable-naming")
         await runtime.start(owner, app.on_runtime_event)
         processes.append(runtime.workers[sid]["process"])
+        if targeted:
+            original_stop = runtime.stop
+            async def saved_stop(identity, *, reason="stopped"):
+                await original_stop(identity, reason=reason)
+                if identity == sid and reason == "configuration" and not (root / "saved-stop-fault").exists():
+                    (root / "saved-stop-fault").touch()
+                    raise RuntimeError("Synthetic acknowledgement loss after native save and confirmed worker exit")
+            runtime.stop = saved_stop
         assert not calls.exists(), "Mounting must not invoke the provider."
         initial = await runtime.control(sid, "configuration.inspect", {})
         desired = copy.deepcopy(initial["plan"])
@@ -318,6 +356,10 @@ async def probe(root, mutant, continuation=False):
             await settings_continuation(app, runtime, owner, action, root, workspace,
                 processes, desired, release, calls, report)
             return
+        if targeted:
+            await action('task.create', {'sessionId': sid, 'expectedRevision': 0,
+                'objective': 'Preserve the unfinished target objective.', 'maxTurns': 8},
+                'target-held-task')
         await action("conversation.send", {"sessionId": sid, "text": "RECOVERY_ORIGINAL"},
             "native-original-input")
         await until(lambda: owner.get("pendingConfiguration", {}).get("phase") == "queued")
@@ -330,6 +372,9 @@ async def probe(root, mutant, continuation=False):
         await until(lambda: owner.get("pendingConfiguration", {}).get("phase") == "error"
             and sid not in app.management.pending_config_tasks)
         record = app.management.configuration_record(sid, owner["pendingConfiguration"]["operationId"])
+        if targeted:
+            await targeted_saved(app, runtime, owner, action, root, bundle, scenario, calls, record, processes, report)
+            return
         assert record["request"]["authorization"] == "grant"
         assert record["state"]["effect"] == "none"
         assert record["state"]["stage"] == "reconciled"
@@ -513,7 +558,56 @@ async def settings_continuation(app, runtime, owner, action, root, workspace,
         originalInputCount=1, originalToolResultCount=1, logicalContinuationCount=1)
 
 
-async def bounded_probe(root, mutant, continuation=False):
+async def targeted_saved(app, runtime, owner, action, root, bundle, scenario, calls, record, processes, report):
+    """A real native Full manager invokes the mounted app-control recovery tool."""
+    from amplifier_web.configuration_recovery import evidence, receipt_path
+    from amplifier_web.runtime_controls import override_path
+    sid = owner['id']
+    assert record['state']['effect'] == 'saved_not_mounted' and len(record['attempts']) == 1
+    assert sid not in runtime.workers and owner['configurationBusy']
+    original_messages = copy.deepcopy(owner['messages'])
+    original_calls = calls.read_bytes()
+    settings = override_path(record['attempts'][0]['nativeSessionId']).read_bytes()
+    sealed = receipt_path(record['attempts'][0], home=app.data_dir).read_bytes()
+    await action('session.create', {'title': 'Native Full recovery operator',
+        'bundle': str(bundle), 'select': False}, 'native-manager-create')
+    manager = next(row for row in app.state['sessions'] if row['id'] != sid)
+    snapshot = (await action('access.get', {'sessionId': manager['id']}, 'native-manager-access'))['result']
+    await action('access.set', {'sessionId': manager['id'], 'scope': 'session',
+        'mode': 'full', 'expectedRevision': snapshot['revision']}, 'native-manager-full')
+    data = json.loads(scenario.read_text())
+    data['operation'] = record['id']
+    scenario.write_text(json.dumps(data))
+    await action('conversation.send', {'sessionId': manager['id'], 'text': 'RECOVERY_MANAGER'},
+        'native-manager-input')
+    await until(lambda: any(m.get('text') == 'targeted-recovery-finished' for m in manager['messages'])
+        and manager.get('collaborationGeneration', {}).get('terminal'), seconds=60)
+    await until(lambda: owner['pendingConfiguration']['phase'] in {'ready', 'error'}
+        and sid not in app.management.pending_config_tasks, seconds=60)
+    current = app.management.configuration_record(sid, record['id'])
+    for row in runtime.workers.values():
+        if row['process'] not in processes:
+            processes.append(row['process'])
+    assert current['state']['effect'] == 'mounted', current['state']
+    assert current['request'] == record['request'] and current['requestHash'] == record['requestHash']
+    assert current['attempts'] == record['attempts']
+    assert current['resumptions'][0]['chain'][0]['sessionId'] == manager['id']
+    assert current['resumptions'][0]['chain'][0]['runtimeSessionId'] == runtime.workers[manager['id']]['runtime_id']
+    assert current['history'][len(record['history'])]['recoverySource']['sessionId'] == manager['id']
+    assert override_path(record['attempts'][0]['nativeSessionId']).read_bytes() == settings
+    assert receipt_path(record['attempts'][0], home=app.data_dir).read_bytes() == sealed
+    assert owner['messages'] == original_messages and owner['status'] == 'idle'
+    assert record['request']['source'].get('continuation'), 'Targeted fixture must exercise an enrolled settings continuation'
+    assert current.get('boundary', {}).get('ready')
+    later = calls.read_bytes()[len(original_calls):].splitlines()
+    assert later and all(json.loads(line)['pid'] == runtime.workers[manager['id']]['process'].pid for line in later)
+    assert evidence(current['attempts'][0], home=app.data_dir)['effect'] == 'saved_not_mounted'
+    report.update(targetedSaved=True, noTargetProviderCalls=True, oneSettingsSave=True,
+        actualManagerTool=True, attempts=1, originalAuthorityPreserved=True,
+        nativeId=record['attempts'][0]['nativeSessionId'], mountedPlanVerified=True)
+
+
+async def bounded_probe(root, mutant, continuation=False, targeted=False):
     # Parent timeout asks for ordinary cancellation so the probe's finally can
     # close real workers and release their writer before the process exits.
     loop, task = asyncio.get_running_loop(), asyncio.current_task()
@@ -525,7 +619,7 @@ async def bounded_probe(root, mutant, continuation=False):
         loop.add_signal_handler(signum, cancel_once)
     try:
         async with asyncio.timeout(150):
-            await probe(root, mutant, continuation)
+            await probe(root, mutant, continuation, targeted)
     finally:
         for signum in signals:
             loop.remove_signal_handler(signum)
@@ -533,6 +627,8 @@ async def bounded_probe(root, mutant, continuation=False):
 
 if __name__ == "__main__":
     if sys.argv[1] == "--worker":
-        asyncio.run(worker(Path(sys.argv[2]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv))
+        asyncio.run(worker(Path(sys.argv[2]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv,
+            "--targeted-saved" in sys.argv))
     else:
-        asyncio.run(bounded_probe(Path(sys.argv[1]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv))
+        asyncio.run(bounded_probe(Path(sys.argv[1]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv,
+            "--targeted-saved" in sys.argv))
