@@ -28,6 +28,12 @@ Amplifier Agent is separate from Unified's Core/Foundation runtime.
 - Keep unrelated upstream improvements separate from Unified release gates.
   Close out-of-scope tracking and correct misleading reviews when discovered.
 
+The user waived the 12 optional IC-09/IC-10 readiness checks on November 10, 2026.
+Follow the [recorded scope and reactivation rule](docs/validation/integration-coverage.md#ic-09-and-ic-10-readiness-waiver).
+Do not reopen source requests or readiness/release blockers solely because these
+checks remain skipped or their dependencies are unavailable. Waived is not passed;
+other integration, physical-device and approval requirements are unchanged.
+
 ## Make performance changes reviewable
 
 For changes to repeated reads, publication, persistence, runtime preparation or

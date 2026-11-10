@@ -25,7 +25,9 @@ and its 87 records remain frozen.
 - **Manual:** the same automated matrix can be dispatched on a selected ref.
   Installed-PWA, optional M365 overlay, unpublished profiling and installed-default
   checks have explicit manual owners below. None is implied by a green headless
-  or host-only run.
+  or host-only run. IC-09 and IC-10 have an explicit
+  [readiness waiver](#ic-09-and-ic-10-readiness-waiver); their manual registration
+  is not an outstanding readiness obligation.
 - **Publication:** the existing short native-runtime group remains the owner of
   ten audited opt-in cases. It now verifies its JUnit report for skips and missing
   required selectors. It is not rerun as another integration lane.
@@ -52,8 +54,8 @@ servers, browsers, displays, or filesystem behavior fail their designated owner.
 | IC-06 filesystem-aliases | Concurrent create cannot overwrite case/Unicode filename aliases | 3 passed, 0 skipped on GitHub macOS; Linux prerequisite probe correctly rejects non-aliasing filesystem | Both alias variants execute on macOS; a skip fails |
 | IC-07 uv-reset | Actual package corruption/missing-dependency repair using uv | 1 passed, 0 skipped; 0.62s in fresh prepared environment | Repeat on reset/dependency changes and nightly |
 | IC-08 context-intelligence | Real isolated server/database, authenticated graph routing and content redaction | 1 passed, 0 skipped; 2.96s | Real disposable Neo4j + server, no production endpoint or account |
-| IC-09 connected-documents | Native upstream composition, shared UI/agent invocation, policy and idempotence | 2 passed, 0 skipped; 1.62s against explicit local upstream copy | Manual optional-overlay acceptance; synthetic Graph transport, no live account writes |
-| IC-10 profiling | Real optional capture library, revocation, privacy, retention and receipts | 10 passed, 0 skipped; 10.28s against clean local library `8edea47c3a05eb4e6206211ac993a0a673245b8a` | Repeat against an explicit clean source; automate when canonical source distribution is available |
+| IC-09 connected-documents | Native upstream composition, shared UI/agent invocation, policy and idempotence | 2 passed, 0 skipped; 1.62s against explicit local upstream copy | **Readiness checks waived by user, 2026-11-10**; not a current qualification or release gate. See [scope and reactivation](#ic-09-and-ic-10-readiness-waiver). |
+| IC-10 profiling | Real optional capture library, revocation, privacy, retention and receipts | 10 passed, 0 skipped; 10.28s against clean local library `8edea47c3a05eb4e6206211ac993a0a673245b8a` | **Readiness checks waived by user, 2026-11-10**; not a current qualification or release gate. See [scope and reactivation](#ic-09-and-ic-10-readiness-waiver). |
 | IC-11 Stories joined | Actual worker storage → real Stories MCP import/retained read → native MCP App review/export/reconnect | Passed against explicit source and supported Agent; separate fresh-install defect repaired upstream | [Manual optional-integration owner](stories-joined-acceptance.md), required on affected changes/source adoption; missing prerequisites fail, never skip |
 | IC-12 native additions | Root/child read policy with actual filesystem/search, both ripgrep and Python fallback; default capability inheritance; Foundation export roundtrip | Registered separately from the 87-record baseline; source-bound execution receipts report actual results | Existing native owner on affected PRs and nightly; current tool packages and ripgrep required before pytest |
 | IC-13 default-installed | Real offline behavior composition, runtime destination/write policy, full mount/export and finite Core/DelegateTool routing | Explicit installed-wheel owner; registration is not a claim of new acceptance | On changes to these boundaries, run copied tests with prepared exact sources and enforce every selector with zero skips |
@@ -61,6 +63,48 @@ servers, browsers, displays, or filesystem behavior fail their designated owner.
 The initial [GitHub matrix](https://github.com/microsoft/amplifier-unified/actions/runs/38873044197)
 passed all six automated lanes: 88 tests, zero skips, including the macOS cases.
 Each lane recorded unchanged source throughout execution.
+
+### IC-09 and IC-10 readiness waiver
+
+**Decision, November 10, 2026:** after an explanation of both optional
+integrations and their missing source provenance, the user directed: "Ok, waive
+the checks but also put a note in the appropriate locations in the repo to avoid
+this in the future."
+
+This waives the outstanding readiness qualification of **exactly 12 cases**:
+
+- **IC-09 / `connected-documents` (2):** the manifest's
+  `test_native_behavior_composition` and
+  `test_shared_ui_agent_native_invocation_and_policy` in
+  `tests/test_connected_documents_profile.py`. These cover an optional M365
+  developer overlay, not a standard shipped dependency.
+- **IC-10 / `profiling` (10):** the eight declared selectors in
+  `tests/test_profiling_host.py`, with
+  `test_revocation_without_followup_request` expanded to its three parameterized
+  cases. These cover the separately installed, debug-only profiling library.
+  Other host/configuration unit checks in that module are not waived.
+
+Record these cases as **waived for readiness; execution unqualified**, not PASS,
+fixed, or evidence of broader acceptance. Keep the tests, frozen baseline
+records, earlier source-bound passes, later skips/failures and UNKNOWN outcomes.
+The earlier passes in the table do not qualify a different source or runtime.
+The waiver does not change test assertions, skip detection, lane selection or
+branch protection; `plan --include-manual` can still list these manual lanes
+without making them mandatory.
+
+Do not repeatedly ask the user to locate unfamiliar repositories, search for a
+substitute package, create a qualification campaign, or carry these 12 cases as
+readiness/release blockers solely because the optional sources remain absent.
+For future work that explicitly adopts or changes either optional integration,
+make a new scoped acceptance decision: the responsible owner must identify its
+canonical source location and exact revision, supply a clean authorized source,
+and record the intended coverage before reactivating qualification. Source
+availability, a skipped test or a generic audit alone does not revoke this waiver.
+If a lane is deliberately run, its existing strict result checks still apply.
+
+This decision does **not** waive other tests, voice or physical-device acceptance,
+DTU approvals/integration, runtime safety, or performance measurement. It grants
+no account, credential, device or live-service access.
 
 ### Child host-component and ownership coverage, October 17
 
@@ -200,21 +244,26 @@ Missing binaries or unsupported display/CDP behavior fail visibly; do not
 substitute headless execution or widen privileges. Shared base-image cache is
 retained and is not counted as owned teardown.
 
-For profiling, prepare a native environment with
+If profiling qualification is explicitly reactivated under the
+[waiver's scope rule](#ic-09-and-ic-10-readiness-waiver), prepare a native environment with
 `integration_native.py prepare --profiling-source file:///clean/library ...` and run
 `integration_checks.py run --lane profiling` in that environment. The library
 must retain its real implementation and exact source identity. Missing library
-access is pending qualification, not a successful skip.
+access cannot establish a pass; it does not reopen the waived readiness checks.
 
 ## Access and maintenance
 
 The private loop source uses the existing read-only CI key. M365 tools are not
 part of Unified’s standard shipped dependencies. Its two tests qualify an
-optional developer overlay, so they remain manual: provide a clean upstream
-checkout under `.ci/m365` and the declared `.ci/loop-live`, then explicitly run
-the `connected-documents` lane. No new cross-repository CI access is needed.
-The local profiling repository currently has
-no configured remote, so it remains a manual owner until publication is decided.
+optional developer overlay and remain manual. Their current readiness obligation
+is [waived](#ic-09-and-ic-10-readiness-waiver). For explicitly reactivated work,
+provide a clean upstream checkout under `.ci/m365` and the declared `.ci/loop-live`,
+then run the `connected-documents` lane with synthetic Graph transport and no live
+account writes. No new cross-repository CI access is needed.
+The initial profiling source had no configured remote. That historical record is
+not a current source location or a request for the user to publish a package.
+A clean authorized local source with an exact revision is sufficient for future
+scoped qualification; public publication is not required.
 Fork PRs cannot consume private repository secrets; their private-source lanes
 remain unqualified until an authorized source-access run is available. Do not
 use `pull_request_target` to execute untrusted PR code with secrets.

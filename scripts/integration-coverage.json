@@ -309,7 +309,7 @@
         "scripts/integration_external.py",
         "tests/test_connected_documents_profile.py"
       ],
-      "prerequisite": "Optional developer overlay only; explicit clean upstream checkout. Not a standard shipped runtime dependency."
+      "prerequisite": "IC-09's two optional readiness checks were waived by the user on 2026-11-10, not passed. Do not reopen readiness/release blockers or source requests solely for missing dependencies. See docs/validation/integration-coverage.md#ic-09-and-ic-10-readiness-waiver. Future explicit reactivation requires a canonical clean upstream checkout and exact revision; this developer overlay is not a standard shipped runtime dependency."
     },
     "profiling": {
       "runner": "ubuntu-latest",
@@ -328,7 +328,7 @@
         "amplifier_web/profiling_host.py",
         "tests/test_profiling_host.py"
       ],
-      "prerequisite": "Canonical optional amplifier-profiling source must be supplied; no substitute implementation is accepted."
+      "prerequisite": "IC-10's ten optional readiness checks were waived by the user on 2026-11-10, not passed. Do not reopen readiness/release blockers or source requests solely for missing dependencies. See docs/validation/integration-coverage.md#ic-09-and-ic-10-readiness-waiver. Future explicit reactivation requires canonical clean amplifier-profiling source and exact revision; no substitute implementation is accepted."
     },
     "default-installed": {
       "runner": "owned-container",

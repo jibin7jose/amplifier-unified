@@ -356,6 +356,12 @@ Python environment. Normal installations do not require it. An operator can
 enable it through `amplifier-unified config set debug.profiling true`; no app
 action, bundle or tool configuration can enable this setting.
 
+The user waived the ten optional IC-10 readiness checks on November 10, 2026;
+this is not a claim that profiling is qualified on the current runtime. See the
+[scope and reactivation rule](validation/integration-coverage.md#ic-09-and-ic-10-readiness-waiver).
+Missing library access is not a normal-installation or release blocker, and
+does not require another source-location request.
+
 `profiling.status`, `profiling.targets`, `profiling.start`, `profiling.read`,
 `profiling.stop` and `profiling.release` are authenticated shared actions.
 Mutations require a stable command ID. Start accepts only the process-local target
