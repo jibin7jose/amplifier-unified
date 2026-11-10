@@ -77,6 +77,7 @@ def probe(installed):
 def main():
     from browser_check_runner import run_scenarios
     from frontend_build_artifact import create, source_identity, verify
+    from web_test_harness import stage_web_test_harness
     assert sys.version_info[:2] == (3, 13), 'Qualification requires Python 3.13'
     assert os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
     assert not sys.flags.optimize, 'Qualification assertions must not be disabled'
@@ -115,24 +116,25 @@ def main():
         ('source-dependencies', 15, ['uv', 'pip', 'check', '--python', str(host)], common, ROOT),
         ('source-imports', 20, [str(host), '-I', str(Path(__file__).resolve()), '--probe-source'], common, ROOT),
         ('runtime-freeze', 15, ['uv', '--quiet', 'pip', 'freeze', '--python', str(host)], common, ROOT),
-        ('npm-ci', 90, ['npm', 'ci', '--no-audit', '--no-fund'], common, ROOT),
-        ('chromium', 120, ['node', 'node_modules/playwright/cli.js', 'install', '--with-deps', 'chromium'], common, ROOT),
+        ('npm-ci', 90, ['npm', 'ci', '--prefix', 'tests/web', '--no-audit', '--no-fund'], common, ROOT),
+        ('client-npm-ci', 90, ['npm', 'ci', '--prefix', '.build/web-client', '--no-audit', '--no-fund'], common, ROOT),
+        ('chromium', 120, ['node', 'tests/web/node_modules/playwright/cli.js', 'install', '--with-deps', 'chromium'], common, ROOT),
         ('python', 150, [str(host), '-m', 'pytest', '-q', '-ra', '--tb=short', *[str(ROOT / s) for s in SELECTORS], '--junitxml=' + str(OUTPUT / 'python.xml')], source_env, ROOT),
-        ('node', 20, ['node', '--test', '--test-reporter=tap', 'tests/fixture-lifecycle.test.mjs',
+        ('node', 20, ['node', '--test', '--test-reporter=tap', '../../tests/web/fixture-lifecycle.test.mjs',
                      'tests/conversation-navigation.test.mjs', 'tests/history-window.test.mjs'], common, ROOT),
-        ('build', 90, ['npm', 'run', 'build'], common, ROOT),
-        ('delegate-browser', 60, ['node', 'tests/delegate-activity-browser.mjs'], source_env, ROOT),
+        ('build', 90, [sys.executable, 'scripts/web_client_build.py', 'build'], common, ROOT),
+        ('delegate-browser', 60, ['node', 'tests/web/delegate-activity-browser.mjs'], source_env, ROOT),
         ('wheel', 30, ['uv', 'build', '--wheel', '--no-build-isolation', '--python', str(host), '--out-dir', str(wheel.parent), str(ROOT)], common, ROOT),
         ('fresh-runtime', 15, ['uv', 'venv', '--python', sys.executable, str(work / 'installed')], common, ROOT),
         ('install-dependencies', 90, ['uv', 'pip', 'install', '--python', str(installed), '--no-deps', '-r', str(OUTPUT / 'runtime-requirements.txt')], common, ROOT),
         ('install-wheel', 20, ['uv', 'pip', 'install', '--python', str(installed), '--no-deps', str(wheel)], common, ROOT),
         ('installed-dependencies', 15, ['uv', 'pip', 'check', '--python', str(installed)], common, ROOT),
         ('installed-imports', 20, [str(installed), '-I', str(Path(__file__).resolve()), '--probe-installed'], common, ROOT),
-        ('questions-browser', 120, ['node', 'tests/questions-browser.mjs'], browser_env, harness),
-        ('count-browser', 60, ['node', 'tests/count-recovery-browser.mjs'], {**browser_env, 'TEST_NATIVE_NO_REDUCTION': '0', 'AMPLIFIER_TEST_ARTIFACTS': str(OUTPUT / 'count-evidence')}, harness),
-        ('nonreduction-browser', 60, ['node', 'tests/count-recovery-browser.mjs'], {**browser_env, 'TEST_NATIVE_NO_REDUCTION': '1', 'AMPLIFIER_TEST_ARTIFACTS': str(OUTPUT / 'nonreduction-evidence')}, harness),
+        ('questions-browser', 120, ['node', 'tests/web/questions-browser.mjs'], browser_env, harness),
+        ('count-browser', 60, ['node', 'tests/web/count-recovery-browser.mjs'], {**browser_env, 'TEST_NATIVE_NO_REDUCTION': '0', 'AMPLIFIER_TEST_ARTIFACTS': str(OUTPUT / 'count-evidence')}, harness),
+        ('nonreduction-browser', 60, ['node', 'tests/web/count-recovery-browser.mjs'], {**browser_env, 'TEST_NATIVE_NO_REDUCTION': '1', 'AMPLIFIER_TEST_ARTIFACTS': str(OUTPUT / 'nonreduction-evidence')}, harness),
     ]
-    save(OUTPUT / 'plan.json', [{'id': n, 'timeoutSeconds': cap, 'command': cmd, 'env': env, 'cwd': str(root / 'frontend')} for n, cap, cmd, env, root in plans])
+    save(OUTPUT / 'plan.json', [{'id': n, 'timeoutSeconds': cap, 'command': cmd, 'env': env, 'cwd': str(root / '.build/web-client' if n == 'node' else root)} for n, cap, cmd, env, root in plans])
     report['phases'] = {name: {'status': 'not_run'} for name, *_ in plans}
     save(OUTPUT / 'report.json', report)
     try:
@@ -157,7 +159,8 @@ def main():
         for name, cap, command, env, root in plans:
             if package and root == harness:
                 env = {**env, 'AMPLIFIER_TEST_PACKAGE_ROOT': str(package / 'amplifier_web')}
-            plan = {'schemaVersion': 1, 'scenarios': [{'id': name, 'command': command, 'env': env}]}
+            plan = {'schemaVersion': 1, 'scenarios': [{'id': name, 'command': command, 'env': env,
+                'cwd': '.build/web-client' if name == 'node' else '.'}]}
             remaining = 600 - (time.monotonic() - started)
             assert remaining > 1, 'Overall qualification budget exhausted'
             report['phases'][name] = {'status': 'running'}
@@ -229,14 +232,11 @@ def main():
                             assert encoded == 'sha256=' + base64.urlsafe_b64encode(bytes.fromhex(sha(package / path))).decode().rstrip('=')
                             assert int(size) == (package / path).stat().st_size
                 # Real copies: the installed harness cannot resolve source node_modules or product code.
-                shutil.copytree(ROOT / 'tests/fixtures', harness / 'tests/fixtures', ignore=shutil.ignore_patterns('__pycache__'))
-                shutil.copytree(ROOT / 'frontend/tests', harness / 'frontend/tests')
-                shutil.copytree(ROOT / 'frontend/node_modules', harness / 'frontend/node_modules', symlinks=False)
-                shutil.copy2(ROOT / 'frontend/package.json', harness / 'frontend/package.json')
+                stage_web_test_harness(ROOT, harness, copy_dependencies=True)
                 assert not any(p.is_symlink() for p in harness.rglob('*'))
-                assert not (harness / 'amplifier_web').exists() and not (harness / 'frontend/src').exists()
-                copied = {str(p.relative_to(harness)): sha(p) for folder in ('tests/fixtures', 'frontend/tests')
-                          for p in (harness / folder).rglob('*') if p.is_file()}
+                assert not (harness / 'amplifier_web').exists() and not (harness / '.build/web-client/src').exists()
+                copied = {str(p.relative_to(harness)): sha(p) for folder in ('tests/fixtures', 'tests/web', '.build/web-client/tests')
+                          for p in (harness / folder).rglob('*') if p.is_file() and 'node_modules' not in p.parts}
                 assert all(sha(ROOT / path) == value for path, value in copied.items())
                 save(OUTPUT / 'harness.json', {'path': str(harness), 'nodeModules': 'real copy',
                     'files': copied})

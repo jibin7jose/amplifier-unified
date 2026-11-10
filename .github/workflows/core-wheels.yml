@@ -27,8 +27,8 @@ jobs:
         with:
           node-version: '22'
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
+        run: |
+          python scripts/web_client_build.py prepare
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           enable-cache: false

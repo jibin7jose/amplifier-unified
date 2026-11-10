@@ -28,12 +28,11 @@ copies retain their canonical paths; no catalog, SDK or license gets a new owner
 From a checkout whose selected shared inputs are committed:
 
 ```sh
-node frontend/scripts/client-capsule.mjs inputs /tmp/web-build-inputs
-node frontend/scripts/client-capsule.mjs verify-inputs /tmp/web-build-inputs SOURCE_COMMIT
+node scripts/web-client-inputs.mjs inputs /tmp/web-build-inputs
+node scripts/web-client-inputs.mjs verify-inputs /tmp/web-build-inputs SOURCE_COMMIT
 ```
 
-Use a new task-owned output directory. The retained helper name is historical;
-its only commands are `inputs` and `verify-inputs`. Source-capsule `export` and
+Use a new task-owned output directory. The shared-input helper supports only `inputs` and `verify-inputs`. Source-capsule `export` and
 `package` commands are retired. Use the component entrypoint and client-owned
 packager for current source preparation and artifacts.
 

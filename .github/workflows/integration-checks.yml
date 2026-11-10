@@ -101,8 +101,15 @@ jobs:
         with:
           node-version: '22'
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
+        run: |
+          if test -f tests/web/package.json; then
+            python scripts/web_client_build.py prepare
+          else
+            # Historical selected checkout keeps its authored web layout.
+            if test -f scripts/web_client_development.py; then
+              python scripts/web_client_development.py prepare-view
+            fi
+          fi
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - name: Resolve the declared runtime revision
         id: runtime

@@ -108,10 +108,20 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            tests/web/package-lock.json
+            components/web-client.source.json
+            frontend/package-lock.json
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
+        run: |
+          if test -f tests/web/package.json; then
+            python scripts/web_client_build.py prepare
+          else
+            # Historical selected checkout keeps its authored web layout.
+            if test -f scripts/web_client_development.py; then
+              python scripts/web_client_development.py prepare-view
+            fi
+          fi
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - run: uv sync --locked --group dev --group artifacts
       - name: Resolve the declared live-runtime source
@@ -289,13 +299,26 @@ jobs:
         if: ${{ env.CHECK_SUITE == 'question-answer-resume' || env.CHECK_SUITE == 'question-answer-installed' }}
         run: |
           set -euo pipefail
-          npm ci --prefix frontend
-          npm run build --prefix frontend
-          if [ "$CHECK_SUITE" = question-answer-resume ]; then
-            (cd frontend && npx playwright install --with-deps chromium)
-            AMPLIFIER_TEST_PYTHON="$GITHUB_WORKSPACE/.venv/bin/python" \
-              AMPLIFIER_TEST_ARTIFACTS="$GITHUB_WORKSPACE/output/python-checks/question-browser" \
-              node frontend/tests/question-resume-browser.mjs 2>&1 | tee output/python-checks/question-browser.log
+          if test -f tests/web/package.json; then
+            npm ci --prefix .build/web-client
+            npm ci --prefix tests/web
+            python scripts/web_client_build.py build
+            if [ "$CHECK_SUITE" = question-answer-resume ]; then
+              (cd tests/web && npx playwright install --with-deps chromium)
+              AMPLIFIER_TEST_PYTHON="$GITHUB_WORKSPACE/.venv/bin/python" \
+                AMPLIFIER_TEST_ARTIFACTS="$GITHUB_WORKSPACE/output/python-checks/question-browser" \
+                node tests/web/question-resume-browser.mjs 2>&1 | tee output/python-checks/question-browser.log
+            fi
+          else
+            # Historical selected checkout keeps its authored web layout.
+            npm ci --prefix frontend
+            npm run build --prefix frontend
+            if [ "$CHECK_SUITE" = question-answer-resume ]; then
+              (cd frontend && npx playwright install --with-deps chromium)
+              AMPLIFIER_TEST_PYTHON="$GITHUB_WORKSPACE/.venv/bin/python" \
+                AMPLIFIER_TEST_ARTIFACTS="$GITHUB_WORKSPACE/output/python-checks/question-browser" \
+                node frontend/tests/question-resume-browser.mjs 2>&1 | tee output/python-checks/question-browser.log
+            fi
           fi
           uv build --wheel --out-dir output/python-checks/dist
           python - <<'PY' > output/python-checks/question-resume-wheel.json

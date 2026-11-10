@@ -168,7 +168,7 @@ candidate and actual-scale measurements remain distinct. Functional timings unde
 shared load are not performance claims. No main release or production adoption is
 part of this audit.
 
-Machine-readable policy: `frontend/tests/standard-ux-completion-policy.json`.
+Machine-readable policy: `tests/web/standard-ux-completion-policy.json`.
 Source/control audit: `docs/validation/standard-ux-completeness-audit-20261015.json`.
 The authoritative current ledger and exact claims are
 `output/readiness-day-20261015/ui-inventory/{coverage-ledger,functional-claims}.json`.

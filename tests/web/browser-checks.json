@@ -1,0 +1,1326 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "id": "navigation-waiting",
+      "command": [
+        "node",
+        "tests/web/navigation-waiting-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/navigation-waiting",
+        "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"
+      }
+    },
+    {
+      "id": "context-inspector",
+      "command": [
+        "node",
+        "tests/web/context-inspector-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/context-inspector"
+      }
+    },
+    {
+      "id": "context-inspector-layout",
+      "command": [
+        "node",
+        "tests/web/context-inspector-layout-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/context-inspector-layout"
+      }
+    },
+    {
+      "id": "adaptive-work",
+      "command": [
+        "node",
+        "tests/web/adaptive-work-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/adaptive-work"
+      }
+    },
+    {
+      "id": "home-sidebar",
+      "command": [
+        "node",
+        "tests/web/home-sidebar-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/home-sidebar"
+      }
+    },
+    {
+      "id": "shared-landing",
+      "command": [
+        "node",
+        "tests/web/shared-landing-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/shared-landing"
+      }
+    },
+    {
+      "id": "focus-navigation",
+      "command": [
+        "node",
+        "tests/web/focus-navigation-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/focus-navigation"
+      }
+    },
+    {
+      "id": "diagram-navigation",
+      "command": [
+        "node",
+        "tests/web/diagram-navigation-browser.mjs"
+      ],
+      "env": {
+        "DIAGRAM_EVIDENCE": "{root}/output/browser-checks/diagram-navigation/report.json"
+      }
+    },
+    {
+      "id": "chat-shortcuts",
+      "command": [
+        "node",
+        "tests/web/chat-shortcuts-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/chat-shortcuts"
+      }
+    },
+    {
+      "id": "automation-hub",
+      "command": [
+        "node",
+        "tests/web/automation-hub-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/automation-hub"
+      }
+    },
+    {
+      "id": "peer-attribution",
+      "command": [
+        "node",
+        "tests/web/peer-attribution-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_BUILT_STATIC": "1"
+      }
+    },
+    {
+      "id": "device-pairing",
+      "command": [
+        "node",
+        "tests/web/device-pairing-browser.mjs"
+      ]
+    },
+    {
+      "id": "standard-ux-keyboard-reflow",
+      "command": [
+        "node",
+        "tests/web/standard-ux-keyboard-reflow-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/standard-ux-keyboard-reflow"
+      }
+    },
+    {
+      "id": "approval-layout",
+      "command": [
+        "node",
+        "tests/web/approval-layout-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/approval-layout"
+      }
+    },
+    {
+      "id": "approval-lifecycle",
+      "command": [
+        "node",
+        "tests/web/approval-lifecycle-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT_DIR": "{root}/output/browser-checks/approval-lifecycle"
+      }
+    },
+    {
+      "id": "standard-ux-connection-controls",
+      "command": [
+        "node",
+        "tests/web/standard-ux-connection-controls-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/standard-ux-connection-controls"
+      }
+    },
+    {
+      "id": "standard-ux-preferences",
+      "command": [
+        "node",
+        "tests/web/standard-ux-preferences-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/standard-ux-preferences"
+      }
+    },
+    {
+      "id": "standard-ux-privacy-effects",
+      "command": [
+        "node",
+        "tests/web/standard-ux-privacy-effects-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/standard-ux-privacy-effects"
+      }
+    },
+    {
+      "id": "standard-ux-voice-settings",
+      "command": [
+        "node",
+        "tests/web/standard-ux-voice-settings-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/standard-ux-voice-settings"
+      }
+    },
+    {
+      "id": "smart-tool-updates",
+      "command": [
+        "node",
+        "tests/web/smart-tool-updates-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/smart-tool-updates-artifacts"
+      }
+    },
+    {
+      "id": "update-restart",
+      "command": [
+        "node",
+        "tests/web/update-restart-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/update-restart-artifacts"
+      }
+    },
+    {
+      "id": "update-effects",
+      "command": [
+        "node",
+        "tests/web/update-effects-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/update-effects"
+      }
+    },
+    {
+      "id": "active-client-performance",
+      "command": [
+        "node",
+        "tests/web/active-client-performance-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_PERF_EVIDENCE": "{root}/output/active-client-performance/report.json"
+      }
+    },
+    {
+      "id": "state-transport",
+      "command": [
+        "node",
+        "tests/web/state-transport-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_PERF_EVIDENCE": "{root}/output/state-transport-browser/evidence.json"
+      }
+    },
+    {
+      "id": "state-stream",
+      "command": [
+        "node",
+        "tests/web/state-stream-browser.mjs"
+      ]
+    },
+    {
+      "id": "client-traffic",
+      "command": [
+        "node",
+        "tests/web/client-traffic-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/client-traffic"
+      }
+    },
+    {
+      "id": "demand",
+      "command": [
+        "node",
+        "tests/web/demand-browser.mjs"
+      ]
+    },
+    {
+      "id": "scoped-navigation",
+      "command": [
+        "node",
+        "tests/web/scoped-navigation-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT": "{root}/output/scoped-navigation"
+      }
+    },
+    {
+      "id": "navigation-details-context",
+      "command": [
+        "node",
+        "tests/web/navigation-details-context-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/navigation-details-context-artifacts"
+      }
+    },
+    {
+      "id": "sidebar-reading",
+      "command": [
+        "node",
+        "tests/web/sidebar-reading-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/sidebar-reading-artifacts"
+      }
+    },
+    {
+      "id": "selected-context",
+      "command": [
+        "node",
+        "tests/web/selected-context-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT": "{root}/output/selected-context"
+      }
+    },
+    {
+      "id": "registry-validation",
+      "command": [
+        "node",
+        "tests/web/registry-validation-browser.mjs"
+      ]
+    },
+    {
+      "id": "empty-host",
+      "command": [
+        "node",
+        "tests/web/empty-host-browser.mjs"
+      ]
+    },
+    {
+      "id": "empty-host-fail-create",
+      "command": [
+        "node",
+        "tests/web/empty-host-browser.mjs",
+        "--fail-create"
+      ]
+    },
+    {
+      "id": "empty-host-lost-create",
+      "command": [
+        "node",
+        "tests/web/empty-host-browser.mjs",
+        "--lost-create"
+      ]
+    },
+    {
+      "id": "new-chat",
+      "command": [
+        "node",
+        "tests/web/new-chat-browser.mjs"
+      ]
+    },
+    {
+      "id": "cross-workspace-handoff",
+      "command": [
+        "node",
+        "tests/web/cross-workspace-handoff-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/cross-workspace-handoff"
+      }
+    },
+    {
+      "id": "chat-reference",
+      "command": [
+        "node",
+        "tests/web/chat-reference-browser.mjs"
+      ],
+      "env": {
+        "CHAT_REFERENCE_EVIDENCE_DIR": "{root}/output/browser-checks/chat-reference"
+      }
+    },
+    {
+      "id": "draft-provider-refresh",
+      "command": [
+        "node",
+        "tests/web/draft-provider-refresh-browser.mjs"
+      ]
+    },
+    {
+      "id": "provider-selection",
+      "command": [
+        "node",
+        "tests/web/provider-selection-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/provider-selection"
+      }
+    },
+    {
+      "id": "provider-native",
+      "command": [
+        "node",
+        "tests/web/provider-native-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/provider-native",
+        "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"
+      }
+    },
+    {
+      "id": "immediate-direction",
+      "command": [
+        "node",
+        "tests/web/immediate-direction-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_DIRECTION_EVIDENCE": "{root}/output/browser-checks/immediate-direction",
+        "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"
+      }
+    },
+    {
+      "id": "draft-discovery-recovery",
+      "command": [
+        "node",
+        "tests/web/draft-discovery-recovery-browser.mjs"
+      ]
+    },
+    {
+      "id": "feedback",
+      "command": [
+        "node",
+        "tests/web/feedback-browser.mjs"
+      ]
+    },
+    {
+      "id": "feedback-followup",
+      "command": [
+        "node",
+        "tests/web/feedback-followup-browser.mjs"
+      ]
+    },
+    {
+      "id": "composer-readiness",
+      "command": [
+        "node",
+        "tests/web/composer-readiness-browser.mjs"
+      ]
+    },
+    {
+      "id": "dormant-controls",
+      "command": [
+        "node",
+        "tests/web/dormant-controls-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_DORMANT_EVIDENCE": "{root}/output/browser-checks/dormant-controls"
+      }
+    },
+    {
+      "id": "composer-primary-action",
+      "command": [
+        "node",
+        "tests/web/composer-primary-action-browser.mjs"
+      ]
+    },
+    {
+      "id": "surface-context",
+      "command": [
+        "node",
+        "tests/web/surface-context-browser.mjs"
+      ]
+    },
+    {
+      "id": "desktop-readiness",
+      "command": [
+        "node",
+        "tests/web/desktop-readiness-browser.mjs"
+      ]
+    },
+    {
+      "id": "memory-personalization",
+      "command": [
+        "node",
+        "tests/web/memory-personalization-browser.mjs"
+      ]
+    },
+    {
+      "id": "publishing",
+      "command": [
+        "node",
+        "tests/web/publishing-browser.mjs"
+      ]
+    },
+    {
+      "id": "portability",
+      "command": [
+        "node",
+        "tests/web/portability-browser.mjs"
+      ]
+    },
+    {
+      "id": "testing-settings",
+      "command": [
+        "node",
+        "tests/web/testing-settings-browser.mjs"
+      ]
+    },
+    {
+      "id": "settings",
+      "command": [
+        "node",
+        "tests/web/settings-browser.mjs"
+      ]
+    },
+    {
+      "id": "configuration-recovery-components",
+      "command": [
+        "node",
+        "--test",
+        "tests/configuration-recovery.test.mjs",
+        "../../tests/web/configuration-recovery-observer.test.mjs"
+      ],
+      "cwd": ".build/web-client"
+    },
+    {
+      "id": "configuration-recovery",
+      "command": [
+        "node",
+        "tests/web/configuration-recovery-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/configuration-recovery"
+      }
+    },
+    {
+      "id": "settings-completeness",
+      "command": [
+        "node",
+        "tests/web/settings-completeness-browser.mjs"
+      ]
+    },
+    {
+      "id": "settings-drafts",
+      "command": [
+        "node",
+        "tests/web/settings-drafts-browser.mjs"
+      ]
+    },
+    {
+      "id": "settings-collections",
+      "command": [
+        "node",
+        "tests/web/settings-collections-browser.mjs"
+      ]
+    },
+    {
+      "id": "settings-mobile",
+      "command": [
+        "node",
+        "tests/web/settings-mobile-browser.mjs"
+      ]
+    },
+    {
+      "id": "workspace-starters",
+      "command": [
+        "node",
+        "tests/web/workspace-starters-browser.mjs"
+      ]
+    },
+    {
+      "id": "theme-definitions",
+      "command": [
+        "node",
+        "tests/web/theme-definitions-browser.mjs"
+      ]
+    },
+    {
+      "id": "appearance-startup",
+      "command": [
+        "node",
+        "tests/web/appearance-startup-browser.mjs"
+      ]
+    },
+    {
+      "id": "appearance-library",
+      "command": [
+        "node",
+        "tests/web/appearance-library-browser.mjs"
+      ]
+    },
+    {
+      "id": "ready",
+      "command": [
+        "node",
+        "tests/web/ready-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/ready",
+        "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"
+      }
+    },
+    {
+      "id": "question-transcript-fade",
+      "command": [
+        "node",
+        "tests/web/question-transcript-fade-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/question-transcript-fade",
+        "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"
+      }
+    },
+    {
+      "id": "question-resume",
+      "command": [
+        "node",
+        "tests/web/question-resume-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/question-resume",
+        "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"
+      }
+    },
+    {
+      "id": "execution-observability",
+      "command": [
+        "node",
+        "tests/web/execution-observability-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT_DIR": "{root}/output/browser-checks/execution-observability"
+      }
+    },
+    {
+      "id": "execution-inspection",
+      "command": [
+        "node",
+        "tests/web/execution-inspection-browser.mjs"
+      ]
+    },
+    {
+      "id": "execution-actions",
+      "command": [
+        "node",
+        "tests/web/execution-actions-browser.mjs"
+      ]
+    },
+    {
+      "id": "delegate-work-stream",
+      "command": [
+        "node",
+        "tests/web/delegate-work-stream-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT_DIR": "{root}/output/browser-checks/delegate-work-stream"
+      }
+    },
+    {
+      "id": "tool-details",
+      "command": [
+        "node",
+        "tests/web/tool-details-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT_DIR": "{root}/output/browser-checks/tool-details"
+      }
+    },
+    {
+      "id": "tool-previews",
+      "command": [
+        "node",
+        "tests/web/tool-previews-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT_DIR": "{root}/output/browser-checks/tool-previews"
+      }
+    },
+    {
+      "id": "canonical-work",
+      "command": [
+        "node",
+        "tests/web/canonical-work-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canonical-work"
+      }
+    },
+    {
+      "id": "interim-replies",
+      "command": [
+        "node",
+        "tests/web/interim-replies-browser.mjs"
+      ]
+    },
+    {
+      "id": "tool-outcomes",
+      "command": [
+        "node",
+        "tests/web/tool-outcomes-browser.mjs"
+      ]
+    },
+    {
+      "id": "navigation",
+      "command": [
+        "node",
+        "tests/web/navigation-browser.mjs"
+      ]
+    },
+    {
+      "id": "archive-feedback",
+      "command": [
+        "node",
+        "tests/web/archive-feedback-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT": "{root}/output/browser-checks/archive-feedback"
+      }
+    },
+    {
+      "id": "pin-retention",
+      "command": [
+        "node",
+        "tests/web/pin-retention-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT": "{root}/output/browser-checks/pin-retention"
+      }
+    },
+    {
+      "id": "pin-rapid-reorder",
+      "command": [
+        "node",
+        "tests/web/pin-rapid-reorder-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT": "{root}/output/browser-checks/pin-rapid-reorder"
+      }
+    },
+    {
+      "id": "workspace-shortcuts",
+      "command": [
+        "node",
+        "tests/web/workspace-shortcuts-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT": "{root}/output/browser-checks/workspace-shortcuts"
+      }
+    },
+    {
+      "id": "chat-title",
+      "command": [
+        "node",
+        "tests/web/chat-title-browser.mjs"
+      ]
+    },
+    {
+      "id": "attachment-consumption",
+      "command": [
+        "node",
+        "tests/web/attachment-consumption-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/attachment-consumption"
+      }
+    },
+    {
+      "id": "attachment-experience",
+      "command": [
+        "node",
+        "tests/web/attachment-experience-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/attachment-experience"
+      }
+    },
+    {
+      "id": "message-delivery",
+      "command": [
+        "node",
+        "tests/web/message-delivery-browser.mjs"
+      ]
+    },
+    {
+      "id": "canvas-media",
+      "command": [
+        "node",
+        "tests/web/canvas-media-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canvas-media"
+      }
+    },
+    {
+      "id": "inline-media-transition",
+      "command": [
+        "node",
+        "tests/web/inline-media-transition-browser.mjs"
+      ],
+      "env": {
+        "EVIDENCE_DIR": "{root}/output/browser-checks/inline-media-transition"
+      }
+    },
+    {
+      "id": "artifact-one-surface",
+      "command": [
+        "node",
+        "tests/web/artifact-one-surface-browser.mjs"
+      ],
+      "env": {
+        "ARTIFACT_EVIDENCE_DIR": "{root}/output/browser-checks/artifact-one-surface"
+      }
+    },
+    {
+      "id": "app-toolbar",
+      "command": [
+        "node",
+        "tests/web/app-toolbar-browser.mjs"
+      ]
+    },
+    {
+      "id": "smart-tools",
+      "command": [
+        "node",
+        "tests/web/smart-tools-browser.mjs"
+      ]
+    },
+    {
+      "id": "mcp-recovery",
+      "command": [
+        "node",
+        "tests/web/mcp-recovery-browser.mjs"
+      ],
+      "env": {
+        "MCP_RECOVERY_SCREENSHOT": "{root}/output/browser-checks/mcp-recovery.png"
+      }
+    },
+    {
+      "id": "mcp-clients",
+      "command": [
+        "node",
+        "tests/web/mcp-clients-browser.mjs"
+      ],
+      "env": {
+        "MCP_RECOVERY_SCREENSHOT": "{root}/output/browser-checks/mcp-clients.png"
+      }
+    },
+    {
+      "id": "shell-components",
+      "command": [
+        "node",
+        "tests/web/shell-components-browser.mjs"
+      ]
+    },
+    {
+      "id": "mobile-navigation",
+      "command": [
+        "node",
+        "tests/web/mobile-navigation-browser.mjs"
+      ]
+    },
+    {
+      "id": "cache-usage",
+      "command": [
+        "node",
+        "tests/web/cache-usage-browser.mjs"
+      ]
+    },
+    {
+      "id": "bundle",
+      "command": [
+        "node",
+        "tests/web/bundle-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_BUNDLE_SCREENSHOT": "{root}/output/browser-checks/bundle-mobile.png"
+      }
+    },
+    {
+      "id": "markdown-composer",
+      "command": [
+        "node",
+        "tests/web/markdown-composer-browser.mjs"
+      ]
+    },
+    {
+      "id": "multi-quote",
+      "command": [
+        "node",
+        "tests/web/multi-quote-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_PROOF_DIR": "{root}/output/browser-checks/multi-quote"
+      }
+    },
+    {
+      "id": "draft-switch",
+      "command": [
+        "node",
+        "tests/web/draft-switch-browser.mjs"
+      ]
+    },
+    {
+      "id": "draft-reload",
+      "command": [
+        "node",
+        "tests/web/draft-reload-browser.mjs"
+      ]
+    },
+    {
+      "id": "live-history",
+      "command": [
+        "node",
+        "tests/web/live-history-browser.mjs"
+      ]
+    },
+    {
+      "id": "destination-history",
+      "command": [
+        "node",
+        "tests/web/destination-history-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT": "{root}/output/browser-checks/destination-history"
+      }
+    },
+    {
+      "id": "live-clients",
+      "command": [
+        "node",
+        "tests/web/live-clients-browser.mjs"
+      ]
+    },
+    {
+      "id": "ownership",
+      "command": [
+        "node",
+        "tests/web/ownership-browser.mjs"
+      ]
+    },
+    {
+      "id": "canvas-dirty",
+      "command": [
+        "node",
+        "tests/web/canvas-dirty-browser.mjs"
+      ]
+    },
+    {
+      "id": "canvas-versions",
+      "command": [
+        "node",
+        "tests/web/canvas-versions-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canvas-versions"
+      }
+    },
+    {
+      "id": "canvas-refresh",
+      "command": [
+        "node",
+        "tests/web/canvas-refresh-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canvas-refresh"
+      }
+    },
+    {
+      "id": "canvas-refresh-catchup",
+      "command": [
+        "node",
+        "tests/web/canvas-refresh-catchup-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canvas-refresh-catchup"
+      }
+    },
+    {
+      "id": "canvas-apps",
+      "command": [
+        "node",
+        "tests/web/canvas-apps-browser.mjs"
+      ]
+    },
+    {
+      "id": "canvas-drawing",
+      "command": [
+        "node",
+        "tests/web/canvas-drawing-browser.mjs"
+      ]
+    },
+    {
+      "id": "session-health",
+      "command": [
+        "node",
+        "tests/web/session-health-browser.mjs"
+      ]
+    },
+    {
+      "id": "session-health-context-limit",
+      "command": [
+        "node",
+        "tests/web/session-health-browser.mjs",
+        "--context-limit"
+      ]
+    },
+    {
+      "id": "session-health-context-limit-active-worker",
+      "command": [
+        "node",
+        "tests/web/session-health-browser.mjs",
+        "--context-limit",
+        "--active-worker"
+      ]
+    },
+    {
+      "id": "session-health-module-failure",
+      "command": [
+        "node",
+        "tests/web/session-health-browser.mjs",
+        "--module-failure"
+      ]
+    },
+    {
+      "id": "capacity",
+      "command": [
+        "node",
+        "tests/web/capacity-browser.mjs"
+      ]
+    },
+    {
+      "id": "request-cancellation",
+      "command": [
+        "node",
+        "tests/web/request-cancellation-browser.mjs"
+      ]
+    },
+    {
+      "id": "coordination",
+      "command": [
+        "node",
+        "tests/web/coordination-browser.mjs"
+      ]
+    },
+    {
+      "id": "shared-work",
+      "command": [
+        "node",
+        "tests/web/shared-work-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_COLD_TASK": "1",
+        "AMPLIFIER_TEST_OUTPUT": "{root}/output/browser-checks/shared-work"
+      }
+    },
+    {
+      "id": "connectors",
+      "command": [
+        "node",
+        "tests/web/connectors-browser.mjs"
+      ]
+    },
+    {
+      "id": "test-environments",
+      "command": [
+        "node",
+        "tests/web/test-environments-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python",
+        "AMPLIFIER_TEST_OUTPUT_DIR": "{root}/output/browser-checks/test-environments"
+      }
+    },
+    {
+      "id": "assignment-adoption",
+      "command": [
+        "node",
+        "tests/web/assignment-adoption-browser.mjs"
+      ]
+    },
+    {
+      "id": "access-mode",
+      "command": [
+        "node",
+        "tests/web/access-mode-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT_DIR": "{root}/output/browser-checks/access-mode"
+      }
+    },
+    {
+      "id": "storage-cleanup-settings",
+      "command": [
+        "node",
+        "tests/web/storage-cleanup-settings-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT_DIR": "{root}/output/browser-checks/storage-cleanup-settings"
+      }
+    },
+    {
+      "id": "model-capacity-settings",
+      "command": [
+        "node",
+        "tests/web/model-capacity-settings-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_OUTPUT_DIR": "{root}/output/browser-checks/model-capacity-settings"
+      }
+    },
+    {
+      "id": "compact-composer",
+      "command": [
+        "node",
+        "tests/web/compact-composer-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/compact-composer"
+      }
+    },
+    {
+      "id": "composer-panel-ownership",
+      "command": [
+        "node",
+        "tests/web/composer-panel-ownership-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/composer-panel-ownership"
+      }
+    },
+    {
+      "id": "peer-preview",
+      "command": [
+        "node",
+        "tests/web/peer-preview-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_PROOF_DIR": "{root}/output/browser-checks/peer-preview"
+      }
+    },
+    {
+      "id": "peer-preview-header",
+      "command": [
+        "node",
+        "tests/web/peer-preview-header-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_PROOF_DIR": "{root}/output/browser-checks/peer-preview-header"
+      }
+    },
+    {
+      "id": "peer-preview-focus",
+      "command": [
+        "node",
+        "tests/web/peer-preview-focus-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_PROOF_DIR": "{root}/output/browser-checks/peer-preview-focus"
+      }
+    },
+    {
+      "id": "canvas-chrome",
+      "command": [
+        "node",
+        "tests/web/canvas-chrome-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canvas-chrome"
+      }
+    },
+    {
+      "id": "canvas-close",
+      "command": [
+        "node",
+        "tests/web/canvas-close-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canvas-close"
+      }
+    },
+    {
+      "id": "semantic-settings",
+      "command": [
+        "node",
+        "tests/web/semantic-settings-browser.mjs"
+      ]
+    },
+    {
+      "id": "voice-work-message",
+      "command": [
+        "node",
+        "tests/web/voice-work-message-browser.mjs"
+      ],
+      "env": {
+        "EVIDENCE_DIR": "{root}/output/browser-checks/voice-work-message"
+      }
+    }
+  ],
+  "scenarioOrder": [
+    "navigation-waiting",
+    "context-inspector",
+    "context-inspector-layout",
+    "adaptive-work",
+    "home-sidebar",
+    "shared-landing",
+    "focus-navigation",
+    "diagram-navigation",
+    "chat-shortcuts",
+    "automation-hub",
+    "peer-attribution",
+    "device-pairing",
+    "standard-ux-keyboard-reflow",
+    "approval-layout",
+    "approval-lifecycle",
+    "standard-ux-connection-controls",
+    "standard-ux-preferences",
+    "standard-ux-privacy-effects",
+    "standard-ux-voice-settings",
+    "smart-tool-updates",
+    "update-restart",
+    "update-effects",
+    "active-client-performance",
+    "state-transport",
+    "state-stream",
+    "client-traffic",
+    "demand",
+    "scoped-navigation",
+    "navigation-details-context",
+    "sidebar-reading",
+    "selected-context",
+    "registry-validation",
+    "empty-host",
+    "empty-host-fail-create",
+    "empty-host-lost-create",
+    "new-chat",
+    "cross-workspace-handoff",
+    "chat-reference",
+    "draft-provider-refresh",
+    "provider-selection",
+    "provider-native",
+    "immediate-direction",
+    "draft-discovery-recovery",
+    "new-chat-recovery",
+    "feedback",
+    "feedback-followup",
+    "composer-readiness",
+    "dormant-controls",
+    "composer-primary-action",
+    "surface-context",
+    "desktop-readiness",
+    "memory-personalization",
+    "publishing",
+    "portability",
+    "testing-settings",
+    "settings",
+    "configuration-recovery-components",
+    "configuration-recovery",
+    "settings-completeness",
+    "settings-drafts",
+    "settings-collections",
+    "settings-mobile",
+    "workspace-starters",
+    "theme-definitions",
+    "appearance-startup",
+    "appearance-library",
+    "ready",
+    "review-during-send",
+    "question-transcript-fade",
+    "question-resume",
+    "execution-observability",
+    "execution-inspection",
+    "execution-actions",
+    "delegate-work-stream",
+    "tool-details",
+    "tool-previews",
+    "canonical-work",
+    "interim-replies",
+    "tool-outcomes",
+    "navigation",
+    "archive-feedback",
+    "pin-retention",
+    "pin-rapid-reorder",
+    "workspace-shortcuts",
+    "chat-title",
+    "message-outbox",
+    "update-message-delivery",
+    "attachment-consumption",
+    "attachment-experience",
+    "message-delivery",
+    "delivery-warning",
+    "delivery-reconciliation",
+    "delivery-new-chat",
+    "canvas-media",
+    "inline-media-transition",
+    "artifact-one-surface",
+    "app-toolbar",
+    "smart-tools",
+    "mcp-recovery",
+    "mcp-clients",
+    "shell-components",
+    "mobile-navigation",
+    "cache-usage",
+    "bundle",
+    "markdown-composer",
+    "multi-quote",
+    "draft-switch",
+    "draft-reload",
+    "live-history",
+    "conversation-navigation",
+    "destination-history",
+    "live-clients",
+    "ownership",
+    "canvas-dirty",
+    "canvas-versions",
+    "canvas-refresh",
+    "canvas-refresh-catchup",
+    "canvas-apps",
+    "canvas-drawing",
+    "session-health",
+    "session-health-context-limit",
+    "session-health-context-limit-active-worker",
+    "session-health-module-failure",
+    "activity-feedback",
+    "capacity",
+    "request-cancellation",
+    "coordination",
+    "shared-work",
+    "connectors",
+    "test-environments",
+    "assignment-adoption",
+    "access-mode",
+    "storage-cleanup-settings",
+    "model-capacity-settings",
+    "compact-composer",
+    "composer-panel-ownership",
+    "peer-preview",
+    "peer-preview-header",
+    "peer-preview-focus",
+    "canvas-chrome",
+    "canvas-close",
+    "chat-scroll-call-boundaries",
+    "semantic-settings",
+    "history-refresh",
+    "voice-work-message"
+  ]
+}

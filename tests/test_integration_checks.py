@@ -50,7 +50,10 @@ def test_changed_feature_selects_its_owner_without_full_matrix():
 @pytest.mark.parametrize('path', ['components/web-client/src/main.jsx',
     'components/web-client/public/pwa.js', 'components/web-client.source.json',
     'scripts/web_client_build.py', 'scripts/web_client_source.py',
-    'scripts/web_client_development.py'])
+    'scripts/web_test_harness.py', 'scripts/web-client-inputs.mjs',
+    'tests/web/package.json', 'tests/web/package-lock.json',
+    'tests/test_web_client_build.py', 'tests/test_web_test_harness.py',
+    'tests/test_integration_clients.py'])
 def test_selected_client_changes_keep_the_existing_browser_owner(path):
     assert checks.select_lanes([path]) == [{'lane': 'browser-headless', 'os': 'ubuntu-latest'}]
 
@@ -206,8 +209,8 @@ def test_frontend_scope_uses_exact_shallow_pr_trees_without_history_fetch(
     assert checks.frontend_test_scope(base, '0' * 40) == 'full'
 
 
-@pytest.mark.parametrize('path', ['frontend/src/app.js', 'frontend/package-lock.json',
-                                  'frontend/tests/assets.test.mjs', 'scripts/integration_checks.py',
+@pytest.mark.parametrize('path', ['components/web-client/src/app.js', 'tests/web/package-lock.json',
+                                  'components/web-client/tests/artifact/assets.test.mjs', 'scripts/integration_checks.py',
                                   '.github/workflows/work-workflows.yml', 'tests/test_access_mode.py'])
 def test_version_with_frontend_or_classifier_change_keeps_full_tests(release_repository, path):
     repo = release_repository
@@ -227,9 +230,12 @@ def test_frontend_runner_reports_actual_successful_scope_only(monkeypatch, tmp_p
     output = tmp_path / 'github-output'
     monkeypatch.setattr(checks.sys, 'argv', ['checks', 'frontend-test', '--output', str(output)])
     assert checks.main() == exit_code
-    expected = (['npm', 'test', '--prefix', 'frontend'] if scope == 'full' else
-                ['node', '--test', 'frontend/tests/assets.test.mjs', 'frontend/tests/build-artifacts.test.mjs'])
-    assert calls == [(expected, checks.ROOT)]
+    expected = ([(['npm', 'test', '--prefix', '.build/web-client'], checks.ROOT)] if scope == 'full' else
+                [(['node', '--test', 'tests/build-identity.test.mjs', 'tests/build-discovery.test.mjs',
+                   'tests/update-release-summary.test.mjs'], checks.ROOT / '.build/web-client')])
+    if scope == 'full' and exit_code == 0:
+        expected.append((['npm', 'test', '--prefix', 'tests/web'], checks.ROOT))
+    assert calls == expected
     if exit_code == 0:
         assert output.read_text() == 'scope=' + scope + '\n'
     else:
@@ -317,8 +323,8 @@ def test_publication_stays_short_and_background_owns_integration():
 
 @pytest.mark.parametrize('changed', ['pyproject.toml', 'uv.lock', '.github/workflows/integration.yml',
     'components/web-client/src/main.jsx', 'components/web-client.source.json',
-    'frontend/src/main.jsx', 'frontend/tests/browser.mjs', 'frontend/package.json',
-    'frontend/package-lock.json', 'frontend/vite.config.js', 'frontend/index.html',
+    'components/web-client/src/shell.jsx', 'tests/web/browser.mjs', 'tests/web/package.json',
+    'tests/web/package-lock.json', 'components/web-client/vite.config.js', 'components/web-client/index.html',
     'amplifier_web/static/assets/main.js', 'amplifier_web/static/index.html',
     'amplifier_web/static/assets/main.css', 'amplifier_web/static/assets/viewer.wasm'])
 def test_dependency_and_workflow_inputs_change_source_identity(tmp_path, monkeypatch, changed):
@@ -341,7 +347,7 @@ def test_generated_caches_and_output_are_not_source_inputs(tmp_path, monkeypatch
     (tmp_path / 'uv.lock').write_text('version=1\n')
     monkeypatch.setattr(checks, 'ROOT', tmp_path)
     before = checks.source_identity('fixture')
-    for name in ('frontend/tests/output/result.json', 'frontend/src/node_modules/lib.js',
+    for name in ('tests/web/output/result.json', 'components/web-client/src/node_modules/lib.js',
                  'amplifier_web/__pycache__/service.pyc'):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -577,7 +583,7 @@ def test_shared_work_changes_select_only_existing_native_owner(path):
 @pytest.mark.parametrize('path', [
     'amplifier_web/workspace_navigation.py',
     'tests/test_workspace_navigation.py',
-    'frontend/src/shared-work-browser.jsx',
+    'components/web-client/src/shared-work-browser.jsx',
     'docs/validation/integration-coverage.md',
 ])
 def test_shared_work_registration_does_not_expand_native_to_unrelated_paths(path):

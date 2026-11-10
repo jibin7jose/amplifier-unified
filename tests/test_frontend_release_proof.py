@@ -244,8 +244,9 @@ def test_create_refuses_fork_or_manual_even_if_checkout_would_match(monkeypatch,
 
 
 def test_fingerprint_covers_all_tracked_inputs_and_detects_dirty_or_extra_assets(tmp_path, monkeypatch):
-    paths = [*module.QUALIFIERS, 'frontend/src/app.js', 'frontend/tests/app.test.mjs',
-             'frontend/package-lock.json', 'frontend/vite.config.js', 'frontend/scripts/branding.mjs',
+    paths = [*module.QUALIFIERS, 'components/web-client/src/app.js', 'components/web-client/tests/app.test.mjs',
+             'tests/web/package.json', 'tests/web/package-lock.json', 'components/web-client.source.json',
+             'scripts/web_client_build.py', 'components/web-client/vite.config.js',
              'pyproject.toml', 'amplifier_web/__init__.py', 'amplifier_web/static/app.js',
              'scripts/build.py', 'assets/logo.svg']
     for name in paths:
@@ -310,8 +311,14 @@ def test_workflows_keep_full_fallback_and_fresh_package_runtime():
     frontend = release['jobs']['prepare']['steps']
     fallback = next(s for s in frontend if s.get('name') == 'Validate frontend and committed assets')
     assert fallback['if'] == "steps.frontend-proof.outputs.reused != 'true'"
-    for command in ('npm ci', 'npm test', 'npm run build', 'git diff --exit-code'):
-        assert command in fallback['run']
+    assert 'historical_web_layout.py" validate' in fallback['run']
+    assert 'git diff --exit-code -- amplifier_web/static' in fallback['run']
+    # The copied adapter owns explicit current and historical full-check orders.
+    import historical_web_layout
+    current = historical_web_layout.commands(ROOT, 'validate')
+    assert ['npm', 'test', '--prefix', '.build/web-client'] in current
+    assert ['npm', 'test', '--prefix', 'tests/web'] in current
+    assert current[-1] == ['npm', 'run', 'test:artifact-assets', '--prefix', '.build/web-client']
     assert release['jobs']['release']['needs'] == 'prepare'
     for name in ('Build and verify distributions', 'Verify surface context and recipe children through Core and loop-live',
                  'Require native goal and peer continuation regressions without skips'):
@@ -336,7 +343,7 @@ def test_workflow_retains_successful_build_before_committed_asset_failure():
     ]
     build = next(step for step in steps if step.get('id') == 'frontend-build')
     assert build == {'name': 'Build frontend', 'id': 'frontend-build',
-                     'run': 'npm run build --prefix frontend'}
+                     'run': 'python scripts/web_client_build.py build\n'}
     uploads = [step for step in steps if step.get('uses') == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02']
     assert len(uploads) == 2
     retained, proof = uploads
@@ -358,7 +365,7 @@ def test_workflow_retains_successful_build_before_committed_asset_failure():
     }
     verify = next(step for step in steps if step.get('name') == 'Verify committed frontend assets')
     assert verify == {'name': 'Verify committed frontend assets',
-                      'run': 'git diff --exit-code -- amplifier_web/static'}
+                      'run': 'npm run test:artifact-assets --prefix .build/web-client\ngit diff --exit-code -- amplifier_web/static\n'}
     # Retention runs before the comparison; its failure cannot be turned into
     # qualification or prevent saving an already successful build after the fact.
     assert steps.index(build) < steps.index(create) < steps.index(retained) < steps.index(verify) < steps.index(proof)
@@ -404,10 +411,12 @@ def test_fast_scope_selection_and_single_full_nightly_owner():
     for name in ('Install frontend dependencies', 'Build frontend', 'Verify committed frontend assets'):
         assert 'if' not in next(step for step in fast if step.get('name') == name)
     browser = load('browser-checks.yml')['jobs']['browser']['steps']
-    full, = [step for step in browser if 'npm test --prefix frontend' in step.get('run', '')]
+    full, = [step for step in browser if 'npm test --prefix .build/web-client' in step.get('run', '')]
     assert full['if'] == '${{ !inputs.multi_quote && !inputs.attachment_consumption && !inputs.app004_qualification && !inputs.mcp_boundary }}'
     assert 'pipefail' in full['run'] and 'output/browser-checks/frontend-units.log' in full['run']
-    assert browser.index(full) > next(i for i, step in enumerate(browser) if step.get('run') == 'npm ci --prefix frontend')
+    assert full['run'].count('npm test --prefix .build/web-client') == 1
+    assert full['run'].count('npm test --prefix tests/web') == 1
+    assert browser.index(full) > next(i for i, step in enumerate(browser) if 'npm ci --prefix .build/web-client' in step.get('run', ''))
 
 
 def test_hosted_image_patch_reuse_records_both_without_relaxing_other_inputs(lookup):
@@ -422,14 +431,30 @@ def test_hosted_image_patch_reuse_records_both_without_relaxing_other_inputs(loo
     assert not module.find(root, env, api)['reused']
 
 
-def test_manual_historical_release_prepares_client_only_when_selected_source_opts_in():
+def test_manual_historical_release_carries_layout_adapter_before_selecting_source():
     release = yaml.load((ROOT / '.github/workflows/release.yml').read_text(), Loader=yaml.BaseLoader)
     steps = release['jobs']['prepare']['steps']
+    copied = next(i for i, step in enumerate(steps) if 'cp scripts/release.py' in step.get('run', ''))
     selected = next(i for i, step in enumerate(steps) if step.get('name') == 'Pin the verified selected commit')
-    prepared = next(i for i, step in enumerate(steps) if step.get('run') ==
-                    'python scripts/web_client_development.py prepare-view')
+    layout = next(i for i, step in enumerate(steps) if step.get('id') == 'web-layout')
+    prepared = next(i for i, step in enumerate(steps) if 'historical_web_layout.py" prepare' in step.get('run', ''))
     proof = next(i for i, step in enumerate(steps) if step.get('id') == 'frontend-proof')
-    assert selected < prepared < proof
-    # An older selected release owns its legacy frontend and has no assembly
-    # helper, even when today's workflow orchestrates the immutable target.
-    assert steps[prepared]['if'] == "hashFiles('scripts/web_client_development.py') != ''"
+    assert copied < selected < layout < prepared < proof
+    assert 'scripts/historical_web_layout.py' in steps[copied]['run']
+    node = next(step for step in steps if step.get('uses', '').startswith('actions/setup-node@'))
+    assert node['with']['cache-dependency-path'] == '${{ steps.web-layout.outputs.cache-files }}'
+    assert 'if' not in steps[prepared]  # Adapter selects known source ownership, not an absent-helper guess.
+
+
+def test_revision_targeted_workflows_keep_explicit_historical_browser_layout():
+    load = lambda name: yaml.load((ROOT / '.github/workflows' / name).read_text(), Loader=yaml.BaseLoader)
+    for name, job in (('browser-checks.yml', 'browser'), ('public-readiness.yml', 'critical')):
+        steps = load(name)['jobs'][job]['steps']
+        install = next(step for step in steps if 'npx playwright install' in step.get('run', ''))
+        assert 'working-directory' not in install
+        assert 'if test -f tests/web/package.json; then' in install['run']
+        assert 'cd tests/web' in install['run'] and 'cd frontend' in install['run']
+    steps = load('browser-checks.yml')['jobs']['browser']['steps']
+    scenario = next(step for step in steps if step.get('name') == 'Run all extended browser scenarios serially')
+    assert '--plan tests/web/browser-checks.json' in scenario['run']
+    assert '--plan frontend/tests/browser-checks.json' in scenario['run']

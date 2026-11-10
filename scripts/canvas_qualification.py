@@ -17,6 +17,7 @@ import tempfile
 import zipfile
 
 from browser_check_runner import run_scenarios
+from web_test_harness import stage_web_test_harness
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'output/canvas-qualification'
@@ -113,25 +114,12 @@ def prepare_installed():
                     '--no-deps', '--only-binary', 'amplifier-core', '-r', str(OUT / 'requirements.txt')], check=True)
     subprocess.run(['uv', 'pip', 'install', '--python', str(venv / 'bin/python'), '--no-deps', str(wheel)], check=True)
     subprocess.run(['uv', 'pip', 'check', '--python', str(venv / 'bin/python')], check=True)
-    (harness / 'frontend').mkdir(parents=True)
-    shutil.copytree(ROOT / 'tests', harness / 'tests', ignore=shutil.ignore_patterns('__pycache__'))
-    shutil.copytree(ROOT / 'frontend/tests', harness / 'frontend/tests')
-    # Main's held-frame history oracle imports this pure command encoder in
-    # Node. It is test support only: Chromium still loads the wheel's built UI.
-    helpers = ('frontend/src/destination-history.js', 'frontend/src/settings-navigation.js')
-    support = {}
-    for name in helpers:
-        helper = Path(name)
-        (harness / helper).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / helper, harness / helper)
-        assert sha(ROOT / helper) == sha(harness / helper)
-        support[name] = sha(harness / helper)
+    support = stage_web_test_harness(ROOT, harness, python_tests=True,
+                                     source_helpers=('destination-history.js', 'settings-navigation.js'))
     write(OUT / 'installed-test-support.json', {
         'files': support,
         'purpose': 'Node-only history/settings test helpers; not browser-served product code',
     })
-    shutil.copy2(ROOT / 'frontend/package.json', harness / 'frontend/package.json')
-    (harness / 'frontend/node_modules').symlink_to(ROOT / 'frontend/node_modules', target_is_directory=True)
     (harness / '.venv').symlink_to(venv, target_is_directory=True)
     assert not (harness / 'amplifier_web').exists()
     verify_installed()
@@ -141,14 +129,18 @@ def verify_installed():
     wheel, = sorted((OUT / 'dist').glob('*.whl'))
     venv = OUT / 'installed-venv'
     harness = OUT / 'installed-harness'
-    toolchain = (harness / 'frontend/node_modules').resolve(strict=True)
-    assert toolchain == (ROOT / 'frontend/node_modules').resolve(strict=True)
-    assert (toolchain / 'playwright/package.json').is_file()
+    toolchain = (harness / '.build/web-client/node_modules').resolve(strict=True)
+    assert toolchain == (ROOT / '.build/web-client/node_modules').resolve(strict=True)
+    host_toolchain = (harness / 'tests/web/node_modules').resolve(strict=True)
+    assert host_toolchain == (ROOT / 'tests/web/node_modules').resolve(strict=True)
+    assert (host_toolchain / 'playwright/package.json').is_file()
     assert shutil.which('node'), 'Installed renderer validation requires the prepared Node executable'
     write(OUT / 'installed-toolchain.json', {
         'nodeModules': str(toolchain), 'node': shutil.which('node'),
-        'packageLockSha256': sha(ROOT / 'frontend/package-lock.json'),
-        'playwrightPackageSha256': sha(toolchain / 'playwright/package.json'),
+        'packageLockSha256': sha(ROOT / '.build/web-client/package-lock.json'),
+        'testNodeModules': str(host_toolchain),
+        'testPackageLockSha256': sha(ROOT / 'tests/web/package-lock.json'),
+        'playwrightPackageSha256': sha(host_toolchain / 'playwright/package.json'),
     })
     probe = '''import amplifier_web,hashlib,json,pathlib,sys,zipfile
 package=pathlib.Path(amplifier_web.__file__).resolve().parent
@@ -183,10 +175,12 @@ def run():
     record['status'] = 'running'
     write(OUT / 'summary.json', record)
     python = str(ROOT / '.venv/bin/python')
-    def stage(name, command, *, root=ROOT, seconds=180, env=None):
+    def stage(name, command, *, root=ROOT, seconds=180, env=None, cwd=None):
         entry = {'name': name, 'status': 'running'}
         record['stages'].append(entry);write(OUT / 'summary.json', record)
         plan = {'schemaVersion': 1, 'scenarios': [{'id': name, 'command': command, 'env': env or {}}]}
+        if cwd is not None:
+            plan['scenarios'][0]['cwd'] = cwd
         rc = run_scenarios(root, plan, OUT / name, budget=seconds + 10, case_timeout=seconds, provenance=identity)
         entry.update(status='passed' if rc == 0 else 'failed', exitCode=rc)
         write(OUT / 'summary.json', record)
@@ -202,9 +196,12 @@ def run():
         assert all(sha(ROOT / name) == value for name, value in identity['sourceSha256'].items())
         if not stage('imports', [python, str(Path(__file__).resolve()), 'imports'], seconds=30):
             raise RuntimeError('Host imports unavailable')
-        if not stage('browser-preflight', ['node', 'tests/canvas-readiness.mjs'], seconds=30):
+        if not stage('browser-preflight', ['node', 'tests/web/canvas-readiness.mjs'], seconds=30):
             raise RuntimeError('Browser unavailable')
-        stage('units', ['node', '--test', *['tests/' + name for name in selected['units']]], seconds=120)
+        unit_paths = ['tests/' + name for name in selected['units']]
+        if 'canvas-overview.test.mjs' in selected['units']:
+            unit_paths.append('../../tests/web/canvas-test-receipts.test.mjs')
+        stage('units', ['node', '--test', *unit_paths], seconds=120, cwd='.build/web-client')
         stage('artifact-feedback-contracts', [python, '-m', 'pytest', '-q',
               str(ROOT / 'tests/test_canvas_feedback.py'),
               str(ROOT / 'tests/test_canvas_versions.py'),
@@ -221,7 +218,7 @@ def run():
               'tests/test_browser_check_runner.py::test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain',
               'tests/test_release_qualification.py::test_canvas_feedback_scope_is_fixed_and_preserves_full_coverage')]],
               seconds=120)
-        if not stage('build', ['npm', 'run', 'build'], seconds=180):
+        if not stage('build', [sys.executable, 'scripts/web_client_build.py', 'build'], seconds=180):
             raise RuntimeError('Production build failed')
         write(OUT / 'static.json', payload(ROOT / 'amplifier_web/static'))
         shutil.make_archive(str(OUT / 'static'), 'zip', ROOT / 'amplifier_web/static')
@@ -234,7 +231,7 @@ def run():
             shutil.make_archive(str(OUT / 'frontend-build-output'), 'zip', output)
         for name in selected['browsers']:
             label = 'source-' + name.removesuffix('.mjs')
-            stage(label, ['node', 'tests/' + name], seconds=240,
+            stage(label, ['node', 'tests/web/' + name], seconds=240,
                   env={'AMPLIFIER_TEST_ARTIFACTS': str(OUT / label / 'artifacts'),
                        'AMPLIFIER_TEST_OUTPUT': str(OUT / label / 'artifacts'),
                        'AMPLIFIER_PROOF_DIR': str(OUT / label / 'artifacts'),
@@ -247,14 +244,14 @@ def run():
         package = json.loads((OUT / 'installed-identity.json').read_text())['package']
         for name in selected['browsers']:
             label = 'installed-' + name.removesuffix('.mjs')
-            stage(label, ['node', 'tests/' + name], root=harness, seconds=240,
+            stage(label, ['node', 'tests/web/' + name], root=harness, seconds=240,
                   env={'AMPLIFIER_TEST_ARTIFACTS': str(OUT / label / 'artifacts'),
                        'AMPLIFIER_TEST_OUTPUT': str(OUT / label / 'artifacts'),
                        'AMPLIFIER_PROOF_DIR': str(OUT / label / 'artifacts'),
                        'AMPLIFIER_TEST_PACKAGE_ROOT': package,
                        'AMPLIFIER_TEST_INSTALLED_STATIC': '1',
                        'AMPLIFIER_TEST_PYTHON': str(OUT / 'installed-venv/bin/python'), 'PYTHONPATH': '',
-                       'AMPLIFIER_SHELL_NODE_MODULES': str(harness / 'frontend/node_modules')})
+                       'AMPLIFIER_SHELL_NODE_MODULES': str(harness / '.build/web-client/node_modules')})
         stage('installed-final-identity', [python, str(Path(__file__).resolve()), 'verify-installed'], seconds=30)
         assert payload(ROOT / 'amplifier_web/static') == json.loads((OUT / 'static.json').read_text())
         assert all(sha(ROOT / name) == value for name, value in identity['sourceSha256'].items())

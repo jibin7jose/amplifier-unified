@@ -45,45 +45,45 @@ def main():
     save()
     try:
         inputs = {}
-        for name in ('frontend/src', 'frontend/tests', 'tests/fixtures', 'amplifier_web'):
+        for name in ('.build/web-client/src', '.build/web-client/tests', 'tests/web', 'tests/fixtures', 'amplifier_web'):
             for path in sorted((ROOT / name).rglob('*')):
-                if path.is_file() and 'static' not in path.parts and '__pycache__' not in path.parts:
+                if path.is_file() and not {'static', '__pycache__', 'node_modules'}.intersection(path.parts):
                     inputs[str(path.relative_to(ROOT))] = digest(path)
-        for name in ('pyproject.toml', 'uv.lock', 'frontend/package.json', 'frontend/package-lock.json', 'frontend/vite.config.js', 'scripts/check_editor_gfm.py', 'scripts/browser_check_runner.py', 'tests/test_message_delivery.py', 'tests/test_multi_quote.py'):
+        for name in ('pyproject.toml', 'uv.lock', '.build/web-client/package.json', '.build/web-client/package-lock.json', '.build/web-client/vite.config.js', 'tests/web/package-lock.json', 'scripts/check_editor_gfm.py', 'scripts/browser_check_runner.py', 'tests/test_message_delivery.py', 'tests/test_multi_quote.py'):
             inputs[name] = digest(ROOT / name)
         (OUT / 'inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
         (OUT / 'execution-contract.json').write_text(json.dumps(contract, indent=2) + '\n')
         ready = run('python-readiness', [sys.executable, '-c', 'import sys,amplifier_core._engine,amplifier_foundation,aiohttp;print(sys.version);print(amplifier_core._engine.__file__)'])
-        ready &= run('browser-readiness', ['node', '--input-type=module', '-e', "import {chromium} from '@playwright/test';const b=await chromium.launch({headless:true});const p=await b.newPage();await p.setContent('<button>Ready</button>');await p.getByRole('button').click();console.log(process.version,await b.version());await b.close();"], cwd=ROOT / 'frontend')
+        ready &= run('browser-readiness', ['node', '--input-type=module', '-e', "import {chromium} from '@playwright/test';const b=await chromium.launch({headless:true});const p=await b.newPage();await p.setContent('<button>Ready</button>');await p.getByRole('button').click();console.log(process.version,await b.version());await b.close();"], cwd=ROOT / 'tests/web')
         if not ready:
             raise RuntimeError('Prepared interpreter/browser readiness failed')
-        units = run('composer-units', ['node', '--test', 'frontend/tests/markdown-composer.test.mjs', 'frontend/tests/multi-quote.test.mjs', 'frontend/tests/markdown.test.mjs', 'frontend/tests/draft-journal.test.mjs'])
+        units = run('composer-units', ['node', '--test', 'tests/markdown-composer.test.mjs', 'tests/multi-quote.test.mjs', 'tests/markdown.test.mjs', 'tests/draft-journal.test.mjs'], cwd=ROOT / '.build/web-client')
         units &= run('send-quote-units', [sys.executable, '-m', 'pytest', '-q', 'tests/test_message_delivery.py', 'tests/test_multi_quote.py'], timeout=240)
-        units &= run('checkpoint-boundary', ['node', 'frontend/tests/markdown-checkpoint-boundary.mjs'])
-        units &= run('candidate-control', ['node', 'frontend/tests/markdown-gfm-falsifier.mjs'])
-        baseline = ROOT / 'frontend/tests/fixtures-markdown-composer-baseline.txt'
+        units &= run('checkpoint-boundary', ['node', 'tests/web/markdown-checkpoint-boundary.mjs'])
+        units &= run('candidate-control', ['node', '.build/web-client/tests/markdown-gfm-falsifier.mjs'])
+        baseline = ROOT / '.build/web-client/tests/fixtures-markdown-composer-baseline.txt'
         assert digest(baseline) == BASE_HASH, 'Wrong negative-control source'
-        baseline_module = ROOT / 'frontend/src/markdown-composer.baseline.js'
+        baseline_module = ROOT / '.build/web-client/src/markdown-composer.baseline.js'
         assert not baseline_module.exists()
         baseline_module.write_bytes(baseline.read_bytes())
         try:
-            units &= run('baseline-control', ['node', 'frontend/tests/markdown-gfm-falsifier.mjs'], env={**os.environ, 'GFM_COMPOSER_MODULE': '../src/markdown-composer.baseline.js'}, expected_failure='GFM_TABLE_MUST_BE_RICH')
+            units &= run('baseline-control', ['node', '.build/web-client/tests/markdown-gfm-falsifier.mjs'], env={**os.environ, 'GFM_COMPOSER_MODULE': '../src/markdown-composer.baseline.js'}, expected_failure='GFM_TABLE_MUST_BE_RICH')
         finally:
             baseline_module.unlink()
         if not units:
             raise RuntimeError('Focused units/control failed; build and browser remain unrun')
-        if not run('frontend-build', ['npm', 'run', 'build', '--prefix', 'frontend'], timeout=240):
+        if not run('frontend-build', [sys.executable, 'scripts/web_client_build.py', 'build'], timeout=240):
             raise RuntimeError('Production build failed')
         static = ROOT / 'amplifier_web/static'
         shutil.copytree(static, OUT / 'static')
         report['static'] = {str(p.relative_to(static)): digest(p) for p in sorted(static.rglob('*')) if p.is_file()}
         (OUT / 'static-manifest.json').write_text(json.dumps({'inputs': inputs, 'static': report['static']}, indent=2) + '\n')
         selected = ['markdown-composer', 'multi-quote', 'draft-reload', 'compact-composer']
-        plan = {'schemaVersion': 1, 'scenarios': [{'id': name, 'command': ['node', f'tests/{name}-browser.mjs'], 'env': {'AMPLIFIER_TEST_PYTHON': sys.executable, 'AMPLIFIER_TEST_ARTIFACTS': str(OUT / name), 'AMPLIFIER_TEST_OUTPUT': str(OUT / name), 'AMPLIFIER_PROOF_DIR': str(OUT / name)}} for name in selected]}
+        plan = {'schemaVersion': 1, 'scenarios': [{'id': name, 'command': ['node', f'tests/web/{name}-browser.mjs'], 'env': {'AMPLIFIER_TEST_PYTHON': sys.executable, 'AMPLIFIER_TEST_ARTIFACTS': str(OUT / name), 'AMPLIFIER_TEST_OUTPUT': str(OUT / name), 'AMPLIFIER_PROOF_DIR': str(OUT / name)}} for name in selected]}
         browser = run_scenarios(ROOT, plan, OUT / 'browser', budget=360, case_timeout=120, provenance={'inputs': inputs})
         report['checks'].append({'id': 'source-browser', 'returncode': browser, 'passed': browser == 0, 'selection': selected})
         save()
-        installed = run('installed-editor', [sys.executable, 'frontend/tests/composer-installed-check.py', '--markdown-only'], timeout=420)
+        installed = run('installed-editor', [sys.executable, 'tests/web/composer-installed-check.py', '--markdown-only'], timeout=420)
         report['status'] = 'passed' if browser == 0 and installed else 'failed'
         save()
         return 0 if report['status'] == 'passed' else 1

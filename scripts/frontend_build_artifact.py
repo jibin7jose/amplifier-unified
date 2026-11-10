@@ -16,7 +16,11 @@ from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from historical_web_layout import environment_directories
 
 STATIC = 'amplifier_web/static'
 MAX_FILES = 10_000
@@ -87,7 +91,7 @@ def source_identity(root):
         # contents or exporting source, credentials, or local environment files.
         entries.append([metadata.decode('ascii'), name.decode('utf-8')])
     env_files = {}
-    for folder in (root, root / 'frontend', root / 'frontend/.client'):
+    for folder in environment_directories(root):
         for path in sorted(folder.glob('.env*')):
             if path.is_symlink():
                 raise ValueError('Linked environment input is not supported')

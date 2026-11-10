@@ -66,6 +66,17 @@ def manifest(folder):
             if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc'}
 
 
+def stage_harness(harness, candidate):
+    """Copy tracked test support, excluding installed web tools and Python caches."""
+    shutil.copytree(ROOT / 'tests', harness / 'tests', symlinks=True,
+                    ignore=shutil.ignore_patterns('node_modules', '__pycache__', '*.pyc'))
+    (harness / 'scripts').mkdir()
+    shutil.copy2(Path(__file__), harness / 'scripts/cold_restore_checks.py')
+    copied = manifest(harness)
+    assert copied and all(candidate['files'].get(p) == value for p, value in copied.items())
+    return copied
+
+
 def verify_wheel(wheel, candidate, package_root=None):
     """Reconcile every RECORD entry, committed module/asset and installed byte."""
     project = tomllib.loads((Path(candidate['root']) / 'pyproject.toml').read_text())
@@ -258,15 +269,11 @@ def main():
         retained = {k: os.environ[k] for k in keep if k in os.environ}
         os.environ.clear()
         os.environ.update(retained)
-        for folder in ('home', 'tmp', 'harness/frontend'):
+        for folder in ('home', 'tmp', 'harness'):
             (work / folder).mkdir(parents=True)
         host, installed = work / 'host/bin/python', work / 'installed/bin/python'
         harness = work / 'harness'
-        shutil.copytree(ROOT / 'tests', harness / 'tests', symlinks=True, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-        (harness / 'scripts').mkdir()
-        shutil.copy2(Path(__file__), harness / 'scripts/cold_restore_checks.py')
-        copied = manifest(harness)
-        assert copied and all(candidate['files'].get(p) == value for p, value in copied.items())
+        copied = stage_harness(harness, candidate)
         save(OUTPUT / 'harness.json', {'root': str(harness), 'files': copied})
         common = {'UV_PROJECT_ENVIRONMENT': str(work / 'host'), 'UV_NO_BUILD_PACKAGE': 'amplifier-core',
                   'UV_CACHE_DIR': str(work / 'uv-cache'), 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null',
@@ -288,7 +295,7 @@ def main():
             ('installed', 90, [str(installed), '-I', str(harness / 'scripts/cold_restore_checks.py'), '--installed-tests'], harness),
         ]
         save(OUTPUT / 'plan.json', [{'id': n, 'timeoutSeconds': cap, 'command': cmd, 'env': common,
-                                   'cwd': str(root / 'frontend')} for n, cap, cmd, root in plans])
+                                   'cwd': str(root)} for n, cap, cmd, root in plans])
         report['phases'] = {name: {'status': 'not_run'} for name, *_ in plans}
         save(OUTPUT / 'report.json', report)
         for name, cap, command, root in plans:

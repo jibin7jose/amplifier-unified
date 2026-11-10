@@ -36,18 +36,52 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            tests/web/package-lock.json
+            components/web-client.source.json
+            frontend/package-lock.json
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
-      - run: npm ci --prefix frontend
+        run: |
+          if test -f tests/web/package.json; then
+            python scripts/web_client_build.py prepare
+          else
+            # Historical selected checkout keeps its authored web layout.
+            if test -f scripts/web_client_development.py; then
+              python scripts/web_client_development.py prepare-view
+            fi
+          fi
+      - run: |
+          if test -f tests/web/package.json; then
+            npm ci --prefix .build/web-client
+            npm ci --prefix tests/web
+          else
+            # Historical selected checkout keeps its authored web layout.
+            npm ci --prefix frontend
+          fi
       # Full Python belongs to the nightly Python lane. Frontend units already
       # qualified this immutable release; this lane owns distinct browser/package flows.
-      - run: npm run build --prefix frontend
+      - run: |
+          if test -f tests/web/package.json; then
+            python scripts/web_client_build.py build
+          else
+            # Historical selected checkout keeps its authored web layout.
+            npm run build --prefix frontend
+          fi
       - name: Install browser
         id: browser_runtime
-        working-directory: frontend
-        run: npx playwright install --with-deps chromium
+        run: |
+          if test -f tests/web/package.json; then
+            (
+              cd tests/web
+              npx playwright install --with-deps chromium
+            )
+          else
+            # Historical selected checkout keeps its authored web layout.
+            (
+              cd frontend
+              npx playwright install --with-deps chromium
+            )
+          fi
       - name: Prepare owned browser evidence
         id: browser_evidence
         run: |
@@ -55,64 +89,146 @@ jobs:
           mkdir -p "$artifact_dir"
           echo "AMPLIFIER_TEST_ARTIFACTS=$artifact_dir" >> "$GITHUB_ENV"
       - name: Exercise real UI and API recovery paths
-        working-directory: frontend
         run: |
-          node tests/imported-naming-browser.mjs
-          node tests/recovery-group-browser.mjs
-          node tests/error-details-browser.mjs
-          node tests/chat-menu-browser.mjs
-          node tests/chat-search-browser.mjs
-          node tests/setup-journey-browser.mjs
-          node tests/composer-options-browser.mjs
-          node tests/chat-demand-browser.mjs
-          node tests/message-render-stability-browser.mjs
-          node tests/delegate-activity-browser.mjs
-          node tests/main-refresh-browser.mjs
-          node tests/document-card-browser.mjs
-          node tests/chat-plan-browser.mjs
-          node tests/questions-browser.mjs
-          node tests/public-first-chat-browser.mjs
-          node tests/settings-everyday-browser.mjs
-          node tests/update-progress-browser.mjs
-          node tests/image-connection-browser.mjs
-          node tests/foreground-stream-browser.mjs
-          node tests/chat-scroll-browser.mjs
-          node tests/pwa-browser.mjs
-          node tests/companion-browser.mjs
-          node tests/observations-browser.mjs
+          if test -f tests/web/package.json; then
+            node tests/web/imported-naming-browser.mjs
+            node tests/web/recovery-group-browser.mjs
+            node tests/web/error-details-browser.mjs
+            node tests/web/chat-menu-browser.mjs
+            node tests/web/chat-search-browser.mjs
+            node tests/web/setup-journey-browser.mjs
+            node tests/web/composer-options-browser.mjs
+            node tests/web/chat-demand-browser.mjs
+            node tests/web/message-render-stability-browser.mjs
+            node tests/web/delegate-activity-browser.mjs
+            node tests/web/main-refresh-browser.mjs
+            node tests/web/document-card-browser.mjs
+            node tests/web/chat-plan-browser.mjs
+            node tests/web/questions-browser.mjs
+            node tests/web/public-first-chat-browser.mjs
+            node tests/web/settings-everyday-browser.mjs
+            node tests/web/update-progress-browser.mjs
+            node tests/web/image-connection-browser.mjs
+            node tests/web/foreground-stream-browser.mjs
+            node tests/web/chat-scroll-browser.mjs
+            node tests/web/pwa-browser.mjs
+            node tests/web/companion-browser.mjs
+            node tests/web/observations-browser.mjs
+          else
+            # Historical selected checkout keeps its authored web layout.
+            (
+              cd frontend
+              node tests/imported-naming-browser.mjs
+              node tests/recovery-group-browser.mjs
+              node tests/error-details-browser.mjs
+              node tests/chat-menu-browser.mjs
+              node tests/chat-search-browser.mjs
+              node tests/setup-journey-browser.mjs
+              node tests/composer-options-browser.mjs
+              node tests/chat-demand-browser.mjs
+              node tests/message-render-stability-browser.mjs
+              node tests/delegate-activity-browser.mjs
+              node tests/main-refresh-browser.mjs
+              node tests/document-card-browser.mjs
+              node tests/chat-plan-browser.mjs
+              node tests/questions-browser.mjs
+              node tests/public-first-chat-browser.mjs
+              node tests/settings-everyday-browser.mjs
+              node tests/update-progress-browser.mjs
+              node tests/image-connection-browser.mjs
+              node tests/foreground-stream-browser.mjs
+              node tests/chat-scroll-browser.mjs
+              node tests/pwa-browser.mjs
+              node tests/companion-browser.mjs
+              node tests/observations-browser.mjs
+            )
+          fi
       - name: Check voice view and reading positions
-        working-directory: frontend
         run: |
-          node tests/voice-follow-latest-browser.mjs
-          node tests/dictation-browser.mjs
-          node tests/chat-scroll-return-browser.mjs
+          if test -f tests/web/package.json; then
+            node tests/web/voice-follow-latest-browser.mjs
+            node tests/web/dictation-browser.mjs
+            (cd .build/web-client && node tests/chat-scroll-return-browser.mjs)
+          else
+            # Historical selected checkout keeps its authored web layout.
+            (
+              cd frontend
+              node tests/voice-follow-latest-browser.mjs
+              node tests/dictation-browser.mjs
+              node tests/chat-scroll-return-browser.mjs
+            )
+          fi
       - name: Check activity feedback and appearance preferences
-        working-directory: frontend
         run: |
-          node tests/appearance-save-feedback-browser.mjs
-          node tests/appearance-preview-navigation-browser.mjs
-          node tests/theme-surfaces-browser.mjs
-          node tests/settings-save-feedback-browser.mjs
-          node tests/location-feedback-browser.mjs
-          node tests/permissions-feedback-browser.mjs
-          node tests/diagnostics-feedback-browser.mjs
+          if test -f tests/web/package.json; then
+            node tests/web/appearance-save-feedback-browser.mjs
+            node tests/web/appearance-preview-navigation-browser.mjs
+            node tests/web/theme-surfaces-browser.mjs
+            node tests/web/settings-save-feedback-browser.mjs
+            node tests/web/location-feedback-browser.mjs
+            node tests/web/permissions-feedback-browser.mjs
+            node tests/web/diagnostics-feedback-browser.mjs
+          else
+            # Historical selected checkout keeps its authored web layout.
+            (
+              cd frontend
+              node tests/appearance-save-feedback-browser.mjs
+              node tests/appearance-preview-navigation-browser.mjs
+              node tests/theme-surfaces-browser.mjs
+              node tests/settings-save-feedback-browser.mjs
+              node tests/location-feedback-browser.mjs
+              node tests/permissions-feedback-browser.mjs
+              node tests/diagnostics-feedback-browser.mjs
+            )
+          fi
       - name: Check full-history conversation navigation
-        working-directory: frontend
         run: |
-          node tests/retained-history-browser.mjs
+          if test -f tests/web/package.json; then
+            node tests/web/retained-history-browser.mjs
+          else
+            # Historical selected checkout keeps its authored web layout.
+            (
+              cd frontend
+              node tests/retained-history-browser.mjs
+            )
+          fi
       - name: Check rendered block and saved source copying
-        working-directory: frontend
-        run: node ../tests/block-copy-browser.mjs
+        run: |
+          if test -f tests/web/package.json; then
+            node tests/block-copy-browser.mjs
+          else
+            # Historical selected checkout keeps its authored web layout.
+            (
+              cd frontend
+              node ../tests/block-copy-browser.mjs
+            )
+          fi
       - name: Check embedded diagram scrolling
-        working-directory: frontend
-        run: node tests/embedded-diagram-layout-browser.mjs
+        run: |
+          if test -f tests/web/package.json; then
+            node tests/web/embedded-diagram-layout-browser.mjs
+          else
+            # Historical selected checkout keeps its authored web layout.
+            (
+              cd frontend
+              node tests/embedded-diagram-layout-browser.mjs
+            )
+          fi
       - name: Check exact inline artifacts and image follow-ups
         run: |
-          cd frontend
-          node tests/inline-artifacts-browser.mjs
-          node tests/canvas-usability-browser.mjs
-          node tests/pdf-browser.mjs
-          node tests/generated-images-browser.mjs
+          if test -f tests/web/package.json; then
+            node tests/web/inline-artifacts-browser.mjs
+            node tests/web/canvas-usability-browser.mjs
+            node tests/web/pdf-browser.mjs
+            node tests/web/generated-images-browser.mjs
+          else
+            # Historical selected checkout keeps its authored web layout.
+            cd frontend
+            node tests/inline-artifacts-browser.mjs
+            node tests/canvas-usability-browser.mjs
+            node tests/pdf-browser.mjs
+            node tests/generated-images-browser.mjs
+          fi
       - name: Check retained inline media in installed package
         # A required backend failure must not conceal independent phase and
         # physical evidence. It still fails the job and source recording gate.
@@ -128,7 +244,12 @@ jobs:
           # Bundled Chromium supports VP9 in MP4 without a proprietary H264
           # decoder. External CC0 H264 receiving samples still use the env path.
           ffmpeg -v error -f lavfi -i testsrc=size=64x48:rate=10 -t 2 -c:v libvpx-vp9 -tag:v vp09 -pix_fmt yuv420p -an "$INLINE_MEDIA_MP4"
-          PYTHON="$GITHUB_WORKSPACE/.venv/bin/python" node frontend/tests/inline-media-browser.mjs
+          if test -f tests/web/package.json; then
+            PYTHON="$GITHUB_WORKSPACE/.venv/bin/python" node tests/web/inline-media-browser.mjs
+          else
+            # Historical selected checkout keeps its authored web layout.
+            PYTHON="$GITHUB_WORKSPACE/.venv/bin/python" node frontend/tests/inline-media-browser.mjs
+          fi
       - name: Gate public inline media evidence
         id: media_evidence
         if: always()
@@ -172,28 +293,58 @@ jobs:
           if-no-files-found: error
       - name: Check immediate chat recency and receipt ownership
         run: |
-          cd frontend
-          AMPLIFIER_HUMAN_POST_ONLY=1 node tests/sidebar-activity-browser.mjs
+          if test -f tests/web/package.json; then
+            AMPLIFIER_HUMAN_POST_ONLY=1 node tests/web/sidebar-activity-browser.mjs
+          else
+            # Historical selected checkout keeps its authored web layout.
+            cd frontend
+            AMPLIFIER_HUMAN_POST_ONLY=1 node tests/sidebar-activity-browser.mjs
+          fi
       - name: Check pending message edits and recovery
-        working-directory: frontend
         run: |
-          node tests/message-outbox-browser.mjs
-          node tests/support-diagnostics-browser.mjs
-          node tests/multiple-window-stream-browser.mjs
+          if test -f tests/web/package.json; then
+            (cd .build/web-client && node tests/message-outbox-browser.mjs)
+            node tests/web/support-diagnostics-browser.mjs
+            node tests/web/multiple-window-stream-browser.mjs
+          else
+            # Historical selected checkout keeps its authored web layout.
+            (
+              cd frontend
+              node tests/message-outbox-browser.mjs
+              node tests/support-diagnostics-browser.mjs
+              node tests/multiple-window-stream-browser.mjs
+            )
+          fi
       - name: Check workspace storage, unread state, plans and formatted copy
         run: |
-          cd frontend
-          node tests/attention-inbox-browser.mjs
-          node tests/workspace-switching-browser.mjs
-          node tests/readiness102-browser.mjs
-          CHROMIUM_SINGLE_PROCESS=0 node tests/canonical-work-browser.mjs
-          node tests/readiness102-workspace-browser.mjs
-          node tests/storage-history-browser.mjs
-          node tests/feedback-browser.mjs
+          if test -f tests/web/package.json; then
+            node tests/web/attention-inbox-browser.mjs
+            node tests/web/workspace-switching-browser.mjs
+            node tests/web/readiness102-browser.mjs
+            CHROMIUM_SINGLE_PROCESS=0 node tests/web/canonical-work-browser.mjs
+            node tests/web/readiness102-workspace-browser.mjs
+            node tests/web/storage-history-browser.mjs
+            node tests/web/feedback-browser.mjs
+          else
+            # Historical selected checkout keeps its authored web layout.
+            cd frontend
+            node tests/attention-inbox-browser.mjs
+            node tests/workspace-switching-browser.mjs
+            node tests/readiness102-browser.mjs
+            CHROMIUM_SINGLE_PROCESS=0 node tests/canonical-work-browser.mjs
+            node tests/readiness102-workspace-browser.mjs
+            node tests/storage-history-browser.mjs
+            node tests/feedback-browser.mjs
+          fi
       - name: Check reviewed feedback attachment recovery
         run: |
-          cd frontend
-          node tests/feedback-additions-browser.mjs
+          if test -f tests/web/package.json; then
+            (cd .build/web-client && node tests/feedback-additions-browser.mjs)
+          else
+            # Historical selected checkout keeps its authored web layout.
+            cd frontend
+            node tests/feedback-additions-browser.mjs
+          fi
       - name: Gate full-scenario core inline media regression
         if: always()
         env:
@@ -274,12 +425,17 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            tests/web/package-lock.json
+            components/web-client.source.json
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
-      - run: npm ci --prefix frontend
-      - run: npm run build --prefix frontend
+        run: |
+          python scripts/web_client_build.py prepare
+      - run: |
+          npm ci --prefix .build/web-client
+          npm ci --prefix tests/web
+      - run: |
+          python scripts/web_client_build.py build
       - name: Bind the diagnostic to the original production build
         run: |
           python - <<'PY'
@@ -307,14 +463,14 @@ jobs:
           (output / 'source-build-identity.json').write_text(json.dumps(record, indent=2) + '\n')
           PY
       - name: Install the same browser
-        working-directory: frontend
+        working-directory: tests/web
         run: npx playwright install --with-deps chromium
       - name: Run the entire installed-media scenario once
         run: |
           uv pip install --python .venv/bin/python --no-deps --reinstall .
           command -v ffmpeg >/dev/null || sudo apt-get install -y ffmpeg
           ffmpeg -v error -f lavfi -i testsrc=size=64x48:rate=10 -t 2 -c:v libvpx-vp9 -tag:v vp09 -pix_fmt yuv420p -an "$INLINE_MEDIA_MP4"
-          PYTHON="$GITHUB_WORKSPACE/.venv/bin/python" node frontend/tests/inline-media-browser.mjs
+          PYTHON="$GITHUB_WORKSPACE/.venv/bin/python" node tests/web/inline-media-browser.mjs
       - name: Gate sanitized bounded diagnostic evidence
         id: diagnostic-evidence
         if: always()

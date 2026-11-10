@@ -1,9 +1,17 @@
 # Library transport and interaction regression
 
-Run `npm --prefix frontend run test:library-performance` with the repository's
-Python environment and Playwright Chromium installed. Run
-`npm --prefix frontend run build` first: the default uses packaged production
-assets served by the real backend. This launches real local
+Run these commands in the owned DTU, with the repository's Python environment,
+prepared client dependencies, host test dependencies, and Playwright Chromium
+installed:
+
+```sh
+python scripts/web_client_build.py build
+npm --prefix tests/web run test:library-performance
+```
+
+The build uses the selected client under `.build/web-client`; the host integration
+harness lives in `tests/web`. The default uses packaged production assets served
+by the real backend. This launches real local
 HTTP services backed by disposable SQLite/presentation storage and synthetic
 native-index input. It does not read personal chats, call providers, or start
 model runtimes. Native ingestion, state projections, actions, SSE, persistence,
@@ -24,8 +32,10 @@ Useful options follow `--` after the npm command:
 - `--label=before` labels a baseline.
 - `--app-root=/path/to/immutable/source` tests old backend and frontend sources
   with the current harness. That source must contain its matching built assets.
-- `--dev` uses Vite development assets instead, for diagnosis; compare only runs
-  using the same production/development mode.
+- `--dev` uses the target's prepared `.build/web-client` source through Vite, for
+  diagnosis. Prepare that selected client and its dependencies first. Compare
+  only runs using the same production/development mode; historical `--app-root`
+  production comparisons continue to use the target's matching built assets.
 - `--assert-bounded` verifies that state and lightweight action responses and
   each measured SSE frame stay below 2 MB, with at most 250 transmitted session
   and workspace rows. `--max-state-bytes=...` overrides the byte ceiling.

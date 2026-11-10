@@ -113,9 +113,9 @@ def npm_integrity(value):
         return False
 
 
-def browser_inputs(files, expected):
+def npm_inputs(files, directory):
     """Only locked public registry packages; never copy npm configuration or source."""
-    prefix = expected['nodeDirectory'] + '/' if expected['nodeDirectory'] else ''
+    prefix = directory + '/' if directory else ''
     try:
         package = json.loads(files[prefix + 'package.json'])
         lock = json.loads(files[prefix + 'package-lock.json'])
@@ -140,7 +140,18 @@ def browser_inputs(files, expected):
                     or '\\' in name or not public_url(entry.get('resolved'))
                     or not npm_integrity(entry.get('integrity'))):
                 return False
-        return 'node_modules/playwright' in lock['packages']
+        return True
+    except (KeyError, TypeError, ValueError, UnicodeError):
+        return False
+
+
+def browser_inputs(files, expected):
+    prefix = expected['nodeDirectory'] + '/' if expected['nodeDirectory'] else ''
+    try:
+        browser = json.loads(files[prefix + 'package-lock.json'])
+        return ('node_modules/playwright' in browser['packages']
+                and all(npm_inputs(files, project['manifestDirectory'])
+                        for project in preparation.node_projects(expected)))
     except (KeyError, TypeError, ValueError, UnicodeError):
         return False
 
@@ -236,6 +247,8 @@ def key_inputs(expected, material):
     # and recipe bind its platform, Python ABI, uv and validation implementation.
     value = {field: expected[field] for field in ('backendIdentity', 'baseImage', 'profileId', 'recipeSha256')}
     value['lockfiles'] = material['lockfiles']
+    if expected['profileId'] == 'browser-test':
+        value['nodeProjects'] = preparation.node_projects(expected)
     value.update(version=VERSION, ownerSha256=preparation.digest(__file__))
     return value
 
@@ -359,6 +372,7 @@ def seed(directory, key, config, expected, material, deadline, task):
                 resourceName='au-deps-' + entry.name[-32:])
     if expected['profileId'] == 'browser-test':
         plan.update({name: expected[name] for name in ('nodeDirectory', 'nodeKey', 'playwrightVersion')})
+        plan['nodeProjects'] = preparation.node_projects(expected)
     for option in ('resourceRequest', 'timingRequest'):
         if option in expected:
             plan[option] = expected[option]

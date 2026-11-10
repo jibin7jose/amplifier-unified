@@ -71,7 +71,7 @@ async def main(home):
         'staticSha256':{str(path.relative_to(static_root)):hashlib.sha256(path.read_bytes()).hexdigest()
                         for path in sorted(static_root.rglob('*')) if path.is_file()},
     }
-    toolchain = Path(os.environ.get('AMPLIFIER_SHELL_NODE_MODULES', package.parent / 'frontend/node_modules')).resolve()
+    toolchain = Path(os.environ.get('AMPLIFIER_SHELL_NODE_MODULES', Path(__file__).resolve().parents[2] / '.build/web-client/node_modules')).resolve()
     readiness = {'node':shutil.which('node'), 'nodeModules':str(toolchain),
                  'playwright':(toolchain / 'playwright').is_dir(),
                  'validationHtml':(package / 'static/shell-validation.html').is_file(),

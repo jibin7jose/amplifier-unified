@@ -4,7 +4,6 @@
 __pycache__/
 .pytest_cache/
 *.pyc
-frontend/node_modules/
 examples/shell-controls/node_modules/
 examples/shell-controls/package-lock.json
 packages/shell-sdk/*.tgz
@@ -12,11 +11,6 @@ dist/
 /amplifier_web/release-source.json
 *.sqlite3*
 
-# Generated from the upstream assets and service-worker source at build time.
-frontend/public/branding/
-frontend/public/favicon.ico
-frontend/public/licenses/
-frontend/public/sw.js
 
 # Local artifacts from modular shell browser acceptance.
 /output/shell-proof/
@@ -28,18 +22,8 @@ frontend/public/sw.js
 /output/shell-components-proof/
 /output/shell-sdk-proof/
 
-# Prepared independent client and generated compatibility test/development view.
-/frontend/.client/
-/frontend/.client-view.json
-/frontend/.build-inputs/
-/frontend/src/
-/frontend/public/
-/frontend/index.html
-/frontend/shell-validation.html
-/frontend/vite.config.js
-/frontend/scripts/build-identity.mjs
-/frontend/scripts/sync-branding.mjs
 
-/frontend/scripts/prepare-inputs.mjs
-/frontend/build-inputs.lock.json
-/frontend/.web-client-view-*/
+
+# Selected client preparation and separately owned web integration dependencies.
+/.build/
+/tests/web/node_modules

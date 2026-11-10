@@ -61,9 +61,9 @@ gestures that cannot move vertically during call following, and
 allows one CSS pixel of rounding only in its bottom-geometry checks. Deliberate
 scrollback, browser focus movement and another conversation retain their behavior.
 
-`frontend/tests/chat-scroll-call-boundaries-browser.mjs` exercises fractional
+`components/web-client/tests/chat-scroll-call-boundaries-browser.mjs` exercises fractional
 geometry, Work collapse/growth, resize, boundary wheel gestures and intentional
-scrollback. `frontend/tests/voice-follow-latest-browser.mjs` also checks starting
+scrollback. `tests/web/voice-follow-latest-browser.mjs` also checks starting
 a call from a saved reading position and new transcript delivery after a downward
 wheel at the bottom. These reproduce mechanisms consistent with the reported
 failure; the user's original browser input sequence was not recorded.

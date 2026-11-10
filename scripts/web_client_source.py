@@ -6,6 +6,7 @@ The client owns source verification, shared build inputs, and packaging.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -35,7 +36,7 @@ def selection(path):
     return record
 
 
-def copy_tracked(source, destination, *, node='node'):
+def copy_tracked(source, destination, *, node='node', development=False):
     """Copy tracked source, or the client's production manifest in Git-free exports."""
     git = command('git', '-C', source, 'rev-parse', '--show-toplevel',
                   capture=True, check=False)
@@ -48,6 +49,27 @@ def copy_tracked(source, destination, *, node='node'):
                          (source / 'scripts/client-source.mjs').as_uri(), source,
                          capture=True, timeout=30)
         paths = json.loads(result.stdout)
+        if development:
+            # Authored tests travel only for development/integration preparation.
+            # Package installation still uses the bounded production manifest.
+            tests = []
+            pending = [source / 'tests'] if (source / 'tests').exists() or (source / 'tests').is_symlink() else []
+            while pending:
+                directory = pending.pop()
+                if directory.is_symlink() or not directory.resolve().is_relative_to(source.resolve()):
+                    raise ValueError('Expected owned test source directory: ' + str(directory))
+                for path in sorted(directory.iterdir()):
+                    mode = path.lstat().st_mode
+                    if stat.S_ISDIR(mode):
+                        pending.append(path)
+                    elif stat.S_ISREG(mode):
+                        tests.append(path.relative_to(source).as_posix())
+                    else:
+                        raise ValueError('Expected regular test source: ' + str(path))
+            # Source-normalization tests use the selected client's Git rules
+            # even when the development source itself has no Git metadata.
+            metadata = ['.gitattributes'] if (source / '.gitattributes').exists() else []
+            paths = sorted(set(paths) | set(tests) | set(metadata))
     destination.mkdir()
     for name in paths:
         if not name:
@@ -58,6 +80,45 @@ def copy_tracked(source, destination, *, node='node'):
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
+
+
+def development_inventory(source, *, generated_public=()):
+    """Local overwrite guard for copied authored files, never release identity."""
+    if not isinstance(generated_public, (list, tuple)) or any(not isinstance(name, str) or not name or '/' in name or '\\' in name
+           or name in {'.', '..'} for name in generated_public):
+        raise ValueError('Expected canonical generated-public member names')
+    generated_public = sorted(set(generated_public))
+    generated_roots = {'node_modules', 'dist', 'output', '.build-inputs'}
+    receipts = {'.client-source.json', '.client-development.json'}
+    files = {}
+
+    def visit(directory):
+        for path in sorted(directory.iterdir()):
+            relative = path.relative_to(source)
+            if (len(relative.parts) == 1 and (path.name in generated_roots | receipts
+                    or path.name.startswith('.build-inputs-stage-'))
+                    or len(relative.parts) == 2 and relative.parts[0] == 'public'
+                    and path.name in generated_public):
+                continue
+            mode = path.lstat().st_mode
+            if stat.S_ISDIR(mode):
+                visit(path)
+            elif stat.S_ISREG(mode):
+                files[relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+            else:
+                raise ValueError('Expected regular prepared source: ' + str(path))
+
+    visit(source)
+    return {'schema': 1, 'generatedPublic': generated_public, 'files': files}
+
+
+def verify_development(source):
+    recorded = json.loads((source / '.client-development.json').read_text())
+    if (not isinstance(recorded, dict) or recorded.get('schema') != 1
+            or not isinstance(recorded.get('generatedPublic'), list)):
+        raise ValueError('Unrecognized local prepared-source inventory; retain existing work')
+    if recorded != development_inventory(source, generated_public=recorded['generatedPublic']):
+        raise ValueError('Edited prepared client source retained; save changes in the client repository before refreshing')
 
 
 def fetch_source(source, destination):
@@ -71,7 +132,7 @@ def fetch_source(source, destination):
     command('git', '-C', destination, 'checkout', '-q', '--detach', revision, capture=True)
 
 
-def prepare(root, record_path, destination, *, node='node'):
+def prepare(root, record_path, destination, *, node='node', development=False):
     record = selection(record_path)
     if destination.exists() or destination.is_symlink():
         raise ValueError('Use a new output directory; existing work is never replaced')
@@ -90,7 +151,7 @@ def prepare(root, record_path, destination, *, node='node'):
             source = stage / 'repository'
             fetch_source(record['source'], source)
         prepared = stage / 'source'
-        copy_tracked(source, prepared, node=node)
+        copy_tracked(source, prepared, node=node, development=development)
         # Carry the same trusted selection into a Git-free developer checkout.
         copied_record = prepared / '.client-source.json'
         copied_record.write_text(json.dumps(record, indent=2) + '\n')
@@ -99,6 +160,13 @@ def prepare(root, record_path, destination, *, node='node'):
         if verification.returncode:
             raise ValueError('Client verification failed; restore the selected source or refresh '
                              'its record from the corresponding canonical client commit')
+        if development:
+            generated = command(node, '--input-type=module', '-e',
+                'const m=await import(process.argv[1]); console.log(JSON.stringify([...m.generatedPublic]));',
+                (prepared / 'scripts/build-identity.mjs').as_uri(), capture=True, timeout=30)
+            (prepared / '.client-development.json').write_text(json.dumps(
+                development_inventory(prepared, generated_public=json.loads(generated.stdout)),
+                sort_keys=True) + '\n')
         prepared.rename(destination)
     return {'directory': str(destination), 'source': record['source'],
             'record': str(destination / '.client-source.json')}

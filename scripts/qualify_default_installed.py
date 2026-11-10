@@ -848,7 +848,7 @@ def retain_pwa_artifacts(base, evidence):
 
 def pwa_preflight_receipt(preflight, env, python):
     require(Path(preflight['actual_interpreter']) == python, 'PWA preflight used another interpreter')
-    expected = json.loads((GUEST / 'candidate/frontend/package-lock.json').read_text())[
+    expected = json.loads((GUEST / 'candidate/tests/web/package-lock.json').read_text())[
         'packages']['node_modules/playwright']['version']
     require(preflight['prerequisites']['playwright_version'] == expected, 'PWA browser package is not lock-matched')
     preflight['interpreter'] = preflight['actual_interpreter']
@@ -947,8 +947,8 @@ def run_fixed_stage(python, env, evidence, stage):
 
 
 RESIDUAL_HELPER_COUNTS = {
-    'tests.test_integration_clients': 15,
-    'tests.test_integration_checks': 64,
+    'tests.test_integration_clients': 16,
+    'tests.test_integration_checks': 115,
 }
 
 

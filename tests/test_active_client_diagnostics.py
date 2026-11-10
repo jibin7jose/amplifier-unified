@@ -107,7 +107,7 @@ def test_failed_browser_always_retains_active_client_evidence():
     steps = workflow['jobs']['browser']['steps']
     run = next(step for step in steps if 'scripts/browser_check_runner.py' in step.get('run', '')
                and '--initialize' not in step['run'])
-    assert '--plan frontend/tests/browser-checks.json' in run['run']
+    assert '--plan tests/web/browser-checks.json' in run['run']
     # Report ownership and distinct destinations belong to the runner contract
     # in test_browser_check_runner; this check guards failed-run retention.
     artifact = next(step for step in steps if step.get('uses', '').startswith('actions/upload-artifact@')

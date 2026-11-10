@@ -106,8 +106,8 @@ def test_reset_refuses_missing_uv_opt_in(tmp_path, monkeypatch):
 @pytest.mark.parametrize('dependencies', [False, True])
 def test_browser_preparation_can_target_existing_noneditable_interpreter(tmp_path, dependencies):
     import json
-    (tmp_path / 'frontend').mkdir()
-    (tmp_path / 'frontend/package-lock.json').write_text(json.dumps({
+    (tmp_path / 'tests/web').mkdir(parents=True)
+    (tmp_path / 'tests/web/package-lock.json').write_text(json.dumps({
         'packages': {'node_modules/playwright': {'version': '1.63.0'}}}))
     commands = clients.browser_prepare_commands(tmp_path, '/owned/uv', '/owned/.venv/bin/python',
                                                  install_dependencies=dependencies)
@@ -116,3 +116,16 @@ def test_browser_preparation_can_target_existing_noneditable_interpreter(tmp_pat
     assert commands[1] == ['/owned/.venv/bin/python', '-m', 'playwright', 'install',
                            *(['--with-deps'] if dependencies else []), 'chromium']
     assert not any('sync' in row or '--editable' in row for row in commands)
+
+
+
+def test_browser_preparation_uses_explicit_old_source_lock_only_when_new_owner_absent(tmp_path):
+    import json
+    (tmp_path / 'frontend').mkdir()
+    (tmp_path / 'frontend/package-lock.json').write_text(json.dumps({
+        'packages': {'node_modules/playwright': {'version': '1.62.0'}}}))
+    commands = clients.browser_prepare_commands(tmp_path, '/owned/uv', '/owned/python')
+    assert commands[0][-1] == 'playwright==1.62.0'
+    (tmp_path / 'tests/web').mkdir(parents=True)
+    with pytest.raises(FileNotFoundError):
+        clients.browser_prepare_commands(tmp_path, '/owned/uv', '/owned/python')

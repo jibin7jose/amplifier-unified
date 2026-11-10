@@ -29,19 +29,19 @@ assert not any(path.is_symlink() for path in static.rglob('*'))
 static_hashes = {str(path.relative_to(static)): hashlib.sha256(path.read_bytes()).hexdigest()
                  for path in sorted(static.rglob('*')) if path.is_file()}
 assert 'build.json' in static_hashes
-source_path = root / 'frontend/tests/mcp-recovery-browser.mjs'
+source_path = root / 'tests/web/mcp-recovery-browser.mjs'
 source = source_path.read_text()
-assert hashlib.sha256(source_path.read_bytes()).hexdigest() == 'a974edc327c8e5c4eee50e9c62af6df3ffe2f11d3870124d50b05c4d0dcc560f'
+assert hashlib.sha256(source_path.read_bytes()).hexdigest() == 'f5146f8d74e8fb5cd1b9b11951cb81ce8c4b613599704fc0afb2cc2773888044'
 positive = []
 for number in range(1, 4):
     name = f'mcp-recovery-repeat-{number}'
     directory = root / 'output/browser-checks/mcp-boundary' / name
     directory.mkdir(parents=True, exist_ok=False)
-    positive.append({'id': name, 'command': ['node', 'tests/mcp-recovery-browser.mjs'],
+    positive.append({'id': name, 'command': ['node', 'tests/web/mcp-recovery-browser.mjs'],
                      'env': {'MCP_RECOVERY_SCREENSHOT': '{root}/' + str(directory.relative_to(root) / 'journey.png')}})
 adjacent = root / 'output/browser-checks/mcp-boundary/mcp-clients-adjacent'
 adjacent.mkdir(parents=True, exist_ok=False)
-positive.append({'id': 'mcp-clients-adjacent', 'command': ['node', 'tests/mcp-clients-browser.mjs'],
+positive.append({'id': 'mcp-clients-adjacent', 'command': ['node', 'tests/web/mcp-clients-browser.mjs'],
                  'env': {'MCP_RECOVERY_SCREENSHOT': '{root}/' + str(adjacent.relative_to(root) / 'journey.png')}})
 (folder / 'positive.json').write_text(json.dumps({'schemaVersion': 1, 'scenarios': positive}, indent=2))
 # Omit only Close plus its waiter/receipt. Keep loaded empty setup and the
@@ -69,14 +69,14 @@ variant = variant.replace(' await expect(setup).toHaveCount(0);', ''' try{await 
 finally_text = "}finally{\n try{\n  await finishFixture({label:'MCP recovery fixture',close:[\n   ['second browser',async()=>{await secondBrowser?.close()}],\n   ['browser',async()=>{await browser?.close()}],\n  ],stop:async()=>{await stop();await rm(directory,{recursive:true,force:true})}});\n  cleanupComplete=true;\n }catch(error){if(originalError)console.error(error);else throw error}\n}"
 assert variant.count(finally_text) == 1
 variant = variant.replace(finally_text, finally_text[:-1] + ";await writeFile(process.env.MCP_NEGATIVE_CLEANUP,JSON.stringify({completed:cleanupComplete}))}", 1)
-negative_script = root / 'frontend/tests/.mcp-omit-close-negative.mjs'
+negative_script = root / 'tests/web/.mcp-omit-close-negative.mjs'
 with negative_script.open('x') as handle:
     handle.write(variant)
 negative_dir = root / 'output/browser-checks/mcp-boundary/negative'
 negative_dir.mkdir(parents=True, exist_ok=False)
 negative = {'schemaVersion': 1, 'scenarios': [{
     'id': 'mcp-open-overlay-negative',
-    'command': ['node', 'tests/.mcp-omit-close-negative.mjs'],
+    'command': ['node', 'tests/web/.mcp-omit-close-negative.mjs'],
     'env': {'MCP_RECOVERY_SCREENSHOT': '{root}/' + str(negative_dir.relative_to(root) / 'overlay-before-cleanup.png'),
             'MCP_NEGATIVE_PROOF': '{root}/' + str(negative_dir.relative_to(root) / 'boundary.json'),
             'MCP_NEGATIVE_CLEANUP': '{root}/' + str(negative_dir.relative_to(root) / 'cleanup.json')},

@@ -208,7 +208,7 @@ def test_workflow_consolidates_checks_without_sharing_publication_credentials():
         assert f'--lane {lane}' in commands
     # Distribution bytes and their receipt are frozen before isolated native setup.
     assert commands.index('uv build') < commands.index('--lane package') < commands.index('runtime-project')
-    assert commands.index('npm run build --prefix frontend') < commands.index('--lane frontend') < commands.index('uv build')
+    assert commands.index('historical_web_layout.py" validate') < commands.index('--lane frontend') < commands.index('uv build')
     assert commands.count('qualify_host_dependencies.py --verify') == 3
     assert steps[0]['with']['fetch-depth'] == "${{ inputs.release_revision != '' && '0' || '1' }}"
     assert 'plan --revision "$SELECTED_RELEASE_REVISION" --fetch-tag' in commands
@@ -232,11 +232,11 @@ def test_broad_checks_are_nightly_or_explicit_and_keep_distinct_package_boundari
     commands = '\n'.join(step.get('run', '') for step in manual['jobs']['browser']['steps'])
     assert 'playwright install' in commands
     assert 'scripts/browser_check_runner.py' in commands
-    plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+    plan = json.loads((ROOT / 'tests/web/browser-checks.json').read_text())
     invocations = [row['command'] for row in plan['scenarios']]
-    assert ['node', 'tests/session-health-browser.mjs'] in invocations
-    assert ['node', 'tests/session-health-browser.mjs', '--context-limit', '--active-worker'] in invocations
-    assert ['node', 'tests/connectors-browser.mjs'] in invocations
+    assert ['node', 'tests/web/session-health-browser.mjs'] in invocations
+    assert ['node', 'tests/web/session-health-browser.mjs', '--context-limit', '--active-worker'] in invocations
+    assert ['node', 'tests/web/connectors-browser.mjs'] in invocations
     critical = yaml.load((workflows / 'public-readiness.yml').read_text(), Loader=yaml.BaseLoader)
     assert set(critical['on']) == {'workflow_dispatch', 'workflow_call'}
     assert critical['permissions'] == {'contents': 'read'}
@@ -301,8 +301,15 @@ def test_broad_checks_are_nightly_or_explicit_and_keep_distinct_package_boundari
     assert 'always()' in post['jobs']['report']['if']
     assert set(post['jobs']['report']['needs']) == {'resolve', 'readiness', 'python', 'browser', 'integrations'}
     frontend = '\n'.join(step.get('run', '') for step in release['jobs']['prepare']['steps'])
-    assert 'npm test --prefix frontend' in frontend
-    assert 'npm run build --prefix frontend' in frontend
+    assert 'historical_web_layout.py" validate' in frontend
+    spec = importlib.util.spec_from_file_location('selected_web_layout', ROOT / 'scripts/historical_web_layout.py')
+    selected = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(selected)
+    commands = selected.commands(ROOT, 'validate')
+    assert ['npm', 'test', '--prefix', '.build/web-client'] in commands
+    assert ['npm', 'test', '--prefix', 'tests/web'] in commands
+    assert commands[-2:] == [selected.build_command(ROOT),
+                             ['npm', 'run', 'test:artifact-assets', '--prefix', '.build/web-client']]
     assert 'git diff --exit-code -- amplifier_web/static' in frontend
 
 
@@ -393,12 +400,12 @@ def test_installed_media_diagnostic_is_explicit_full_scenario_and_cannot_replace
     assert '${{' not in steps[initialize]['run']
     commands = '\n'.join(step.get('run', '') for step in steps)
     assert 'uv sync --locked --group dev --group artifacts' in commands
-    assert 'npm run build --prefix frontend' in commands
+    assert 'python scripts/web_client_build.py build' in commands
     assert 'e4a71c46fd41ecf6' in commands and 'staticSha256' in commands
     assert 'assert len(files) == 311' in commands
     assert "assert payload.hexdigest() == '1b4c114ffe44d4c7a5dcf8a2136fb363847feb4ec4b27aa5bbc5fe2435deb337'" in commands
     assert 'uv pip install --python .venv/bin/python --no-deps --reinstall .' in commands
-    assert commands.count('node frontend/tests/inline-media-browser.mjs') == 1
+    assert commands.count('node tests/web/inline-media-browser.mjs') == 1
     assert "result['fullScenario'] and result['coreChecks'] == 'PASS'" in commands
     assert 'INLINE_MEDIA_PHASES' not in commands and 'secrets.' not in str(job)
     upload = next(step for step in steps if step.get('uses') == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
@@ -416,6 +423,7 @@ def test_media_diagnostic_product_guard_rejects_unlisted_changes(monkeypatch, ex
     workflow = yaml.load((ROOT / '.github/workflows/public-readiness.yml').read_text(), Loader=yaml.BaseLoader)
     guard = workflow['jobs']['installed-media-diagnostic']['steps'][1]['run']
     script = compile('\n'.join(guard.splitlines()[1:-1]), 'diagnostic-source-guard', 'exec')
+    # Frozen diagnostic compares the original historical candidate, never today's moved tree.
     changed = ['.github/workflows/public-readiness.yml',
                'frontend/tests/inline-media-browser.mjs', 'tests/test_release_qualification.py']
     if extra:
@@ -445,7 +453,7 @@ def test_media_diagnostic_cleanup_refuses_unknown_ui_command(
 ):
     import re
     import subprocess
-    source = (ROOT / 'frontend/tests/inline-media-browser.mjs').read_text()
+    source = (ROOT / 'tests/web/inline-media-browser.mjs').read_text()
     helper = re.search(r'function gifCanvasCleanupAllowed\([^)]*\)\{\n.*?\n\}', source, re.S)
     assert helper, 'Exercise the actual harness cleanup decision, not a copied predicate'
     args = json.dumps([click_attempted, primary_failed, click_settled])
@@ -458,7 +466,7 @@ def test_media_diagnostic_cleanup_refuses_unknown_ui_command(
 
 
 def test_media_diagnostic_applies_ui_guard_before_cleanup_mutations():
-    source = (ROOT / 'frontend/tests/inline-media-browser.mjs').read_text()
+    source = (ROOT / 'tests/web/inline-media-browser.mjs').read_text()
     phase = source.split("await phase('gif-canvas-errors',async()=>{", 1)[1].split(
         "await phase('endpoints'", 1)[0]
     click = "await inline.getByRole('button',{name:'Open in Canvas',exact:true}).click();"
@@ -477,7 +485,7 @@ def test_media_diagnostic_applies_ui_guard_before_cleanup_mutations():
 
 
 def test_media_native_route_is_opt_in_and_partial_result_stays_unqualified():
-    source = (ROOT / 'frontend/tests/inline-media-browser.mjs').read_text()
+    source = (ROOT / 'tests/web/inline-media-browser.mjs').read_text()
     assert "process.env.INLINE_MEDIA_NATIVE_INPUT==='x11'" in source
     assert 'guestNative&&(!headed||!selectedPhases' in source
     assert 'qualified:fullScenario&&!failed&&remainingPhysical.length===0' in source
@@ -491,7 +499,7 @@ def test_media_native_route_is_opt_in_and_partial_result_stays_unqualified():
 
 
 def test_media_native_helper_uses_real_input_and_bounded_owned_cleanup():
-    source = (ROOT / 'frontend/tests/inline-media-native-input.mjs').read_text()
+    source = (ROOT / 'tests/web/inline-media-native-input.mjs').read_text()
     assert 'connectOverCDP(endpoint,{noDefaults:true})' in source
     assert "shadow.shadowRootType,'user-agent'" in source
     assert "cdp.send('DOM.focus',{backendNodeId})" in source
@@ -502,7 +510,7 @@ def test_media_native_helper_uses_real_input_and_bounded_owned_cleanup():
     for forbidden in ('requestFullscreen(', '.volume=', 'setFocusEmulationEnabled',
                       'setDeviceMetricsOverride', 'dispatchKeyEvent'):
         assert forbidden not in source
-    keyboard = (ROOT / 'frontend/tests/inline-media-x11.py').read_text()
+    keyboard = (ROOT / 'tests/web/inline-media-x11.py').read_text()
     assert "contract.get('profileId') != 'browser-test'" in keyboard
     assert 'XTestFakeKeyEvent(display, code, 1, 0)' in keyboard
     assert 'XTestFakeKeyEvent(display, code, 0, 0)' in keyboard
@@ -513,7 +521,7 @@ def test_media_native_helper_uses_real_input_and_bounded_owned_cleanup():
 @pytest.mark.parametrize('mode', ['rejected', 'uncertain', 'page-rejected', 'success'])
 def test_media_native_tab_retains_input_failure_and_observes_page_wait(tmp_path, mode):
     import subprocess
-    source = (ROOT / 'frontend/tests/inline-media-native-input.mjs').read_text()
+    source = (ROOT / 'tests/web/inline-media-native-input.mjs').read_text()
     helper = re.search(r'export async function nativeTab\(page\)\{\n.*?\n\}', source, re.S)
     assert helper, 'Exercise the maintained helper without loading browser dependencies'
     evidence_path = tmp_path / 'native-tab-final.json'
@@ -575,7 +583,7 @@ finally{
 
 def test_media_native_preflight_retains_launch_failure(tmp_path):
     import subprocess
-    source = (ROOT / 'frontend/tests/inline-media-native-preflight.mjs').read_text()
+    source = (ROOT / 'tests/web/inline-media-native-preflight.mjs').read_text()
     # Execute the maintained preflight with a failing launch dependency. There
     # must still be durable phase identity and no false successful exit.
     source = source.replace(
@@ -611,7 +619,7 @@ export async function launchNativeBrowser(){throw Error('negative launch control
 def test_media_native_preflight_cleanup_independent_of_primary_and_write(tmp_path, fail_write):
     import os
     import subprocess
-    source = (ROOT / 'frontend/tests/inline-media-native-preflight.mjs').read_text().replace(
+    source = (ROOT / 'tests/web/inline-media-native-preflight.mjs').read_text().replace(
         "from './inline-media-native-input.mjs'", "from './failed-sample.mjs'")
     (tmp_path / 'preflight.mjs').write_text(source)
     (tmp_path / 'failed-sample.mjs').write_text("""
@@ -652,7 +660,7 @@ export async function launchNativeBrowser(){return {
 
 
 def test_media_native_input_write_failure_does_not_skip_fixture_stop():
-    source = (ROOT / 'frontend/tests/inline-media-browser.mjs').read_text()
+    source = (ROOT / 'tests/web/inline-media-browser.mjs').read_text()
     cleanup = source.split("await phase('cleanup',async()=>{", 1)[1]
     assert "catch(error){errors.push('Native input evidence: '+error.message)}" in cleanup
     assert cleanup.index("Native input evidence: ") < cleanup.index("fixture.kill('SIGTERM')")
@@ -714,7 +722,7 @@ def test_media_native_foreign_window_owner_refuses_before_any_key(monkeypatch, t
 
     monkeypatch.setattr(c, 'CDLL', lambda name: Library())
     monkeypatch.setattr(sys, 'argv', ['inline-media-x11.py', 'space'])
-    module = runpy.run_path(str(ROOT / 'frontend/tests/inline-media-x11.py'))
+    module = runpy.run_path(str(ROOT / 'tests/web/inline-media-x11.py'))
     assert module['main']() == 2
     receipt = json.loads(capsys.readouterr().out)
     assert receipt['error'] == 'Focused X window is not the owned Chromium process'
@@ -730,7 +738,7 @@ def test_media_native_foreign_window_owner_refuses_before_any_key(monkeypatch, t
 ])
 def test_media_native_preflight_all_phases_pass_cannot_hide_cleanup_failure(status, errors, expected):
     import subprocess
-    source = (ROOT / 'frontend/tests/inline-media-native-preflight.mjs').read_text()
+    source = (ROOT / 'tests/web/inline-media-native-preflight.mjs').read_text()
     # Execute the exact maintained catch + qualification/exit statements with
     # all phase oracles PASS, then inject a close error with settled resources.
     catch = source.split('try{if(native)evidence.cleanup=await native.close()}', 1)[1].split(
@@ -1636,7 +1644,7 @@ def test_browser_retains_only_the_successfully_built_public_web_payload():
     assert steps[identity]['run'] == 'echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"'
     build = next(index for index, step in enumerate(steps) if step.get('id') == 'frontend-build')
     assert identity < build
-    assert steps[build]['run'] == 'npm run build --prefix frontend'
+    assert 'python scripts/web_client_build.py build' in steps[build]['run']
     upload = steps[build + 1]
     assert upload['if'] == "${{ steps.frontend-build.outcome == 'success' }}"
     assert upload['uses'] == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
@@ -1656,7 +1664,16 @@ def test_browser_retains_only_the_successfully_built_public_web_payload():
 
 def browser_runner_commands(steps):
     invocation = r'(?m)^(?:uv run --no-sync )?python scripts/browser_check_runner\.py(?:[ \t]|$)'
-    return [step['run'] for step in steps if re.search(invocation, step.get('run', ''))]
+    commands = []
+    for step in steps:
+        # Count the current layout once; the explicit historical target branch
+        # is separate compatibility coverage, never a second live invocation.
+        source = re.sub(r'(?ms)^[ \t]*if test -f tests/web/package\.json; then\n(.*?)^[ \t]*else\n.*?^[ \t]*fi[ \t]*$',
+                        r'\1', step.get('run', ''))
+        source = '\n'.join(line.strip() for line in source.splitlines()).strip()
+        if re.search(invocation, source):
+            commands.append(source)
+    return commands
 
 
 def test_browser_runner_matcher_excludes_test_names_without_hiding_extra_invocations():
@@ -1673,6 +1690,8 @@ def test_browser_runner_matcher_excludes_test_names_without_hiding_extra_invocat
     assert browser_runner_commands([*steps, {'run': execute}]) == [initialize, execute, execute]
     joined = initialize + '\n' + execute
     assert browser_runner_commands([{'run': joined}]) == [joined]
+    guarded = 'if test -f tests/web/package.json; then\n  '+initialize+'\nelse\n  '+execute+'\nfi'
+    assert browser_runner_commands([{'run': guarded}]) == [initialize]
 
 
 def test_canvas_qualification_is_fixed_manual_and_installed_not_a_release_gate():
@@ -1685,7 +1704,8 @@ def test_canvas_qualification_is_fixed_manual_and_installed_not_a_release_gate()
     assert job['steps'][0]['with'] == {'ref': '${{ github.sha }}', 'persist-credentials': 'false'}
     commands = '\n'.join(step.get('run', '') for step in job['steps'])
     assert 'uv sync --locked --group dev --group artifacts --no-build-package amplifier-core' in commands
-    assert 'npm ci --prefix frontend' in commands
+    assert 'npm ci --prefix tests/web' in commands
+    assert 'npm ci --prefix .build/web-client' in commands
     assert 'npx playwright install --with-deps chromium' in commands
     assert 'python scripts/canvas_qualification.py run' in commands
     upload = next(step for step in job['steps'] if step.get('uses') == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
@@ -1704,6 +1724,10 @@ def test_canvas_qualification_is_fixed_manual_and_installed_not_a_release_gate()
     assert "raise ValueError('Qualification already started; no replay')" in source
     assert "'installed-harness'" in source and "'installed-identity.json'" in source
     assert "assert static == json.loads((OUT / 'static.json').read_text())" in source
+    assert 'stage_web_test_harness(ROOT, harness, python_tests=True,' in source
+    assert "source_helpers=('destination-history.js', 'settings-navigation.js')" in source
+    assert "../../tests/web/canvas-test-receipts.test.mjs" in source
+    assert "cwd='.build/web-client'" in source
 
 
 def test_canvas_feedback_scope_is_fixed_and_preserves_full_coverage(tmp_path):
@@ -1827,11 +1851,11 @@ def test_app004_opt_in_is_fixed_manual_only_and_keeps_default_browser_budget():
     assert all(command.count(attachment_flag) == 1 for command in commands)
     # Empty/default selection executes exactly the preexisting plan and budget.
     assert commands[0].replace(flag, '').replace(attachment_flag, '').strip() == (
-        'python scripts/browser_check_runner.py --plan frontend/tests/browser-checks.json '
+        'python scripts/browser_check_runner.py --plan tests/web/browser-checks.json '
         '--output output/browser-checks --initialize')
     assert commands[1].replace(flag, '').replace(attachment_flag, '').strip() == (
         'uv run --no-sync python scripts/browser_check_runner.py '
-        '--plan frontend/tests/browser-checks.json --output output/browser-checks --budget-seconds 1500')
+        '--plan tests/web/browser-checks.json --output output/browser-checks --budget-seconds 1500')
     assert next(i for i, s in enumerate(steps) if '--initialize' in s.get('run', '')) < next(
         i for i, s in enumerate(steps) if s.get('uses') == 'actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065')
     contracts = [s for s in steps if s.get('name') == 'Verify fixed APP004 qualification contracts']
@@ -1846,7 +1870,8 @@ def test_app004_opt_in_is_fixed_manual_only_and_keeps_default_browser_budget():
     ]
     before = steps[:steps.index(contract)]
     assert any(s.get('uses') == 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' for s in before)
-    assert any(s.get('run') == 'npm ci --prefix frontend' for s in before)
+    assert any('npm ci --prefix tests/web' in s.get('run', '') for s in before)
+    assert any('npm ci --prefix .build/web-client' in s.get('run', '') for s in before)
     assert any(s.get('run') == 'uv sync --locked --group dev --group artifacts' for s in before)
     assert any(s.get('with', {}).get('path') == 'amplifier_web/static/' for s in before)
     # The fixed attachment-only contracts are inactive for APP004/default.
@@ -2027,24 +2052,25 @@ def test_permissions_history_plan_has_only_fixed_checks_and_strict_evidence():
     plans, = [n.value for n in ast.walk(tree) if isinstance(n, ast.Assign)
               and any(isinstance(t, ast.Name) and t.id == 'plans' for t in n.targets)]
     assert [ast.literal_eval(row.elts[0]) for row in plans.elts] == [
-        'locked-host', 'locked-freeze', 'host-dependencies', 'npm-ci', 'chromium', 'python', 'node',
+        'locked-host', 'locked-freeze', 'host-dependencies', 'npm-ci', 'client-npm-ci', 'chromium', 'python', 'node',
         'build', 'source-approval', 'wheel', 'fresh-runtime', 'install-dependencies', 'install-wheel',
         'installed-dependencies', 'installed-freeze', 'installed-imports', 'installed-approval', 'questions']
-    assert source.count("['npm', 'run', 'build']") == 1
+    assert source.count("[sys.executable, 'scripts/web_client_build.py', 'build']") == 1
     assert source.count("['uv', 'build', '--wheel'") == 1
-    assert source.count("['node', 'tests/approval-lifecycle-browser.mjs']") == 2
-    assert source.count("['node', 'tests/questions-browser.mjs']") == 1
+    assert source.count("['node', 'tests/web/approval-lifecycle-browser.mjs']") == 2
+    assert source.count("['node', 'tests/web/questions-browser.mjs']") == 1
     assert "'--locked', '--group', 'dev', '--group', 'artifacts', '--no-install-project'" in source
     assert "'--no-build-isolation'" in source and "'--no-deps'" in source
     assert 'CONTEXT_REQUIREMENT' not in source and 'context-dependency' not in source
     assert 'signal.alarm(600)' in source and "'normalBudgetSeconds': 300" in source
     assert 'from browser_check_runner import run_scenarios' in source
-    assert "'scenarios': [{'id': phase, 'command': command, 'env': env}]" in source
+    assert "'scenarios': [{'id': phase, 'command': command, 'env': env," in source
+    assert "'cwd': '.build/web-client' if phase == 'node' else '.'" in source
     assert "row['cleanup'] == {'remaining': [], 'terminated': 0}" in source
     assert "report['phases'] = {name: {'status': 'not_run'}" in source
     assert 'verify_wheel(wheel, candidate, package.parent)' in source
     assert 'source_identity(ROOT)' in source and 'create(ROOT,' in source and 'verify(ROOT,' in source
-    assert "harness / 'frontend/node_modules', symlinks=False" in source
+    assert 'stage_web_test_harness(ROOT, harness, copy_dependencies=True)' in source
     assert 'symlink_to' not in source and 'manifest(harness) == copied' in source
     assert source.count("'AMPLIFIER_SHELL_NODE_MODULES':") == 2
     assert source.count("'AMPLIFIER_TEST_PACKAGE_ROOT':") == 2
@@ -2119,7 +2145,7 @@ def test_permissions_node_names_expand_literals_and_refuse_unknown_loops(permiss
     with pytest.raises(AssertionError):
         module.node_names(text.replace('${value}', '${other}'))
     with pytest.raises(AssertionError, match='Unrecognized'):
-        module.node_names((ROOT / 'frontend/tests/approval-card.test.mjs').read_text().replace(
+        module.node_names((ROOT / '.build/web-client/tests/approval-card.test.mjs').read_text().replace(
             "['missing',()=>null]", "['renamed',()=>null]"))
 
 
@@ -2255,8 +2281,9 @@ def test_compact_composer_is_fixed_manual_only_with_independent_failure_evidence
     commands = [step['run'] for step in steps if 'run' in step]
     assert commands.count('uv run --no-sync python scripts/compact_composer_checks.py') == 1
     assert 'uv sync --locked --group dev --group artifacts' in commands
-    assert 'npm ci --prefix frontend' in commands
-    assert 'npm run build --prefix frontend' in commands
+    assert any('npm ci --prefix tests/web' in command for command in commands)
+    assert any('npm ci --prefix .build/web-client' in command for command in commands)
+    assert any('python scripts/web_client_build.py build' in command for command in commands)
     assert all('${{' not in command for command in commands)
     assert all('continue-on-error' not in step for step in steps)
     uploads = [step for step in steps if step.get('uses') == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02']
@@ -2357,7 +2384,7 @@ def test_coordination_prepares_real_loop_before_first_contract_suite():
     assert 'importorskip' not in steps[verify]['run']
     assert not any('continue-on-error' in s for s in steps)
     assert any(s.get('name') == 'Verify mounted child identity and file boundaries' for s in steps[contracts + 1:])
-    assert any(s.get('run') == 'node tests/coordination-browser.mjs' for s in steps)
+    assert any(s.get('run', '').strip() == 'node tests/web/coordination-browser.mjs' for s in steps)
     assert steps[-1]['if'] == 'always()'
     assert '${{ runner.temp }}/test-environments' in steps[-1]['with']['path']
     assert 'output/coordination-runtime-readiness.json' in steps[-1]['with']['path']

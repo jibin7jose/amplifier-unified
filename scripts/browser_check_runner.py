@@ -606,6 +606,49 @@ def interrupt_owned(process, token, preexisting):
     return False
 
 
+def load_plan(root, path):
+    """Read one explicit plan, or compose the two current registry owners.
+
+    Initialization may precede dependency preparation. A selected directory
+    delivery is already source; repository deliveries need their prepared copy.
+    """
+    root, path = Path(root).resolve(), Path(path).resolve()
+    plan = json.loads(path.read_text())
+    provenance = {'planSha256': digest(path)}
+    if path == root / 'frontend/tests/browser-checks.json':
+        # Only an explicitly selected historical source uses the old cwd.
+        plan = {**plan, 'scenarios': [{**row, 'cwd': row.get('cwd', 'frontend')}
+                                     for row in validate_plan(plan)]}
+        provenance['browserLayout'] = 'legacy-frontend'
+    elif path == root / 'tests/web/browser-checks.json':
+        selection_path = root / 'components/web-client.source.json'
+        selection = json.loads(selection_path.read_text())
+        client = root / '.build/web-client'
+        if client.exists():
+            if json.loads((client / '.client-source.json').read_text()) != selection:
+                raise ValueError('Prepared client selection differs; prepare the selected client')
+        elif selection['delivery']['type'] == 'directory':
+            client = root / selection['delivery']['path']
+        else:
+            raise ValueError('Prepare the selected repository client before reading its registry')
+        client_path = client / 'tests/browser-checks.json'
+        client_plan = json.loads(client_path.read_text())
+        rows = [*validate_plan(plan),
+                *[{**row, 'cwd': str(Path('.build/web-client') / row.get('cwd', '.'))}
+                  for row in validate_plan(client_plan)]]
+        order = plan['scenarioOrder']
+        if len(order) != len(rows) or len(set(order)) != len(order) or set(order) != {row['id'] for row in rows}:
+            raise ValueError('Assembly scenario order must include each owned scenario exactly once')
+        validate_plan({'schemaVersion': 1, 'scenarios': rows})
+        by_id = {row['id']: row for row in rows}
+        plan = {'schemaVersion': 1, 'scenarios': [by_id[name] for name in order]}
+        provenance.update(browserLayout='separate-owners',
+                          registrySha256={'unified': digest(path), 'client': digest(client_path)},
+                          clientSelectionSha256=digest(selection_path))
+    validate_plan(plan)
+    return plan, provenance
+
+
 def validate_plan(plan):
     rows = plan['scenarios']
     if plan.get('schemaVersion') != 1 or not 1 <= len(rows) <= 200:
@@ -614,7 +657,8 @@ def validate_plan(plan):
     for row in rows:
         name, command = row['id'], row['command']
         if (not name or any(c not in 'abcdefghijklmnopqrstuvwxyz0123456789-' for c in name)
-                or name in seen or not command or not all(isinstance(x, str) for x in command)):
+                or name in seen or not command or not all(isinstance(x, str) for x in command)
+                or 'cwd' in row and (not isinstance(row['cwd'], str) or not row['cwd'])):
             raise ValueError('Invalid or duplicate scenario')
         seen.add(name)
     return rows
@@ -650,15 +694,21 @@ APP004_BOUNDARY = 'app004-same-document'
 
 def initial_app004(provenance):
     # Fixed commands, not a second user-programmable plan or scenario selector.
-    return {'schemaVersion': 1, 'source': provenance or {}, 'complete': False, 'passed': False,
+    report = {'schemaVersion': 1, 'source': provenance or {}, 'complete': False, 'passed': False,
             'checks': [
                 {'id': 'units', 'status': 'unrun', 'reason': 'not_started', 'timeoutSeconds': 60,
                  'command': ['node', '--test', '--test-reporter=tap',
                              'tests/chat-reference.test.mjs', 'tests/message-copy.test.mjs',
-                             'tests/chat-reference-harness.test.mjs']},
+                             '../../tests/web/chat-reference-harness.test.mjs'], 'cwd': '.build/web-client'},
                 {'id': 'reload-negative', 'status': 'unrun', 'reason': 'not_started',
-                 'timeoutSeconds': 300, 'command': ['node', 'tests/chat-reference-browser.mjs']},
+                 'timeoutSeconds': 300, 'command': ['node', 'tests/web/chat-reference-browser.mjs']},
             ]}
+    if (provenance or {}).get('browserLayout') == 'legacy-frontend':
+        report['checks'][0].update(cwd='frontend', command=[
+            'node', '--test', '--test-reporter=tap', 'tests/chat-reference.test.mjs',
+            'tests/message-copy.test.mjs', 'tests/chat-reference-harness.test.mjs'])
+        report['checks'][1].update(cwd='frontend', command=['node', 'tests/chat-reference-browser.mjs'])
+    return report
 
 
 def save_app004(output, report):
@@ -840,7 +890,7 @@ def run_scenarios(root, plan, output, *, budget=1500, case_timeout=300, provenan
                     save(output, report)
                 if log_limit is not None:
                     capture = BoundedLog(folder / row['log'], log_limit)
-                    process = subprocess.Popen(command, cwd=cwd or root / 'frontend', env=env,
+                    process = subprocess.Popen(command, cwd=cwd if cwd is not None else root / row.get('cwd', '.'), env=env,
                                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                                start_new_session=True, **inherited)
                     capture.attach(process.stdout)
@@ -876,7 +926,7 @@ def run_scenarios(root, plan, output, *, budget=1500, case_timeout=300, provenan
                     row['exitCode'] = process.poll()
                 else:
                     with EvidenceFile(folder / row['log'], create=True) as log:
-                        process = subprocess.Popen(command, cwd=cwd or root / 'frontend', env=env,
+                        process = subprocess.Popen(command, cwd=cwd if cwd is not None else root / row.get('cwd', '.'), env=env,
                                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True, **inherited)
                         while process.poll() is None and not stopped:
                             limit = row['timeoutSeconds'] if extra else case_timeout
@@ -1271,9 +1321,11 @@ def python_suite(root, output, provenance, deadline, *, initialize=False, finali
 def attachment_consumption_plan(plan):
     """One fixed diagnostic; retain the ordinary plan and process owner."""
     expected = {'id': 'attachment-consumption',
-                'command': ['node', 'tests/attachment-consumption-browser.mjs'],
+                'command': ['node', 'tests/web/attachment-consumption-browser.mjs'],
                 'env': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/attachment-consumption'}}
     rows = [row for row in validate_plan(plan) if row['id'] == expected['id']]
+    if rows and rows[0].get('cwd') == 'frontend':
+        expected.update(command=['node', 'tests/attachment-consumption-browser.mjs'], cwd='frontend')
     if rows != [expected]:
         raise ValueError('Attachment consumption requires its exact registered owner')
     return {'schemaVersion': 1, 'scenarios': rows}
@@ -1300,12 +1352,13 @@ def main():
     if args.attachment_consumption and args.app004_qualification:
         parser.error('Attachment consumption and APP004 are separate selections')
     root = Path(__file__).resolve().parents[1]
+    plan, plan_provenance = (load_plan(root, args.plan) if not args.python_suite else
+                             (None, {'planSha256': hashlib.sha256(json.dumps(python_plan(), sort_keys=True).encode()).hexdigest()}))
     git = lambda *parts: subprocess.check_output(['git', *parts], cwd=root).strip()
     provenance = {'revision': git('rev-parse', 'HEAD').decode(),
                   'tree': git('rev-parse', 'HEAD^{tree}').decode(),
                   'trackedDiffSha256': hashlib.sha256(git('diff', '--binary', 'HEAD')).hexdigest(),
-                  'planSha256': (hashlib.sha256(json.dumps(python_plan(), sort_keys=True).encode()).hexdigest()
-                                 if args.python_suite else digest(args.plan)),
+                  **plan_provenance,
                   'runnerSha256': digest(Path(__file__)),
                   'runId': os.environ.get('GITHUB_RUN_ID'), 'runAttempt': os.environ.get('GITHUB_RUN_ATTEMPT')}
     build = root / 'amplifier_web/static/build.json'
@@ -1314,7 +1367,6 @@ def main():
         return python_suite(root, args.output.absolute(), provenance,
                             float(os.environ['PYTHON_CHECK_DEADLINE']),
                             initialize=args.initialize, finalize=args.finalize)
-    plan = json.loads(args.plan.read_text())
     if args.attachment_consumption:
         plan = attachment_consumption_plan(plan)
         provenance['selection'] = 'attachment-consumption-only'

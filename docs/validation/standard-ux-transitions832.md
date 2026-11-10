@@ -50,8 +50,8 @@ headless browser processes.
 The existing source-census entries remain the owners:
 `standard-ux-connection-inspection`, `standard-ux-decisions`, and
 `standard-ux-decisions-touch`. Their direct entry points are
-`frontend/tests/standard-ux-connection-inspection-browser.mjs` and
-`frontend/tests/standard-ux-decisions-browser.mjs` (the latter uses
+`tests/web/standard-ux-connection-inspection-browser.mjs` and
+`tests/web/standard-ux-decisions-browser.mjs` (the latter uses
 `STANDARD_UX_TOUCH=1` for touch). Both require an owned
 `AMPLIFIER_TEST_ARTIFACTS` directory and the normal Python/Playwright prerequisites.
 No frozen inventory or skip baseline changed. Exact source hashes, logs,

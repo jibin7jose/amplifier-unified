@@ -29,7 +29,8 @@ def test_peer_hosted_route_is_fixed_and_separate():
     assert 'secrets.' not in json.dumps(job)
     commands = [step.get('run', '') for step in steps]
     assert 'uv sync --locked --group dev --group artifacts' in commands
-    assert 'npm ci --prefix frontend' in commands
+    assert any('npm ci --prefix tests/web' in command for command in commands)
+    assert any('npm ci --prefix .build/web-client' in command for command in commands)
     assert 'uv run --no-sync python scripts/peer_message_qualification.py' in commands
     assert commands.index('python scripts/peer_message_qualification.py --initialize') < commands.index('uv sync --locked --group dev --group artifacts')
     upload, = [step for step in steps if step.get('uses') == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02']
@@ -44,7 +45,10 @@ def test_peer_script_requires_real_counts_bytes_and_negative_failure():
     assert names == ('python', 'node', 'build', 'sourceBrowser', 'whitespaceNegative', 'wheel', 'installedBrowser')
     for required in ('PEER_NEGATIVE_CONTROL_CONFIRMED', "'failure', 'error', 'skipped'", "'site-packages'",
                      "env.pop('PYTHONPATH', None)", "'--no-deps'", "'--reinstall'",
-                     "'payloadsVerifiedBeforeAfter'", "len(files) == 311", "'status': 'not_run'"):
+                     "'payloadsVerifiedBeforeAfter'", "set(files) == set(source['staticBefore'])", "'status': 'not_run'"):
         assert required in source
-    assert "'peer-preview'" in source and "'tests/peer-preview-browser.mjs'" in source
+    assert "'peer-preview'" in source and "'tests/web/peer-preview-browser.mjs'" in source
     assert "assert not sys.argv[1:]" in source
+    assert 'stage_web_test_harness(ROOT, harness, python_tests=True,' in source
+    assert "source_helpers=('settings-navigation.js',)" in source
+    assert "cwd=ROOT / '.build/web-client'" in source

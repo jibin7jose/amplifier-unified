@@ -6,14 +6,14 @@ on:
     paths:
       - 'components/web-client.source.json'
       - 'scripts/web_client_*.py'
-      - 'frontend/commands.json'
+      - 'components/web-client/commands.json'
       - 'examples/appearances/night-drive.amplifier.css'
       - 'amplifier_web/appearance_activity.py'
       - 'amplifier_web/browser_state.py'
       - 'components/web-client/src/app-appearance-state.js'
       - 'components/web-client/src/window-controls-overlay.css'
-      - 'frontend/tests/night-drive-browser.mjs'
-      - 'frontend/tests/app-appearance-state.test.mjs'
+      - 'tests/web/night-drive-browser.mjs'
+      - 'components/web-client/tests/app-appearance-state.test.mjs'
       - 'tests/test_appearance_activity.py'
       - '.github/workflows/night-drive.yml'
 permissions:
@@ -33,18 +33,23 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            tests/web/package-lock.json
+            components/web-client.source.json
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
-      - run: npm ci --prefix frontend
+        run: |
+          python scripts/web_client_build.py prepare
+      - run: |
+          npm ci --prefix .build/web-client
+          npm ci --prefix tests/web
       - name: Focused lifecycle and root-state checks
         run: |
           uv run --no-sync pytest -q tests/test_appearance_activity.py tests/test_browser_state.py::test_large_catalog_bounded_receipts_publications_and_complete_agent_access tests/test_browser_state.py::test_offpage_error_and_approval_still_produce_attention tests/test_browser_state.py::test_stream_publications_coalesce_but_final_response_flushes
-          node --test frontend/tests/app-appearance-state.test.mjs frontend/tests/window-controls-overlay.test.mjs
-      - run: npm run build --prefix frontend
+          (cd .build/web-client && node --test tests/app-appearance-state.test.mjs tests/window-controls-overlay.test.mjs)
+      - run: |
+          python scripts/web_client_build.py build
       - name: Prepare Chromium
-        working-directory: frontend
+        working-directory: tests/web
         run: npx playwright install --with-deps chromium
       - name: Verify actual applied theme and unchanged native geometry controls
         run: |
@@ -57,9 +62,9 @@ jobs:
           output.mkdir(parents=True, exist_ok=True)
           env = {'AMPLIFIER_TEST_PYTHON': sys.executable}
           plan = {'schemaVersion': 1, 'scenarios': [
-            {'id': 'night-drive', 'command': ['node', 'tests/night-drive-browser.mjs'],
+            {'id': 'night-drive', 'command': ['node', 'tests/web/night-drive-browser.mjs'],
              'env': {**env, 'AMPLIFIER_TEST_ARTIFACTS': str(output / 'theme')}},
-            {'id': 'native-geometry', 'command': ['node', 'tests/window-controls-overlay-browser.mjs', '--header-clearance-only'],
+            {'id': 'native-geometry', 'command': ['node', 'tests/web/window-controls-overlay-browser.mjs', '--header-clearance-only'],
              'env': {**env, 'AMPLIFIER_TEST_ARTIFACTS': str(output / 'native-geometry')}},
           ]}
           (output / 'plan.json').write_text(json.dumps(plan, indent=2))
