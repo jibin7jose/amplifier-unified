@@ -106,9 +106,13 @@ qualify native execution, model accounts, devices, other versions or AHP.
 
 ## Shared inputs for the source ownership transfer
 
-The next client source owner is planned as `microsoft/amplifier-unified-web`.
-Creating that repository and qualifying its import precede the source transfer;
-this prerequisite does not move canonical ownership or publish another SDK.
+The client repository is [microsoft/amplifier-client-web](https://github.com/microsoft/amplifier-client-web),
+following the existing `amplifier-client-macos` naming convention. Its initial
+history import preserves `LICENSE` and `frontend/` from Unified 0.70.0
+(`4854dbd9ec555690269747b7dbe273f008e9e179`). Independent build preparation and
+qualification precede the source transfer; Unified remains the canonical source
+for the shipped client until that coordinated handoff. This prerequisite does
+not publish another SDK or adopt the retained AHP client.
 
 | Source or check | Owner at the transfer boundary |
 | --- | --- |
