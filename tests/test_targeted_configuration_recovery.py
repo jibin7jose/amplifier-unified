@@ -51,6 +51,9 @@ async def saved_failure(b, monkeypatch):
     assert (await process_apply(b))['phase'] == 'error'
     saved = operation(b)
     assert saved['state']['effect'] == 'unknown'
+    # This synthetic worker emits runtime.ready, not the real park/idle event.
+    # Model the settled host boundary explicitly; the native probe owns lifecycle.
+    b.owner['status'] = 'idle'
     return saved
 
 
@@ -99,7 +102,7 @@ async def test_targeted_saved_resume_never_rewrites_or_wakes(process_boundary, m
     assert override_path(b.owner['runtimeSessionId']).read_bytes() == settings
     assert receipt_path(saved['attempts'][0]).read_bytes() == seal
     assert b.owner['messages'] == before_messages
-    assert b.owner['status'] == 'idle'
+    assert b.owner['status'] in {'idle', 'ready'}
     drain.assert_not_awaited()
     duplicate = await agent(b.app, source, 'configuration.operation.resume', args, 'operator-saved-resume')
     assert duplicate['duplicate'] and duplicate['result'] == accepted['result']
@@ -314,6 +317,7 @@ async def test_recovery_preserves_revoked_original_grant(process_boundary):
 async def test_cross_owner_no_effect_recovery_holds_existing_queued_input(process_boundary):
     b = process_boundary
     saved = await operator_failure(b)
+    b.owner['status'] = 'idle'
     source = await manager(b)
     await agent(b.app, source, 'coordination.send', {'sessionId': b.owner['id'],
         'text': 'Do not run incidentally during recovery', 'mode': 'queue'}, 'queued-before-recovery')
@@ -331,7 +335,7 @@ async def test_cross_owner_no_effect_recovery_holds_existing_queued_input(proces
     assert operation(b)['attempts'][0] == saved['attempts'][0]
     await b.app.collaboration.drain(b.owner['id'])
     assert b.app.collaboration.receipt('queued-before-recovery')['delivery'] == 'queued'
-    assert b.owner['status'] == 'idle'
+    assert b.owner['status'] in {'idle', 'ready'}
     admitted = []
     async def input_adapter(session, args, guard, emit):
         assert not guard()
@@ -389,7 +393,8 @@ async def test_late_old_wait_stays_evidence_without_waking_recovered_target(proc
     source['status'] = 'working'
     watched = await agent(b.app, b.owner, 'coordination.watch', {
         'sessionId': b.owner['id'], 'targetSessionId': source['id'],
-        'condition': 'idle', 'expiresInSeconds': 60}, 'old-target-wait')
+        'condition': 'idle', 'expiresInSeconds': 60}, 'old-target-wait',
+        _runtimeSessionId=b.owner['runtimeSessionId'])
     saved = await operator_failure(b)
     await invoke(b, source, 'reconcile')
     await b.runtime._request(b.owner['id'], 'fixture.busy', count=0)
@@ -412,7 +417,7 @@ async def test_late_old_wait_stays_evidence_without_waking_recovered_target(proc
     assert result['subscription']['status'] == 'backpressured'
     assert not b.app.db.execute('SELECT 1 FROM commands WHERE id=?',
         (watched['subscription']['continuationId'],)).fetchone()
-    assert b.owner['messages'] == before and b.owner['status'] == 'idle'
+    assert b.owner['messages'] == before and b.owner['status'] in {'idle', 'ready'}
     assert operation(b)['attempts'][0] == saved['attempts'][0]
 
 
