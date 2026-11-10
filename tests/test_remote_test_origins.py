@@ -16,6 +16,7 @@ from amplifier_web import test_environment_configs as configs
 from amplifier_web import test_origin_files as files
 from amplifier_web import test_origin_snapshot as snapshots
 from amplifier_web import test_origin_storage as receipts
+from amplifier_web import test_source_transfer as transfer
 
 
 def git(source, *args):
@@ -57,6 +58,61 @@ def repository(tmp_path):
     git(path, 'add', '.')
     git(path, 'commit', '-qm', 'initial')
     return path
+
+
+def prepared_client(repository):
+    record = {'delivery': {'type': 'repository'}, 'source': {'revision': 'a' * 40}}
+    (repository / 'components').mkdir()
+    (repository / 'components/web-client.source.json').write_text(json.dumps(record))
+    (repository / '.gitignore').write_text('.build/\n')
+    root = repository / '.build/web-client'
+    root.mkdir(parents=True)
+    (root / 'package.json').write_text('{"name":"client"}')
+    (root / 'package-lock.json').write_text('{"lockfileVersion":3}')
+    (root / '.client-source.json').write_text(json.dumps(record))
+    (root / 'unrelated.js').write_text('This source is not part of manifest staging')
+    (root / 'node_modules').mkdir()
+    (root / 'node_modules/local.js').write_text('Do not transfer dependencies')
+    return root
+
+
+def test_repository_client_snapshot_includes_only_three_prepared_inputs(repository, tmp_path):
+    prepared_client(repository)
+    before = git(repository, 'status', '--porcelain=v1')
+    result = transfer.export_snapshot(repository, tmp_path / 'client.tar',
+                                      lambda: pytest.fail('repository selection must use canonical snapshot owner'))
+    with tarfile.open(result['path']) as archive:
+        selected = {name for name in archive.getnames() if name.startswith('.build/')}
+    assert selected == {'.build/web-client/' + name for name in
+                        ('package.json', 'package-lock.json', '.client-source.json')}
+    assert git(repository, 'status', '--porcelain=v1') == before
+    assert result['snapshot_tree'] and result['archive_sha256']
+    assert not (repository / '.git/index.lock').exists()
+
+
+@pytest.mark.parametrize('change', ['missing', 'different-selection', 'symlink'])
+def test_repository_snapshot_refuses_missing_or_changed_preparation(repository, tmp_path, change):
+    root = prepared_client(repository)
+    if change == 'missing':
+        (root / 'package-lock.json').unlink()
+    elif change == 'different-selection':
+        (root / '.client-source.json').write_text('{}')
+    else:
+        if os.name == 'nt':
+            pytest.skip('Windows symlink privilege is not part of this source fixture')
+        (root / 'package.json').unlink()
+        (root / 'package.json').symlink_to(repository / 'tracked.txt')
+    with pytest.raises(ValueError, match='web_client_build.py prepare'):
+        snapshots.export_archive(repository, tmp_path / 'missing.tar')
+    assert not (tmp_path / 'missing.tar').exists()
+
+
+def test_ordinary_snapshot_keeps_existing_exporter(repository, tmp_path):
+    calls = []
+    expected = {'original': 'library-owned snapshot'}
+    result = transfer.export_snapshot(repository, tmp_path / 'unused.tar',
+                                      lambda: calls.append(True) or expected)
+    assert result is expected and calls == [True]
 
 
 def target():

@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import React, {act} from 'react';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
-import {bounded,deferredRead,observeCompletion,requireCompletion,unknownCleanupValue} from './shared-work-test-helpers.mjs';
+import {bounded,deferredRead,observeCompletion,requireCompletion,unknownCleanupValue} from './shared-work-async.mjs';
 
 const vite = await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {SharedWorkBrowser} = await vite.ssrLoadModule('/src/workspace-work.jsx');

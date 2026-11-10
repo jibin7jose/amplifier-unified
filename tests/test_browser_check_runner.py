@@ -20,8 +20,52 @@ runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
 
+def current_plan():
+    return runner.load_plan(ROOT, ROOT / 'tests/web/browser-checks.json')[0]
+
+
+def coverage_paths(value):
+    """Compare frozen coverage identities independently of their new directories."""
+    return value.replace('../../tests/web/', 'tests/').replace('.build/web-client/tests/', 'tests/').replace('tests/web/', 'tests/')
+
+
+def current_layout_commands(source):
+    # Workflow wrappers retain a deliberate historical-target branch. Inventory
+    # the current owner once; the old branch is not a second automatic journey.
+    return re.sub(r'(?ms)^[ \t]*if test -f tests/web/package\.json; then\n(.*?)^[ \t]*else\n.*?^[ \t]*fi[ \t]*$',
+                  r'\1', source)
+
+
+def coverage_plan():
+    plan = current_plan()
+    rows = []
+    for row in plan['scenarios']:
+        row = {**row, 'command': [coverage_paths(part) for part in row['command']]}
+        row.pop('cwd', None)
+        if row['id'] == 'configuration-recovery-components':
+            # Both halves remain required by the current registry; only the old
+            # inventory spelling is normalized for the frozen coverage oracle.
+            assert row['command'] == ['node', '--test', 'tests/configuration-recovery.test.mjs',
+                                      'tests/configuration-recovery-observer.test.mjs']
+            row['command'] = row['command'][:-1]
+        rows.append(row)
+    return {**plan, 'scenarios': rows}
+
+
+def source_test(path):
+    name = str(path).removeprefix('frontend/tests/').removeprefix('tests/')
+    host = ROOT / 'tests/web' / name
+    if host.is_file():
+        return host
+    selection = json.loads((ROOT / 'components/web-client.source.json').read_text())
+    client = ROOT / '.build/web-client'
+    if not client.exists():
+        client = ROOT / selection['delivery']['path']
+    return client / 'tests' / name
+
+
 def execute(tmp_path, rows, **kwargs):
-    (tmp_path / 'frontend').mkdir(exist_ok=True)
+    (tmp_path / '.build/web-client').mkdir(parents=True, exist_ok=True)
     output = tmp_path / 'results'
     code = runner.run_scenarios(tmp_path, {'schemaVersion': 1, 'scenarios': rows}, output,
                                 provenance={'revision': 'a' * 40}, **kwargs)
@@ -229,7 +273,7 @@ def test_cli_initialization_and_execution_record_exact_source_and_plan(tmp_path)
 
 
 def test_existing_scenario_commands_environments_and_distinct_modes_are_preserved():
-    plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+    plan = coverage_plan()
     rows = runner.validate_plan(plan)
     canvas_additions = canvas_browser_additions(rows, set())
     breadbin_addition = breadbin_browser_addition(rows, set())
@@ -348,19 +392,19 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     commands = [row['command'] for row in rows]
     assert ['node', 'tests/session-health-browser.mjs', '--context-limit', '--active-worker'] in commands
     assert ['node', 'tests/empty-host-browser.mjs', '--lost-create'] in commands
-    assert all((ROOT / 'frontend' / command[2 if command[1] == '--test' else 1]).is_file()
+    assert all(source_test(command[2 if command[1] == '--test' else 1]).is_file()
                for command in commands)
 
 
 def test_dormant_controls_has_standard_ux_and_plan_owned_evidence():
-    deltas = json.loads((ROOT / 'frontend/tests/standard-ux-inventory-deltas.json').read_text())
+    deltas = json.loads((ROOT / 'tests/web/standard-ux-inventory-deltas.json').read_text())
     delta = next(row for row in deltas['changes'] if row['id'] == 'delta.1035')
     workflow, = delta['workflowsAdded']
     owner = 'frontend/tests/dormant-controls-browser.mjs'
     assert workflow['id'] == 'conversation.next-message-settings'
     assert owner in {row['path'] for row in workflow['existingTests']}
     # This is evidence ownership, not a claim that a browser run has passed.
-    source = (ROOT / owner).read_text()
+    source = source_test(owner).read_text()
     assert "process.env.AMPLIFIER_DORMANT_EVIDENCE||" in source
     assert "evidenceDir+'/browser-result.json'" in source
     assert "evidenceDir+'/dormant-controls-narrow.png'" in source
@@ -368,7 +412,7 @@ def test_dormant_controls_has_standard_ux_and_plan_owned_evidence():
 
 
 def test_voice_refinement_has_four_additive_standard_ux_owners():
-    ledger = json.loads((ROOT / 'frontend/tests/standard-ux-inventory-deltas.json').read_text())
+    ledger = json.loads((ROOT / 'tests/web/standard-ux-inventory-deltas.json').read_text())
     delta, = [row for row in ledger['changes'] if row['id'] == 'delta.1153']
     paths = [test['path'] for flow in delta['workflowsAdded'] for test in flow['existingTests']]
     assert len(paths) == len(set(paths)) == 4
@@ -377,8 +421,8 @@ def test_voice_refinement_has_four_additive_standard_ux_owners():
 
 
 def test_compact_composer_peer_preview_and_artifact_keep_automatic_inventory_owners():
-    plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
-    ledger = json.loads((ROOT / 'frontend/tests/standard-ux-inventory-deltas.json').read_text())
+    plan = coverage_plan()
+    ledger = json.loads((ROOT / 'tests/web/standard-ux-inventory-deltas.json').read_text())
     owners = {
         'delta.compact-composer': {'compact-composer', 'composer-panel-ownership'},
         'delta.peer-preview': {'peer-preview', 'peer-preview-header', 'peer-preview-focus'},
@@ -398,7 +442,7 @@ def test_compact_composer_peer_preview_and_artifact_keep_automatic_inventory_own
     # Register the maintained keyboard regression with its existing evidence
     # writer, not a duplicate journey or a claim that runtime checks passed.
     keyboard_path = 'frontend/tests/composer-panel-ownership-browser.mjs'
-    keyboard = (ROOT / keyboard_path).read_text()
+    keyboard = source_test(keyboard_path).read_text()
     assert "process.env.AMPLIFIER_TEST_ARTIFACTS||" in keyboard
     assert "output+'/result.json'" in keyboard
     assert '${output}/keyboard-settings-${width}.png' in keyboard
@@ -412,7 +456,7 @@ def test_compact_composer_peer_preview_and_artifact_keep_automatic_inventory_own
     for name, result_name in [('peer-preview-header', 'header-geometry.json'),
                               ('peer-preview-focus', 'focus-result.json')]:
         path = f'frontend/tests/{name}-browser.mjs'
-        source = (ROOT / path).read_text()
+        source = source_test(path).read_text()
         assert 'process.env.AMPLIFIER_PROOF_DIR' in source and result_name in source
         row, = [row for row in plan['scenarios'] if row['id'] == name]
         assert row['env'] == {'AMPLIFIER_PROOF_DIR': f'{{root}}/output/browser-checks/{name}'}
@@ -458,7 +502,9 @@ def test_workflow_keeps_independent_artifacts_and_one_full_python_owner():
     # Never replace failed-run diagnostics with a successful-build-only upload.
     # Exact names, count and paths also reject additional or overlapping uploads.
     build = next(step for step in steps if step.get('id') == 'frontend-build')
-    assert build['run'] == 'npm run build --prefix frontend'
+    assert 'if test -f tests/web/package.json; then' in build['run']
+    assert current_layout_commands(build['run']).strip() == 'python scripts/web_client_build.py build'
+    assert 'npm run build --prefix frontend' in build['run']
     assert steps.index(build) < steps.index(static)
     readiness = yaml.load((workflows / 'public-readiness.yml').read_text(), Loader=yaml.BaseLoader)
     readiness_commands = '\n'.join(step.get('run', '') for step in readiness['jobs']['critical']['steps'])
@@ -518,7 +564,7 @@ def test_destination_history_evidence_gate_rejects_incomplete_results(tmp_path, 
 @pytest.mark.parametrize('provider', ['provider-selection', 'provider-native'])
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'different-command', 'readiness-owner'])
 def test_provider_browser_additions_reject_missing_or_duplicate_ordinary_owner(provider, fault):
-    plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+    plan = coverage_plan()
     script = f'tests/{provider}-browser.mjs'
     rows = plan['scenarios']
     readiness_scripts = set()
@@ -560,7 +606,7 @@ def breadbin_browser_addition(rows, readiness_scripts):
                                   'missing-python', 'wrong-artifacts', 'managed-contract',
                                   'readiness-owner'])
 def test_breadbin_browser_addition_rejects_missing_duplicate_or_wrong_environment(fault):
-    plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+    plan = coverage_plan()
     rows = plan['scenarios']
     script = 'tests/ready-browser.mjs'
     owner, = [row for row in rows if row['id'] == 'ready']
@@ -587,7 +633,7 @@ def test_breadbin_browser_addition_rejects_missing_duplicate_or_wrong_environmen
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'different-command', 'readiness-owner',
                                  'missing-env', 'wrong-env', 'wrong-id', 'wrong-command'])
 def test_canvas_browser_additions_reject_changed_or_duplicate_ordinary_owner(canvas, fault):
-    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    rows = coverage_plan()['scenarios']
     script = f'tests/{canvas}-browser.mjs'
     owner = next(row for row in rows if row['id'] == canvas)
     readiness_scripts = set()
@@ -626,7 +672,7 @@ def delivery_warning_browser_addition(rows, readiness_scripts):
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'command', 'environment', 'readiness'])
 @pytest.mark.parametrize('name', ['delivery-warning', 'delivery-reconciliation', 'delivery-new-chat'])
 def test_delivery_warning_browser_owner_is_exact(fault, name):
-    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    rows = coverage_plan()['scenarios']
     owner = next(row for row in rows if row['id'] == name)
     readiness = set()
     if fault == 'missing':
@@ -686,7 +732,7 @@ def immediate_direction_browser_addition(rows, readiness_scripts):
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'command', 'identity',
                                   'python', 'evidence', 'readiness'])
 def test_immediate_direction_browser_owner_rejects_invalid_coverage(fault):
-    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    rows = coverage_plan()['scenarios']
     owner = next(row for row in rows if row['id'] == 'immediate-direction')
     readiness = set()
     if fault == 'missing':
@@ -720,7 +766,7 @@ def question_resume_browser_addition(rows, readiness_scripts):
 
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'environment', 'readiness'])
 def test_question_resume_owner_is_distinct(fault):
-    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    rows = coverage_plan()['scenarios']
     owner = next(row for row in rows if row['id'] == 'question-resume')
     readiness = set()
     if fault == 'missing': rows.remove(owner)
@@ -744,7 +790,7 @@ def navigation_waiting_browser_addition(rows, readiness_scripts):
 
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'environment', 'readiness'])
 def test_navigation_waiting_owner_is_distinct(fault):
-    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    rows = coverage_plan()['scenarios']
     owner = next(row for row in rows if row['id'] == 'navigation-waiting')
     readiness = set()
     if fault == 'missing': rows.remove(owner)
@@ -772,7 +818,7 @@ def context_inspector_browser_addition(rows, readiness_scripts):
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'environment', 'readiness'])
 @pytest.mark.parametrize('name', ['context-inspector', 'context-inspector-layout'])
 def test_context_inspector_browser_owner_is_distinct(fault, name):
-    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    rows = coverage_plan()['scenarios']
     owner = next(row for row in rows if row['id'] == name)
     readiness = set()
     if fault == 'missing': rows.remove(owner)
@@ -787,7 +833,7 @@ def test_context_inspector_browser_owner_is_distinct(fault, name):
                                   'missing-python', 'wrong-artifacts', 'managed-contract',
                                   'readiness-owner'])
 def test_question_fade_browser_addition_rejects_missing_duplicate_or_wrong_environment(fault):
-    plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+    plan = coverage_plan()
     rows = plan['scenarios']
     script = 'tests/question-transcript-fade-browser.mjs'
     owner, = [row for row in rows if row['id'] == 'question-transcript-fade']
@@ -814,11 +860,11 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     workflows = ROOT / '.github/workflows'
     readiness = yaml.load((workflows / 'public-readiness.yml').read_text(), Loader=yaml.BaseLoader)
     steps = readiness['jobs']['critical']['steps']
-    commands = [(index, line.strip()) for index, step in enumerate(steps)
-                for line in step.get('run', '').splitlines()]
+    commands = [(index, coverage_paths(line.strip())) for index, step in enumerate(steps)
+                for line in current_layout_commands(step.get('run', '')).splitlines()]
     readiness_scripts = {match.group(1) for _, line in commands
                          if (match := re.search(r'node (tests/[^ ]+-browser\.mjs)', line))}
-    plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+    plan = coverage_plan()
     extended_scripts = {row['command'][2 if row['command'][1] == '--test' else 1]
                         for row in plan['scenarios']}
     source_only = {f'tests/{name}-browser.mjs' for name in (
@@ -837,6 +883,23 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     assert appearance_preview in readiness_scripts
     assert appearance_preview not in extended_scripts
     assert sum(f'node {appearance_preview}' in line for _, line in commands) == 1
+    # These two existing installed journeys used ../tests/ and frontend/tests/
+    # spellings, outside the historical reader's `node tests/` match. Their new
+    # paths make them visible here; validate their sole owners before excluding
+    # them from the frozen counts below, without inventing two new journeys.
+    relocated_readiness = {
+        'tests/block-copy-browser.mjs': ('Check rendered block and saved source copying',
+                                         'node tests/block-copy-browser.mjs'),
+        'tests/inline-media-browser.mjs': ('Check retained inline media in installed package',
+                                           'node tests/web/inline-media-browser.mjs'),
+    }
+    for script, (owner, command) in relocated_readiness.items():
+        assert script in readiness_scripts and script not in extended_scripts
+        matches = [index for index, line in commands if f'node {script}' in line]
+        assert len(matches) == 1, f'{script}: missing or duplicate readiness owner'
+        step = steps[matches[0]]
+        assert step['name'] == owner
+        assert command in current_layout_commands(step['run'])
     # All 108 original scripts, three navigation regressions, confirmed restart,
     # Smart Tool recovery, archive feedback and appearance preview navigation
     # and sequential keyboard reflow, saved MCP recovery, device pairing, and media transition
@@ -917,7 +980,7 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     resume_addition = question_resume_browser_addition(plan['scenarios'], readiness_scripts)
     # Freeze all three prior counts; validate each new owner before subtracting
     # the additions so missing or duplicated coverage cannot disappear.
-    previous_scripts = ((readiness_scripts | extended_scripts) - {state_stream, update_delivery}
+    previous_scripts = ((readiness_scripts | extended_scripts) - relocated_readiness.keys() - {state_stream, update_delivery}
                         - provider_additions - breadbin_addition - canvas_additions - question_fade_addition - context_addition - immediate_addition - delivery_addition - waiting_addition - resume_addition)
     assert len(previous_scripts - {attachment, cancellation, shared_landing, tool_details, tool_previews, attachment_experience, pin_reorder, approval, dormant, shared_work} - feature_additions - voice_additions) == 146
     assert len(previous_scripts - {shared_work, 'tests/delegate-work-stream-browser.mjs', 'tests/client-traffic-browser.mjs'} - voice_additions) == 164
@@ -947,12 +1010,12 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
         value = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
         for job in value.get('jobs', {}).values():
             for step in job.get('steps', []):
-                if f'node {environment}' in step.get('run', ''):
+                if f'node {environment}' in coverage_paths(current_layout_commands(step.get('run', ''))):
                     owners.append((path.name, step))
     assert len(owners) == 1 and owners[0][0] == 'coordination.yml'
     assert owners[0][1]['env']['AMPLIFIER_TEST_OUTPUT_DIR'] == '${{ runner.temp }}/test-environments'
     coordination = yaml.load((workflows / 'coordination.yml').read_text(), Loader=yaml.BaseLoader)
-    assert 'frontend/' + environment in coordination['on']['pull_request']['paths']
+    assert environment.replace('tests/', 'tests/web/', 1) in coordination['on']['pull_request']['paths']
     assert any(step.get('if') == 'always()' and step.get('uses') == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
                and step.get('with', {}).get('path', '').splitlines() == [
                    '${{ runner.temp }}/test-environments',
@@ -962,13 +1025,13 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
 
 def test_attachment_focus_selects_exact_existing_owner_without_changing_plan():
     import copy
-    plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+    plan = current_plan()
     before = copy.deepcopy(plan)
     focused = runner.attachment_consumption_plan(plan)
     assert plan == before
     assert focused == {'schemaVersion': 1, 'scenarios': [{
         'id': 'attachment-consumption',
-        'command': ['node', 'tests/attachment-consumption-browser.mjs'],
+        'command': ['node', 'tests/web/attachment-consumption-browser.mjs'],
         'env': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/attachment-consumption'},
     }]}
     for mutation in ('missing', 'duplicate', 'command', 'environment'):
@@ -1012,18 +1075,18 @@ def test_attachment_focus_workflow_retains_failures_and_default_coverage():
 
 
 def test_reload_failure_diagnostics_have_retained_scenario_owners():
-    rows = {row['id']: row for row in json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']}
+    rows = {row['id']: row for row in coverage_plan()['scenarios']}
     for identity in ('canonical-work', 'canvas-media'):
         assert rows[identity]['env']['AMPLIFIER_TEST_ARTIFACTS'] == '{root}/output/browser-checks/' + identity
-    canvas = (ROOT / 'frontend/tests/canvas-media-browser.mjs').read_text()
+    canvas = (ROOT / 'tests/web/canvas-media-browser.mjs').read_text()
     assert "process.env.AMPLIFIER_TEST_ARTIFACTS" in canvas
     assert "outputDir+'/failure.json'" in canvas
-    canonical = (ROOT / 'frontend/tests/canonical-work-browser.mjs').read_text()
+    canonical = (ROOT / 'tests/web/canonical-work-browser.mjs').read_text()
     assert "join(outputDir,'failure-groups.json')" in canonical
 
 
 def test_performance_reports_are_distinct_and_uploaded():
-    rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
+    rows = coverage_plan()['scenarios']
     reports = {row['id']: row['env']['AMPLIFIER_PERF_EVIDENCE'] for row in rows
                if 'AMPLIFIER_PERF_EVIDENCE' in row.get('env', {})}
     assert len(set(reports.values())) == len(reports), 'A later scenario must not overwrite prior diagnostics'
@@ -1231,9 +1294,10 @@ def test_app004_fixed_commands_and_literal_twenty_three_identities():
         'checks': [
             {'id': 'units', 'status': 'unrun', 'reason': 'not_started', 'timeoutSeconds': 60,
              'command': ['node', '--test', '--test-reporter=tap', 'tests/chat-reference.test.mjs',
-                         'tests/message-copy.test.mjs', 'tests/chat-reference-harness.test.mjs']},
+                         'tests/message-copy.test.mjs', '../../tests/web/chat-reference-harness.test.mjs'],
+             'cwd': '.build/web-client'},
             {'id': 'reload-negative', 'status': 'unrun', 'reason': 'not_started', 'timeoutSeconds': 300,
-             'command': ['node', 'tests/chat-reference-browser.mjs']},
+             'command': ['node', 'tests/web/chat-reference-browser.mjs']},
         ],
     }
     assert tuple(map(len, APP004_EXPECTED_GROUPS)) == (12, 4, 7)
@@ -3090,3 +3154,102 @@ def test_cleanup_failure_receipt_wait_timeout_preserves_signal_progress(tmp_path
                                  'errorType': 'TimeoutExpired', 'pid': 91000, 'ownership': 'unknown'}
     assert report['scenarios'][1]['reason'] == 'unsafe_cleanup'
     assert 'SECRET' not in json.dumps(receipt)
+
+
+def owned_registry_fixture(tmp_path):
+    host = tmp_path / 'tests/web/browser-checks.json'
+    client = tmp_path / 'components/web-client/tests/browser-checks.json'
+    selection = tmp_path / 'components/web-client.source.json'
+    host.parent.mkdir(parents=True)
+    client.parent.mkdir(parents=True)
+    host.write_text(json.dumps({'schemaVersion': 1, 'scenarioOrder': ['client-case', 'host-case'],
+                                'scenarios': [scenario('host-case', 'pass')]}))
+    client.write_text(json.dumps({'schemaVersion': 1, 'scenarios': [
+        {**scenario('client-case', 'pass'), 'env': {'PROOF': '{root}/output/client'}}]}))
+    selection.write_text(json.dumps({'delivery': {'type': 'directory', 'path': 'components/web-client'}}))
+    return host, client, selection
+
+
+def test_split_registry_initialization_preserves_order_and_binds_both_sources(tmp_path):
+    host, client, selection = owned_registry_fixture(tmp_path)
+    plan, proof = runner.load_plan(tmp_path, host)
+    assert [row['id'] for row in plan['scenarios']] == ['client-case', 'host-case']
+    assert plan['scenarios'][0]['cwd'] == '.build/web-client'
+    assert plan['scenarios'][0]['env'] == {'PROOF': '{root}/output/client'}
+    assert 'cwd' not in plan['scenarios'][1]
+    assert proof['registrySha256'] == {'unified': runner.digest(host), 'client': runner.digest(client)}
+    assert proof['clientSelectionSha256'] == runner.digest(selection)
+    assert not (tmp_path / '.build').exists(), 'Reading initial coverage must not prepare or execute the client'
+
+
+@pytest.mark.parametrize('fault', ['missing-client', 'duplicate-id', 'missing-order-id', 'duplicate-order-id', 'stale-prepared'])
+def test_split_registry_never_falls_back_or_loses_coverage(tmp_path, fault):
+    host, client, selection = owned_registry_fixture(tmp_path)
+    if fault == 'missing-client':
+        client.unlink()
+    elif fault == 'duplicate-id':
+        client.write_text(json.dumps({'schemaVersion': 1, 'scenarios': [scenario('host-case', 'pass')]}))
+    elif fault in {'missing-order-id', 'duplicate-order-id'}:
+        plan = json.loads(host.read_text())
+        plan['scenarioOrder'] = ['host-case'] if fault == 'missing-order-id' else ['host-case', 'host-case']
+        host.write_text(json.dumps(plan))
+    else:
+        prepared = tmp_path / '.build/web-client'
+        prepared.mkdir(parents=True)
+        (prepared / '.client-source.json').write_text('{}')
+    with pytest.raises((ValueError, FileNotFoundError)):
+        runner.load_plan(tmp_path, host)
+
+
+def test_repository_delivery_requires_prepared_registry_and_records_actual_bytes(tmp_path):
+    host, _, selection = owned_registry_fixture(tmp_path)
+    selection.write_text(json.dumps({'delivery': {'type': 'repository', 'repository': 'example.invalid/client'}}))
+    with pytest.raises(ValueError, match='Prepare the selected repository'):
+        runner.load_plan(tmp_path, host)
+    prepared = tmp_path / '.build/web-client'
+    (prepared / 'tests').mkdir(parents=True)
+    (prepared / '.client-source.json').write_bytes(selection.read_bytes())
+    registry = prepared / 'tests/browser-checks.json'
+    registry.write_text(json.dumps({'schemaVersion': 1, 'scenarios': [scenario('client-case', 'pass')]}))
+    plan, proof = runner.load_plan(tmp_path, host)
+    assert proof['registrySha256']['client'] == runner.digest(registry)
+    assert plan['scenarios'][0]['id'] == 'client-case'
+
+
+def test_only_explicit_historical_registry_selects_legacy_working_directory(tmp_path):
+    legacy = tmp_path / 'frontend/tests/browser-checks.json'
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps({'schemaVersion': 1, 'scenarios': [scenario('legacy', 'pass')]}))
+    plan, proof = runner.load_plan(tmp_path, legacy)
+    assert plan['scenarios'][0]['cwd'] == 'frontend'
+    assert proof['browserLayout'] == 'legacy-frontend'
+    custom = tmp_path / 'custom.json'
+    custom.write_bytes(legacy.read_bytes())
+    plan, proof = runner.load_plan(tmp_path, custom)
+    assert 'cwd' not in plan['scenarios'][0] and 'browserLayout' not in proof
+
+
+def test_runner_executes_each_explicit_owner_cwd_without_changing_environment_root(tmp_path):
+    source = 'import os;from pathlib import Path;print(Path.cwd());print(os.environ["PROOF"])'
+    host = {**scenario('host-owner', source), 'env': {'PROOF': '{root}/output/host'}}
+    client = {**scenario('client-owner', source), 'cwd': '.build/web-client',
+              'env': {'PROOF': '{root}/output/client'}}
+    code, report, output = execute(tmp_path, [host, client])
+    assert code == 0 and report['passed']
+    assert (output / 'host-owner.log').read_text().splitlines() == [str(tmp_path), str(tmp_path / 'output/host')]
+    assert (output / 'client-owner.log').read_text().splitlines() == [str(tmp_path / '.build/web-client'), str(tmp_path / 'output/client')]
+    assert all(row['cleanup'] == {'remaining': [], 'terminated': 0} for row in report['scenarios'])
+
+
+def test_current_composed_registry_owns_every_executable_and_both_mixed_suites():
+    plan = current_plan()
+    assert len(plan['scenarios']) == len({row['id'] for row in plan['scenarios']}) == 145
+    assert sum(row.get('cwd') == '.build/web-client' for row in plan['scenarios']) == 12
+    for row in plan['scenarios']:
+        for part in row['command']:
+            if part.endswith('.mjs'):
+                assert source_test(coverage_paths(part)).is_file(), (row['id'], part)
+    mixed = next(row for row in plan['scenarios'] if row['id'] == 'configuration-recovery-components')
+    assert mixed['cwd'] == '.build/web-client'
+    assert mixed['command'] == ['node', '--test', 'tests/configuration-recovery.test.mjs',
+                                '../../tests/web/configuration-recovery-observer.test.mjs']

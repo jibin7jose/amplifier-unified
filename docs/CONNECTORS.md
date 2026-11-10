@@ -137,10 +137,10 @@ fixture, PKCE/resource checks, refresh, denial, cancellation, wrong/replayed cal
 private storage, missing/invalid credentials, visibility, schema bounds, stale queued
 calls, abrupt child death, package dependencies and existing app authentication.
 
-`npm --prefix frontend run test:connectors-browser` starts the production aiohttp host
+`npm --prefix tests/web run test:connectors-browser` starts the production aiohttp host
 and production assets with a local MCP/OAuth fixture. It checks configure-without-connect,
 explicit consent, user and agent calls, progressive schema loading, stale-call denial,
 reconnect, forget/cancel, desktop/mobile layout and preserved conversation/draft.
-`npm --prefix frontend run test:smart-tools-browser` retains the MCP Apps regression.
+`npm --prefix tests/web run test:smart-tools-browser` retains the MCP Apps regression.
 Real-account interoperability, provider-specific consent screens and remote HTTPS
 deployments remain untested; this is not a brand conformance claim.

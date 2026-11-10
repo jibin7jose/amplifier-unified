@@ -194,7 +194,10 @@ Published wheels and source archives (`.tar.gz` release assets) include the buil
 web client. Installing either format needs no Node.js, npm or frontend download;
 Python and runtime dependencies are still resolved normally. A raw Git checkout
 is a development source tree: rebuilding or changing its client requires Node.js
-and npm. See the [development setup](CONTRIBUTING.md#development-setup).
+and npm. See the [development setup](CONTRIBUTING.md#development-setup) and
+[web client ownership guide](components/README.md). Client source and tests are
+maintained in [amplifier-client-web](https://github.com/microsoft/amplifier-client-web);
+Unified selects and packages a tested component with its host.
 
 After installation, open **Settings → Updates** to check for and install updates,
 review any failed checks, or choose the automatic check interval. See the

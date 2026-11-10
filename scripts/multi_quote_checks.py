@@ -85,8 +85,8 @@ def main():
     units = ['multi-quote', 'markdown-composer', 'draft-attach', 'draft-journal',
              'pending-view', 'message-render-stability', 'message-reaction-feedback', 'composer',
              'message-quote-selection', 'canvas-reference']
-    unit_code, _ = run('model-units', ['node', '--test', *['tests/' + name + '.test.mjs' for name in units]], cwd=ROOT / 'frontend')
-    model = ROOT / 'frontend/src/markdown-composer.js'
+    unit_code, _ = run('model-units', ['node', '--test', *['tests/' + name + '.test.mjs' for name in units]], cwd=ROOT / '.build/web-client')
+    model = ROOT / '.build/web-client/src/markdown-composer.js'
     original = model.read_bytes()
     if unit_code == 0:
         before = 'if(direction===0)tr=tr.delete(here.pos,here.pos+here.node.nodeSize);'
@@ -94,7 +94,7 @@ def main():
         try:
             model.write_text(original.decode().replace(before, 'if(direction===0){tr=tr.delete(here.pos,here.pos+here.node.nodeSize);tr=tr.delete(1,2);}'))
             code, text = run('negative-commentary-removal', ['node', '--test', '--test-name-pattern=three references accumulate',
-                'tests/multi-quote.test.mjs'], cwd=ROOT / 'frontend', expected=1)
+                'tests/multi-quote.test.mjs'], cwd=ROOT / '.build/web-client', expected=1)
             results[-1]['passed'] = code == 1 and 'quote removal preserves every commentary segment' in text
             results[-1]['namedAssertion'] = 'quote removal preserves every commentary segment'
         finally:
@@ -103,7 +103,7 @@ def main():
         results[-1]['restoredSha256'] = sha(original)
         results[-1]['passed'] &= results[-1]['sourceRestored']
         save()
-        mapping = ROOT / 'frontend/src/message-quote-selection.js'
+        mapping = ROOT / '.build/web-client/src/message-quote-selection.js'
         mapping_original = mapping.read_bytes()
         before = b"source.slice(at,node.type==='text'?end:at+value.length)!==value"
         assert mapping_original.count(before) == 1
@@ -111,7 +111,7 @@ def main():
         try:
             mapping.write_bytes(mapping_mutant)
             code, text = run('negative-selection-mapping', ['node', '--test', '--test-name-pattern=unsupported entities',
-                'tests/message-quote-selection.test.mjs'], cwd=ROOT / 'frontend', expected=1)
+                'tests/message-quote-selection.test.mjs'], cwd=ROOT / '.build/web-client', expected=1)
             results[-1]['passed'] = code == 1 and 'first **&amp;** last' in text
             results[-1]['namedAssertion'] = 'first **&amp;** last'
         finally:
@@ -125,26 +125,26 @@ def main():
         results.append({'name': 'negative-commentary-removal', 'passed': False, 'status': 'not-run', 'reason': 'Baseline units failed'})
         results.append({'name': 'negative-selection-mapping', 'passed': False, 'status': 'not-run', 'reason': 'Baseline units failed'})
         save()
-    build, _ = run('production-build', ['npm', 'run', 'build', '--prefix', 'frontend'])
+    build, _ = run('production-build', [sys.executable, 'scripts/web_client_build.py', 'build'])
     browser_env = {**os.environ, 'AMPLIFIER_TEST_PYTHON': sys.executable,
                    'AMPLIFIER_PROOF_DIR': str(output / 'source-browser')}
     ordinary_env = {key: value for key, value in browser_env.items() if key != 'AMPLIFIER_QUOTE_REFERENCE'}
     if build == 0:
-        browser_code, _ = run('source-browser', ['node', 'frontend/tests/multi-quote-browser.mjs'], env=browser_env)
+        browser_code, _ = run('source-browser', ['node', 'tests/web/multi-quote-browser.mjs'], env=browser_env)
         if browser_code == 0:
             # Hide only the header: preserve its geometry so the unchanged
             # visible-excerpt/hit-test assertion, not a bounds error, must fail.
-            css = ROOT / 'frontend/src/message-interactions.css'
+            css = ROOT / '.build/web-client/src/message-interactions.css'
             css_original = css.read_bytes()
             before = b'#amp-one .a-composer-quote-head{display:flex;'
             assert css_original.count(before) == 1
             css_mutant = css_original.replace(before, before + b'visibility:hidden;')
             try:
                 css.write_bytes(css_mutant)
-                negative_build, _ = run('negative-quote-alignment-build', ['npm', 'run', 'build:development', '--prefix', 'frontend'])
+                negative_build, _ = run('negative-quote-alignment-build', [sys.executable, 'scripts/web_client_build.py', 'build-development'])
                 negative_proof = output / 'negative-quote-alignment'
                 if negative_build == 0:
-                    code, _ = run('negative-quote-alignment', ['node', 'frontend/tests/multi-quote-browser.mjs'],
+                    code, _ = run('negative-quote-alignment', ['node', 'tests/web/multi-quote-browser.mjs'],
                                   env={**ordinary_env, 'AMPLIFIER_PROOF_DIR': str(negative_proof)}, expected=1)
                     named = 'first quote scrolled: visible quote has reachable source/move/remove controls'
                     failure_path = negative_proof / 'failure.json'
@@ -169,10 +169,10 @@ def main():
             assert model_original.decode().count(before) == 1
             try:
                 model.write_text(model_original.decode().replace(before, 'TextSelection.atStart(view.state.doc)'))
-                negative_build, _ = run('negative-interleaving-build', ['npm', 'run', 'build:development', '--prefix', 'frontend'])
+                negative_build, _ = run('negative-interleaving-build', [sys.executable, 'scripts/web_client_build.py', 'build-development'])
                 negative_env = {**ordinary_env, 'AMPLIFIER_PROOF_DIR': str(output / 'negative-interleaving')}
                 if negative_build == 0:
-                    code, text = run('negative-interleaving', ['node', 'frontend/tests/multi-quote-browser.mjs'],
+                    code, text = run('negative-interleaving', ['node', 'tests/web/multi-quote-browser.mjs'],
                                      env=negative_env, expected=1)
                     results[-1]['passed'] = code == 1 and 'between typed: exact commentary/quote DOM order' in text
                     results[-1]['namedAssertion'] = 'between typed: exact commentary/quote DOM order'
@@ -183,9 +183,9 @@ def main():
             save()
             # One normal rebuild after both independent browser mutants also
             # removes their generated assets before the restored/installed checks.
-            build, _ = run('restored-production-build', ['npm', 'run', 'build', '--prefix', 'frontend'])
+            build, _ = run('restored-production-build', [sys.executable, 'scripts/web_client_build.py', 'build'])
             if build == 0:
-                run('restored-source-browser', ['node', 'frontend/tests/multi-quote-browser.mjs'],
+                run('restored-source-browser', ['node', 'tests/web/multi-quote-browser.mjs'],
                     env={**ordinary_env, 'AMPLIFIER_PROOF_DIR': str(output / 'restored-source-browser')})
         else:
             results.append({'name': 'negative-quote-alignment', 'passed': False,
@@ -199,7 +199,9 @@ def main():
     if build == 0:
         # Exercise the ordinary source owners through the unchanged standard
         # runner. Derive rows from the accepted plan, never a parallel command list.
-        plan = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())
+        from browser_check_runner import load_plan
+        plan, registry_source = load_plan(ROOT, ROOT / 'tests/web/browser-checks.json')
+        (output / 'registry-source.json').write_text(json.dumps(registry_source, indent=2))
         names = {'multi-quote', 'compact-composer'}
         rows = [row for row in plan['scenarios'] if row['id'] in names]
         assert len(rows) == len(names) and {row['id'] for row in rows} == names
@@ -285,7 +287,7 @@ print(json.dumps(identity))
                 env.update(AMPLIFIER_TEST_PYTHON=str(python), AMPLIFIER_QUOTE_FIXTURE=str(fixtures / 'message_interactions_ui_server.py'),
                            AMPLIFIER_FIXTURE_CWD=str(outside), AMPLIFIER_PROOF_DIR=str(output / 'installed-browser'),
                            AMPLIFIER_TEST_PACKAGE_ROOT=installed_root)
-                installed_code, text = run('installed-browser', ['node', str(ROOT / 'frontend/tests/multi-quote-browser.mjs')], cwd=outside, env=env)
+                installed_code, text = run('installed-browser', ['node', str(ROOT / 'tests/web/multi-quote-browser.mjs')], cwd=outside, env=env)
                 identities = []
                 for line in text.splitlines():
                     try:

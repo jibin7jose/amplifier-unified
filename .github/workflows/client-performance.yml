@@ -6,7 +6,7 @@ on:
     paths:
       - 'components/web-client.source.json'
       - 'scripts/web_client_*.py'
-      - 'frontend/commands.json'
+      - 'components/web-client/commands.json'
       - 'amplifier_web/browser_*.py'
       - 'amplifier_web/attention.py'
       - 'amplifier_web/directory_attention.py'
@@ -19,8 +19,8 @@ on:
       - 'amplifier_web/server_websocket.py'
       - 'amplifier_web/service.py'
       - 'components/web-client/src/main.jsx'
-      - 'frontend/package.json'
-      - 'frontend/package-lock.json'
+      - 'tests/web/package.json'
+      - 'tests/web/package-lock.json'
       - 'pyproject.toml'
       - 'uv.lock'
       - 'tests/test_browser_demand.py'
@@ -30,11 +30,11 @@ on:
       - 'tests/test_state_transport.py'
       - 'tests/fixtures/empty_host_ui_server.py'
       - 'tests/fixtures/configured_browser.py'
-      - 'frontend/tests/browser-chat-pages.mjs'
+      - 'tests/web/browser-chat-pages.mjs'
       - 'components/web-client/src/state-*.js'
       - 'components/web-client/src/view-reporter.js'
-      - 'frontend/tests/client-traffic-browser.mjs'
-      - 'frontend/tests/state-revision-presentation.test.mjs'
+      - 'tests/web/client-traffic-browser.mjs'
+      - 'components/web-client/tests/state-revision-presentation.test.mjs'
       - 'tests/fixtures/client_traffic_server.py'
       - '.github/workflows/client-performance.yml'
   workflow_dispatch:
@@ -57,11 +57,15 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            tests/web/package-lock.json
+            components/web-client.source.json
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
-      - run: npm ci --prefix frontend
+        run: |
+          python scripts/web_client_build.py prepare
+      - run: |
+          npm ci --prefix .build/web-client
+          npm ci --prefix tests/web
       - name: Record source and synthetic qualification limits
         run: |
           mkdir -p output/client-performance
@@ -75,18 +79,21 @@ jobs:
           tests/test_state_transport.py tests/test_browser_check_runner.py
           --junitxml=output/client-performance/python.xml
       - name: Presentation and view-report boundaries
-        working-directory: frontend
+        working-directory: .build/web-client
         run: node --test tests/state-revision-presentation.test.mjs tests/state-transport.test.mjs tests/view-reporter.test.mjs
       - name: Notice counts and demanded detail work
         run: >-
           uv run --no-sync pytest -q -s tests/test_attention_demand.py
           --junitxml=output/client-performance/attention.xml
-      - run: npm run build --prefix frontend
-      - run: npx --prefix frontend playwright install --with-deps chromium
+      - run: |
+          python scripts/web_client_build.py build
+      - run: |
+          npx --prefix tests/web playwright install --with-deps chromium
       - name: Observe idle updates, historical growth, panels and reconnect
         env:
           AMPLIFIER_TEST_ARTIFACTS: ${{ github.workspace }}/output/client-performance/browser
-        run: node frontend/tests/client-traffic-browser.mjs
+        run: |
+          node tests/web/client-traffic-browser.mjs
       - name: Retain bounded diagnostics including failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

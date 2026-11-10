@@ -90,12 +90,13 @@ uv sync --locked --group dev
   tests/test_pinned_chats.py tests/test_questions.py tests/test_observations.py \
   tests/test_server_auth.py tests/test_storage_workspace_scope.py
 .venv/bin/python tests/fixtures/client_observation_benchmark.py
-cd frontend
-npm ci
-npm run build
-node --test tests/chat-deep-link.test.mjs
-DTU_CHROMIUM_SINGLE_PROCESS=1 node tests/companion-browser.mjs
-DTU_CHROMIUM_SINGLE_PROCESS=1 node tests/observations-browser.mjs
+python scripts/web_client_build.py prepare
+npm ci --prefix .build/web-client
+npm ci --prefix tests/web
+python scripts/web_client_build.py build
+node --test .build/web-client/tests/chat-deep-link.test.mjs
+DTU_CHROMIUM_SINGLE_PROCESS=1 node tests/web/companion-browser.mjs
+DTU_CHROMIUM_SINGLE_PROCESS=1 node tests/web/observations-browser.mjs
 ```
 
 Node 22 and Playwright Chromium are required. Separate browser instances are used

@@ -218,7 +218,7 @@ selection also exposes that action directly. See the
 [saved MCP contract review contract](clients/mcp-contract-review.md) and
 [October17 qualification](validation/mcp-contract-review-20261017.md).
 
-Local acceptance: `npm --prefix frontend run test:mcp-recovery-browser` uses an
+Local acceptance: `npm --prefix tests/web run test:mcp-recovery-browser` uses an
 actual MCP SDK fixture and restarts the host over isolated synthetic state. It
 checks source identity, launch receipts, mutation counts, input preservation,
 cooperative safe-read recovery, deliberate historical selection and changed-schema
@@ -268,7 +268,7 @@ for installed code. Tool metadata and rendered content remain untrusted data.
 `pytest tests/test_smart_tools.py tests/test_smart_canvas.py tests/test_connector_lifecycle.py` covers real SDK subprocess
 calls, visibility, environment isolation, schema/resource validation, timeouts,
 configuration races, restart and duplicate receipts, durable paging, and canvas bindings.
-`npm --prefix frontend run test:smart-tools-browser` uses an unfamiliar independent
+`npm --prefix tests/web run test:smart-tools-browser` uses an unfamiliar independent
 MCP App and the real host to verify rendering, shared state, nested-message isolation,
 reopen behavior, and stale configuration failures without provider calls.
 
@@ -295,7 +295,7 @@ or the page returns to the foreground. This is a read-only availability check: i
 does not reload the frame, discard unfinished input, reconnect automatically, or
 replay the launch tool. Reconnect remains an explicit user/agent action.
 
-`frontend/tests/mcp-clients-browser.mjs` exercises independent desktop and mobile-
+`tests/web/mcp-clients-browser.mjs` exercises independent desktop and mobile-
 sized clients, stale status replies, foreground return and cross-client reconnect.
 The extended browser runner owns it as `mcp-clients`, alongside `mcp-recovery`.
 Its empty-account fixture waits for completed connection discovery and dismisses

@@ -550,8 +550,8 @@ def test_root_evidence_copy_cannot_widen_receipt_directory(tmp_path, monkeypatch
 
 def test_pwa_preflight_records_effective_environment_and_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(adapter, 'GUEST', tmp_path)
-    (tmp_path / 'candidate/frontend').mkdir(parents=True)
-    (tmp_path / 'candidate/frontend/package-lock.json').write_text(json.dumps({
+    (tmp_path / 'candidate/tests/web').mkdir(parents=True)
+    (tmp_path / 'candidate/tests/web/package-lock.json').write_text(json.dumps({
         'packages': {'node_modules/playwright': {'version': '1.63.0'}}}))
     python = tmp_path / '.venv/bin/python'
     original = {'actual_interpreter': str(python), 'interpreter': '/unused/env/bin/python',
@@ -685,7 +685,7 @@ def test_fixed_product_waits_for_changed_helper_contracts(monkeypatch, tmp_path,
         assert result['testExit'] is None
 
 
-def test_residual_helper_expected_counts_match_the_two_unchanged_modules():
+def test_residual_helper_expected_counts_match_the_two_current_modules():
     import ast
     for module, expected in adapter.RESIDUAL_HELPER_COUNTS.items():
         tree = ast.parse((ROOT / (module.replace('.', '/') + '.py')).read_text())

@@ -21,7 +21,7 @@ and [SDK types](../../packages/shell-sdk/index.d.ts). Start from:
    host and mark unsaved edits dirty; arbitrary component-local state does not
    migrate automatically.
 3. Compile one self-contained ESM artifact within the host's size limit. In a
-   source checkout the example build scripts are under `frontend/scripts/`.
+   source checkout the example build scripts are under `scripts/examples/`.
    Installed SDK/examples can also be built with an external compatible
    toolchain. Keep compiler output separate from installed reference files.
 4. Stage the manifest and exact compiled source with `shell.packages.stage`.

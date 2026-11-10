@@ -101,10 +101,11 @@ def prepare(root, version, notes_file, build=False):
             json.dumps(item, ensure_ascii=False, separators=(',', ':')) for item in history['releases']) + '\n  ]\n}\n'
     validator.parse(updated[names[3]], version)
 
+    from historical_web_layout import build_command
+    command = build_command(root)
     changed = [name for name in names if updated[name] != original[name]]
     for name in changed:
         (root / name).write_text(updated[name])
-    command = ['npm', 'run', 'build', '--prefix', 'frontend']
     result = {'version': version, 'changedFiles': changed, 'buildCommand': command, 'buildStatus': 'not-run'}
     if build:
         started = time.monotonic()

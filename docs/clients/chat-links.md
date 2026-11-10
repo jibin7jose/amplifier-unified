@@ -18,8 +18,8 @@ Host and Origin protections continue to apply. Do not put credentials or command
 in the link. The parser accepts only a nonempty chat ID up to 200 characters with
 no control characters; the host resolves and validates its actual availability.
 
-Acceptance: `frontend/tests/chat-deep-link.test.mjs` and
-`frontend/tests/companion-browser.mjs` cover parsing, exact target, query cleanup,
+Acceptance: `components/web-client/tests/chat-deep-link.test.mjs` and
+`tests/web/companion-browser.mjs` cover parsing, exact target, query cleanup,
 reload, independent windows, missing/deleted targets, sign-in, and no submitted
 turn or ordinary-browser companion polling. Run application/browser tests only
 in the project's owned DTU.
@@ -86,7 +86,7 @@ automatically converted. `outputs.unlink` removes the card from display without
 deleting the record; relinking changes its revision, invalidating old click proofs.
 
 Qualification: `tests/test_chat_references.py`,
-`frontend/tests/chat-reference-browser.mjs`, and the copy tests cover the intended
+`tests/web/chat-reference-browser.mjs`, and the copy tests cover the intended
 boundaries. `CHAT_REFERENCE_NEGATIVE_RELOAD=1` deliberately replaces a genuine
 card click with a reload and must fail the same-document check. Source-only
 implementation is not acceptance: execute these checks, rendered keyboard/mobile

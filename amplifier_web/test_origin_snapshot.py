@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 from tempfile import NamedTemporaryFile, TemporaryDirectory, TemporaryFile
 import time
@@ -17,7 +18,11 @@ import uuid
 from typing import BinaryIO
 import zlib
 
-from .test_origin_files import source_file, directory
+if __package__:
+    from .test_origin_files import source_file, directory
+else:  # The managed DTU interpreter invokes this installed owner with -I.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_origin_files import source_file, directory
 
 # Working-tree algorithm adapted from the MIT-licensed DTU snapshot exporter
 # (5235833098d9a630791452a46558d92f58af0389). No installed runner is needed.
@@ -143,9 +148,34 @@ def _selection(git: Git, source: Path, index: bytes) -> dict[str, tuple[str, str
     for name in git.run(source, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
         if name:
             selected[os.fsdecode(name)] = ("", "")
+    for name in prepared_client_inputs(source):
+        selected[name] = ('100644', '')
     if len(selected) > MAX_FILES:
         raise _error("repository-snapshot-limit", f"Repository snapshot exceeds {MAX_FILES} selected files.")
     return selected
+
+
+def prepared_client_inputs(source):
+    """Carry only prepared dependency inputs for an exact repository delivery."""
+    selected = source_file(source, 'components/web-client.source.json', '', 16 * 1024)
+    if selected is None or selected[0] == '120000':
+        return ()
+    record = json.loads(selected[1])
+    if record.get('delivery', {}).get('type') != 'repository':
+        return ()
+    prefix = '.build/web-client/'
+    names = tuple(prefix + name for name in ('package.json', 'package-lock.json', '.client-source.json'))
+    values = {}
+    for name in names:
+        content = source_file(source, name, '100644', 16 * 1024 * 1024)
+        if content is None or content[0] != '100644':
+            raise ValueError('Prepare the selected client before transferring source: '
+                             'python scripts/web_client_build.py prepare')
+        values[name] = content[1]
+    if json.loads(values[prefix + '.client-source.json']) != record:
+        raise ValueError('Prepared client inputs belong to another selection; run '
+                         'python scripts/web_client_build.py prepare before transferring source.')
+    return names
 
 
 
@@ -317,3 +347,10 @@ def export_archive(source: Path, destination: Path) -> dict:
         raise _error('snapshot-destination-inside-source', 'Keep snapshot output outside the source checkout.')
     with directory(source), directory(destination.parent, private=True) as parent:
         return _export_archive(source, destination, parent)
+
+
+if __name__ == '__main__':
+    try:
+        print(json.dumps(export_archive(Path(sys.argv[1]), Path(sys.argv[2]))))
+    except (OSError, ValueError) as error:
+        raise SystemExit(str(error)) from error

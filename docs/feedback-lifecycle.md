@@ -266,7 +266,7 @@ remains active, late acceptance before/after reload and restart, forged/mutated
 bindings, submitted versus sanitized names and sniffed MIME, report isolation,
 retained bounded history and inherited concurrent reconciliation without owner
 selection cleanup. Old strict phase/response-loss assertions remain unchanged.
-`frontend/tests/feedback-additions-browser.mjs` is explicitly a **component unit
+`components/web-client/tests/feedback-additions-browser.mjs` is explicitly a **component unit
 fixture with a synthetic host**, including complete-intent acknowledgement fences
 and copied read-only UI; it is not an installed HTTP/SSE test. These tests have
 only been syntax-checked, not executed in this source lane.

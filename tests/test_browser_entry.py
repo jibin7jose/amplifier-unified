@@ -304,7 +304,7 @@ async def test_real_app_routes_and_static_parity_without_listener(tmp_path, monk
         assert response.status == 200
         root = Path(entry.__file__).parent.parent
         delivery = json.loads((root / "components/web-client.source.json").read_text())["delivery"]
-        client = root / delivery["path"] if delivery["type"] == "directory" else root / "frontend/.client"
+        client = root / delivery["path"] if delivery["type"] == "directory" else root / ".build/web-client"
         for name in ("browser-entry.js", "windows-login.html"):
             assert (client / "public" / name).read_bytes() == (root / "amplifier_web/static" / name).read_bytes()
     finally:

@@ -70,10 +70,9 @@ tool/no-response refusal, exact generation/config revision and private-draft rel
 without replay. This is not a paid-provider or deployed-demo acceptance claim.
 
 ```sh
-cd frontend
 AMPLIFIER_TEST_PYTHON=/path/to/qualified-runtime/bin/python \
   AMPLIFIER_DIRECTION_EVIDENCE=/path/to/new-evidence \
-  npm run test:immediate-direction-browser
+  npm run test:immediate-direction-browser --prefix tests/web
 ```
 
 ### Same-instance human demo acceptance plan

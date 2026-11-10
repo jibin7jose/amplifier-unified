@@ -528,7 +528,7 @@ class ShellModules:
             record = self.get('package', digest)
             fingerprint = self.host_fingerprint()
         root = Path(__file__).parent.parent
-        toolchain = Path(os.environ.get('AMPLIFIER_SHELL_NODE_MODULES', root / 'frontend/node_modules')).resolve()
+        toolchain = Path(os.environ.get('AMPLIFIER_SHELL_NODE_MODULES', root / '.build/web-client/node_modules')).resolve()
         node = shutil.which('node')
         if not node or not (toolchain / 'playwright').is_dir() or not (Path(__file__).parent / 'static/shell-validation.html').exists():
             fail('Host validation requires Node, Playwright with Chromium, and a production frontend build. No module was approved.', 503)

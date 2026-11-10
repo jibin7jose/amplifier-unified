@@ -47,13 +47,15 @@ class SourceContextTests(unittest.TestCase):
 
     def test_authored_inputs_and_maintained_ledgers_are_not_generated(self):
         expected = {
-            'frontend/public/pwa.js': 'source',
-            'frontend/src/state-stream.js': 'source',
+            'amplifier_web/browser_entry.py': 'source',
+            'amplifier_web/host/storage.py': 'source',
             'docs/shell/appearance-contract.md': 'documentation',
             'contracts/client-state.v1.md': 'contracts',
             'skills/example/SKILL.md': 'guidance',
-            'frontend/tests/standard-ux-inventory-deltas.json': 'tests',
-            'frontend/tests/standard-ux-completion-policy.json': 'tests',
+            'tests/web/standard-ux-inventory-deltas.json': 'tests',
+            'tests/web/standard-ux-completion-policy.json': 'tests',
+            'tests/web/fixture-lifecycle.mjs': 'tests',
+            'tests/web/package.json': 'configuration',
             'docs/validation/performance.md': 'documentation',
             'docs/validation/current-followup-20261015.md': 'documentation',
             'tests/fixtures/library-performance.md': 'documentation',
@@ -72,8 +74,9 @@ class SourceContextTests(unittest.TestCase):
         self.assertTrue(set(expected) <= {row['path'] for row in json.loads(result.stdout)})
 
     def test_generated_evidence_and_locks_are_opt_in_but_summary_accounts_for_them(self):
-        names = ['amplifier_web/static/app.js', 'frontend/tests/standard-ux-controls.json',
-                 'frontend/tests/standard-ux-inventory.json', 'assets/branding/icon.png', 'uv.lock',
+        names = ['amplifier_web/static/app.js', 'tests/web/standard-ux-controls.json',
+                 'tests/web/standard-ux-inventory.json', 'tests/web/package-lock.json',
+                 'assets/branding/icon.png', 'uv.lock',
                  'tests/fixtures/model_catalog_candidates.json',
                  'docs/workspaces/evidence/collaboration-fable-assets.json',
                  'docs/workspaces/evidence/collaboration-fable-results.json',
@@ -95,7 +98,8 @@ class SourceContextTests(unittest.TestCase):
     def test_copied_client_is_opt_in_but_its_selection_and_owner_stay_visible(self):
         guides = ['components/README.md', 'components/AGENTS.md', 'components/web-client.source.json']
         copied = ['components/web-client/README.md', 'components/web-client/package.json',
-                  'components/web-client/src/app.js', 'components/web-client/tests/app.test.mjs']
+                  'components/web-client/src/app.js', 'components/web-client/public/pwa.js',
+                  'components/web-client/tests/app.test.mjs']
         self.add(*guides, *copied)
         visible = {row['path'] for row in json.loads(self.cli('--format', 'json').stdout)}
         self.assertTrue(set(guides) <= visible)
@@ -105,22 +109,22 @@ class SourceContextTests(unittest.TestCase):
         self.assertTrue(all(row['kind'] == 'generated' for row in selected))
 
     def test_unclassified_invalid_and_unset_attributes_remain_visible(self):
-        self.add('future/owner.py', 'frontend/invalid.js', 'frontend/unset.js', 'contracts/current.md')
+        self.add('future/owner.py', 'tests/web/invalid.mjs', 'tests/web/unset.mjs', 'contracts/current.md')
         with (self.root / '.gitattributes').open('a') as handle:
-            handle.write('\n/frontend/invalid.js source-context=typo\n/frontend/unset.js !source-context\n')
+            handle.write('\n/tests/web/invalid.mjs source-context=typo\n/tests/web/unset.mjs !source-context\n')
         rows = json.loads(self.cli('--format', 'json').stdout)
         unknown = {row['path'] for row in rows if row['kind'] == 'unclassified'}
-        self.assertEqual(unknown, {'future/owner.py', 'frontend/invalid.js', 'frontend/unset.js'})
+        self.assertEqual(unknown, {'future/owner.py', 'tests/web/invalid.mjs', 'tests/web/unset.mjs'})
         result = self.cli('--check', '--format', 'json', '--kind', 'contracts', '--under', 'contracts')
         self.assertEqual(result.returncode, 1)
         self.assertIn(b'3 unclassified', result.stderr)
         self.assertEqual([row['path'] for row in json.loads(result.stdout)], ['contracts/current.md'])
 
     def test_index_membership_unusual_names_and_exact_directory_prefixes(self):
-        names = ['frontend/src/a space.js', 'frontend/src/caf\u00e9.js', 'frontend/src-other/keep.js']
+        names = ['amplifier_web/host/a space.js', 'amplifier_web/host/caf\u00e9.js', 'amplifier_web/host-other/keep.js']
         self.add(*names)
-        (self.root / 'frontend/src/private-untracked.js').write_text('not collected')
-        result = self.cli('--format', 'paths', '--null', '--under', 'frontend/src/')
+        (self.root / 'amplifier_web/host/private-untracked.js').write_text('not collected')
+        result = self.cli('--format', 'paths', '--null', '--under', 'amplifier_web/host/')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(set(result.stdout.split(b'\0')) - {b''}, {os.fsencode(n) for n in names[:-1]})
         rows = json.loads(self.cli('--format', 'json', '--under', names[0]).stdout)
@@ -128,37 +132,37 @@ class SourceContextTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == 'nt', 'Windows forbids newline and quote filenames')
     def test_posix_filenames_round_trip_without_line_or_quote_parsing(self):
-        names = ['frontend/src/a\nline.js', 'frontend/src/quoted\".js']
+        names = ['amplifier_web/host/a\nline.js', 'amplifier_web/host/quoted\".js']
         self.add(*names)
-        result = self.cli('--format', 'paths', '--null', '--under', 'frontend/src')
+        result = self.cli('--format', 'paths', '--null', '--under', 'amplifier_web/host')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(set(result.stdout.split(b'\0')) - {b''}, {os.fsencode(n) for n in names})
-        rows = json.loads(self.cli('--format', 'json', '--under', 'frontend/src').stdout)
+        rows = json.loads(self.cli('--format', 'json', '--under', 'amplifier_web/host').stdout)
         self.assertEqual({row['path'] for row in rows}, set(names))
 
     def test_missing_files_and_links_are_metadata_not_silently_dropped(self):
-        self.add('frontend/missing.js')
-        (self.root / 'frontend/missing.js').unlink()
+        self.add('tests/web/missing.mjs')
+        (self.root / 'tests/web/missing.mjs').unlink()
         target = self.root.parent / 'outside.txt'
         target.write_text('outside the checkout')
         try:
-            (self.root / 'frontend/link.js').symlink_to(target)
+            (self.root / 'tests/web/link.mjs').symlink_to(target)
         except OSError as error:
             self.skipTest(f'Cannot create symlinks: {error}')
-        self.git('add', 'frontend/link.js')
+        self.git('add', 'tests/web/link.mjs')
         rows = {row['path']: row for row in selector.inventory(self.root)}
-        self.assertEqual(rows['frontend/missing.js']['status'], 'missing')
-        self.assertIsNone(rows['frontend/missing.js']['bytes'])
-        self.assertEqual(rows['frontend/link.js']['status'], 'symlink')
-        self.assertIsNone(rows['frontend/link.js']['bytes'])
+        self.assertEqual(rows['tests/web/missing.mjs']['status'], 'missing')
+        self.assertIsNone(rows['tests/web/missing.mjs']['bytes'])
+        self.assertEqual(rows['tests/web/link.mjs']['status'], 'symlink')
+        self.assertIsNone(rows['tests/web/link.mjs']['bytes'])
 
     def test_local_override_is_effective_and_visible(self):
-        self.add('frontend/local.js')
-        (self.root / '.git/info/attributes').write_text('/frontend/local.js source-context=unclassified\n')
+        self.add('tests/web/local.mjs')
+        (self.root / '.git/info/attributes').write_text('/tests/web/local.mjs source-context=unclassified\n')
         result = self.cli('--check', '--format', 'json')
         self.assertEqual(result.returncode, 1)
         rows = {row['path']: row for row in json.loads(result.stdout)}
-        self.assertEqual(rows['frontend/local.js']['kind'], 'unclassified')
+        self.assertEqual(rows['tests/web/local.mjs']['kind'], 'unclassified')
 
     def test_empty_inventory_and_invalid_selection(self):
         self.git('rm', '--cached', '.gitattributes')

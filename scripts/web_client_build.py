@@ -14,7 +14,6 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import web_client_source as delivery
-from web_client_development import verify_wrapper
 
 command = delivery.command
 
@@ -109,26 +108,28 @@ def prepare_inputs(root, source, *, node='node'):
 
 def prepare(root=ROOT, *, node='node'):
     root = root.resolve()
+    source = root / '.build/web-client'
+    source.parent.mkdir(parents=True, exist_ok=True)
+    recovery = sorted(source.parent.glob('.web-client-previous-*'))
+    if recovery:
+        raise ValueError(f'Previous client recovery retained at {recovery[0]}; inspect it before preparing again')
     selected = root / 'components/web-client.source.json'
     record = delivery.selection(selected)
-    source = root / 'frontend/.client'
-    source.parent.mkdir(parents=True, exist_ok=True)
     if source.exists() or source.is_symlink():
         if source.is_symlink():
             raise ValueError('Prepared client must be an owned directory, not a link')
         previous = source / '.client-source.json'
         # Validate the old selection before replacing it; never erase an edit.
         verify_source(source, previous, node=node)
+        delivery.verify_development(source)
         if read(previous) == record:
             prepare_inputs(root, source, node=node)
-            verify_wrapper(root, source)
             return source
     with tempfile.TemporaryDirectory(prefix='.web-client-prepare-', dir=source.parent) as name:
         stage = Path(name)
         ready = stage / 'ready'
-        delivery.prepare(root, selected, ready, node=node)
+        delivery.prepare(root, selected, ready, node=node, development=True)
         prepare_inputs(root, ready, node=node)
-        verify_wrapper(root, ready)
         replace_directory(ready, source)
     return source
 
@@ -138,8 +139,8 @@ def verify_artifact(root, source, component, static, *, node='node'):
     if read(source / '.client-source.json') != record:
         raise ValueError('Prepared client selection differs from the distribution')
     verify_source(source, source / '.client-source.json', node=node)
+    delivery.verify_development(source)
     verify_inputs(source, node=node)
-    verify_wrapper(root, source)
     lock_path = source / 'build-inputs.lock.json'
     lock = read(lock_path)
     identity = json.loads(invoke(source, 'build-identity.mjs',
@@ -192,21 +193,47 @@ def build(root=ROOT, *, node='node', npm='npm'):
 
 def verify(root=ROOT, *, node='node'):
     root = root.resolve()
-    return verify_artifact(root, root / 'frontend/.client',
+    return verify_artifact(root, root / '.build/web-client',
                            read(member(root / 'amplifier_web/static', 'client-component.json')),
                            root / 'amplifier_web/static', node=node)
 
 
+def develop(root=ROOT, *, npm='npm'):
+    """Run the selected client's own development server in the owned environment."""
+    source = root.resolve() / '.build/web-client'
+    if not (source / '.client-source.json').is_file():
+        raise ValueError('Run scripts/web_client_build.py prepare and install its dependencies first')
+    command(shutil.which(npm) or npm, 'run', 'dev', '--prefix', source, timeout=86400)
+    return {'directory': str(source)}
+
+
+def build_development(root=ROOT, *, npm='npm'):
+    """Build deliberate local experiments without a qualifying component receipt."""
+    root = root.resolve()
+    source = root / '.build/web-client'
+    if not (source / '.client-source.json').is_file():
+        raise ValueError('Prepare the selected client before building a development experiment')
+    command(shutil.which(npm) or npm, 'run', 'build', '--prefix', source, timeout=300)
+    with tempfile.TemporaryDirectory(prefix='.web-client-development-', dir=root / 'amplifier_web') as name:
+        ready = Path(name) / 'ready'
+        shutil.copytree(source / 'dist', ready)
+        replace_directory(ready, root / 'amplifier_web/static')
+    return {'directory': str(source), 'qualification': 'development-only'}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['prepare', 'build', 'verify'])
+    parser.add_argument('command', choices=['prepare', 'build', 'verify', 'dev', 'build-development'])
     args = parser.parse_args(argv)
     try:
-        result = globals()[args.command]()
+        operation = {'dev': develop, 'build-development': build_development}.get(args.command)
+        result = (operation or globals()[args.command])()
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f'{error}\n{getattr(error, "stderr", "") or ""}')
-    print(json.dumps({'directory': str(result)} if isinstance(result, Path) else
-                     {name: result[name] for name in ['source', 'build', 'pairedServer']}))
+    report = ({'directory': str(result)} if isinstance(result, Path) else
+              {name: result[name] for name in ['source', 'build', 'pairedServer']}
+              if 'build' in result else result)
+    print(json.dumps(report))
 
 
 if __name__ == '__main__':

@@ -91,7 +91,7 @@ allowlisted worker to stream and stop normally. Record actual child cleanup.
 Reuse the qualified real-worker benchmark recipe rather than introduce a second
 runtime simulator: `tests/fixtures/runtime_concurrency_server.py`, its local
 `amplifier_module_provider_concurrency` provider, and
-`frontend/tests/runtime-concurrency-browser.mjs` in the integrated readiness
+`tests/web/runtime-concurrency-browser.mjs` in the integrated readiness
 source. The fixture uses a real RuntimeManager with the qualified worker Python
 and `runtime_worker.py`; the provider emits actual coordinator streaming hooks.
 Its existing use of an already qualified interpreter bypasses fresh runtime

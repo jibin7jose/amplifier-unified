@@ -37,7 +37,7 @@ the worker no longer infers a current window it does not own. First-install
 instructions link HTTPS setup before pairing.
 
 Four certificate/recovery checks passed in
-`frontend/tests/device-connection-tls-browser.mjs`, followed by all fourteen
+`tests/web/device-connection-tls-browser.mjs`, followed by all fourteen
 normal browser/client checks. The separate installed-wheel check verified the
 new network helper and extension version. Evidence is retained as
 `extension-tls-recovery.json`, `extension-011-browser.json`,

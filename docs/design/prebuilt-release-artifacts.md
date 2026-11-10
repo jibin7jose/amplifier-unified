@@ -13,7 +13,7 @@ Building the UI from a raw Git checkout requires Node and locked frontend
 dependencies. Backend-only iteration can reuse an existing built UI.
 
 This removes generated review/context churn without splitting the currently
-bundled client/server contract. Authored `frontend/public` files, upstream inputs
+bundled client/server contract. Authored client `public/` files in `amplifier-client-web`, upstream inputs
 and licenses remain source; published artifacts remain immutable release output.
 The [family vision](../architecture/VISION.md), [update contract](../UPDATES.md)
 and [focused release policy](../validation/release-qualification.md) retain their

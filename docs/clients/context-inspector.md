@@ -334,14 +334,14 @@ workspace context P3/4. It does not assert completion of the broader ACP/AHP mig
 and streaming boundaries with scripted providers, captured-file changes, adjacent
 cycles, managed compaction, privacy, retained identities, failure, read scope and
 bounded work. Existing provider-recording/execution/final-refit checks protect their
-owners. `frontend/tests/context-inspector-browser.mjs` runs against canonical built
+owners. `tests/web/context-inspector-browser.mjs` runs against canonical built
 assets and production inspection responses, with synthetic captured input. It checks
 entry/drilldown/reader, pagination, unknown/no-record/empty states, errors, cross-chat
 late responses, keyboard, actual Canvas divider/focus transitions, retained other
 documents and 320/390px and full-width light/dark layouts. Source inspection and scripted
 checks are not live-provider or released-package qualification.
 
-`frontend/tests/context-inspector-layout-browser.mjs` covers the 60-source
+`tests/web/context-inspector-layout-browser.mjs` covers the 60-source
 long-list/short-reader regression and paged long readers at actual wheel and
 keyboard start/middle/end positions. It records whole viewport images and DOM
 scroll geometry, narrow native-divider and full-window transitions, 320/390px

@@ -21,15 +21,15 @@ def main():
     contract = json.loads(Path(os.environ['AMPLIFIER_TEST_CONTRACT']).read_text())
     assert contract['profileId'] == 'browser-test'
     (OUT / 'execution-contract.json').write_text(json.dumps(contract, indent=2))
-    names = ['tests/block-copy-browser.mjs', 'frontend/tests/markdown-composer.test.mjs',
-             'frontend/src/markdown-composer.js', 'frontend/src/block-copy.js',
-             'tests/fixtures/empty_host_ui_server.py', 'frontend/package-lock.json', 'uv.lock',
+    names = ['tests/block-copy-browser.mjs', '.build/web-client/tests/markdown-composer.test.mjs',
+             '.build/web-client/src/markdown-composer.js', '.build/web-client/src/block-copy.js',
+             'tests/fixtures/empty_host_ui_server.py', 'tests/web/package-lock.json', 'uv.lock',
              'scripts/check_block_copy_oracle.py', 'amplifier_web/static/build.json']
     inputs = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in names}
     (OUT / 'inputs.json').write_text(json.dumps(inputs, indent=2))
     commands = [
-        ('readiness', ['node', '--input-type=module', '-e', "import {chromium} from '@playwright/test';const b=await chromium.launch({headless:true});const p=await b.newPage();await p.setContent('<button>Ready</button>');await p.getByRole('button').click();console.log(process.version,await b.version());await b.close();"], ROOT / 'frontend'),
-        ('parser-contrasts', ['node', '--test', 'frontend/tests/markdown-composer.test.mjs'], ROOT),
+        ('readiness', ['node', '--input-type=module', '-e', "import {chromium} from '@playwright/test';const b=await chromium.launch({headless:true});const p=await b.newPage();await p.setContent('<button>Ready</button>');await p.getByRole('button').click();console.log(process.version,await b.version());await b.close();"], ROOT / 'tests/web'),
+        ('parser-contrasts', ['node', '--test', 'tests/markdown-composer.test.mjs'], ROOT / '.build/web-client'),
     ]
     for name, command, cwd in commands:
         with (OUT / (name + '.log')).open('w') as log:
@@ -38,10 +38,10 @@ def main():
             print((OUT / (name + '.log')).read_text()[-12000:])
             return completed.returncode
     plan = {'schemaVersion': 1, 'scenarios': [
-        {'id': 'old-oracle', 'command': ['node', '../tests/block-copy-browser.mjs'],
+        {'id': 'old-oracle', 'command': ['node', 'tests/block-copy-browser.mjs'],
          'env': {'BLOCK_COPY_OLD_ORACLE': '1', 'AMPLIFIER_TEST_PYTHON': sys.executable,
                  'AMPLIFIER_TEST_ARTIFACTS': str(OUT / 'old-oracle')}},
-        {'id': 'full-journey', 'command': ['node', '../tests/block-copy-browser.mjs'],
+        {'id': 'full-journey', 'command': ['node', 'tests/block-copy-browser.mjs'],
          'env': {'AMPLIFIER_TEST_PYTHON': sys.executable,
                  'AMPLIFIER_TEST_ARTIFACTS': str(OUT / 'full-journey')}},
     ]}

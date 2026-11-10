@@ -194,7 +194,7 @@ def verify_inventory(value):
 
 
 def test_phase(name):
-    os.chdir(ROOT)  # run_scenarios intentionally starts its children in frontend/.
+    os.chdir(ROOT)  # Keep process probes rooted in this selected application checkout.
     sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
     for module in ('amplifier_web.runtime_worker', 'amplifier_web.service', 'amplifier_core', 'amplifier_foundation',
                    'amplifier_module_loop_live.orchestrator', 'amplifier_module_loop_streaming',

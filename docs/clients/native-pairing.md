@@ -66,6 +66,6 @@ configuration and lock waits. The service checks before creation preparation and
 again before accepting new effects under its mutation lock. Receipt replay and
 work already durably accepted are preserved.
 
-The `device-pairing` scenario in `frontend/tests/browser-checks.json` owns browser
+The `device-pairing` scenario in `tests/web/browser-checks.json` owns browser
 sign-in, approval and revocation acceptance. It provisions and cleans its own
 synthetic fixture and is part of the standard browser-checks smoke plan.

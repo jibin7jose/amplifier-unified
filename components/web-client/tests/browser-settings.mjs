@@ -60,9 +60,3 @@ export async function openPhoneNotificationSettings(page){
  if(!await page.locator('#notify-topic').isVisible())await page.getByText(/^(Set up|Manage) phone notifications$/).click();
  if(!await page.locator('#notify-token').isVisible())await page.getByText('Server & account',{exact:true}).click();
 }
-
-export async function settingsToolObservations(page){
- const response=await page.request.get(new URL('/fixture/settings-tool-observations',page.url()).href);
- if(!response.ok())throw new Error('Settings tool observations failed: '+response.status());
- return response.json();
-}

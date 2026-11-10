@@ -90,8 +90,8 @@ This revision passed 343 frontend unit tests, 55 targeted backend tests, and the
 
 Source anchors:
 
-- Header, composer and retained conversation: `frontend/src/main.jsx`, `work-shell.jsx`.
-- Main sidebar behavior: `frontend/src/shell/navigation-components.jsx`, `workspace-explorer.jsx`.
+- Header, composer and retained conversation: `components/web-client/src/main.jsx`, `work-shell.jsx`.
+- Main sidebar behavior: `components/web-client/src/shell/navigation-components.jsx`, `workspace-explorer.jsx`.
 - Settings and runtime access: `settings-navigation.js`, `settings-experience.jsx`, `runtime-settings.jsx`.
 - Canvas: `shell-panels.jsx`, `canvas-workspace.jsx`, `work-overview.jsx`.
 - Shared draft and chooser actions: `amplifier_web/new_chat.py`, `workspace_placement.py`, `service.py`.

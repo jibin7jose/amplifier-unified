@@ -14,6 +14,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 from browser_check_runner import run_scenarios
+from web_test_harness import stage_web_test_harness
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +48,7 @@ def main():
                    if not name.startswith("amplifier_web/static/"))
     try:
         source_restored()
-        automation = ROOT / "frontend/src/automation-hub.jsx"
+        automation = ROOT / ".build/web-client/src/automation-hub.jsx"
         original_automation = automation.read_bytes()
         name = "hub Create selects a new draft, while manage and Review retain existing edits without retaining authority"
         command = ["node", "--test", "--test-reporter=tap",
@@ -56,7 +57,7 @@ def main():
             needle = b"if(create)prepareNewSchedule(id);"
             assert original_automation.count(needle) == 1
             automation.write_bytes(original_automation.replace(needle, b"if(create)void 0;"))
-            text = run("negative-automation-create", command, cwd=ROOT / "frontend", expected=1)
+            text = run("negative-automation-create", command, cwd=ROOT / ".build/web-client", expected=1)
             assert f"not ok 1 - {name}" in text and "ERR_ASSERTION" in text
             assert "operator: 'match'" in text and "New schedule" in text
             counts = dict(re.findall(r"^# (tests|pass|fail|cancelled|skipped|todo) (\d+)$", text, re.M))
@@ -65,13 +66,13 @@ def main():
         finally:
             automation.write_bytes(original_automation)
         assert automation.read_bytes() == original_automation
-        text = run("restored-automation-create", command, cwd=ROOT / "frontend")
+        text = run("restored-automation-create", command, cwd=ROOT / ".build/web-client")
         assert f"ok 1 - {name}" in text and "# fail 0" in text and "# pass 1" in text
         result["checks"]["automationCreateIntent"] = {
             "negative": "rejected at New schedule assertion",
             "restoredPositive": "passed", "sourceSha256": hashlib.sha256(original_automation).hexdigest()}
 
-        layout = ROOT / "frontend/src/settings-layout.jsx"
+        layout = ROOT / ".build/web-client/src/settings-layout.jsx"
         original_layout = layout.read_bytes()
         try:
             needle = b"if(entry.key===latest.current.trail.at(-1)?.key)return;"
@@ -79,27 +80,27 @@ def main():
             layout.write_bytes(original_layout.replace(needle, b""))
             text = run("negative-settings-reopen", ["node", "--test",
                        "--test-name-pattern=discard trail reconciliation",
-                       "tests/settings-drafts.test.mjs"], cwd=ROOT / "frontend", expected=1)
+                       "tests/settings-drafts.test.mjs"], cwd=ROOT / ".build/web-client", expected=1)
             assert "Reconciling the already-current parent must not publish a Settings reopen" in text
             assert "not ok" in text
             result["checks"]["settingsCloseReopen"] = "rejected at redundant Settings navigation assertion"
         finally:
             layout.write_bytes(original_layout)
 
-        model = ROOT / "frontend/src/destination-history.js"
+        model = ROOT / ".build/web-client/src/destination-history.js"
         original = model.read_bytes()
         try:
             needle = b"frame.host===receipt.hostInstanceId&&frame.revision>=receipt.stateRevision"
             assert original.count(needle) == 1
             model.write_bytes(original.replace(needle, b"frame.host===receipt.hostInstanceId"))
             text = run("negative-revision", ["node", "--test", "--test-name-pattern=cursor commits only",
-                       "tests/destination-history.test.mjs"], cwd=ROOT / "frontend", expected=1)
+                       "tests/destination-history.test.mjs"], cwd=ROOT / ".build/web-client", expected=1)
             assert "old-revision" in text and "not ok" in text
             result["checks"]["revisionFence"] = "rejected at old-revision assertion"
         finally:
             model.write_bytes(original)
 
-        entry = ROOT / "frontend/src/main.jsx"
+        entry = ROOT / ".build/web-client/src/main.jsx"
         original = entry.read_bytes()
         static = ROOT / "amplifier_web/static"
         with tempfile.TemporaryDirectory(prefix="history-negative-") as temporary:
@@ -110,7 +111,7 @@ def main():
                 assert original.count(needle) == 1
                 entry.write_bytes(original.replace(
                     needle, b"destinationHistory.current.observe(conversationNavigation.current.apply(next),historyOptions);"))
-                run("negative-build", ["npm", "run", "build:development", "--prefix", "frontend"])
+                run("negative-build", [sys.executable, "scripts/web_client_build.py", "build-development"])
                 plan = json.loads((OUTPUT / "plan.json").read_text())
                 plan["scenarios"] = [row for row in plan["scenarios"] if row["id"] == "destination-history"]
                 plan["scenarios"][0]["env"]["AMPLIFIER_TEST_OUTPUT"] = "{root}/output/destination-history/negative-browser"
@@ -140,11 +141,11 @@ def main():
                              "--no-deps", "--reinstall", str(wheel)])
         with tempfile.TemporaryDirectory(prefix="history-installed-") as temporary:
             harness = Path(temporary)
-            shutil.copytree(ROOT / "tests", harness / "tests", ignore=shutil.ignore_patterns("__pycache__"))
-            shutil.copytree(ROOT / "frontend/tests", harness / "frontend/tests")
-            (harness / "frontend/node_modules").symlink_to(ROOT / "frontend/node_modules", target_is_directory=True)
+            helpers = stage_web_test_harness(ROOT, harness, python_tests=True,
+                source_helpers=('destination-history.js', 'settings-navigation.js'))
+            result['installedSourceOracles'] = helpers
             env = {**os.environ, "AMPLIFIER_TEST_PYTHON": sys.executable,
-                   "AMPLIFIER_SHELL_NODE_MODULES": str(ROOT / "frontend/node_modules"),
+                   "AMPLIFIER_SHELL_NODE_MODULES": str(harness / ".build/web-client/node_modules"),
                    "AMPLIFIER_TEST_OUTPUT": str(OUTPUT / "installed-browser")}
             env.pop("PYTHONPATH", None)
             origins = json.loads(run("wheel-origin", [sys.executable, "-c",
@@ -176,9 +177,9 @@ def main():
             rows = []
             for identity, evidence in (("destination-history", {"AMPLIFIER_TEST_OUTPUT": str(OUTPUT / "installed-browser")}),
                                        ("automation-hub", {"AMPLIFIER_TEST_ARTIFACTS": str(OUTPUT / "installed-automation")})):
-                rows.append({"id": identity, "command": ["node", f"tests/{identity}-browser.mjs"],
+                rows.append({"id": identity, "command": ["node", f"tests/web/{identity}-browser.mjs"],
                              "env": {"AMPLIFIER_TEST_PYTHON": sys.executable,
-                                     "AMPLIFIER_SHELL_NODE_MODULES": str(ROOT / "frontend/node_modules"), **evidence}})
+                                     "AMPLIFIER_SHELL_NODE_MODULES": str(harness / ".build/web-client/node_modules"), **evidence}})
             installed_plan = {"schemaVersion": 1, "scenarios": rows}
             (OUTPUT / "installed-plan.json").write_text(json.dumps(installed_plan, indent=2))
             previous = os.environ.pop("PYTHONPATH", None)
