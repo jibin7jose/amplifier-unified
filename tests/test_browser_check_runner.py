@@ -381,7 +381,7 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     original = [row for row in historical_rows if row['id'] not in additions and row['id'] not in recovery_ids]
     assert len(original) == 65 and len(historical_rows) == 132
     # Preserve the preceding total after validating all exact additive owners.
-    assert len([row for row in rows if row['id'] not in navigation_ids | sidebar_ids | {'context-inspector-layout', 'delivery-warning', 'delivery-reconciliation', 'delivery-new-chat', 'navigation-waiting', 'canvas-versions', 'question-resume'}]) == 138
+    assert len([row for row in rows if row['id'] not in navigation_ids | sidebar_ids | {'context-inspector-layout', 'delivery-warning', 'legacy-outbox-notice', 'delivery-reconciliation', 'delivery-new-chat', 'navigation-waiting', 'canvas-versions', 'question-resume'}]) == 138
     # Existing scenarios retain their commands; only evidence ownership changes.
     evidence = {
         'bundle': {'AMPLIFIER_BUNDLE_SCREENSHOT': '{root}/output/browser-checks/bundle-mobile.png'},
@@ -661,7 +661,7 @@ def test_canvas_browser_additions_reject_changed_or_duplicate_ordinary_owner(can
 
 def delivery_warning_browser_addition(rows, readiness_scripts):
     scripts = set()
-    for name in ('delivery-warning', 'delivery-reconciliation', 'delivery-new-chat'):
+    for name in ('delivery-warning', 'legacy-outbox-notice', 'delivery-reconciliation', 'delivery-new-chat'):
         script = f'tests/{name}-browser.mjs'
         expected = {'id': name, 'command': ['node', script],
                     'env': {'AMPLIFIER_TEST_ARTIFACTS': f'{{root}}/output/browser-checks/{name}'}}
@@ -673,7 +673,7 @@ def delivery_warning_browser_addition(rows, readiness_scripts):
 
 
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'command', 'environment', 'readiness'])
-@pytest.mark.parametrize('name', ['delivery-warning', 'delivery-reconciliation', 'delivery-new-chat'])
+@pytest.mark.parametrize('name', ['delivery-warning', 'legacy-outbox-notice', 'delivery-reconciliation', 'delivery-new-chat'])
 def test_delivery_warning_browser_owner_is_exact(fault, name):
     rows = coverage_plan()['scenarios']
     owner = next(row for row in rows if row['id'] == name)
@@ -3387,9 +3387,9 @@ def test_current_composed_registry_owns_every_executable_and_both_mixed_suites()
     plan = current_plan()
     navigation_ids = agent_navigation_browser_additions(plan['scenarios'], set(), current=True)
     preceding = [row for row in plan['scenarios'] if row['id'] not in navigation_ids]
-    assert len(preceding) == len({row['id'] for row in preceding}) == 146
-    assert len(plan['scenarios']) == 146 + len(navigation_ids)
-    assert sum(row.get('cwd') == '.build/web-client' for row in plan['scenarios']) == 13
+    assert len(preceding) == len({row['id'] for row in preceding}) == 147
+    assert len(plan['scenarios']) == 147 + len(navigation_ids)
+    assert sum(row.get('cwd') == '.build/web-client' for row in plan['scenarios']) == 14
     sidebar_controls_browser_addition(plan['scenarios'], set(), current=True)
     for row in plan['scenarios']:
         for part in row['command']:
@@ -3399,3 +3399,28 @@ def test_current_composed_registry_owns_every_executable_and_both_mixed_suites()
     assert mixed['cwd'] == '.build/web-client'
     assert mixed['command'] == ['node', '--test', 'tests/configuration-recovery.test.mjs',
                                 '../../tests/web/configuration-recovery-observer.test.mjs']
+
+
+def test_legacy_outbox_notice_is_composed_once_from_selected_client_owner():
+    name = 'legacy-outbox-notice'
+    script = 'tests/legacy-outbox-notice-browser.mjs'
+    expected = {'id': name, 'command': ['node', script],
+                'env': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/legacy-outbox-notice'}}
+    host_path = ROOT / 'tests/web/browser-checks.json'
+    host = json.loads(host_path.read_text())
+    client_path = source_test(script).with_name('browser-checks.json')
+    client = json.loads(client_path.read_text())
+    # The selected client remains the sole command/env owner; Unified only
+    # places its ID in the composed order, never creates a duplicate journey.
+    def owns(row):
+        return row['id'] == name or any(Path(part).name == Path(script).name for part in row['command'])
+    assert [row for row in host['scenarios'] if owns(row)] == []
+    assert [row for row in client['scenarios'] if owns(row)] == [expected]
+    assert host['scenarioOrder'].count(name) == 1
+    index = host['scenarioOrder'].index(name)
+    assert host['scenarioOrder'][index - 1:index + 2] == [
+        'delivery-warning', name, 'delivery-reconciliation']
+    plan, proof = runner.load_plan(ROOT, host_path)
+    assert [row['id'] for row in plan['scenarios']] == host['scenarioOrder']
+    assert [row for row in plan['scenarios'] if owns(row)] == [{**expected, 'cwd': '.build/web-client'}]
+    assert proof['registrySha256'] == {'unified': runner.digest(host_path), 'client': runner.digest(client_path)}

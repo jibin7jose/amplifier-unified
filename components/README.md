@@ -8,6 +8,14 @@ selects the canonical commit, source digest and delivery location. Author change
 in the client repository and refresh the whole snapshot; this copy is not a second
 place to develop the client.
 
+Until the client repository is public and its review is complete, release
+acceptance verifies that the canonical selected commit and this entire copy stay
+byte-for-byte synchronized. Notify both owners when changing either side and
+carry source, selection record and generated assets through the same handoff.
+A qualified pinned snapshot need not equal the latest client branch tip: record
+accepted upstream changes not yet delivered and assign their next handoff rather
+than silently mixing them into an already qualified artifact.
+
 Unified owns `scripts/web_client_build.py`, canonical shared inputs, package
 assembly and [`tests/web`](../tests/web/README.md). The latter contains host,
 browser-integration and input-producer checks with an explicit test dependency

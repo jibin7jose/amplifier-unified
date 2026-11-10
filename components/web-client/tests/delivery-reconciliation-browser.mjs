@@ -41,7 +41,7 @@ const seed=[
  {id:'legacy-unbound',commandId:'original',sessionId:'chat',text:'Legacy payload with no verified source.',attachmentIds:[],status:'unknown'},
 ];
 const kept=seed.filter(entry=>entry.id!=='local-original');
-const legacyNotice='Earlier pending messages have no verified host identity. They remain saved in this browser and were not sent again.';
+const legacyNotice='This tab retains earlier message copies with no verified host identity. Their delivery is unknown. Nothing was sent again.';
 const calls=[],pending=[],errors=[],screenshots=[],completed=[],stops=[],responseSourceCases=[];
 const executions=new Map([['chat/original',1]]);
 let senderCounter=0,duplicateExecution=0,vite,browser,page;

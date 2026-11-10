@@ -15,15 +15,17 @@ This experimental extraction preserves the client history from Unified v0.70.0
 (`4854dbd9ec555690269747b7dbe273f008e9e179`, `LICENSE` and `frontend/`).
 The browser interface matches accepted Unified main
 `5692ad7bb7b79e0a000ccc7415cd0ac97d58738e`, preserving the current HTTP/SSE
-behavior. Version `0.3.1` retains the compact-sidebar controls and reset-cleanup
-interface accepted in Unified `0.74.0`, and gives client tests one canonical
-owner. Backend reset behavior is qualified by that paired Unified release,
+behavior. Version `0.3.2` adds a reversible, tab-local notice for earlier message
+copies with unknown delivery. Hiding the notice preserves those copies and all
+delivery safeguards; a new unbound copy makes it visible again. It retains the
+compact-sidebar controls, reset-cleanup interface and canonical client-test
+ownership from `0.3.1`. Backend reset behavior is qualified by Unified `0.74.0`,
 not by standalone client fixtures.
 The 14 canonical shared inputs are selected from accepted Unified main
 `816c7a67dbafc20bfb28723dd317c71d3bd2bb28`; their bytes still match the current
 accepted server. Shared-input provenance and actual server qualification are distinct.
 The repository is currently private. Its independent package is
-`@amplifier/client-web`, currently `0.3.1`; this candidate's registry publication
+`@amplifier/client-web`, currently `0.3.2`; this candidate's private GitHub artifact publication
 and Unified release adoption remain separate. Client source and tests are authored here. Unified owns selection, host integration
 checks and distribution assembly; its temporary delivery copy and disposable
 prepared tree are consumers of this source. The retained AHP client is separate.

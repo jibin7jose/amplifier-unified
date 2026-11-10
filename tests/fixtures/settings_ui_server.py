@@ -1,7 +1,12 @@
 """Isolated settings UI fixture: synthetic providers and runtime, no account calls."""
 import asyncio,copy,json,os,signal,sys,tempfile
 from pathlib import Path
-sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
+if not os.environ.get('AMPLIFIER_TEST_INSTALLED_PACKAGE'):
+ sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
+else:
+ import amplifier_web
+ if Path(amplifier_web.__file__).resolve().parent != Path(os.environ['AMPLIFIER_TEST_INSTALLED_PACKAGE']).resolve():
+  raise ValueError('Installed fixture must import the exact selected package, not checkout source')
 from aiohttp import web
 from amplifier_web.server import create_app
 from amplifier_web.host.config import write_private

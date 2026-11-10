@@ -40,6 +40,7 @@ import {homePatch} from './adaptive-work.js';
 import {SettingsExperience} from './settings-experience';
 import {useGuardedSettingsPanel,useGuardedSettingsSession} from './settings-drafts';
 import {useMessageOutbox,outboxMessages,outboxMatches} from './message-outbox';
+import {LegacyOutboxNotice} from './legacy-outbox-notice';
 import {checkedDelivery,deliveryRecovery,deliveryScope} from './pending-delivery-checks';
 import {clientId,clientUrl,attachClient,draftJournal} from './api';
 import {checkpointSurfaces} from './surface-checkpoint';
@@ -933,7 +934,7 @@ function App(){
    <form className="a-composer a-compact-composer" data-part="composer" data-action="conversation.send" onSubmit={send}>
     {draftStorageError&&<p role="alert" className="a-upload-status">This browser could not keep a recovery copy of your draft. Keep this tab open until it is saved.</p>}
     {outbox.storageError&&outbox.entries.length>0&&<p role="alert" className="a-upload-status">This browser could not save the pending message. Keep this tab open until delivery is confirmed.</p>}
-    {outbox.entries.some(row=>!row.scope)&&<p role="status" className="a-upload-status">Earlier pending messages have no verified host identity. They remain saved in this browser and were not sent again.</p>}
+    <LegacyOutboxNotice entries={outbox.entries}/>
     <ComposerOwnership session={session} runtimeAvailable={state.runtime?.available!==false} dispatch={dispatch}>
     {!session&&<ComposerWorkspace state={state} act={act}/>}
     <div className="a-compose-surface" data-part="composer-surface" data-expanded={composerExpanded({draft,attachments:availableAttachments,quote:state.view?.messageReply||state.view?.draftDocument?.segments?.some(part=>part.type==='quote')})}>

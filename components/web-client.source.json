@@ -3,9 +3,9 @@
   "kind": "amplifier-web-client-source",
   "source": {
     "repository": "https://github.com/microsoft/amplifier-client-web",
-    "revision": "4d3822964f3b89e124b46056c9b54c1176069aac"
+    "revision": "0332c080b714f450161447aeb27fcfc93ad0b03e"
   },
-  "inputsSha256": "6b4926dd0b3123f402e5b11133ae6f72d352ac8a5d23bbeee1b6adb1666068a6",
+  "inputsSha256": "b485c5a9add874d20b4b07254048e135e06cf2bf9defa39ad12126914b683ca0",
   "delivery": {
     "type": "directory",
     "path": "components/web-client"
