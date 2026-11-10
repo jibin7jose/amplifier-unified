@@ -1271,9 +1271,10 @@ class AppService:
     def _publish_changes(self, *, sessions=(), globals=(), detail_only=False):
         """Save only changed authority, then publish the affected projection.
 
-        Empty sessions means no conversation writes. Catalog membership changes
-        still require the explicit full reconciliation path. Pending progress
-        scopes are joined by _publish, so a receipt never loses earlier work.
+        Empty sessions means no conversation writes. Callers must declare every
+        changed owner and global, including during catalog reconciliation; unknown
+        scope uses the explicit full path. Pending progress scopes are joined by
+        _publish, so a receipt never loses earlier work.
         """
         globals = set(globals)
         updater = getattr(self, 'update_manager', None)

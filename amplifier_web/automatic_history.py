@@ -926,11 +926,11 @@ class AutomaticHistory:
                         state['sharedHistory']['reconciliation'] = reconciliation
                     self.last_scan = snapshot
                     if changed:
-                        if delta_mode and not full_merge:
-                            # Native directory changes still need a committed
-                            # publication, but unchanged registries are not its
-                            # write scope. The service retains its independent
-                            # detail-facts and pending-progress broadening guards.
+                        if delta_mode:
+                            # A full metadata reconciliation still tracks every
+                            # changed owner and global above; it does not require
+                            # checkpointing unrelated conversation histories.
+                            # Pending progress joins this scope in the service.
                             self.service._publish_changes(sessions=touched, globals=globals_changed,
                                                           detail_only=resident_detail_only and not globals_changed)
                         else:

@@ -153,8 +153,9 @@ async def test_metadata_noop_does_not_drop_pending_runtime_scope(tmp_path, app_f
     assert messages[-1]['text'] == 'Pending runtime answer'
 
 
+@pytest.mark.parametrize('force', [False, True])
 async def test_failed_changed_resident_save_keeps_owner_in_retry_union(
-        tmp_path, app_factory, monkeypatch):
+        tmp_path, app_factory, monkeypatch, force):
     import sqlite3
     app, workspace, paths, owner = await owned_history(tmp_path, app_factory, monkeypatch)
     metadata_change(monkeypatch, app, workspace, paths, 'root', name='Title awaiting durable save')
@@ -163,7 +164,7 @@ async def test_failed_changed_resident_save_keeps_owner_in_retry_union(
         raise sqlite3.OperationalError('Fixture refuses publication')
     with monkeypatch.context() as patch:
         patch.setattr(app, '_save', fail)
-        await app.history.refresh(force=False)
+        await app.history.refresh(force=force)
     assert owner['title'] == 'Title awaiting durable save'
     assert app.state['sharedHistory']['error']
     assert app.history._native_revision == before

@@ -156,6 +156,20 @@ async def test_admission_settles_cancelled_reload_of_loaded_history(
     assert not app.runtime.started and not app.runtime.sent
 
 
+async def settled_discovery(app):
+    # Discovery is time-sliced. Its completion is a legitimate global change,
+    # so finish the real scan before measuring an unrelated progress update.
+    index = app.history.index
+    for _ in range(100):
+        await app.history.refresh(force=False)
+        shared = app.state['sharedHistory']
+        assert shared['error'] is None
+        if (shared.get('reconciliation', {}).get('phase') == 'complete'
+                and index._recovery is None and not index._recovery_urgent):
+            return
+    pytest.fail('Synthetic history discovery did not complete')
+
+
 async def prepared(tmp_path, app_factory, monkeypatch):
     workspace = tmp_path / 'native'
     paths = {
@@ -174,8 +188,8 @@ async def prepared(tmp_path, app_factory, monkeypatch):
     index = app.history.index
     index._reconcile_at = time.monotonic() + 60
     monkeypatch.setattr(index, '_invalidations', lambda: (True, set()))
-    await app.history.refresh()  # Settle the newly learned registered paths.
-    await app.history.refresh(force=False)
+    await app.history.refresh()
+    await settled_discovery(app)
     await close_maintenance(app)
     assert app.state['sharedHistory']['error'] is None
     return app, workspace, paths, owners
@@ -313,6 +327,7 @@ async def test_live_progress_uses_existing_detail_guard_and_real_metadata_broade
     owner.update(historyManaged=False, status='working')
     app._publish_changes(sessions={owner['id']})
     await app.history.refresh()  # Reconcile the adopted runtime's title/source metadata.
+    await settled_discovery(app)
     await close_maintenance(app)
     queues = []
     for client in ('viewing', 'home'):
@@ -369,8 +384,9 @@ async def test_live_progress_uses_existing_detail_guard_and_real_metadata_broade
         app.unsubscribe(queue)
 
 
+@pytest.mark.parametrize('refresh_mode', ['delta', 'forced', 'reset', 'local-change'])
 async def test_workspace_placeholder_delta_retains_selection_pins_and_owner_references(
-        tmp_path, app_factory, monkeypatch):
+        tmp_path, app_factory, monkeypatch, refresh_mode):
     app, workspace, _, owners = await prepared(tmp_path, app_factory, monkeypatch)
     project = project_slug(workspace)
     resolved = next(row for row in app.state['workspaces'] if row.get('nativeProject') == project)
@@ -383,6 +399,10 @@ async def test_workspace_placeholder_delta_retains_selection_pins_and_owner_refe
     owners['root'].update(workspaceId=placeholder['id'], draft='Keep this draft')
     app._publish_changes(sessions={owners['root']['id']}, globals={
         'workspaces', 'selectedWorkspaceId', 'pinnedWorkspaceIds', 'pinnedItemIds'})
+    if refresh_mode == 'reset':
+        app.history._native_revision = None
+    elif refresh_mode == 'local-change':
+        app._publish()
     publications = []
     original = app._publish
     def publish(**kwargs):
@@ -392,7 +412,7 @@ async def test_workspace_placeholder_delta_retains_selection_pins_and_owner_refe
     native_session(workspace, 'second-worker', metadata={'parent_id': 'root'})
     monkeypatch.setattr(app.history.index, '_invalidations',
                         lambda: (True, {(project, 'second-worker', 'metadata')}))
-    await app.history.refresh(force=False)
+    await app.history.refresh_catalog(force=refresh_mode == 'forced')
     assert app.state['sharedHistory']['error'] is None
     assert len(publications) == 1
     assert owners['root']['id'] in publications[0]['session_ids']
@@ -407,3 +427,64 @@ async def test_workspace_placeholder_delta_retains_selection_pins_and_owner_refe
     assert placeholder['id'] not in {row['id'] for row in saved['workspaces']}
     saved_root = next(row for row in saved['sessions'] if row['id'] == owners['root']['id'])
     assert saved_root['workspaceId'] == resolved['id'] and saved_root['draft'] == 'Keep this draft'
+
+
+@pytest.mark.parametrize('refresh_mode', ['forced', 'reset', 'local-change'])
+@pytest.mark.parametrize('pending_progress', [False, True])
+async def test_catalog_reconciliation_does_not_encode_unrelated_loaded_history(
+        tmp_path, app_factory, monkeypatch, refresh_mode, pending_progress):
+    from amplifier_web import cold_display
+    from amplifier_web.cold_display import load
+    from amplifier_web.state_records import load_owner
+
+    app, workspace, paths, owners = await prepared(tmp_path, app_factory, monkeypatch)
+    unrelated = []
+    for title in ('Unchanged conversation', 'Concurrent progress'):
+        row = app._new_session({'title': title})
+        row.update(draft='Preserved draft', messages=[
+            {'id': 'saved', 'role': 'assistant', 'text': 'Retained answer'}])
+        app._state['sessions'].append(row)
+        unrelated.append(row)
+    app._publish()
+    await app.history.refresh_catalog()
+    await close_maintenance(app)
+    if refresh_mode == 'reset':
+        app.history._native_revision = None
+    elif refresh_mode == 'local-change':
+        app._publish()
+
+    metadata_path = paths['root'] / 'metadata.json'
+    metadata = json.loads(metadata_path.read_text())
+    metadata_path.write_text(json.dumps({**metadata, 'name': 'Reconciled root title'}))
+    monkeypatch.setattr(app.history.index, '_invalidations',
+                        lambda: (True, {(project_slug(workspace), 'root', 'metadata')}))
+    encoded = []
+    original_cold, original_publish = cold_display.saved, app._publish
+
+    def cold(row, *args, **kwargs):
+        encoded.append(row['id'])
+        return original_cold(row, *args, **kwargs)
+
+    def publish(**kwargs):
+        if pending_progress:
+            unrelated[1]['streaming'] = 'Concurrent token'
+            app._publish_progress(session_ids={unrelated[1]['id']},
+                                  detail_only=True, record_only=True)
+        return original_publish(**kwargs)
+
+    monkeypatch.setattr(cold_display, 'saved', cold)
+    monkeypatch.setattr(app, '_publish', publish)
+    await app.history.refresh_catalog(force=refresh_mode == 'forced')
+
+    assert app.state['sharedHistory']['error'] is None
+    assert owners['root']['title'] == 'Reconciled root title'
+    assert app.directory.resolve('root')['title'] == 'Reconciled root title'
+    assert unrelated[0]['id'] not in encoded, 'Catalog checks must not serialize unchanged conversation history'
+    assert (unrelated[1]['id'] in encoded) == pending_progress
+    for row in unrelated:
+        descriptor, _ = load_owner(app.db, row['id'])
+        saved = load(app.db, descriptor['$viewPayload'])
+        assert saved['draft'] == 'Preserved draft' and saved['messages'] == row['messages']
+    if pending_progress:
+        assert saved['streaming'] == 'Concurrent token' and not app._progress_dirty
+    assert not app.runtime.started and not app.runtime.sent

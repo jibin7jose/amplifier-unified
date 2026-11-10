@@ -22,10 +22,12 @@ import uuid
 async def measure(root, output, source, owner_count=3, reservation_bytes=0,
                   size='large', cycles=1, profile=False, operation='publication'):
     sys.path[:0] = [str(source), str(source / 'tests')]
+    from amplifier_web import cold_display
     from amplifier_web.cold_display import load
     from amplifier_web.service import AppService
     from amplifier_web.state_records import load_owner
     from amplifier_web.session_projection import stored_execution
+    from amplifier_web.storage_migration import close_maintenance
     from test_service import Runtime
     from test_automatic_history import native_session
     from amplifier_web.session_files import project_slug
@@ -39,6 +41,7 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
     app = AppService(root / 'state', workspace=root, runtime=Runtime())
     records = []
     profiler = cProfile.Profile() if profile else None
+    original_saved = cold_display.saved
     try:
         owners, transcripts = [], {}
         for number in range(owner_count):
@@ -78,19 +81,38 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
                 transcripts[sid] = directory / 'transcript.jsonl'
                 row.update(nativeProject=project_slug(root), nativeIdentity=sid, runtimeSessionId=sid,
                            historyManaged=False, historyLoaded=False)
-        publications = 0
-        original_publish = app._publish_changes
+        catalog_metadata = None
+        if operation == 'catalog-refresh':
+            # Retain large loaded histories before measuring an unrelated
+            # metadata reconciliation. The initial history write is setup.
+            for row in owners:
+                row['status'] = 'working'
+            app._publish_changes(sessions={row['id'] for row in owners})
+            directory = native_session(root, 'catalog-only')
+            catalog_metadata = directory / 'metadata.json'
+            app.history.index._invalidations = lambda: (
+                True, {(project_slug(root), 'catalog-only', 'metadata')})
+            await close_maintenance(app)
+        publications, owner_encodings = 0, 0
+        owner_ids = {row['id'] for row in owners}
+        original_publish = app._publish
         def publish(*args, **kwargs):
             nonlocal publications
             publications += 1
             return original_publish(*args, **kwargs)
-        app._publish_changes = publish
-        phases = ('cold',) + (('refresh',) if operation == 'history-load' else
+        app._publish = publish
+        def saved(row, *args, **kwargs):
+            nonlocal owner_encodings
+            owner_encodings += row['id'] in owner_ids
+            return original_saved(row, *args, **kwargs)
+        cold_display.saved = saved
+        phases = ('cold',) + (('refresh',) if operation in {'history-load', 'catalog-refresh'} else
                              ('scalar', 'current', 'current', 'nested', 'current', 'report', 'scalar')) * cycles
         before_io = io_bytes()
         for phase in phases:
             for number, row in enumerate(owners):
-                row['streaming'] = f'Token {len(records)}'
+                if operation != 'catalog-refresh':
+                    row['streaming'] = f'Token {len(records)}'
                 if phase == 'nested':
                     row['execution']['nodes'][-1]['revision'] += 1
                     row['execution']['retiredUsageNodes'][-1]['usage']['inputTokens'] += 1
@@ -98,13 +120,20 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
                     row['execution']['nodes'][-1]['revision'] += 1
                 if phase == 'report':
                     row['workers'][-1]['reportReceipts'][-1]['text'] = f'Fresh report {len(records)}'
-                if phase == 'refresh':
+                if phase == 'refresh' and operation == 'history-load':
                     with transcripts[row['id']].open('a') as stream:
                         stream.write(json.dumps({'role': 'assistant', 'content': f'Fresh response {len(records)}'}) + '\n')
+                if catalog_metadata:
+                    metadata = json.loads(catalog_metadata.read_text())
+                    catalog_metadata.write_text(json.dumps({**metadata, 'name': f'Catalog title {len(records)}'}))
                 if profiler:
                     profiler.enable()
                 started, cpu = time.perf_counter(), time.process_time()
-                if operation == 'history-load':
+                if operation == 'catalog-refresh':
+                    await app.history.refresh_catalog(force=True)
+                    assert not app.state['sharedHistory']['error']
+                    assert app.directory.resolve('catalog-only')['title'] == f'Catalog title {len(records)}'
+                elif operation == 'history-load':
                     await app.history.ensure_loaded(row['id'])
                     assert row['historyLoaded'] and not row['historyLoading'] and not row['historyError']
                 else:
@@ -141,10 +170,13 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
         receipt = dict(records=records, owners=owner_count, placementsPerOwner=live_count + tools,
             receiptsPerOwner=receipts_count, turnsPerOwner=turns_count + 1,
             size=size, cycles=cycles, profiled=profile, operation=operation,
-            warmup='First operation per owner is separately labelled cold; subsequent events reuse that service.',
+            warmup=('Large histories are saved before measurement; cold labels the first metadata '
+                    'refresh per owner, and later refreshes reuse that service.' if catalog_metadata else
+                    'First operation per owner is separately labelled cold; subsequent events reuse that service.'),
             totalWallSeconds=sum(row['wallSeconds'] for row in records),
             steadyWallSeconds=sum(row['wallSeconds'] for row in records if row['phase'] != 'cold'),
-            executionSha256=execution_hashes, publicationCount=publications, operationCount=len(records),
+            executionSha256=execution_hashes, publicationCount=publications,
+            ownerEncodingCount=owner_encodings, operationCount=len(records),
             processIoDelta={key: after_io[key] - before_io[key] for key in before_io},
             peakRssKiB=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
             python=sys.version, platform=platform.platform(),
@@ -165,6 +197,7 @@ async def measure(root, output, source, owner_count=3, reservation_bytes=0,
                 pstats.Stats(profiler, stream=stream).sort_stats('cumulative').print_stats(60)
         print(json.dumps(receipt), flush=True)
     finally:
+        cold_display.saved = original_saved
         await app.close()
 
 
@@ -177,7 +210,7 @@ if __name__ == '__main__':
     parser.add_argument('--size', choices=('small', 'large'), default='large')
     parser.add_argument('--cycles', type=int, default=1)
     parser.add_argument('--profile', action='store_true')
-    parser.add_argument('--operation', choices=('publication', 'history-load'), default='publication')
+    parser.add_argument('--operation', choices=('publication', 'history-load', 'catalog-refresh'), default='publication')
     args = parser.parse_args()
     output = args.output.resolve(); output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='publication-scaling-', dir=output) as temporary:
