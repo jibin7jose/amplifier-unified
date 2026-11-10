@@ -84,21 +84,60 @@ def display_identity(session, index, role, text):
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
+def _public_row(row):
+    return (isinstance(row, dict) and row.get('role') in {'user', 'assistant'}
+            and not any((row.get('metadata') or {}).get(key) for key in
+                        ('ephemeral', 'amplifier_visible_reference', 'amplifier_recovery_reference')))
+
+
+def _private_block(block):
+    return isinstance(block, dict) and block.get('visibility') in ('internal', 'developer')
+
+
+def _public_blocks(row, *, text_only=False):
+    """Select ordered native public blocks, without copying or resolving media.
+
+    Returned blocks are read-only references to the selected raw record. This
+    does not reconcile retained originals, assign message IDs or qualify media
+    encodings. Unknown public kinds are diagnostics, never public payloads.
+    """
+    result = {'blocks': [], 'unsupported': []}
+    if not _public_row(row):
+        return result
+    content = row.get('content')
+    if isinstance(content, str):
+        result['blocks'].append({'type': 'text', 'text': content})
+        return result
+    if not isinstance(content, list):
+        result['unsupported'].append({'index': 0, 'type': None})
+        return result
+    for index, block in enumerate(content):
+        if _private_block(block):
+            continue
+        kind = block.get('type') if isinstance(block, dict) else None
+        if kind in ('text', 'output_text') and isinstance(block.get('text'), str):
+            result['blocks'].append(block)
+        elif text_only or kind in ('thinking', 'redacted_thinking', 'reasoning',
+                                   'tool_call', 'tool_use', 'tool_result'):
+            continue
+        elif kind in ('image', 'image_url'):
+            result['blocks'].append(block)
+        else:
+            result['unsupported'].append({'index': index, 'type': kind if isinstance(kind, str) else None})
+    return result
+
+
 def _public_text(row, raw_text):
     content = row.get('content')
-    def private(block):
-        return isinstance(block, dict) and block.get('visibility') in ('internal', 'developer')
-    if not isinstance(content, list) or not any(private(block) for block in content):
+    if not isinstance(content, list) or not any(_private_block(block) for block in content):
         return raw_text
-    return text_content({'content': [block for block in content if not private(block)]})
+    return text_content({'content': _public_blocks(row, text_only=True)['blocks']})
 
 
 def display_message(row, index, session, *, include_internal=False):
     if not isinstance(row, dict) or row.get('role') not in {'user', 'assistant'}:
         return None
-    metadata = row.get('metadata') or {}
-    if not include_internal and any(metadata.get(key) for key in
-            ('ephemeral', 'amplifier_visible_reference', 'amplifier_recovery_reference')):
+    if not include_internal and not _public_row(row):
         return None
     raw_text = text_content(row)
     text = raw_text if include_internal else _public_text(row, raw_text)

@@ -130,6 +130,11 @@ This public-text correction does not make its text view a complete media view;
 media-only identity, resource routing and complete recorded-activity replay remain
 separate prerequisites for full Load. Raw and recent-window readers keep their
 existing contracts and are not a substitute for that conversation projection.
+The same display owner has an internal ordered public-block selector for
+projection qualification. It borrows selected blocks without resolving media,
+keeps unknown public kinds explicit, and leaves retained-original reconciliation
+with its existing owner. It adds no message IDs, media to ordinary text pages,
+execution-owner method or advertised capability.
 
 Interactive approval forwarding is a separate limitation of this first path.
 The existing access-mode owner resolves standing Full; the adapter may join its
