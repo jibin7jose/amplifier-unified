@@ -35,6 +35,8 @@ async def serve(args):
     verify_tree(root, record['server']['files'])
     verify_tree(root / 'amplifier_web/static', client['assets'], complete=True)
     sys.path[:0] = [str(root), str(root / 'tests/fixtures')]
+    # Bind helper subprocesses to the selected server, not the interpreter's install.
+    os.environ['PYTHONPATH'] = os.pathsep.join(filter(None, (str(root), os.environ.get('PYTHONPATH'))))
     import amplifier_web
     import chat_ui_server as fixture
     from aiohttp import web

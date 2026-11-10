@@ -10,7 +10,10 @@ import sys
 import tempfile
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+source_root = str(Path(__file__).resolve().parents[2])
+sys.path.insert(0, source_root)
+# Query helpers inherit the same source selection even with an older installed app.
+os.environ['PYTHONPATH'] = os.pathsep.join(filter(None, (source_root, os.environ.get('PYTHONPATH'))))
 
 from aiohttp import web
 from amplifier_web.server import create_app
