@@ -218,6 +218,14 @@ forced refreshes. It also checks exact returned history, the selected draft and
 the absence of runtime starts or sends. Growing or refreshing one conversation
 must not serialize unrelated history queries behind its display work.
 
+Text-only agent history read/search also omits execution activity reconstruction.
+Its canonical transcript, native input identities, voice/peer alignment and scope
+checks remain unchanged. `test_text_history_does_not_read_execution_events` rejects
+execution-log reads through the actual text query, including relocated logs, and
+checks that ordinary browser history still returns saved tool activity. Compare
+query outputs and event-read counts while growing retained events independently
+of transcript text; an output limit alone does not bound work before filtering.
+
 Internal admission reads keep their loading fence in memory and commit the final
 history or error once. They must not serialize the same retained execution merely
 to announce that the read has started. Explicit client history loads keep their

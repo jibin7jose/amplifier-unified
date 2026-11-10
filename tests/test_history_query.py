@@ -139,6 +139,36 @@ def _query_service(rows, *, attribution=None):
         _session=lambda identity, **kwargs: next(row for row in rows if row['id'] == identity))
 
 
+@pytest.mark.parametrize('action', ['read', 'search'])
+@pytest.mark.parametrize('relocate', [False, True])
+async def test_text_history_does_not_read_execution_events(tmp_path, monkeypatch, action, relocate):
+    """Text retrieval has no activity consumer, even with retained native events."""
+    from amplifier_web import history_query as history
+    from amplifier_web.automatic_history import read_transcript
+    from amplifier_foundation.session.history import SessionHistoryStore
+    from test_native_activity import fixture, snapshot
+
+    monkeypatch.setenv('AMPLIFIER_HOME', str(tmp_path / 'native'))
+    _, _, session = fixture(tmp_path, monkeypatch, relocate=relocate)
+    session.update(historyManaged=True, messages=[])
+    before = snapshot(tmp_path)
+    service = _query_service([session])
+    args = {'action': action, 'limit': 2}
+    args.update({'session_id': session['id']} if action == 'read' else {'query': 'inspect fixture'})
+    expected = await history.query_history(service, args, session['id'])
+
+    def no_events(*args, **kwargs):
+        raise AssertionError('Text retrieval read execution events')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SessionHistoryStore, 'iter_events', no_events)
+        assert await history.query_history(service, args, session['id']) == expected
+    # The browser's ordinary transcript reader still includes its saved activity.
+    browser = read_transcript(session)
+    assert browser['activity']['nodes'][0]['toolCallId'] == 'tool-1'
+    assert snapshot(tmp_path) == before
+
+
 @pytest.mark.parametrize('native', [False, True])
 @pytest.mark.parametrize('managed', [False, True])
 @pytest.mark.parametrize('child', [False, True])

@@ -35,7 +35,7 @@ def _rows(session):
         from .automatic_history import read_transcript, directory
         if not directory(session).is_dir():
             raise ValueError('Shared session history is unavailable. Its saved app data has been preserved.')
-        result = read_transcript(session, limit=None)
+        result = read_transcript(session, limit=None, include_activity=False)
         # Include the complete native history, plus unmatched UI/voice messages
         # that may not yet have reached a checkpoint. Repeated messages retain
         # their multiplicity. This is a retrieval view, never a persisted merge.
