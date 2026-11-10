@@ -352,6 +352,10 @@ async def test_owner_update_wait_yields_then_continues_once_on_exact_healthy_ado
             assert marker["yieldedGoal"] == yielded_goal  # Produced by the actual native hook.
             boundary_id = provider.wait_receipt["result"]["boundaryId"]
             assert marker["id"] == boundary_id
+            enrolled = app.collaboration.receipt(WAIT)
+            assert enrolled["sourceInputIds"] == [HUMAN]
+            assert enrolled["sourceGenerationId"] == first["generation_id"]
+            assert enrolled["sourceInterruptionRevision"] == app._session(sid).get("interruptionRevision", 0)
             assert worker.controls.tasks.record()["status"] == "active"
 
             # Native idle alone must not count as checkpoint/release proof.

@@ -337,13 +337,15 @@ class ConfigurationAuthority:
         """
         kind = original.get('commandAction')
         lineage = original
+        if kind == 'updates.app':
+            lineage = self.update_continuation_lineage(original)
         if kind == 'coordination.create' and 'sourceInputIds' not in original:
             metadata = original.get('result') or {}
             if (metadata.get('creatorSessionId') == original.get('senderSessionId')
                     and metadata.get('requestId') == original.get('requestId')):
                 lineage = metadata
         inputs = lineage.get('sourceInputIds')
-        if (kind not in {'coordination.send', 'coordination.watch', 'coordination.create', 'workspace.tests.submit', 'worktree.handoff'}
+        if (kind not in {'coordination.send', 'coordination.watch', 'coordination.create', 'workspace.tests.submit', 'worktree.handoff', 'updates.app'}
                 or not isinstance(inputs, list) or len(inputs) > 128
                 or any(not isinstance(item, str) or not item for item in inputs)
                 or type(lineage.get('sourceInterruptionRevision')) is not int
@@ -351,6 +353,40 @@ class ConfigurationAuthority:
                     not lineage.get('sourceGenerationId') or not inputs)):
             self.error('The saved return has no verified original input lineage. Ask the user to authorize this current request before changing configuration.')
         return inputs
+
+    def update_continuation_lineage(self, original):
+        """Resolve an own-update return from its original admitted wait receipt.
+
+        The current generation and global drain may already be successors. Neither
+        can backfill ancestry missing from a historical enrollment.
+        """
+        proof = original.get('updateYield') or {}
+        owner = self.service._session(original['senderSessionId'], hydrate=False)
+        wait = self.service.collaboration.receipt(proof.get('commandId'))
+        boundary = wait.get('boundary') or {}
+        expected = ('update-wait-withdrawn:' + str(proof.get('boundaryId')) if proof.get('withdrawn')
+                    else 'update-wait:' + str(proof.get('updateTarget', {}).get('attemptId')) + ':' + owner['id'])
+        from .task_binding import matches
+        task = owner.get('task') or self.service.coordination.task(owner['id'])
+        if (original.get('origin') != 'system' or original.get('requestId') != expected
+                or original.get('target', {}).get('sessionId') != owner['id']
+                or original.get('workspace') != owner['workspace']
+                or wait.get('commandAction') != 'task.waitForUpdate'
+                or wait.get('origin') != 'agent' or proof.get('sessionId') != owner['id']
+                or wait.get('arguments', {}).get('sessionId') != owner['id']
+                or wait.get('requestId') != proof.get('commandId')
+                or wait.get('admissionStatus') != 'acknowledged'
+                or not proof.get('explicit') or not boundary.get('ready')
+                or boundary.get('unknown') or boundary.get('suppressed')
+                or boundary.get('continuationSourceRequestId') != original.get('requestId')
+                or any(boundary.get(key) != proof.get(key) for key in
+                       ('boundaryId', 'binding', 'generationId', 'taskBinding', 'updateTarget', 'accessRevision'))
+                or wait.get('sourceGenerationId') != proof.get('generationId')
+                or wait.get('sourceInterruptionRevision') != (proof.get('binding') or {}).get('interruptionRevision')
+                or self.service.access_mode.snapshot(owner)['revision'] != proof.get('accessRevision')
+                or not matches(task, proof.get('taskBinding') or {}) or task.get('status') != 'active'):
+            self.error('The update continuation has no verified original input lineage.')
+        return wait
 
     def peer_authorities(self, source, grant, effect, scope):
         """A lower-authority input cannot borrow a more privileged recipient.

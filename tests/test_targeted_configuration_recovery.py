@@ -15,6 +15,7 @@ from test_full_operator_configuration_recovery import operator_failure
 from test_queued_configuration_boundary import (
     operation, plan, process_apply, process_boundary,
 )
+from test_owner_update_wait import OwnerRuntime, UpdateWait
 
 
 async def manager(b, mode='full'):
@@ -486,3 +487,180 @@ async def test_own_settings_return_keeps_exact_original_lineage(process_boundary
             await asyncio.wait_for(task, 12)
         assert operation(b)['state']['effect'] == 'mounted'
         assert operation(b)['resumptions'][0]['chain'][1] == authority
+
+
+async def update_return(b, tmp_path, monkeypatch, outcome, *, sender=None):
+    """Real wait, native goal checkpoint and return producer on the recovery host.
+
+    Only transport routing and successor health are fixture adapters; the target
+    retains the real subprocess/native effect and saved operation.
+    """
+    from amplifier_web import update_drain
+    from amplifier_web.updates import UpdateManager
+    h = UpdateWait(tmp_path)
+    h.app, h.runtime = b.app, OwnerRuntime()
+    h.runtime.app = b.app
+    h.manager = UpdateManager(b.app)
+    b.app.update_manager = h.manager
+    control, collaboration_input = b.runtime.control, b.runtime.collaboration_input
+
+    async def route_control(sid, *args, **kwargs):
+        if sid in h.runtime.controllers:
+            return await h.runtime.control(sid, *args, **kwargs)
+        return await control(sid, *args, **kwargs)
+
+    async def route_input(session, *args, **kwargs):
+        if session['id'] == h.sid:
+            return await h.runtime.collaboration_input(session, *args, **kwargs)
+        return await collaboration_input(session, *args, **kwargs)
+
+    monkeypatch.setattr(b.runtime, 'control', route_control)
+    monkeypatch.setattr(b.runtime, 'collaboration_input', route_input)
+    monkeypatch.setattr(b.runtime, 'handoff_boundary', h.runtime.handoff_boundary)
+    h.sid = await h.new_task('Update recovery operator', full_access=True)
+    source = b.app._session(h.sid)
+    if sender is not None:
+        await agent(b.app, sender, 'coordination.send', {
+            'sessionId': h.sid, 'text': 'Lower authority request', 'mode': 'notify'}, 'lower-peer')
+        source['collaborationGeneration']['inputIds'] = ['lower-peer']
+    # Only this owner's native checkpoint lives in the in-process adapter.
+    b.runtime.workers[h.sid] = h.runtime.workers[h.sid]
+    try:
+        h.stage()
+        await h.ready()
+        if outcome == 'update-withdrawn':
+            b.app.state['updates']['pendingApp'] = None
+            await update_drain.observe_waiters(h.manager)
+            await h.settle()
+        else:
+            h.replace()
+            # Explicit health fixture, not an installed update/restart test.
+            b.app.state['updates']['drain']['hostInstanceId'] = 'retired-fixture-host'
+            h.manager.running_identity = {**h.release, 'instanceId': b.app.instance_id}
+            b.app.state['updates'].update(phase='idle', pendingApp=None, pendingRestart=None,
+                pendingReplacement=None, applicationResult={**h.release, 'phase': 'restart-ack'})
+            await h.finish()
+        assert len(h.runtime.admitted) == 1, {
+            'returns': [(r.get('delivery'), r.get('detail'), r.get('admission'))
+                        for r in h.receipts('coordination.send')],
+            'guards': h.runtime.guard_reasons, 'calls': h.runtime.admission_calls,
+            'status': source['status'], 'busy': source.get('configurationBusy')}
+        returned = b.app.collaboration.receipt(h.runtime.admitted[0]['inputId'])
+        original = b.app.collaboration.receipt(returned['dependencyRequestId'])
+        assert original['terminalOutcome']['outcome'] == outcome
+        source['collaborationGeneration'] = {'id': 'update-return-generation',
+            'inputIds': [returned['requestId']], 'terminal': False}
+        return source, original
+    finally:
+        b.runtime.workers.pop(h.sid, None)
+        await h.runtime.close()
+
+
+@pytest.mark.parametrize('process_boundary', ['full'], indirect=True)
+@pytest.mark.parametrize('outcome', ['update-ready', 'update-withdrawn'])
+async def test_real_update_return_preserves_targeted_full_recovery(process_boundary, tmp_path, monkeypatch, outcome):
+    b = process_boundary
+    source, original = await update_return(b, tmp_path, monkeypatch, outcome)
+    saved = await saved_failure(b, monkeypatch)
+    settings = override_path(b.owner['runtimeSessionId']).read_bytes()
+    seal = receipt_path(saved['attempts'][0]).read_bytes()
+    before_messages = deepcopy(b.owner['messages'])
+    view = (await invoke(b, source, 'read', includeRecovery=True))['result']
+    assert view['recovery']['canReconcile'] and not view['recovery']['canResume']
+    await invoke(b, source, 'reconcile')
+    await b.runtime.stop(b.owner['id'], reason='configuration')
+    await invoke(b, source, 'resume')
+    pending = b.app.management.pending_config_tasks.get(b.owner['id'])
+    if pending:
+        await asyncio.wait_for(pending, 12)
+    final = operation(b)
+    assert final['state']['effect'] == 'mounted'
+    assert final['request'] == saved['request'] and final['requestHash'] == saved['requestHash']
+    assert final['attempts'] == saved['attempts']
+    assert override_path(b.owner['runtimeSessionId']).read_bytes() == settings
+    assert receipt_path(saved['attempts'][0]).read_bytes() == seal
+    assert b.owner['messages'] == before_messages
+    assert original['senderSessionId'] == source['id']
+
+
+@pytest.mark.parametrize('process_boundary', ['full'], indirect=True)
+@pytest.mark.parametrize('outcome', ['update-ready', 'update-withdrawn'])
+@pytest.mark.parametrize('fault', [
+    'missing-proof', 'missing-inputs', 'malformed-inputs', 'overflow', 'generation',
+    'wait-id', 'wrong-owner', 'wrong-workspace', 'peer-ask',
+])
+async def test_real_update_return_cannot_launder_unknown_or_peer_authority(
+        process_boundary, tmp_path, monkeypatch, outcome, fault):
+    b = process_boundary
+    sender = await manager(b, 'ask') if fault == 'peer-ask' else None
+    source, original = await update_return(b, tmp_path, monkeypatch, outcome, sender=sender)
+    saved = await operator_failure(b)
+    if fault != 'peer-ask':
+        wait = b.app.collaboration.receipt(original['updateYield']['commandId'])
+        if fault == 'missing-proof':
+            for key in ('sourceInputIds', 'sourceGenerationId', 'sourceInterruptionRevision'):
+                wait.pop(key, None)
+        elif fault == 'missing-inputs':
+            wait['sourceInputIds'] = []
+        elif fault == 'malformed-inputs':
+            wait['sourceInputIds'] = [None]
+        elif fault == 'overflow':
+            wait['sourceInputIds'] = ['input-' + str(n) for n in range(129)]
+        elif fault == 'generation':
+            wait['sourceGenerationId'] = 'unrelated-generation'
+        elif fault in {'wrong-owner', 'wrong-workspace'}:
+            if fault == 'wrong-owner':
+                original['target']['sessionId'] = b.owner['id']
+            else:
+                original['workspace'] += '-elsewhere'
+            b.app.collaboration.save(original['requestId'], original)
+        else:
+            original['updateYield']['commandId'] = 'unrelated-wait'
+            b.app.collaboration.save(original['requestId'], original)
+        b.app.collaboration.save(wait['requestId'], wait)
+    with pytest.raises((AppError, ValueError)):
+        await invoke(b, source, 'reconcile')
+    assert operation(b) == saved
+    assert not override_path(b.owner['runtimeSessionId']).exists()
+
+
+@pytest.mark.parametrize('process_boundary', ['full'], indirect=True)
+@pytest.mark.parametrize('outcome', ['update-ready', 'update-withdrawn'])
+@pytest.mark.parametrize('changed', ['peer-full', 'caller-stop', 'target-native'])
+async def test_update_return_keeps_recovery_ceilings_at_final_readback(
+        process_boundary, tmp_path, monkeypatch, outcome, changed):
+    b = process_boundary
+    sender = await manager(b)
+    source, _ = await update_return(b, tmp_path, monkeypatch, outcome, sender=sender)
+    saved = await saved_failure(b, monkeypatch)
+    await invoke(b, source, 'reconcile')
+    before = override_path(b.owner['runtimeSessionId']).read_bytes()
+    entered, release = asyncio.Event(), asyncio.Event()
+    control = b.runtime.control
+
+    async def hold(*args, **kwargs):
+        if args[1] == 'configuration.inspect':
+            entered.set()
+            await release.wait()
+        return await control(*args, **kwargs)
+
+    monkeypatch.setattr(b.runtime, 'control', hold)
+    await invoke(b, source, 'resume')
+    pending = b.app.management.pending_config_tasks[b.owner['id']]
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        chain = operation(b)['resumptions'][0]['chain']
+        assert chain[1]['sessionId'] == sender['id']
+        if changed == 'peer-full':
+            await mode_for(b, sender, 'ask')
+            await mode_for(b, sender, 'full')
+        elif changed == 'caller-stop':
+            source['interruptionRevision'] = source.get('interruptionRevision', 0) + 1
+        else:
+            b.owner['runtimeSessionId'] = 'superseding-native-owner'
+    finally:
+        release.set()
+    await asyncio.wait_for(pending, 12)
+    assert operation(b)['state']['phase'] == 'error'
+    assert operation(b)['attempts'] == saved['attempts']
+    assert override_path(saved['attempts'][0]['nativeSessionId']).read_bytes() == before
