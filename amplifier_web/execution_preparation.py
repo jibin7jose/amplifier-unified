@@ -141,6 +141,7 @@ class ExecutionPreparation:
     def __init__(self):
         self.entries = OrderedDict()
         self.bytes = 0
+        self.admission_bytes = 0
         self.accounting = OrderedDict()
         self.accounting_bytes = 0
         self.references = OrderedDict()
@@ -280,6 +281,16 @@ class ExecutionPreparation:
                 self.bytes -= self.entries.popitem(last=False)[1][2]
             self.entries[key] = (witness, text, charge, token, summary)
             self.bytes += charge
+            # Most new fragments enter at the eviction end, protecting reuse
+            # from large one-pass scans. Once a cache's worth of new bytes has
+            # arrived, give one fragment normal recency so a later working set
+            # can displace an idle one. Only this byte counter is retained.
+            if old is None:
+                self.admission_bytes += charge
+                if self.admission_bytes >= 2 * self.MAX_BYTES - reserved - self.accounting_bytes:
+                    self.admission_bytes = 0
+                else:
+                    self.entries.move_to_end(key, last=False)
             return text, token, summary
         return text, None, summary
 

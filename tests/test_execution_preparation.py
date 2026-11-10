@@ -342,3 +342,45 @@ def test_six_interleaved_histories_reuse_fragments_within_existing_total_budget(
     # unchanged list is rebuilt merely because another active owner saved.
     assert calls == [256] * 12
     assert encoded == []
+
+
+def test_interleaved_histories_larger_than_cache_keep_reusing_recent_fragments(monkeypatch):
+    cache = ExecutionPreparation()
+    cache.MAX_BYTES = 150000
+    histories = {
+        str(owner): {'nodes': [
+            {'id': str(i), 'text': f'{owner}:{i}:' + 'x' * 256,
+             'nested': {'values': [i]}}
+            for i in range(256)], 'turns': [], 'retiredUsageNodes': []}
+        for owner in range(6)}
+    expected = {owner: resource_files.prepare(value) for owner, value in histories.items()}
+    assert sum(len(value.text) for value in expected.values()) > 2 * cache.MAX_BYTES
+    for owner, value in histories.items():
+        assert cache.prepare(owner, value) == expected[owner]
+    encoded = []
+    dumps = json.dumps
+    with monkeypatch.context() as patch:
+        def observe(value, *args, **kwargs):
+            if type(value) is list and value:
+                encoded.append(len(value))
+            return dumps(value, *args, **kwargs)
+        patch.setattr(json, 'dumps', observe)
+        for _ in range(2):
+            for owner, value in histories.items():
+                assert cache.prepare(owner, value) == expected[owner]
+                assert cache.bytes + cache.accounting_bytes <= 2 * cache.MAX_BYTES
+    # A cyclic scan larger than capacity must not cause every unchanged row to
+    # be encoded again. This checks saved bytes and work, not a cache's ordering.
+    assert sum(encoded) < 2 * 6 * 256
+    for owner, value in histories.items():
+        shared = {'values': ['changed']}
+        value['nodes'][127]['nested'] = value['nodes'][128]['nested'] = shared
+        assert cache.prepare(owner, value) == resource_files.prepare(value)
+        shared['values'].append('changed again')
+        assert cache.prepare(owner, value) == resource_files.prepare(value)
+    cache.retain({'5'})
+    assert all(key[0] == '5' for key in cache.entries)
+    replacement = tree()
+    assert cache.prepare('5', replacement) == resource_files.prepare(replacement)
+    cache.retain(())
+    assert cache.bytes == 0 and not cache.entries
