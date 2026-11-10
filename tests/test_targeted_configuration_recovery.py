@@ -344,6 +344,9 @@ async def test_cross_owner_no_effect_recovery_holds_existing_queued_input(proces
         admitted.append(args['inputId'])
         return {'accepted': True}
     b.runtime.collaboration_input = input_adapter
+    # Fixture startup reports ready but never publishes the production parked
+    # idle event. Fresh queue-only work must wait for that explicit boundary.
+    b.owner['status'] = 'idle'
     await agent(b.app, source, 'coordination.send', {'sessionId': b.owner['id'],
         'text': 'Genuinely fresh explicit work after recovery', 'mode': 'queue'}, 'fresh-after-recovery')
     async with asyncio.timeout(5):
