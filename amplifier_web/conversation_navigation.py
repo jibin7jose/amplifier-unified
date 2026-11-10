@@ -10,7 +10,7 @@ def source(session):
     if session.get('nativeProject') and session.get('historyManaged'):
         from amplifier_foundation.session.history import SessionHistoryStore
         from amplifier_foundation.session.jsonl import TranscriptIndex
-        from .automatic_history import directory, display_identity, display_message
+        from .automatic_history import directory, display_identity, display_message, native_input_id
         rows = SessionHistoryStore(directory(session)).indexed_messages()
         def fact(value, index):
             row = display_message(value, index, session)
@@ -21,10 +21,10 @@ def source(session):
                                if row and row.get('nativeMessageId') else None)
             return (row['id'] if row else None, internal['role'] if internal else None,
                     not bool(row.get('observation')) if row else False, index,
-                    internal.get('nativeInputId') if internal else None, public_identity)
+                    native_input_id(value), public_identity)
         # Cache only descriptors, including input identity multiplicity. A
         # duplicate outside the requested page must not qualify a native row.
-        facts = rows.project('unified-navigation-v6:'+session['id'], fact) if isinstance(rows, TranscriptIndex) else [fact(row,i) for i,row in enumerate(rows)]
+        facts = rows.project('unified-navigation-v7:'+session['id'], fact) if isinstance(rows, TranscriptIndex) else [fact(row,i) for i,row in enumerate(rows)]
         input_counts = Counter(row[4] for row in facts if row[4])
         visible = [row for row in facts if row[0]]
         def read(positions):
