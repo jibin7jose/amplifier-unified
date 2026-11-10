@@ -19,7 +19,7 @@ for(const label of ['alpha','bravo']){
 const app=new App({name:${JSON.stringify(label)},version:'1.0.0'},{});
 document.querySelector('button').onclick=async()=>{try{const result=await app.readServerResource({uri:'counter://media/${label}'});document.querySelector('output').textContent=result.contents[0].text}catch(error){document.querySelector('output').textContent=error.message}};
 await app.connect();document.body.dataset.ready='true';`;
- const built=await build({stdin:{contents:source,resolveDir:process.cwd(),sourcefile:label+'.js'},bundle:true,write:false,format:'esm',minify:true});
+ const built=await build({stdin:{contents:source,resolveDir:fileURLToPath(new URL('./',import.meta.url)),sourcefile:label+'.js'},bundle:true,write:false,format:'esm',minify:true});
  await writeFile(join(documents,label+'.html'),`<!doctype html><html><body><h1>${label} view</h1><button>Read ${label} resource</button><output></output><input aria-label="Local tool draft"><script type="module">${built.outputFiles[0].text.replaceAll('</script','<\\/script')}</script></body></html>`);
 }
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',[root+'tests/fixtures/smart_canvas_owner_ui_server.py',documents],{stdio:['ignore','pipe','pipe']});

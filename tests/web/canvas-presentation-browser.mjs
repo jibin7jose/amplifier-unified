@@ -10,7 +10,7 @@ import {chromium,expect} from '@playwright/test';
 import assert from 'node:assert/strict';
 const root=fileURLToPath(new URL('../../',import.meta.url)),python=process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python';
 const directory=await mkdtemp(join(tmpdir(),'canvas-presentation-')),html=join(directory,'app.html'),calls=join(directory,'calls.jsonl');
-const built=await build({stdin:{contents:`import {App} from '@modelcontextprotocol/ext-apps';const app=new App({name:'Entity review',version:'1.0.0'},{});app.ontoolresult=result=>document.querySelector('#value').textContent=result.structuredContent.entity+':'+result.structuredContent.value;await app.connect();document.body.dataset.booted='true';`,resolveDir:process.cwd(),sourcefile:'presentation.js'},bundle:true,write:false,format:'esm'});
+const built=await build({stdin:{contents:`import {App} from '@modelcontextprotocol/ext-apps';const app=new App({name:'Entity review',version:'1.0.0'},{});app.ontoolresult=result=>document.querySelector('#value').textContent=result.structuredContent.entity+':'+result.structuredContent.value;await app.connect();document.body.dataset.booted='true';`,resolveDir:fileURLToPath(new URL('./',import.meta.url)),sourcefile:'presentation.js'},bundle:true,write:false,format:'esm'});
 await writeFile(html,`<!doctype html><h1>Entity dashboard</h1><output id="value"></output><script type="module">${built.outputFiles[0].text.replaceAll('</script','<\\/script')}</script>`);
 const fixture=spawn(python,[root+'tests/fixtures/canvas_restart_ui_server.py',directory,'0'],{stdio:['ignore','pipe','inherit']});let browser;
 try{

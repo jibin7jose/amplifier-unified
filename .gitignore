@@ -26,4 +26,4 @@ dist/
 
 # Selected client preparation and separately owned web integration dependencies.
 /.build/
-/tests/web/node_modules/
+/tests/web/node_modules
