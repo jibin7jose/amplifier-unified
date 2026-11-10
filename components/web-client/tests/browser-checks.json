@@ -2,6 +2,16 @@
   "schemaVersion": 1,
   "scenarios": [
     {
+      "id": "sidebar-controls",
+      "command": [
+        "node",
+        "tests/sidebar-controls-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/sidebar-controls"
+      }
+    },
+    {
       "id": "new-chat-recovery",
       "command": [
         "node",

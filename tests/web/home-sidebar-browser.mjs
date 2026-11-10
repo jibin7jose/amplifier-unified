@@ -58,11 +58,14 @@ try{
  const oneRow=async()=>{
   await expect.poll(()=>sidebar.evaluate(node=>{const rail=node.getBoundingClientRect();return [...node.querySelectorAll('.a-sidebar-modes button')].every(button=>{const box=button.getBoundingClientRect();return box.left>=rail.left&&box.right<=rail.right})})).toBe(true);
   const boxes=await sidebar.locator('.a-sidebar-modes button').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right}}));
-  assert.equal(boxes.length,4);assert.ok(boxes.every(box=>Math.abs(box.top-boxes[0].top)<2));
+  assert.equal(boxes.length,3);assert.ok(boxes.every(box=>Math.abs(box.top-boxes[0].top)<2));
   assert.ok(boxes.every((box,i)=>!i||box.left>=boxes[i-1].right-1));
   const rail=await sidebar.boundingBox();assert.ok(boxes.every(box=>box.left>=rail.x&&box.right<=rail.x+rail.width));
   assert.ok(await newChat.evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))}));
   await expect(newChat).toHaveText('');await expect(newChat).toHaveAttribute('title','New chat');
+  await expect(sidebar.getByRole('button',{name:'Home',exact:true})).toHaveCount(0);
+  await expect(homeButton).toHaveCount(1);
+  await expect(newChat.locator('svg.lucide-message-square-plus')).toHaveCount(1);
  };
  await oneRow();
  assert.equal(await sidebar.locator('.a-chat-age-stops>span').count(),6);

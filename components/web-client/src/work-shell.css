@@ -8,12 +8,14 @@
 #amp-one.a-approachable-shell .a-sidebar-organizations>button{flex:1;min-width:0;justify-content:center;font-size:var(--a-text-sm,13px);min-height:36px;padding:6px 4px;background:none;border:1px solid transparent;border-radius:7px;color:var(--a-muted)}
 #amp-one.a-approachable-shell .a-sidebar-organizations>button[aria-pressed=true]{background:var(--a-surface);border-color:var(--a-line);color:var(--a-ink);font-weight:600}
 #amp-one.a-approachable-shell .a-sidebar-modes button:focus-visible{outline:2px solid var(--a-accent);outline-offset:1px}
-#amp-one.a-approachable-shell .a-sidebar-modes>:is(.a-sidebar-home,.a-sidebar-new){flex:0 0 32px;width:32px;min-width:32px;min-height:36px;padding:6px;background:none;border:1px solid transparent;border-radius:7px;color:var(--a-muted)}
-#amp-one.a-approachable-shell .a-sidebar-home[aria-current=page]{background:var(--a-soft);color:var(--a-accent)}
+#amp-one.a-approachable-shell .a-sidebar-modes>.a-sidebar-new{flex:0 0 32px;width:32px;min-width:32px;min-height:36px;padding:6px;background:none;border:1px solid transparent;border-radius:7px;color:var(--a-muted)}
 #amp-one.a-approachable-shell .a-nav-main{margin:4px 0;min-height:38px;border-radius:8px}
 #amp-one.a-approachable-shell .a-nav-content{padding:0 0 14px}
 #amp-one.a-approachable-shell .a-nav-search-launch{display:flex;align-items:center;gap:12px;justify-content:flex-start;background:none;color:var(--a-muted);width:100%;padding:9px 10px;text-align:left;border:0}
 #amp-one.a-approachable-shell .a-sidebar-section{margin:16px 0 0}
+/* The age control already supplies the first module's section gap. Preserve
+   normal section spacing inside and between all later shell modules. */
+#amp-one.a-approachable-shell .a-chat-age-filter+.a-shell-modules>.a-shell-instance:nth-child(1 of :not([hidden]):has(.a-sidebar-section))>.a-sidebar-navigation>.a-sidebar-section:nth-child(1 of .a-sidebar-section){margin-top:0}
 #amp-one.a-approachable-shell .a-sidebar-section-heading{margin:0 0 3px;padding:0 3px}
 #amp-one.a-approachable-shell .a-sidebar-section-heading>button{font-size:var(--a-text-xs,12px);justify-content:flex-start;font-weight:550}
 #amp-one.a-approachable-shell .a-nav-chat{min-height:40px;margin:1px 0;border-radius:9px}
