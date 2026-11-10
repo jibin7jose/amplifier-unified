@@ -32,7 +32,7 @@ try{
   if(!response.ok)throw Error(await response.text());return response.json();
  },[path,body]);
  const info=()=>api('/api/fixture/info');
- const agent=async(action,args)=>api('/api/fixture/agent',{args:action==='view.update'?{action:'shell.view.update',args:{...args,clientId:await page.evaluate(()=>window.amplifier.shellClientId),instanceId:'chats',patch:{navRecentView:args.patch}}}:{action,args}});
+ const agent=async(action,args)=>api('/api/fixture/agent',{args:action==='view.update'?{action:'shell.view.update',args:{...args,clientId:await page.evaluate(()=>window.amplifier.shellClientId),instanceId:'chats',patch:{navRecentView:args.patch}}}:{action,args:{...args,...(action==='session.select'?{clientId:await page.evaluate(()=>window.amplifier.getState().client.id)}:{})}}});
  const state=()=>page.evaluate(()=>({...window.amplifier.getState(),...window.amplifier.getShellState().snapshots.chats,chatNavigation:window.amplifier.getShellState().snapshots.chats.sidebarNavigation.recent,view:{...window.amplifier.getState().view,...window.amplifier.getShellState().snapshots.chats.view}}));
  const rows=()=>page.locator('[data-sidebar-section=pinned] .a-nav-chat[data-session-id], [data-sidebar-section=recent] .a-nav-chat[data-session-id]');
  const row=id=>page.locator(`[data-sidebar-section=pinned] .a-nav-chat[data-session-id="${id}"], [data-sidebar-section=recent] .a-nav-chat[data-session-id="${id}"]`);
@@ -60,6 +60,44 @@ try{
  assert.equal(current.chatNavigation.items.some(chat=>chat.title==='Hidden worker'||chat.title==='Deleted workspace chat'),false);
  assert.deepEqual((await info()).runtimeStarts,[]);
  assert.deepEqual((await info()).runtimeSends,[]);
+
+    // The metadata finder is passive; explicit agent navigation addresses one
+    // connected browser, never the calling chat's global/default projection.
+    const composer=page.getByRole('textbox',{name:'Message Amplifier',exact:true});
+    await composer.fill('Private source draft stays on first client');
+    const second=await browser.newPage({viewport:{width:1280,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
+    try{
+     await second.goto(vite.resolvedUrls.local[0]);
+     const secondComposer=second.getByRole('textbox',{name:'Message Amplifier',exact:true});
+     await secondComposer.waitFor();await secondComposer.fill('Second client source draft');
+     const secondId=await second.evaluate(()=>window.amplifier.getState().client.id);
+     const found=await agent('coordination.list',{query:'Quiet older chat',limit:1});
+     assert.equal(found.result.items[0].target.sessionId,quiet);
+     assert.equal(found.result.items[0].archived,false);
+     assert.equal(found.result.nextOffset,null);
+     assert.equal((await state()).selectedSessionId,initial);
+     const selected=await api('/api/fixture/agent',{args:{action:'session.select',id:'explicit-navigation-proof',
+      args:{id:quiet,clientId:secondId}}});
+     assert.equal(selected.accepted,true);
+     assert.equal(selected.result.clientId,secondId);
+     assert.equal(selected.result.sourceSessionId,initial);
+     assert.equal(selected.result.selectedSessionId,quiet);
+     assert.equal(selected.result.rendering,'unverified');
+     assert.equal(JSON.stringify(selected).includes('Second client source draft'),false);
+     await second.waitForFunction(id=>window.amplifier.getState().selectedSessionId===id,quiet);
+     await second.getByText('An earlier fixture response',{exact:true}).waitFor();
+     assert.equal((await state()).selectedSessionId,initial);
+     assert.equal(await composer.textContent(),'Private source draft stays on first client');
+     const readback=await agent('session.selection',{commandId:'explicit-navigation-proof'});
+     assert.equal(readback.result.status,'selected');
+     assert.equal(readback.result.selectedSessionId,quiet);
+     await second.evaluate(id=>window.amplifier.dispatch('session.select',{id}),initial);
+     await second.waitForFunction(()=>window.amplifier.getState().view.draft==='Second client source draft');
+     assert.equal((await agent('session.selection',{commandId:'explicit-navigation-proof'})).result.status,'changed');
+     assert.deepEqual((await info()).runtimeStarts,[]);
+     assert.deepEqual((await info()).runtimeSends,[]);
+    }finally{await second.close()}
+    await composer.fill('');
 
  assert.equal(await page.getByRole('button',{name:'New workspace',exact:true}).count(),1);
 

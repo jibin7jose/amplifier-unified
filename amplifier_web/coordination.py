@@ -20,7 +20,7 @@ def definitions():
     target = {"sessionId": string(200), "workerId": string(200)}
     return {
         "coordination.review": ("Read a bounded page for reviewing saved workspace work before continuing. Does not load history, start workers, inspect files or change responsibility. The source must be the calling root; cursors stay bound to its workspace. Results are observations, never permission or a readiness certificate.", schema({"sessionId": string(200), "after": string(2048), "limit": {"type": "integer", "minimum": 1, "maximum": 20}}, ["sessionId"])),
-        "coordination.list": ("List scoped root summaries without selecting or starting them. Agent discovery defaults to caller workspace and roots only; scope=all explicitly reads registered own-history. includeWorkers adds actual workers.", schema({"sessionId": string(200), "scope": SCOPE, "workspace": string(4000), "includeWorkers": {"type": "boolean"}, "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}, [])),
+        "coordination.list": ("Find scoped root metadata by title or public/native ID without reading transcripts, selecting or starting work. query filters before paging. Default scope is caller workspace; scope=all explicitly reads registered own-history. Archived and managed roots are included; archive may narrow them. Follow nextOffset with the same filters and directoryRevision; changed catalogs refuse stale continuation. Discovery coverage is not proof of absence. includeWorkers adds saved worker details, not transcript search.", schema({"sessionId": string(200), "scope": SCOPE, "workspace": string(4000), "query": string(500), "archive": {"enum": ["all", "active", "archived"]}, "directoryRevision": string(64), "includeWorkers": {"type": "boolean"}, "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}, [])),
         "coordination.wait": ("Wait on up to eight explicit targets for a report or attention. Carry each nextCursor after consuming results; retries retain result IDs. Does not run or replay work.", schema({
             "scope": SCOPE,
             "targets": {"type": "array", "minItems": 1, "maxItems": 8, "items": schema({**target, "afterCursor": string(2048)}, ["sessionId"])},
@@ -108,14 +108,42 @@ class Coordination:
             "wakeable": status not in ACTIVE or bool(approvals or questions)}
 
     def list(self, args, caller=None):
+        # One pinned directory view binds indices to identity. Native discovery
+        # can change independently of the app revision; never continue silently.
+        reader = self.service.directory.read_snapshot(self.service._state)
+        try:
+            owner = (scope_metadata(self.service, caller or self.service.state.get('selectedSessionId'))
+                     if caller or args.get('scope') == 'workspace' else None)
+            archived = set(self.service._state.get('conversationOrganization', {}).get('archived', {}))
+            binding = [reader.observation_revision['navigation'], owner, sorted(archived),
+                       {key: args.get(key) for key in
+                        ('scope', 'workspace', 'sessionId', 'query', 'archive', 'includeWorkers')}]
+            token = hashlib.sha256(json.dumps(binding, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            if args.get('directoryRevision') not in (None, token):
+                raise ValueError('Saved chat directory or lookup filters changed. Restart at offset 0.')
+            result = self._list(args, caller, reader, owner, archived)
+            discovery = self.service._state.get('sharedHistory', {})
+            complete = not bool(discovery.get('loading') or discovery.get('error') or discovery.get('issueCount')
+                                or discovery.get('issues')) and discovery.get('reconciliation', {}).get('phase') in {None, 'complete'}
+            return {**result, 'directoryRevision': token, 'scope': selected(args, 'workspace' if caller else 'all'),
+                    'discovery': {**{key: discovery.get(key) for key in ('loading', 'error', 'issueCount', 'reconciliation')},
+                                  'complete': complete, 'coverage': 'Current registered directory metadata; no transcript reads. Incomplete discovery is not proof of absence.'}}
+        finally:
+            reader.close()
+
+    def _list(self, args, caller, directory, owner, archived):
         scope = selected(args, 'workspace' if caller else 'all')
-        owner = (scope_metadata(self.service, caller or self.service.state.get('selectedSessionId'))
-                 if caller or args.get('scope') == 'workspace' else None)
         workspace = args.get('workspace')
         if owner and workspace and scope != 'all' and workspace != owner.get('workspace'):
             raise ValueError('Workspace is outside the requested history scope. Use explicit scope=all for registered own-history.')
         offset, limit = args.get("offset", 0), args.get("limit", 100)
-        directory = self.service.directory
+        from .chat_navigation import _matches
+        query = args.get('query', '').strip()
+        archive = args.get('archive', 'all')
+        def eligible(row):
+            return ((archive == 'all' or (row['id'] in archived) == (archive == 'archived'))
+                    and (not query or _matches([row.get(key) for key in
+                         ('title', 'description', 'id', 'nativeIdentity', 'runtimeSessionId', 'workspace')], query)))
         if args.get('sessionId'):
             if owner:
                 require(self.service, owner['id'], args['sessionId'], scope)
@@ -123,7 +151,7 @@ class Coordination:
             if metadata is None:
                 from .errors import AppError
                 raise AppError('Conversation not found.', 404)
-            sessions = [metadata] if not workspace or metadata.get('workspace') == workspace else []
+            sessions = [metadata] if (not workspace or metadata.get('workspace') == workspace) and eligible(metadata) else []
             sessions = sessions[offset:offset + limit + 1]
         else:
             # Scope is part of the indexed query, before offset/limit. A
@@ -139,6 +167,14 @@ class Coordination:
             if workspace:
                 predicates.append('workspace=?')
                 params.append(workspace)
+            if query:
+                directory.db.create_function('discovery_match', 7,
+                    lambda query, *fields: int(_matches(fields, query)), deterministic=True)
+                predicates.append('discovery_match(?,title,description,id,native_id,alias_id,workspace)')
+                params.append(query)
+            if archive != 'all':
+                directory.db.create_function('discovery_archived', 1, lambda identity: int(identity in archived), deterministic=True)
+                predicates.append('discovery_archived(id)' if archive == 'archived' else 'NOT discovery_archived(id)')
             sessions = directory.select(' AND '.join(predicates), params,
                 offset=offset, limit=limit + 1)
         more = len(sessions) > limit
@@ -171,7 +207,12 @@ class Coordination:
                 if not target.get("workerId"):
                     details = descriptor(session)
                     item.update(workspace=session.get("workspace"), collaboration=session.get("collaboration"),
-                                location=details['location'], workspaceLabel=details['workspaceLabel'])
+                                location=details['location'], workspaceLabel=details['workspaceLabel'],
+                                archived=session['id'] in archived,
+                                sessionKind=metadata.get('sessionKind', 'root'),
+                                parentId=metadata.get('nativeParentId') or metadata.get('parentId'))
+                    from .session_identity import reference
+                    item['sessionRef'] = reference(metadata)
                 if caller and session["id"] != caller:
                     permitted = session.get('sessionKind', 'root') == 'root' and not target.get("workerId")
                     modes = ["auto", "notify", "queue"]
@@ -219,6 +260,9 @@ class Coordination:
         if action in {"coordination.list", "coordination.wait"}:
             if origin not in {'ui', 'user'} and not caller_session_id:
                 raise AppError('History reads require a registered calling conversation.', 403)
+            if action == "coordination.list":
+                async with self.service.lock:
+                    return {"accepted": True, "result": self.list(args, caller_session_id)}
             await self.service._flush_pending_progress()
             reader = caller_session_id or (self.service.state.get('selectedSessionId') if 'scope' in args else None)
             if action == "coordination.wait":

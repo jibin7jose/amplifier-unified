@@ -24,6 +24,18 @@ try{
  await page.getByRole('button',{name:'Keep settings open',exact:true}).click();
  await expect(page.locator('#provider-key')).toHaveValue(secret);
  await page.waitForFunction(()=>window.amplifier.getState().view.panel==='settings');
+ const source=await page.evaluate(()=>window.amplifier.getState().selectedSessionId);
+ const selection=await page.evaluate(async()=>{const response=await fetch('/fixture/agent-selection',{method:'POST',
+  headers:{'Content-Type':'application/json'},body:JSON.stringify({clientId:window.amplifier.getState().client.id})});
+  return {ok:response.ok,body:await response.json()}});
+ assert.equal(selection.ok,true,JSON.stringify(selection.body));
+ assert.equal(selection.body.result.rendering,'unverified');
+ await expect(page.getByRole('alertdialog')).toBeVisible();
+ await expect(page.locator('#provider-key')).toHaveValue(secret);
+ assert.equal(JSON.stringify(selection).includes(secret),false);
+ await page.getByRole('button',{name:'Keep settings open',exact:true}).click();
+ await expect(page.locator('#provider-key')).toHaveValue(secret);
+ await page.waitForFunction(id=>window.amplifier.getState().selectedSessionId===id,source);
  await openSettingsPage(page,'voice');
  await page.getByRole('button',{name:'Close panel',exact:true}).click();
  await page.getByRole('button',{name:'Review and save',exact:true}).click();

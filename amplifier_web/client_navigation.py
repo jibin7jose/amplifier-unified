@@ -1,5 +1,60 @@
 """Select an existing chat without rewriting the shared history catalog."""
 import copy
+import json
+
+
+def selection_result(service, source_session_id):
+    """Non-content evidence from the existing client selection owner."""
+    identity = service.clients.current.get()
+    client = service.clients.record()
+    return {'clientId': identity, 'sourceSessionId': source_session_id,
+            'selectedSessionId': client.get('selectedSessionId'),
+            'selectedWorkspaceId': client.get('selectedWorkspaceId'),
+            'selectionRevision': service.clients.selection_revision(identity),
+            'status': 'selected', 'rendering': 'unverified'}
+
+
+def saved_selection(service, command_id, source_session_id):
+    from .errors import AppError
+    row = service.db.execute('SELECT receipt FROM commands WHERE id=?', (command_id,)).fetchone()
+    receipt = json.loads(row[0]) if row else {}
+    result = receipt.get('result', {})
+    if (not source_session_id or not receipt.get('accepted') or
+            receipt.get('commandAction') != 'session.select' or
+            result.get('sourceSessionId') != source_session_id or not result.get('clientId')):
+        raise AppError('No selection receipt for this calling conversation and command.', 404)
+    return receipt
+
+
+def retry_client(service, command_id, source_session_id, requested_client):
+    """Only a saved command may leave the caller; dispatch still checks its fingerprint."""
+    from .errors import AppError
+    if not command_id:
+        return None
+    try:
+        saved = saved_selection(service, command_id, source_session_id)['result']
+    except AppError as exc:
+        if exc.status == 404:
+            return None
+        raise
+    if requested_client not in (None, saved['clientId']):
+        raise AppError('The saved navigation command targets another client.', 409)
+    return saved['clientId']
+
+
+def read_selection(service, command_id, source_session_id):
+    """Read only metadata authorized by the caller's existing command receipt."""
+    saved = saved_selection(service, command_id, source_session_id)['result']
+    client = service.clients.records.get(saved['clientId'], {})
+    connected = any(service.queue_clients.get(queue) == saved['clientId'] for queue in service.queues)
+    current = {key: client.get(key) for key in
+               ('selectedSessionId', 'selectedWorkspaceId', 'selectionRevision')}
+    unchanged = all(current[key] == saved[key] for key in current)
+    return {'commandId': command_id, 'clientId': saved['clientId'],
+            'sourceSessionId': source_session_id, 'requestedSessionId': saved['selectedSessionId'],
+            **current, 'connected': connected,
+            'status': 'disconnected' if not connected else 'selected' if unchanged else 'changed',
+            'rendering': 'unverified', 'revision': service._state['revision']}
 
 
 def workspace_for(service, session):
@@ -22,7 +77,7 @@ def accepts(service, session):
     return True
 
 
-def select(service, session, command_id, fingerprint, *, include_state):
+def select(service, session, command_id, fingerprint, *, include_state, caller_session_id=None):
     from .managed_chats import is_managed
     from .workspace_navigation import NAV_KEYS
     from .errors import AppError
@@ -56,6 +111,7 @@ def select(service, session, command_id, fingerprint, *, include_state):
         for key in NAV_KEYS | {'navWorkspaceBrowseFor', 'navWorkspaceAncestorsOpen'}:
             client['view'].pop(key, None)
         service.clients.reconcile(identity)
+        receipt.update(commandAction='session.select', result=selection_result(service, caller_session_id))
         service._state['revision'] = revision + 1
         service.clients.commit(identity, command_id, fingerprint, receipt)
     except Exception:

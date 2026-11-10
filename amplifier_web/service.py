@@ -48,7 +48,7 @@ def command_fingerprint(action, args, origin, client_id, *, caller_session_id=No
     # Later-file receipts belong to their conversation even when no browser is
     # attached. This is a stable replay identity, not a fresh permission check.
     if (origin in {'agent', 'system'} and caller_session_id and
-            (action.startswith('feedback.attachments.') or
+            (action == 'session.select' or action.startswith('feedback.attachments.') or
              action in {'feedback.attachment.add', 'feedback.attachment.remove'} and args.get('feedbackId'))):
         values.append({'sourceSessionId': caller_session_id})
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
@@ -108,12 +108,13 @@ ACTION_DEFINITIONS = {
     "session.draft": ("Open configurable new-chat setup without creating a conversation or starting work. Optional workspaceId binds an explicit workspace path to an available registration. Edit view.newSessionDraft. The user must submit the first message to create this chat; an agent cannot finish this through raw session.create. For an authorized task in the caller's inherited workspace, use coordination.create instead. For an authorized independent chat and opening brief in another existing folder, including unattended Full access, use session.handoff.start without a second confirmation; use session.handoff.propose for suggestions.", schema({"workspace": string(4000), "workspaceId": {**string(100), "minLength": 1}, "location": LOCATION}, [])),
     "session.create": ("Create a conversation through the human UI or host-managed creation flow. Direct agent calls are refused, including after session.draft; coordination.create commissions a task in the caller's inherited workspace, not an independent chat in another folder. session.handoff.start creates and delivers an independent chat directly under Full access or an explicit user request; session.handoff.propose reserves human review for suggestions; session.handoff.read inspects its durable outcome without replay. location.kind managed allocates a private app-owned folder (not a security sandbox); workspace uses an existing or explicitly supplied new folder. Reviewed inheritance does not copy history, tasks or running work; select:false preserves the view. purpose creates (or reuses an idle matching) internal session omitted from chat lists, never selected, e.g. terminal-tool. expectedDraftId guards the originating private unnamed draft during fromDraft creation.", schema({"id": string(100), "location": LOCATION, "title": string(200), "purpose": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,79}$"}, "bundle": string(2000), "workspace": string(4000), "select": {"type": "boolean"}, "fromDraft": {"type": "boolean"}, "expectedDraftId": {"type": "string", "pattern": "^[a-f0-9]{32}$"}, "selection": {"type": "object", "properties": {"instance": string(200), "model": string(500), "effort": string(100)}, "additionalProperties": False}, "inheritConfiguration": schema({"sessionId": string(200), "configurationHash": string(100), "scheduledRunId": string(200)}, ["sessionId", "configurationHash"])}, [])),
     "session.plans": ("Read current plan progress and recorded trajectory for up to 50 chats without selecting them. Include items for at most one chat to inspect its todo list.", schema({"ids":{"type":"array","minItems":1,"maxItems":50,"uniqueItems":True,"items":string(200)},"includeItems":{"type":"boolean"}},["ids"])),
-    "session.select": ("Select a conversation without preparing a runtime. A saved chatReference proof is UI-only and revalidated before the ordinary navigation guards.", schema({"id": string(100), "chatReference": schema({
+    "session.select": ("Select an existing conversation without preparing a runtime or sending input. Agents require an originating or explicitly named connected client displaying the calling chat; no detached/global fallback. The selection receipt is not render confirmation; session.selection reads its current client-bound status. Saved chatReference and peerPreview proofs remain UI-only.", schema({"id": string(100), "clientId": string(100), "chatReference": schema({
         "id": string(100), "version": {"type": "integer", "minimum": 1},
         "sourceSessionId": string(200), "messageId": string(200),
         "expectedRevision": {"type": "integer", "minimum": 1}},
         ["id", "version", "sourceSessionId", "messageId", "expectedRevision"]),
         "peerPreview": schema({"proof": string(4096), "sourceSessionId": string(200)}, ["proof", "sourceSessionId"])}, ["id"])),
+    "session.selection": ("Read current non-content selection metadata for your exact saved navigation command. Passive: does not select, read drafts/history, prepare a runtime or repeat the command. A selected host view is not proof of browser rendering.", schema({"commandId": string(200)}, ["commandId"])),
     "peer.preview": ("Inspect a receipt-bound source in a read-only Canvas preview without selecting or starting it.", schema({
         "proof": string(4096), "sourceSessionId": string(200)}, ["proof", "sourceSessionId"])),
     "session.warm": ("Prepare a conversation in the background without sending input or requesting takeover", schema({"id": string(200)})),
@@ -1889,13 +1890,22 @@ class AppService:
 
     async def _dispatch(self, action, args=None, origin="ui", command_id=None, expected_revision=None, *, include_state=True, caller_session_id=None, admission_check=None):
         args = dict(args or {})
+        if action == 'session.selection':
+            validate(args, ACTION_DEFINITIONS[action][1])
+            from .client_navigation import read_selection
+            async with self.lock:
+                return {'accepted': True, 'result': read_selection(self, args['commandId'], caller_session_id)}
+        if action == 'session.select' and 'clientId' in args and args['clientId'] != self.clients.current.get():
+            raise AppError('Navigation clientId must match the attached client.', 409, code='ui_client_required')
+        if action == 'session.select' and origin not in {'ui', 'user'} and not caller_session_id:
+            raise AppError('Navigation requires the registered calling conversation.', 403)
         # Four exact passive task actions (including their public alias) use
         # directory metadata plus canonical control-state only. Keep the normal
         # validators and caller guards; never refresh history/admit an overlay.
         passive_task = action in {'task.get', 'task.history', 'task.detail', 'task.receipt'} or (
             action == 'runtime.control' and isinstance(args.get('operation'), str) and args['operation'] in
             {'task.get', 'task.history', 'task.detail', 'task.receipt'})
-        passive_metadata = passive_task or action == 'assignment.brief'
+        passive_metadata = passive_task or action in {'assignment.brief', 'coordination.list'}
         if action in {'workspace.environments.removal.read', 'workspace.environments.removal.list'}:
             # Exact retained IDs only. General alias resolution can refresh
             # history and admit a dormant owner before the passive read runs.
@@ -2685,7 +2695,9 @@ class AppService:
             if action in {'workspace.pin', 'workspace.pinOrder', 'navigation.pinOrder'}:
                 from .workspace_navigation import update_pins
                 return update_pins(self, action, args, command_id, fingerprint, origin, include_state=include_state)
-            if (action == 'view.update' or action in SETTINGS_NAVIGATION) and origin == 'agent' and caller_session_id and client_id is not None:
+            if (action in {'view.update', 'session.select'} or action in SETTINGS_NAVIGATION) and origin == 'agent' and caller_session_id:
+                if action == 'session.select' and client_id is None:
+                    raise AppError('Choose an explicit connected navigation client.', 409, code='ui_client_required')
                 from .agent_canvas import target
                 target(self, caller_session_id, client_id, required=True, connected_only=True)
             if action == 'view.update' and client_id is not None:
@@ -2718,7 +2730,8 @@ class AppService:
                 from .client_navigation import accepts, select
                 target = self.projections.sessions(self.state).by_id.get(args['id'])
                 if target is not None and accepts(self, target):
-                    return select(self, target, command_id, fingerprint, include_state=include_state)
+                    return select(self, target, command_id, fingerprint, include_state=include_state,
+                                  caller_session_id=caller_session_id)
             if action in {'canvas.copy', 'canvas.download'}:
                 canvas = self.state['canvas']
                 if args['id'] == canvas.get('id') and canvas.get('kind') == 'gif':
@@ -3924,6 +3937,10 @@ class AppService:
             self.state.setdefault("deviceCommands", []).extend(copy.deepcopy([effect for effect in effects if effect["type"] != "download" or view_action == "canvas.download"]))
             self.state["deviceCommands"] = self.state["deviceCommands"][-20:]
             receipt = {"accepted": True, "revision": self.state["revision"] + 1, "effects": effects}
+            if action == 'session.select' and client_id is not None:
+                from .client_navigation import selection_result
+                receipt['commandAction'] = 'session.select'
+                receipt['result'] = selection_result(self, caller_session_id)
             if action in {"worker.message", "worker.stop", "worker.steer"}:
                 receipt.update(delivery="requested", commandAction=action, target={"sessionId": args["sessionId"], "workerId": args["id"]}, completed=False, effectsState="not_rolled_back")
             if action == 'session.create':receipt['sessionId']=session['id']
@@ -5443,7 +5460,10 @@ class AppService:
             receipt_mode = (args.get('responseMode') == 'receipt'
                             or (BINDING.get() or {}).get('_responseMode') == 'receipt')
             action_args=copy.deepcopy(args.get('args',{}))
-            if args['action'] in {'workspace.environments.removal.read', 'workspace.environments.removal.list', 'assignment.brief'}:
+            if args['action'] == 'session.selection':
+                return await self.dispatch(args['action'], action_args, origin='agent',
+                    include_state=False, caller_session_id=session_id)
+            if args['action'] in {'workspace.environments.removal.read', 'workspace.environments.removal.list', 'assignment.brief', 'coordination.list'}:
                 # Do not infer nativeProject, flush progress or build a snapshot:
                 # even _session(hydrate=False) admits dormant owners. Each passive
                 # action validates its own caller scope without runtime demand.
@@ -5565,17 +5585,26 @@ class AppService:
                     result = await self.dispatch(args['action'], action_args, origin='agent', command_id=args.get('id'), caller_session_id=session_id, include_state=not receipt_mode)
                 finally:
                     self.observations.input_bindings.reset(token)
-            elif args['action'] == 'view.update' or args['action'] in SETTINGS_NAVIGATION or args['action'].startswith('computer.visual.'):
+            elif args['action'] in {'view.update', 'session.select'} or args['action'] in SETTINGS_NAVIGATION or args['action'].startswith('computer.visual.'):
                 if args['action'].startswith('computer.visual.'):
                     visual_origin(action_args.get('clientId'))
-                elif input_origin is not None and not action_args.get('clientId') and input_origin['clientId'] is None:
+                elif args['action'] != 'session.select' and input_origin is not None and not action_args.get('clientId') and input_origin['clientId'] is None:
                     raise AppError('Choose an explicit connected navigation target; the input has no single originating browser.',
                                    409, code='ui_client_required')
                 from .agent_canvas import target
                 requested_client = action_args.get('clientId', input_origin['clientId'] if input_origin is not None else None)
-                canvas_client = target(self, session_id, requested_client, required=True, connected_only=True)[0]
+                if args['action'] == 'session.select':
+                    from .client_navigation import retry_client
+                    canvas_client = retry_client(self, args.get('id'), session_id, requested_client)
+                    if canvas_client is None and requested_client is None and self.clients.current.get() is None:
+                        raise AppError('Choose an explicit connected navigation target; the input has no single originating browser.',
+                                       409, code='ui_client_required')
+                if canvas_client is None:
+                    canvas_client = target(self, session_id, requested_client, required=True, connected_only=True)[0]
+                if args['action'] == 'session.select' and canvas_client is None:
+                    raise AppError('Open the calling chat in a connected client first.', 409, code='ui_client_required')
                 with self.clients.bind(canvas_client):
-                    result = await self.dispatch(args['action'], action_args, origin='agent', command_id=args.get('id'), expected_revision=args.get('expectedRevision'), caller_session_id=session_id, include_state=not receipt_mode)
+                    result = await self.dispatch(args['action'], action_args, origin='agent', command_id=args.get('id'), expected_revision=args.get('expectedRevision'), caller_session_id=session_id, include_state=not receipt_mode and args['action'] != 'session.select')
             elif args['action'] in {'session.exportDeliver', 'feedback.excerpt.stage'}:
                 from .agent_canvas import target
                 from . import feedback_context
@@ -5625,6 +5654,14 @@ class AppService:
                 # Unrelated progress publication must not lose that receipt.
                 return result
             await self._flush_pending_progress()
+            if args['action'] == 'session.select':
+                # Selection deliberately leaves the caller. Do not substitute a
+                # caller-scoped snapshot or expose the destination's private view.
+                return {**result, 'state': {'revision': self.state['revision'], 'sessionId': session_id,
+                    'clientId': canvas_client, '_stateAccess': {
+                        'note': 'The receipt confirms host selection, not browser rendering. Ordinary get_state remains scoped to the calling chat.',
+                        'readback': ([{'operation': 'dispatch', 'args': {'action': 'session.selection',
+                            'args': {'commandId': args['id']}}}] if args.get('id') else [])}}}
             if receipt_mode:
                 from .agent_receipts import compact_receipt
                 return compact_receipt(result, action=args['action'], session_id=session_id,
