@@ -122,8 +122,14 @@ class SessionStore:
                    ("transcript.jsonl", "transcript.jsonl.backup"))
 
     def save(self, session_id, messages, metadata, *, preserve_system=False):
+        """Synchronously persist owned context; returned rows borrow its values.
+
+        Foundation validates and encodes without mutating messages. Callers keep
+        execution ownership through this call; no detached history snapshot is
+        needed for the immediately consumed checkpoint anchors.
+        """
         history = self.history(session_id)
-        rows = [copy.deepcopy(m if isinstance(m, dict) else m.model_dump()) for m in messages]
+        rows = [m if isinstance(m, dict) else m.model_dump() for m in messages]
         from ..naming import adopt, initial_name
         previous = history.load_metadata()
         saved_metadata = _metadata({**previous, **copy.deepcopy(metadata or {})})

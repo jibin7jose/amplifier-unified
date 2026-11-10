@@ -293,12 +293,13 @@ def align_expanded_inputs(current, incoming, *, peer_only=False):
     return [replacements.get(number, row) for number, row in enumerate(current) if number not in copies]
 
 
-def alias_peer_inputs(session, native):
-    """Reuse one retained web bubble at its exact unique native input identity.
+def alias_input_originals(session, native, *, peer_only=False):
+    """Reuse one retained original at its exact unique native input identity.
 
     This is display alignment, not attribution. The owning service still needs
     its retained receipt and exact envelope binding before deriving a caption.
-    No role/text multiplicity can transfer an input's identity.
+    No role/text multiplicity can transfer an input's identity. Export may keep
+    its existing peer-only policy; passive retrieval retains ordinary originals.
     """
     from amplifier_operations.coordination import peer_input
     from .peer_attribution import input_identity
@@ -317,8 +318,12 @@ def alias_peer_inputs(session, native):
             continue
         original, saved = web[identity][0], candidates[0]
         envelope = original.get('peerEnvelope')
-        if (not isinstance(envelope, dict) or saved.get('nativeInputAmbiguous')
-                or saved['text'] != peer_input(envelope, original.get('text', ''))
+        if peer_only and not isinstance(envelope, dict):
+            continue
+        if ('peerEnvelope' in original and (not isinstance(envelope, dict)
+                or saved['text'] != peer_input(envelope, original.get('text', '')))):
+            continue
+        if (saved.get('nativeInputAmbiguous')
                 or original.get('nativeMessageId') not in (None, saved['id'])
                 or original.get('nativeIndex') not in (None, saved['nativeIndex'])):
             continue
