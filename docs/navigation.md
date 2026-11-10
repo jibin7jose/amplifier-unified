@@ -462,7 +462,9 @@ Agents use the same `shell.view.update` and `shell.command` paths as the UI:
 - Workspace instance: `navWorkspaceMode` (`recent`, `folders`), plus the existing
   folder path, wildcard search, and page keys.
 - The bundled sidebar's **Last activity** slider owns the attached client's
-  `view.navAge` (`24h`, `7d`, `30d`, `90d`, `1y`, or default `all`).
+  `view.navAge` (`24h`, `7d`, `14d`, `30d`, `90d`, or default `all`).
+  Saved/API `1y` retains its year meaning for existing clients and custom modules;
+  the bundled control shows that current value until an explicit six-stop choice.
   Home/status cards, workspace chats, All chats/search, Recent, and workspace
   session counts use that same age before counting or paging. Pins bypass age;
   unknown activity dates appear under All. Folder registrations stay navigable.

@@ -42,8 +42,9 @@ RECENT_LIMITS = (20, 40, 60, 80, 100)
 MAX_POST_ADMISSIONS = 16
 SIDEBAR_FILTER_KEYS = {'navSort', 'navArchive', 'navCollection', 'navLocationFilter',
                        'navStatusFilter', 'navFilter', 'navChatPage', 'navGroup', 'navAge'}
-AGE_SECONDS = {'24h': 86400, '7d': 7*86400, '30d': 30*86400,
+AGE_SECONDS = {'24h': 86400, '7d': 7*86400, '14d': 14*86400, '30d': 30*86400,
                '90d': 90*86400, '1y': 365*86400}
+DATE_SECONDS = (86400, 7*86400, 30*86400, 90*86400, 365*86400)
 DATE_GROUPS = ('Last 24 hours', '1–7 days ago', '7–30 days ago', '30–90 days ago',
                '90 days–1 year ago', 'Over 1 year ago', 'Activity time unavailable')
 STATUS_GROUPS = {'attention': 'Needs you', 'unread': 'Ready for you', 'working': 'Working',
@@ -89,7 +90,7 @@ def list_group(group, pinned, recent, workspace_id, workspace_name, kind, now):
         kind = kind if kind in STATUS_GROUPS else 'idle'
         return ('status:' + kind, STATUS_GROUPS[kind], keys.index(kind))
     at = timestamp(recent)
-    index = (next((i for i, seconds in enumerate(AGE_SECONDS.values()) if at >= now-seconds), 5)
+    index = (next((i for i, seconds in enumerate(DATE_SECONDS) if at >= now-seconds), 5)
              if at is not None and at > 0 else 6)
     return ('date:' + str(index), DATE_GROUPS[index], index)
 
@@ -358,7 +359,7 @@ def view_patch(patch):
     if 'navGroup' in patch and patch['navGroup'] not in ('recent', 'workspace', 'status'):
         raise ValueError('Choose Recent, Workspace or Status grouping.')
     if 'navAge' in patch and patch['navAge'] not in (*AGE_SECONDS, 'all'):
-        raise ValueError('Choose 24h, 7d, 30d, 90d, 1y or All.')
+        raise ValueError('Choose 24h, 7d, 14d, 30d, 90d, 1y or All.')
     if 'navArchive' in patch and patch['navArchive'] not in ('active', 'archived', 'all'):
         raise ValueError('Choose active, archived or all conversations.')
     if 'navCollection' in patch and patch['navCollection'] is not None and (not isinstance(patch['navCollection'], str) or len(patch['navCollection']) > 200):

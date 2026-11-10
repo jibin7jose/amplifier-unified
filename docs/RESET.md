@@ -41,6 +41,8 @@ amplifier-unified reset --data-dir /path/to/unified-data
    It waits up to one minute for the configured app to respond and only says
    “Unified is ready” after both checks pass. Use `--no-start` to leave it stopped;
    both checks still run, but a stopped service is expected in that mode.
+   Installation verification, saved update-state changes and a passing `doctor`
+   qualify an intentional `--no-start` reset as successful without a listener.
    The next message can take a few minutes while worker caches rebuild.
 
 **Chats, credentials, settings, TLS certificates, attachments, bookmarks, workspace
@@ -64,11 +66,16 @@ run a fresh copy of the same dependency-free recovery script with system Python:
 repair_dir=$(mktemp -d)
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://raw.githubusercontent.com/microsoft/amplifier-unified/main/amplifier_web/reset.py \
-  -o "$repair_dir/reset.py" && python3 "$repair_dir/reset.py"
+   -o "$repair_dir/reset.py" &&
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/microsoft/amplifier-unified/main/amplifier_web/reset_retention.py \
+  -o "$repair_dir/reset_retention.py" && python3 "$repair_dir/reset.py"
 ```
 
 Use Python 3.10+ for this recovery script. uv obtains Python 3.13 for the new app.
-The script uses the same options and safeguards as the installed command.
+The script and its sibling retention policy use only the standard library, with
+the same options and safeguards as the installed command. Keep both files from
+the same reviewed revision together; no ordinary app dependencies are imported.
 
 ### Public downloads on a device with restricted GitHub sign-in
 
@@ -135,14 +142,61 @@ replacement environments are retained in that same recovery folder as `failed`.
 The backup manifest records the exact path. Keeping recovery copies and the
 installation repair lock outside uv's tool directory prevents them from being
 mistaken for installed tools by `uv tool list` and `uv tool upgrade`.
-Failed candidates are retained as `.amplifier-unified-failed-<id>`. The manifest in
+Older versions used hidden `.amplifier-unified-reset-<id>` and
+`.amplifier-unified-failed-<id>` tool-directory siblings. The manifest in
 the data backup records the paths. Backups can contain credentials or private
 conversation data; keep them private. They are not active runtime paths.
 
-Keep backups until you have checked the repaired app, then remove those exact
-backup directories to reclaim space. Do not restore an old update pointer by
-itself: it refers to the matching retired runtime directories. If repair fails,
-the command reports failure and retains evidence rather than claiming success.
+### One shared reset recovery point
+
+After a **successful** CLI or in-app reset, Unified automatically retains its
+recovery set and deletes older validated successful reset sets for that same
+data directory. The two entry points share one keep-one policy, not one backup
+each. A set includes every paired recovery folder, including the previous tool
+environment outside the data directory. For in-app resets,
+`backups/<id>/private-state.tar.gz` and `backups/reset-<id>/` are one set with
+the same operation ID. Recovery covers the latest reset, not a separate point
+for each previously selected component. Archive contents and restore format
+are unchanged.
+
+CLI reset commits success only after installation verification, saved update
+state, restart and passing `doctor` and service-status checks. With `--no-start`,
+verified installation and passing `doctor` count as a successful, intentionally
+stopped reset. A failing doctor, installation, rollback, startup or readiness
+check does **not** prune earlier sets. In-app success requires both the applied
+reset stores and its terminal action outcome to be durably saved.
+
+Reset ownership and monotonic successful-completion order live in
+`<data-dir>/reset-recovery/state.json`; modification times do not choose the
+retained point. Do not edit this ledger or member ownership markers. Pending,
+failed, cancelled, interrupted or unverified attempts are preserved as unresolved
+recovery evidence; a later success does not silently discard them. Legacy CLI
+manifests lack a reliable successful-completion witness, and legacy in-app
+archives cannot reliably be paired with retained originals. Those copies are
+reported for explicit review, never paired by timestamps or automatically
+deleted. Independent manual private backups, migration backups, current data,
+workspaces and shared CLI history are not reset-retention candidates. Storage
+keeps the newest manual private backup separately and protects reset members.
+
+If deletion fails, Unified reports **reset succeeded; older-backup cleanup
+incomplete**, preserves the new point and saves retry progress. It does not
+claim exactly one set remains. Resolve the reported access/I/O issue, then retry
+without resetting again:
+
+```sh
+amplifier-unified reset --data-dir /path/to/unified-data --cleanup-only
+```
+
+The equivalent in-app/agent action is `maintenance.resetCleanup`. The next
+successful reset also retries obsolete-member cleanup. Cleanup is awaited, runs
+off the in-app event loop and outside database/runtime/publishing locks, and
+does not replay reset changes. Unresolved attempts and ambiguous legacy material
+still need explicit owner review. If committing the retention ledger itself
+fails after a healthy reset, old copies remain; do not promote the unverified
+record by hand or assume cleanup retry can establish missing success evidence.
+
+Do not restore an old update pointer by itself: it refers to matching retired
+runtime directories. Keep recovery copies private.
 
 ### Linux: background service manager unavailable
 

@@ -254,6 +254,23 @@ test('catalog grouping and age use ready activity before paging, retain pins and
  state.view.navGroup='workspace';
  assert.equal(chatPage(state,null,{section:'search'}).pending,true);
 });
+test('14-day cutoff is inclusive and independent of date grouping and supported year queries',async()=>{
+ const {CHAT_AGES}=await import('../src/chat-navigation.js');
+ assert.deepEqual(CHAT_AGES,['24h','7d','14d','30d','90d','all']);
+ const now=Math.floor(Date.now()/60000)*60;
+ const state={view:{navChatScope:'all',navAge:'14d',navGroup:'recent'},workspaces:[{id:'w',path:'/w',name:'Workspace',available:true}],pinnedSessionIds:['pin'],sessions:[
+  ...[-1,0,1].map(delta=>({id:String(delta),workspaceId:'w',navigationActivityAt:now-1209600+delta})),
+  {id:'pin',workspaceId:'w',navigationActivityAt:1},
+  {id:'unknown',workspaceId:'w',navigationActivityAt:0},
+  {id:'year',workspaceId:'w',navigationActivityAt:now-365*86400}
+ ]};
+ const page=chatPage(state,null,{section:'search'});
+ assert.deepEqual(page.items.map(row=>row.id),['pin','1','0']);
+ assert.deepEqual(page.items.slice(1).map(row=>row.group.title),['7–30 days ago','7–30 days ago']);
+ state.view.navAge='1y';
+ assert.ok(chatPage(state,null,{section:'search'}).items.some(row=>row.id==='year'));
+ assert.ok(!chatPage(state,null,{section:'search'}).items.some(row=>row.id==='unknown'));
+});
 test('moving pins retains every filtered or off-page pin',async()=>{
  const {movePin}=await import('../src/chat-navigation.js');
  const ids=['first','hidden','second','off-page'];

@@ -10,16 +10,17 @@ from test_shell_modules import service, settled_resources
 
 @pytest.mark.parametrize('resource,section', [('sidebarSearch', 'search'), ('sidebarWorkspace', 'workspace'),
     ('workHome', None), ('workStatusIdle', None), ('recentNavigation', None), ('workspaceShortcuts', None)])
-async def test_grouped_cutoff_expires_through_settled_browser_delivery(service, monkeypatch, resource, section):
+@pytest.mark.parametrize('age,seconds', [('24h', 86400), ('14d', 1209600)])
+async def test_grouped_cutoff_expires_through_settled_browser_delivery(service, monkeypatch, resource, section, age, seconds):
     from amplifier_web import chat_navigation
     now = [1_800_000_000]
     monkeypatch.setattr(chat_navigation.time, 'time', lambda: now[0])
     for row in service.state['sessions']:
-        row.update(recentActivityAt=now[0]-86400, navigationActivityAt=now[0]-86400)
+        row.update(recentActivityAt=now[0]-seconds, navigationActivityAt=now[0]-seconds)
     service._save_changes(sessions={'alpha', 'beta'}, globals={'workspaces'})
     client = service.clients.attach('age-client')
     client.update(selectedSessionId='alpha', selectedWorkspaceId='one')
-    client['view']['navAge'] = '24h'
+    client['view']['navAge'] = age
     with service.clients.bind('age-client'):
         owner = service.shell.resources
         owner.register('age-client', 1, [resource], scope_for(service.state))
@@ -32,7 +33,7 @@ async def test_grouped_cutoff_expires_through_settled_browser_delivery(service, 
             if resource == 'workHome':
                 return value['workHome']['groups']['idle']
             if resource == 'workspaceShortcuts':
-                assert value['navigationAge'] == '24h'
+                assert value['navigationAge'] == age
                 rows = value['workspaceShortcuts']
                 return {'total': sum(row['chatCount'] for row in rows), 'items': [row for row in rows if row['chatCount']]}
             return value[resource]

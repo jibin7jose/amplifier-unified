@@ -7,7 +7,7 @@ import {createServer} from 'vite';
 const vite=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {WorkNavigationContext,browsePatch}=await vite.ssrLoadModule('/src/work-navigation.js');
 const {WorkSurface,LiveChatActivity,WorkspaceFiles}=await vite.ssrLoadModule('/src/work-shell.jsx');
-const {ConversationList,PinnedItems,useRecentShortcuts}=await vite.ssrLoadModule('/src/shell/navigation-components.jsx');
+const {ConversationList,PinnedItems,useRecentShortcuts,ChatAgeFilter,ChatDetails}=await vite.ssrLoadModule('/src/shell/navigation-components.jsx');
 const {WorkspaceExplorer,WorkspaceRow}=await vite.ssrLoadModule('/src/workspace-explorer.jsx');
 const {WorkspaceDetails}=await vite.ssrLoadModule('/src/navigation-details.jsx');
 const {useLandingLayout,useWorkspaceChatView}=await vite.ssrLoadModule('/src/work-landing.jsx');
@@ -53,6 +53,27 @@ test('compact sidebar has shortcuts; filtering lives in the main surface',()=>{
  const main=renderToStaticMarkup(render(React.createElement(WorkSurface,{shell,state:{view:{workSurface:'chats'}},act:host.dispatch})));
  assert.match(main,/Research ideas/);assert.match(main,/aria-label="Search chats"/);assert.doesNotMatch(main,/a-browser-pins/);
  assert.match(main,/aria-label="Group conversations"/);assert.doesNotMatch(main,/aria-label="Filter conversations by age"/);
+});
+test('age is two-line tick-only native range with six choices and truthful saved year',async()=>{
+ const calls=[];let root;
+ for(const [age,value,text] of [['14d',4,'Within the last 14 days'],['1y',9,'Within the last year'],['all',10,'All activity dates']]){
+  const html=renderToStaticMarkup(React.createElement(ChatAgeFilter,{view:{navAge:age},act(){}}));
+  assert.match(html,/type="range"/);assert.match(html,new RegExp('aria-valuetext="'+text+'"'));
+  assert.match(html,new RegExp('value="'+value+'"'));
+  assert.equal((html.match(/<span><\/span>/g)||[]).length,6);
+  assert.doesNotMatch(html,/<small|aria-describedby|Pins stay visible/);
+ }
+ await act(async()=>{root=create(React.createElement(ChatAgeFilter,{view:{navAge:'1y'},act:(...args)=>calls.push(args)}))});
+ for(const value of [0,2,4,6,8,10])await act(async()=>root.root.findByType('input').props.onChange({target:{value}}));
+ assert.deepEqual(calls.map(row=>row[1].patch.navAge),['24h','7d','14d','30d','90d','all']);
+ await act(async()=>root.unmount());
+});
+test('chat details puts native ID before workspace and omits prose and visible pin arrows',()=>{
+ const html=renderToStaticMarkup(React.createElement(ChatDetails,{chat:{id:'internal',nativeIdentity:'native-id',title:'Saved',pinned:true,workspace:'/research',workspaceName:'Research'},model:{state:snapshot,act(){},draft:{},setDraft(){},choose(){}},now:1,close(){}}));
+ assert.ok(html.indexOf('Session ID')<html.indexOf('<dt>Workspace'));
+ assert.match(html,/native-id/);assert.match(html,/Full workspace path/);
+ assert.doesNotMatch(html,/Discovered in|Move up|Move down|session.pinOrder/);
+ assert.match(html,/Unpin Saved/);
 });
 test('empty Pinned disappears; workspace-only and mixed pins share one section',async()=>{
  const calls=[];
