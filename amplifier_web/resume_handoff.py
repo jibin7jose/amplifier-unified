@@ -55,6 +55,8 @@ def prepare(app, origin, owner, value, lineage):
     if len(human.get('text', '')) > 4000:
         raise ValueError('The complete human instruction exceeds the bounded resume handoff; use a concise direct human request.')
     member = app._session(value['memberSessionId'])
+    if origin['workspace'] != owner['workspace'] or origin['workspace'] != member['workspace']:
+        raise ValueError('Resume handoff origin, owner and member must share the same workspace.')
     if len({origin['id'], owner['id'], member['id']}) != 3:
         raise ValueError('Use ordinary owner resume for your own member; handoffs require three distinct roots.')
     assignment = assignment_scope(app, owner, member)
@@ -89,6 +91,8 @@ def participants(app, request):
     origin = app._session(scope['sourceSessionId'])
     owner = app.collaboration.request_target(origin, request)
     member = app._session(scope['memberSessionId'])
+    if origin['workspace'] != owner['workspace'] or origin['workspace'] != member['workspace']:
+        raise ValueError('Resume handoff origin, owner and member must still share the same workspace.')
     return scope, origin, owner, member
 
 

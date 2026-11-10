@@ -58,10 +58,9 @@ async def consume(app, owner, member, identity='member-resume', handoff='handoff
             'expectedInterruptionRevision': member.get('interruptionRevision', 0)}, **patch}, identity, inputs=inputs)
 
 
-@pytest.mark.parametrize('cross_workspace', [False, True])
 @pytest.mark.parametrize('interrupted', [False, True])
-async def test_handoff_preserves_ownership_task_and_nonhuman_input(app, cross_workspace, interrupted):
-    origin, owner, member, human = await roots(app, cross_workspace=cross_workspace, interrupted=interrupted)
+async def test_handoff_preserves_ownership_task_and_nonhuman_input(app, interrupted):
+    origin, owner, member, human = await roots(app, interrupted=interrupted)
     before = copy.deepcopy(member['task']) if member.get('task') else None
     assignments = [copy.deepcopy(app.assignments.current(row)) for row in (origin, owner, member)]
     await issue(app, origin, owner, member, human)
@@ -84,6 +83,14 @@ async def test_handoff_preserves_ownership_task_and_nonhuman_input(app, cross_wo
     assert app.collaboration.receipt('handoff')['resumeHandoff']['consumption']['requestId'] == 'member-resume'
     await consume(app, owner, member)
     assert len(app.runtime.inputs) == 1
+
+
+async def test_cross_workspace_human_origin_cannot_issue_member_resume_scope(app):
+    origin, owner, member, human = await roots(app, cross_workspace=True)
+    with pytest.raises(AppError, match='same workspace'):
+        await issue(app, origin, owner, member, human)
+    assert not app.runtime.inputs
+    assert not app.db.execute("SELECT 1 FROM commands WHERE id='handoff'").fetchone()
 
 
 @pytest.mark.parametrize('invalid', ['peer', 'generated', 'scheduled', 'question', 'historical',
@@ -151,13 +158,14 @@ def change_boundary(app, kind, row):
     elif kind == 'task': row['task'] = {'id': 'changed-task', 'revision': 1, 'status': 'active'}
     elif kind == 'access': row['fileAccessPending'] = True
     elif kind == 'placement': row['executionRevision'] = row.get('executionRevision', 0) + 1
+    elif kind == 'workspace': row['workspace'] = str(app.data_dir.parent / 'moved-workspace')
     elif kind == 'config': app.state['configurationRevision'] = app.state.get('configurationRevision', 0) + 1
     else:
         value = app.assignments.current(row); value['revision'] += 1; app.assignments.save(value)
 
 
 @pytest.mark.parametrize('participant', [0, 1, 2])
-@pytest.mark.parametrize('kind', ['stop', 'human', 'task', 'access', 'placement', 'config', 'assignment'])
+@pytest.mark.parametrize('kind', ['stop', 'human', 'task', 'access', 'placement', 'workspace', 'config', 'assignment'])
 @pytest.mark.parametrize('phase', ['consume', 'final_admission'])
 async def test_all_three_boundaries_rechecked_through_preparation(app, participant, kind, phase):
     rows = await roots(app)
