@@ -49,6 +49,8 @@ def distributions(root):
 
 @pytest.fixture
 def preparation(repository):
+    (repository/'frontend').mkdir()
+    (repository/'frontend/package.json').write_text('{}')  # Explicit historical bundled fixture.
     (repository/'uv.lock').write_text('''version = 1
 revision = 3
 [[package]]
@@ -158,9 +160,15 @@ def test_prepare_verifies_selected_client_instead_of_matching_host_version(
     root, notes = preparation
     (root / 'components').mkdir()
     (root / 'components/web-client.source.json').write_text('{"fixture":true}')
+    (root / 'tests/web').mkdir(parents=True)
+    (root / 'tests/web/package.json').write_text('{}')
+    (root / 'scripts').mkdir()
+    (root / 'scripts/web_client_build.py').write_text('# Selected client builder fixture')
     calls = []
 
     def build(command, cwd):
+        assert command == [sys.executable, 'scripts/web_client_build.py', 'build']
+        assert cwd == root
         (root / 'amplifier_web/static/build.json').write_text(
             '{"version":"0.2.0","id":"independent-client"}')
         return subprocess.CompletedProcess(command, 0)

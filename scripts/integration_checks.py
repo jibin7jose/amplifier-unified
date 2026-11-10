@@ -113,14 +113,20 @@ def frontend_test_scope(base, head):
 def test_frontend(base, head, output=None):
     scope = frontend_test_scope(base, head)
     print('Frontend test scope: ' + scope, flush=True)
-    command = (['node', '--test', 'frontend/tests/assets.test.mjs',
-                'frontend/tests/build-artifacts.test.mjs'] if scope == 'release-smoke'
-               else ['npm', 'test', '--prefix', 'frontend'])
-    result = subprocess.run(command, cwd=ROOT)
-    if result.returncode == 0 and output:
+    selected = ROOT / '.build/web-client'
+    commands = ([(['node', '--test', 'tests/build-identity.test.mjs',
+                   'tests/build-discovery.test.mjs', 'tests/update-release-summary.test.mjs'], selected)]
+                if scope == 'release-smoke' else
+                [(['npm', 'test', '--prefix', '.build/web-client'], ROOT),
+                 (['npm', 'test', '--prefix', 'tests/web'], ROOT)])
+    for command, cwd in commands:
+        result = subprocess.run(command, cwd=cwd)
+        if result.returncode:
+            return result.returncode
+    if output:
         with output.open('a') as stream:
             stream.write('scope=' + scope + '\n')
-    return result.returncode
+    return 0
 
 
 def verify_junit(path, selectors):
@@ -150,11 +156,9 @@ def source_identity(revision=None):
     # silently escape provenance merely because it is not executable code.
     excluded = {'__pycache__', 'node_modules', '.pytest_cache', '.git', 'output'}
     directories = [*ROOT.glob('amplifier_*'), ROOT / 'scripts', ROOT / 'tests',
-                   ROOT / '.github/workflows', ROOT / 'packages', ROOT / 'components',
-                   *(ROOT / 'frontend' / name for name in ('src', 'tests', 'scripts', 'public'))]
+                   ROOT / '.github/workflows', ROOT / 'packages', ROOT / 'components']
     files = sorted({p for parent in directories if parent.is_dir() for p in parent.rglob('*')
                     if p.is_file() and not excluded.intersection(p.relative_to(ROOT).parts)} |
-                   {p for p in (ROOT / 'frontend').glob('*') if p.is_file()} |
                    {ROOT / 'pyproject.toml', ROOT / 'uv.lock'} |
                    {p for p in (ROOT / 'bundle.yaml',) if p.is_file()})
     digest = hashlib.sha256()

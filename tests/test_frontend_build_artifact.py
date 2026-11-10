@@ -22,11 +22,15 @@ def git(root, *args):
 @pytest.fixture
 def source(tmp_path):
     root = tmp_path / 'source'
-    (root / 'frontend').mkdir(parents=True)
+    (root / 'components/web-client').mkdir(parents=True)
     (root / module.STATIC).mkdir(parents=True)
-    (root / 'frontend/input.js').write_text('source')
+    (root / 'components/web-client/input.js').write_text('source')
+    for name in ('tests/web/package.json', 'components/web-client.source.json', 'scripts/web_client_build.py'):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{}')
     (root / 'package.json').write_text('{}')
-    (root / '.gitignore').write_text('.env*\nfrontend/.env*\n')
+    (root / '.gitignore').write_text('.env*\n.build/\n')
     (root / module.STATIC / 'old.js').write_text('committed output')
     git(root, 'init', '-q'); git(root, 'add', '.'); git(root, 'commit', '-qm', 'source')
     (root / module.STATIC / 'old.js').unlink()
@@ -46,19 +50,19 @@ def test_generated_changes_are_retained_for_exact_source_without_qualifying_it(s
     assert manifest['qualified'] is False and manifest['workflow']['GITHUB_RUN_ID'] == '123'
     assert set(manifest['assets']) == {'new.js'}
     assert (output / 'static/new.js').read_text() == 'new output'
-    assert not (output / 'frontend').exists()
+    assert not (output / 'components/web-client').exists()
     # Committing only the recovered assets changes HEAD but not build inputs.
     git(source, 'add', '.'); git(source, 'commit', '-qm', 'assets')
     assert module.verify(source, output) == manifest
 
 
 @pytest.mark.parametrize('change', ['source-dirty', 'source-committed', 'new-source', 'version',
-                                    'environment', 'client-environment'])
+                                    'environment', 'client-environment', 'host-environment'])
 def test_changed_build_inputs_cannot_reuse_old_output(source, tmp_path, change):
     output, _ = capture(source, tmp_path)
-    path = 'frontend/.client/.env.local' if change == 'client-environment' else (
+    path = '.build/web-client/.env.local' if change == 'client-environment' else ('tests/web/.env.local' if change == 'host-environment' else (
         'package.json' if change == 'version' else '.env.local' if change == 'environment' else (
-        'frontend/new.js' if change == 'new-source' else 'frontend/input.js')
+        'components/web-client/new.js' if change == 'new-source' else 'components/web-client/input.js'))
     )
     (source / path).parent.mkdir(parents=True, exist_ok=True)
     (source / path).write_text('different')
@@ -81,9 +85,9 @@ def test_corrupt_or_redirected_artifact_is_rejected_without_writing_source(sourc
         manifest['assets']['../escape'] = manifest['assets'].pop('new.js')
     elif change == 'qualified': manifest['qualified'] = True
     elif change == 'link':
-        asset.unlink(); asset.symlink_to(source / 'frontend/input.js')
+        asset.unlink(); asset.symlink_to(source / 'components/web-client/input.js')
     elif change == 'directory-link':
-        (output / 'static/external').symlink_to(source / 'frontend', target_is_directory=True)
+        (output / 'static/external').symlink_to(source / 'components/web-client', target_is_directory=True)
     (output / 'manifest.json').write_text(json.dumps(manifest))
     with pytest.raises(ValueError): module.verify(source, output)
     assert (source / module.STATIC / 'new.js').read_bytes() == before
@@ -98,7 +102,7 @@ def test_ignored_environment_inputs_are_hashed_not_exported(source, tmp_path):
 
 
 def test_capture_refuses_dirty_source_and_leaves_no_partial_bundle(source, tmp_path):
-    (source / 'frontend/input.js').write_text('uncommitted source')
+    (source / 'components/web-client/input.js').write_text('uncommitted source')
     with pytest.raises(subprocess.CalledProcessError): capture(source, tmp_path)
     assert not (tmp_path / 'build-output').exists()
 
@@ -108,7 +112,7 @@ def test_capture_refuses_links_and_oversize_before_publishing(source, tmp_path, 
     with pytest.raises(ValueError, match='size limit'): capture(source, tmp_path)
     assert not (tmp_path / 'build-output').exists()
     monkeypatch.setattr(module, 'MAX_BYTES', 10000)
-    (source / module.STATIC / 'external').symlink_to(source / 'frontend', target_is_directory=True)
+    (source / module.STATIC / 'external').symlink_to(source / 'components/web-client', target_is_directory=True)
     with pytest.raises(ValueError, match='Linked'): capture(source, tmp_path)
 
 
@@ -129,7 +133,7 @@ def test_workflow_retains_build_before_parity_without_weakening_proof():
         assert step['if'] == "${{ !cancelled() && steps.frontend-build.outcome == 'success' }}"
         assert names.index('Build frontend') < names.index(name) < names.index('Verify committed frontend assets')
     parity = next(step for step in steps if step.get('name') == 'Verify committed frontend assets')
-    assert parity['run'] == 'git diff --exit-code -- amplifier_web/static'
+    assert parity['run'].splitlines() == ['npm run test:artifact-assets --prefix .build/web-client', 'git diff --exit-code -- amplifier_web/static']
     assert 'continue-on-error' not in parity
     proof = next(step for step in steps if step.get('name') == 'Record frontend proof')
     assert 'if' not in proof and names.index(proof['name']) > names.index(parity['name'])
@@ -208,7 +212,7 @@ def test_apply_preserves_local_generated_work(importable, change):
 @pytest.mark.parametrize('change', ['source', 'environment', 'artifact', 'overlap', 'parent-link', 'recovery-link'])
 def test_apply_preflight_does_not_move_originals(importable, tmp_path, change):
     source, output, _, original = importable
-    if change == 'source': (source / 'frontend/input.js').write_text('changed')
+    if change == 'source': (source / 'components/web-client/input.js').write_text('changed')
     elif change == 'environment': (source / '.env.local').write_text('changed')
     elif change == 'artifact': (output / 'static/nested/new.js').write_text('changed')
     elif change == 'overlap':
@@ -292,7 +296,7 @@ def test_recovery_preserves_conflicting_work(importable, change):
     if change == 'target': (source / module.STATIC / 'nested/new.js').write_text('new local work')
     elif change == 'backup': (recovery / 'old/old.js').write_text('saved local work')
     elif change == 'index': git(source, 'add', module.STATIC)
-    elif change == 'source': (source / 'frontend/input.js').write_text('source work')
+    elif change == 'source': (source / 'components/web-client/input.js').write_text('source work')
     elif change == 'artifact': (output / 'static/nested/new.js').write_text('artifact work')
     before, saved = module.tree(source / module.STATIC), module.tree(recovery / 'old')
     index = git(source, 'ls-files', '--stage', '-z')
@@ -349,9 +353,9 @@ def test_linked_worktree_recovers_using_its_own_git_metadata(importable, tmp_pat
 @pytest.mark.parametrize('flag', ['assume-unchanged', 'skip-worktree'])
 def test_hidden_authored_input_cannot_claim_exact_source(importable, tmp_path, flag):
     source, output, _, original = importable
-    git(source, 'update-index', '--' + flag, 'frontend/input.js')
-    (source / 'frontend/input.js').write_text('hidden authored changes')
-    assert git(source, 'diff', 'HEAD', '--', 'frontend/input.js') == b''
+    git(source, 'update-index', '--' + flag, 'components/web-client/input.js')
+    (source / 'components/web-client/input.js').write_text('hidden authored changes')
+    assert git(source, 'diff', 'HEAD', '--', 'components/web-client/input.js') == b''
     with pytest.raises(ValueError, match='Source index flags'):
         module.create(source, tmp_path / 'another-output', {})
     with pytest.raises(ValueError, match='Source index flags'):
@@ -359,5 +363,5 @@ def test_hidden_authored_input_cannot_claim_exact_source(importable, tmp_path, f
     with pytest.raises(ValueError, match='Source index flags'):
         module.apply(source, output)
     assert module.tree(source / module.STATIC) == original
-    assert (source / 'frontend/input.js').read_text() == 'hidden authored changes'
+    assert (source / 'components/web-client/input.js').read_text() == 'hidden authored changes'
     assert not recovery_path(source).exists()

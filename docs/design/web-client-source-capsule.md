@@ -28,8 +28,8 @@ copies retain their canonical paths; no catalog, SDK or license gets a new owner
 From a checkout whose selected shared inputs are committed:
 
 ```sh
-node frontend/scripts/client-capsule.mjs inputs /tmp/web-build-inputs
-node frontend/scripts/client-capsule.mjs verify-inputs /tmp/web-build-inputs SOURCE_COMMIT
+node scripts/client-capsule.mjs inputs /tmp/web-build-inputs
+node scripts/client-capsule.mjs verify-inputs /tmp/web-build-inputs SOURCE_COMMIT
 ```
 
 Use a new task-owned output directory. The retained helper name is historical;

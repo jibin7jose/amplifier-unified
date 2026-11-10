@@ -194,8 +194,7 @@ Focused local checks (scripted external transports, no live model requests):
 uv sync --frozen --group dev
 .venv/bin/python -m pytest -q tests/test_native_provider.py tests/test_native_job_recovery.py \
   tests/test_collaboration_input.py tests/test_conversation_steering.py
-cd frontend
-node --test tests/native-provider.test.mjs
+node --test .build/web-client/tests/native-provider.test.mjs
 ```
 
 For the PR #144 changed-input check, the native host/job and SelectedProvider

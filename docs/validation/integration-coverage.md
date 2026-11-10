@@ -224,7 +224,7 @@ runs pytest as root on the host.
 
 The existing `browser-installed` owner retains its single unchanged behavior
 case. Its adapter stage uses an unprivileged container, a private Xvfb display,
-and Python Playwright/Chromium matched to the frontend lock. Browser preparation
+and Python Playwright/Chromium matched to the host browser lock in `tests/web`. Browser preparation
 is reused without running `uv sync` or replacing the noneditable candidate
 installation. The real headed CDP install, login, launch, relaunch and uninstall
 remain required; overlay assertions stay conditional on the browser's reported

@@ -24,7 +24,7 @@ No live host was updated or restarted and no provider turn was sent.
 
 Build identity: `2486a46908ac74f1`, version `0.20.184`. Wheel and source archive
 pass `scripts/release.py verify`; packaged source and client bytes are checked.
-The focused browser owner uses `frontend/tests/update-effects-browser.mjs` and
+The focused browser owner uses `tests/web/update-effects-browser.mjs` and
 `tests/fixtures/update_effects_server.py`. Its installer/rollback effects remain
 synthetic; Python tests separately exercise the canonical stage/activate owners.
 

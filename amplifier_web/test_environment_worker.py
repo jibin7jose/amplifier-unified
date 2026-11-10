@@ -726,7 +726,13 @@ def execute_call(payload):
             return docker_reconcile(payload, identity, backend, binding_source)
         if action == 'prepare':
             # Source snapshot is immutable and retained even when launch fails.
-            snapshot = serialize(lib.export_repository_snapshot(Path(payload['source']), root / 'source.tar'))
+            try:
+                snapshot = source_transfer.export_snapshot(Path(payload['source']), root / 'source.tar',
+                    lambda: serialize(lib.export_repository_snapshot(Path(payload['source']), root / 'source.tar')))
+            except ValueError as error:
+                return {'ok': False, 'status': 'not-started', 'effectAdmitted': False,
+                        'universeId': identity, 'snapshot': None, 'code': 'source-preparation-required',
+                        'message': str(error)}
             (root / 'snapshot.json').write_text(json.dumps(snapshot))
             try:
                 source_transfer.preflight(root / 'source.tar', snapshot)

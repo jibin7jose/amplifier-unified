@@ -88,9 +88,9 @@ that retention lasts only while this page stays open.
 
 Focused checks (run against the candidate in an owned isolated environment):
 `tests/test_auth.py`, `tests/test_history_scope.py`,
-`frontend/tests/destination-history.test.mjs`,
-`frontend/tests/destination-history-ui.test.mjs`, and
-`frontend/tests/destination-history-browser.mjs`. The browser script requires an
+`components/web-client/tests/destination-history.test.mjs`,
+`components/web-client/tests/destination-history-ui.test.mjs`, and
+`tests/web/destination-history-browser.mjs`. The browser script requires an
 owned `AMPLIFIER_TEST_OUTPUT` directory and rebuilt production assets. These
 instructions are not evidence that the checks have passed.
 
@@ -205,12 +205,11 @@ that checks have run. Do not use a production service or model/SDK runtime.
    ```
 2. Run the frontend unit source:
    ```sh
-   cd frontend
-   node --test tests/work-shell.test.mjs
+   node --test .build/web-client/tests/work-shell.test.mjs
    ```
 3. Run the new real HTTP/SSE receiving-build harness:
    ```sh
-   AMPLIFIER_RECENT_EXPECTED_PACKAGE="$INSTALLED_AMPLIFIER_WEB_PACKAGE" AMPLIFIER_RECENT_EVIDENCE=/test-evidence/recent.json node tests/recent-visibility-browser.mjs
+   AMPLIFIER_RECENT_EXPECTED_PACKAGE="$INSTALLED_AMPLIFIER_WEB_PACKAGE" AMPLIFIER_RECENT_EVIDENCE=/test-evidence/recent.json node tests/web/recent-visibility-browser.mjs
    ```
    Set `INSTALLED_AMPLIFIER_WEB_PACKAGE` to the interpreter's actual installed
    `amplifier_web` directory. The fixture rejects a different import and records
@@ -329,8 +328,7 @@ against the original candidate and corrected candidate:
    promotion-before-ACK, eight-row cutoff, progress stability, duplicate-input,
    other-client draft/reference and ready/attention expectations:
    ```sh
-   cd frontend
-   AMPLIFIER_HUMAN_POST_ONLY=1 npm run test:sidebar-activity-browser
+   AMPLIFIER_HUMAN_POST_ONLY=1 npm run test:sidebar-activity-browser --prefix tests/web
    ```
 4. Review the exact integrated candidate and these observed outcomes before a PR.
    Syntax/AST/diff checks alone qualify only a source candidate; they do not

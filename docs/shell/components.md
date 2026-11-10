@@ -47,7 +47,7 @@ actual controls example and checks that its only bundled dependency is the SDK.
 The resulting `output/shell-sdk-proof` holds the tarball, component and receipt;
 temporary dependencies are removed. This is a package check, not host acceptance.
 Inside an owned test environment, set `AMPLIFIER_SHELL_COMPONENT_PACKAGE` to that
-output directory when running `frontend/tests/shell-components-browser.mjs` to
+output directory when running `tests/web/shell-components-browser.mjs` to
 exercise the same installed artifact through real host validation, preview/apply,
 dirty-edit deferral, stale callbacks and recovery. The fixture also rejects an
 unsupported API revision. Registry publication and repository extraction remain
@@ -125,7 +125,7 @@ message/execution renderers, canvas container, voice implementation, or Settings
 system. Layout packages and isolated shell execution need their own contracts;
 none should be presented as available APIs on this host.
 
-Run `npm run test:shell-components-browser --prefix frontend` against a production
+Run `npm run test:shell-components-browser --prefix tests/web` against a production
 build. The disposable provider-free proof builds and validates a separate module
 after opening the app, uses user and agent actions, checks dirty/stale behavior,
 retains the actual composer/iframe nodes, and verifies draft/module-state reload

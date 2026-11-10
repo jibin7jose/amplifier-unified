@@ -19,7 +19,7 @@ on:
     paths:
       - 'components/web-client.source.json'
       - 'scripts/web_client_*.py'
-      - 'frontend/commands.json'
+      - 'components/web-client/commands.json'
       - .github/workflows/platform-mechanisms.yml
       - amplifier_web/generation_leases.py
       - amplifier_web/reset.py

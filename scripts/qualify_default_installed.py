@@ -848,7 +848,7 @@ def retain_pwa_artifacts(base, evidence):
 
 def pwa_preflight_receipt(preflight, env, python):
     require(Path(preflight['actual_interpreter']) == python, 'PWA preflight used another interpreter')
-    expected = json.loads((GUEST / 'candidate/frontend/package-lock.json').read_text())[
+    expected = json.loads((GUEST / 'candidate/tests/web/package-lock.json').read_text())[
         'packages']['node_modules/playwright']['version']
     require(preflight['prerequisites']['playwright_version'] == expected, 'PWA browser package is not lock-matched')
     preflight['interpreter'] = preflight['actual_interpreter']

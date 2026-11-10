@@ -6,6 +6,7 @@ The client owns source verification, shared build inputs, and packaging.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -35,7 +36,7 @@ def selection(path):
     return record
 
 
-def copy_tracked(source, destination, *, node='node'):
+def copy_tracked(source, destination, *, node='node', development=False):
     """Copy tracked source, or the client's production manifest in Git-free exports."""
     git = command('git', '-C', source, 'rev-parse', '--show-toplevel',
                   capture=True, check=False)
@@ -48,6 +49,11 @@ def copy_tracked(source, destination, *, node='node'):
                          (source / 'scripts/client-source.mjs').as_uri(), source,
                          capture=True, timeout=30)
         paths = json.loads(result.stdout)
+        if development:
+            # Authored tests travel only for development/integration preparation.
+            # Package installation still uses the bounded production manifest.
+            paths = sorted(set(paths) | {p.relative_to(source).as_posix()
+                for p in (source / 'tests').rglob('*') if p.is_file()})
     destination.mkdir()
     for name in paths:
         if not name:
@@ -58,6 +64,24 @@ def copy_tracked(source, destination, *, node='node'):
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
+
+
+def development_inventory(source):
+    """Local edit protection for authored test support, separate from build identity."""
+    result = {}
+    for path in sorted((source / 'tests').rglob('*')):
+        if path.is_dir() and not path.is_symlink():
+            continue
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise ValueError('Expected regular prepared test source: ' + str(path))
+        result[path.relative_to(source).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return result
+
+
+def verify_development(source):
+    recorded = json.loads((source / '.client-development.json').read_text())
+    if recorded != development_inventory(source):
+        raise ValueError('Edited prepared client tests retained; save changes in the client repository before refreshing')
 
 
 def fetch_source(source, destination):
@@ -71,7 +95,7 @@ def fetch_source(source, destination):
     command('git', '-C', destination, 'checkout', '-q', '--detach', revision, capture=True)
 
 
-def prepare(root, record_path, destination, *, node='node'):
+def prepare(root, record_path, destination, *, node='node', development=False):
     record = selection(record_path)
     if destination.exists() or destination.is_symlink():
         raise ValueError('Use a new output directory; existing work is never replaced')
@@ -90,7 +114,7 @@ def prepare(root, record_path, destination, *, node='node'):
             source = stage / 'repository'
             fetch_source(record['source'], source)
         prepared = stage / 'source'
-        copy_tracked(source, prepared, node=node)
+        copy_tracked(source, prepared, node=node, development=development)
         # Carry the same trusted selection into a Git-free developer checkout.
         copied_record = prepared / '.client-source.json'
         copied_record.write_text(json.dumps(record, indent=2) + '\n')
@@ -99,6 +123,9 @@ def prepare(root, record_path, destination, *, node='node'):
         if verification.returncode:
             raise ValueError('Client verification failed; restore the selected source or refresh '
                              'its record from the corresponding canonical client commit')
+        if development:
+            (prepared / '.client-development.json').write_text(
+                json.dumps(development_inventory(prepared), sort_keys=True) + '\n')
         prepared.rename(destination)
     return {'directory': str(destination), 'source': record['source'],
             'record': str(destination / '.client-source.json')}

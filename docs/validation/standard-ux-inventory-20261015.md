@@ -19,7 +19,7 @@ new rendered-browser or physical-backend acceptance pass or alter frozen counts.
 ## Expired configuration request follow-up (October 22)
 
 `approval-lifecycle` is an additive extended-browser owner in
-`frontend/tests/browser-checks.json`. Its report and screenshots are retained
+`tests/web/browser-checks.json`. Its report and screenshots are retained
 under `output/browser-checks/approval-lifecycle`; the runner also retains the
 exact command, source/plan/build identities, raw outcome and process cleanup.
 The journey covers cold stale/current requests, passive scope review, exact
@@ -105,13 +105,13 @@ inventory and browser execution plan, not a release gate or a passing test repor
 
 ## Reviewable records
 
-- [Workflow checklist](../../frontend/tests/standard-ux-inventory.json): 196 stable
+- [Workflow checklist](../../tests/web/standard-ux-inventory.json): 196 stable
   workflow IDs in 27 families, prerequisites, real interaction steps, expected
   outcomes, condition/state matrix, source references and existing test candidates.
-- [Control census](../../frontend/tests/standard-ux-controls.json): 1,666 lexical
+- [Control census](../../tests/web/standard-ux-controls.json): 1,666 lexical
   native control/option declarations across 126 source files. Its source-file
   crosswalk suggests workflows; it does not assert that their tests cover a control.
-- [Route catalog](../../frontend/tests/standard-ux-routes.json): 30 Settings routes,
+- [Route catalog](../../tests/web/standard-ux-routes.json): 30 Settings routes,
   13 Chat routes, workspace destinations, custom control carriers and exclusions.
 
 All workflow browser statuses begin **not-run**. The 65 associated test scripts
@@ -258,7 +258,7 @@ the lexical source census. Shared-load timings are observational only.
 Execution evidence and the per-expected-outcome ledger live at workspace-root
 `output/readiness-day-20261015/ui-inventory/`. The ledger has 649 baseline outcomes;
 new integration workflows are recorded separately in
-[the delta ledger](../../frontend/tests/standard-ux-inventory-deltas.json).
+[the delta ledger](../../tests/web/standard-ux-inventory-deltas.json).
 The first delta covers #635's controlled per-tool Retry/Skip flow at its exact
 integration source, including the narrower evidence limits of that browser test.
 
@@ -303,7 +303,8 @@ for the subsequent results and exact source limits.
 | **R166-11 PDF prerequisite fidelity** — existing Canvas/output rendering journeys | Exercise the PDF browser against the declared artifact dependency group. A reused environment missing `pypdf` is a setup failure, not a renderer result. Retain that failure and rerun the same source with the declared prerequisite before assigning a product outcome. | `pdf-browser.mjs` in Public readiness; Public readiness, Extended browser checks and Full Python checks use locked `dev` + `artifacts` dependencies. |
 | **R166-12 Built-client fidelity** — all browser journeys and release evidence | Rebuild the client after frontend changes, verify generated static output matches the committed candidate, then qualify that built client. Preserve earlier source-only/focused observations but do not label them proof of the newly built integrated package. | Work workflow frontend build plus `git diff --exit-code -- amplifier_web/static`; the Release workflow repeats the static consistency gate. Public readiness and Extended browser checks build their checked-out source before browsers run. |
 
-All script names above are under `frontend/tests/`; Python test names are under
+Host browser script names above are under `tests/web/`; client unit checks are
+owned by the selected client in `components/web-client/tests/`. Python test names are under
 `tests/`. Routine jobs are the existing `public-readiness.yml`,
 `browser-checks.yml`, `python-checks.yml`, `work-workflows.yml` and `release.yml`.
 `post-release.yml` invokes the first three against the published revision. This
@@ -918,7 +919,7 @@ checks; it adds no broad publication gate.
 
 ## Model capacity waiting settings — October 20
 
-`frontend/tests/model-capacity-settings-browser.mjs` owns the global Advanced settings journey using the production built UI and AppService with a synthetic runtime. It proves finite and unlimited waiting, two-client stale-save refusal, retained private edits, exact command retry after a lost acknowledgement and reopen, no extra saved mutation, unchanged worker starts/stops, saved cold reopen, and desktop/narrow layouts. No paid provider or live-host policy change is involved.
+`tests/web/model-capacity-settings-browser.mjs` owns the global Advanced settings journey using the production built UI and AppService with a synthetic runtime. It proves finite and unlimited waiting, two-client stale-save refusal, retained private edits, exact command retry after a lost acknowledgement and reopen, no extra saved mutation, unchanged worker starts/stops, saved cold reopen, and desktop/narrow layouts. No paid provider or live-host policy change is involved.
 
 This additive owner gives this isolated branch 100 registered scenarios and 143 distinct readiness/extended browser scripts (142 excluding the attachment script). The original 65-scenario identity is unchanged. This focused qualification does not add a broad browser census as a release gate.
 

@@ -14,8 +14,7 @@ without changing the original 65-scenario hash or adding a duplicate foreground
 release gate. Focused affected-change execution uses the same invocation:
 
 ```sh
-cd frontend
-AMPLIFIER_TEST_ARTIFACTS=/absolute/owned/evidence node tests/cross-workspace-handoff-browser.mjs
+AMPLIFIER_TEST_ARTIFACTS=/absolute/owned/evidence node tests/web/cross-workspace-handoff-browser.mjs
 ```
 
 The built client must match the candidate backend. The fixture starts the real

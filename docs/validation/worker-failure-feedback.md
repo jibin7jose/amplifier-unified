@@ -43,7 +43,7 @@ until a new generation or terminal outcome replaces it.
   reopen. Reads do not publish or load history. Changed later failures do not
   rewrite accepted reports. Existing custom/malformed-value, size, opt-out and
   content-exclusion checks remain required.
-- The existing registered `frontend/tests/feedback-browser.mjs` journey now
+- The existing registered `tests/web/feedback-browser.mjs` journey now
   presents a synthetic worker communication failure, opens reproduction details
   through the UI, and asserts the precise safe classification and absence of raw
   detail. It retains its on-demand collection, explicit refresh, opt-out,

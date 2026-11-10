@@ -2027,24 +2027,25 @@ def test_permissions_history_plan_has_only_fixed_checks_and_strict_evidence():
     plans, = [n.value for n in ast.walk(tree) if isinstance(n, ast.Assign)
               and any(isinstance(t, ast.Name) and t.id == 'plans' for t in n.targets)]
     assert [ast.literal_eval(row.elts[0]) for row in plans.elts] == [
-        'locked-host', 'locked-freeze', 'host-dependencies', 'npm-ci', 'chromium', 'python', 'node',
+        'locked-host', 'locked-freeze', 'host-dependencies', 'npm-ci', 'client-npm-ci', 'chromium', 'python', 'node',
         'build', 'source-approval', 'wheel', 'fresh-runtime', 'install-dependencies', 'install-wheel',
         'installed-dependencies', 'installed-freeze', 'installed-imports', 'installed-approval', 'questions']
-    assert source.count("['npm', 'run', 'build']") == 1
+    assert source.count("[sys.executable, 'scripts/web_client_build.py', 'build']") == 1
     assert source.count("['uv', 'build', '--wheel'") == 1
-    assert source.count("['node', 'tests/approval-lifecycle-browser.mjs']") == 2
-    assert source.count("['node', 'tests/questions-browser.mjs']") == 1
+    assert source.count("['node', 'tests/web/approval-lifecycle-browser.mjs']") == 2
+    assert source.count("['node', 'tests/web/questions-browser.mjs']") == 1
     assert "'--locked', '--group', 'dev', '--group', 'artifacts', '--no-install-project'" in source
     assert "'--no-build-isolation'" in source and "'--no-deps'" in source
     assert 'CONTEXT_REQUIREMENT' not in source and 'context-dependency' not in source
     assert 'signal.alarm(600)' in source and "'normalBudgetSeconds': 300" in source
     assert 'from browser_check_runner import run_scenarios' in source
-    assert "'scenarios': [{'id': phase, 'command': command, 'env': env}]" in source
+    assert "'scenarios': [{'id': phase, 'command': command, 'env': env," in source
+    assert "'cwd': '.build/web-client' if phase == 'node' else '.'" in source
     assert "row['cleanup'] == {'remaining': [], 'terminated': 0}" in source
     assert "report['phases'] = {name: {'status': 'not_run'}" in source
     assert 'verify_wheel(wheel, candidate, package.parent)' in source
     assert 'source_identity(ROOT)' in source and 'create(ROOT,' in source and 'verify(ROOT,' in source
-    assert "harness / 'frontend/node_modules', symlinks=False" in source
+    assert 'stage_web_test_harness(ROOT, harness, copy_dependencies=True)' in source
     assert 'symlink_to' not in source and 'manifest(harness) == copied' in source
     assert source.count("'AMPLIFIER_SHELL_NODE_MODULES':") == 2
     assert source.count("'AMPLIFIER_TEST_PACKAGE_ROOT':") == 2
@@ -2119,7 +2120,7 @@ def test_permissions_node_names_expand_literals_and_refuse_unknown_loops(permiss
     with pytest.raises(AssertionError):
         module.node_names(text.replace('${value}', '${other}'))
     with pytest.raises(AssertionError, match='Unrecognized'):
-        module.node_names((ROOT / 'frontend/tests/approval-card.test.mjs').read_text().replace(
+        module.node_names((ROOT / '.build/web-client/tests/approval-card.test.mjs').read_text().replace(
             "['missing',()=>null]", "['renamed',()=>null]"))
 
 

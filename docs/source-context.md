@@ -14,7 +14,7 @@ is needed. The command reads Git membership/attributes and file metadata only.
 python scripts/source_context.py
 python scripts/source_context.py --format paths --under amplifier_web/agent_state.py --under tests/test_agent_state.py
 python scripts/source_context.py --format paths --kind contracts
-python scripts/source_context.py --format json --under frontend/src
+python scripts/source_context.py --format json --all --under components/web-client/src
 python scripts/source_context.py --format paths --kind evidence
 python scripts/source_context.py --format json --all --under amplifier_web/static
 ```
@@ -30,12 +30,12 @@ Ordinary `rg` searches do not apply Git's context attributes. After choosing the
 relevant roots, search their selected paths (this example uses GNU `xargs`):
 
 ```sh
-python scripts/source_context.py --format paths --null --under frontend/src --under frontend/tests | xargs -0 -r rg -n --with-filename -- 'stateRevision'
+python scripts/source_context.py --format paths --null --all --under components/web-client/src --under components/web-client/tests --under tests/web | xargs -0 -r rg -n --with-filename -- 'stateRevision'
 ```
 
 `-r` prevents an empty selection from becoming an unrestricted search. Git also
 supports attribute-aware searches without `xargs`, for example
-`git grep -n 'stateRevision' -- ':(attr:source-context=source)frontend/src' ':(attr:source-context=tests)frontend/tests'`.
+`git grep -n 'stateRevision' -- ':(attr:source-context=generated)components/web-client/src' ':(attr:source-context=generated)components/web-client/tests' ':(attr:source-context=tests)tests/web'`.
 Both searches keep tests alongside source; add the actual consumers and contracts
 for the changed behavior rather than treating directory selection as complete coverage.
 
@@ -52,8 +52,10 @@ The temporary [independent client delivery](../components/README.md) is classifi
 as generated context because it is mechanically copied from its owning repo.
 Its selection and maintenance guide stay visible; use `--all --under components/web-client`
 to inspect the copy. It is the selected production build source, not another authored client owner.
-Source bootstrap files in `components/web-client/public` and shipped documentation in
-`docs/shell` remain authored inputs. Frozen UX inventory/control JSON is retained
+Source bootstrap files in the canonical client's `public/` remain authored inputs;
+their delivery copy has the same generated-context classification as other copied
+client source. Shipped documentation in `docs/shell` is authored here. Frozen UX inventory/control
+JSON is retained
 evidence; its maintained delta and completion-policy ledgers remain test inputs.
 Dated documents can contain current follow-ups, so documentation is not
 automatically historical. Labels select review context, never deletion candidates.
@@ -79,7 +81,7 @@ guides remain visible for current direction, reproduction and evidence limits.
 | Agent instructions and readbacks | [app guidance](../amplifier_web/app_guidance.py), [agent state](../amplifier_web/agent_state.py), [receipts](../amplifier_web/agent_receipts.py) | [Agent results](AGENT-RESULTS.md), client privacy and receipt contracts; optional skill absence does not remove supported actions |
 | Domain capabilities | Relevant `amplifier_web` handler, portable `amplifier_*` package, frontend consumer and domain tests | Domain guide under `docs/`; [component boundaries](../contracts/component-boundaries.v1.md) |
 | Shell, canvas and appearance | [shell](shell), [SDK](../packages/shell-sdk), [frontend shell](../components/web-client/src/shell) | Public extension/appearance contracts; saved user skins and independent components remain consumers |
-| Test and release mechanisms | [Python tests](../tests), [browser registry](../frontend/tests/browser-checks.json), [scripts](../scripts) | [Performance validation](validation/performance.md), [release qualification](validation/release-qualification.md); exact evidence and independent modes remain distinct |
+| Test and release mechanisms | [Python tests](../tests), [browser registry](../tests/web/browser-checks.json), [scripts](../scripts) | [Performance validation](validation/performance.md), [release qualification](validation/release-qualification.md); exact evidence and independent modes remain distinct |
 
 The [family vision](architecture/VISION.md) and [client direction index](clients/direction.md)
 separate target design, current contracts and demonstrated behavior. Follow those

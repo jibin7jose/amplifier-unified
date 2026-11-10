@@ -1,0 +1,72 @@
+import {ownFixture,finishFixture} from './fixture-lifecycle.mjs';
+import {spawn} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import assert from 'node:assert/strict';
+import {createServer} from 'vite';
+import {chromium,expect} from '@playwright/test';
+
+const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||fileURLToPath(new URL('../../.venv/bin/python',import.meta.url)),[fileURLToPath(new URL('../../tests/fixtures/storage_history_ui_server.py',import.meta.url))],{stdio:['ignore','pipe','inherit']});
+const stop=ownFixture(fixture,{label:"Storage history fixture"});
+let browser,vite,failure;
+try{
+ const target=await new Promise((resolve,reject)=>{
+  const timer=setTimeout(()=>reject(Error('Fixture timed out')),20000);let output='';
+  fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exited '+code))});
+  fixture.stdout.on('data',chunk=>{output+=chunk;for(const line of output.split('\n')){try{const value=JSON.parse(line);if(value.url){clearTimeout(timer);resolve(value.url)}}catch{}}});
+ });
+ vite=await createServer({configFile:false,root:fileURLToPath(new URL('../../.build/web-client/',import.meta.url)),server:{host:'127.0.0.1',port:0,hmr:false,proxy:{'/api':{target,changeOrigin:true,ws:true,configure(proxy){for(const event of ['proxyReq','proxyReqWs'])proxy.on(event,request=>request.setHeader('Origin',target))}},'/branding':target}},optimizeDeps:{include:['react','react-dom/client','react/jsx-dev-runtime']}});await vite.listen();
+ browser=await chromium.launch({headless:true,args:process.env.UNIFIED_BROWSER_SINGLE_PROCESS?['--no-zygote','--single-process','--disable-gpu']:[]});
+ const page=await browser.newPage({viewport:{width:1280,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}}),errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(vite.resolvedUrls.local[0]);await page.waitForFunction(()=>window.amplifier?.getState()?.sessions);
+ const info=await page.evaluate(async()=>await(await fetch('/api/fixture/history')).json());
+ await page.evaluate(()=>{window.storageReads=[];const original=window.fetch;window.fetch=async(...args)=>{let body;try{body=JSON.parse(args[1]?.body)}catch{}if(body?.action==='storage.inspect'&&!body.args?.scanId)window.storageReads.push(body.args);return original(...args)}});
+ const view=patch=>page.evaluate(patch=>window.amplifier.dispatch('view.update',{patch}),patch);
+ await view({panel:'settings',settingsSection:'privacy',settingsExpanded:['storage']});
+ const storage=page.getByRole('region',{name:'Storage usage'}),nav=storage.getByRole('navigation',{name:'Storage navigation'});
+ await expect(storage.locator('.a-storage-categories li')).toHaveCount(6);
+ const reads=()=>page.evaluate(()=>window.storageReads.length);
+ const confirmDeletion=async()=>{
+  const response=page.waitForResponse(response=>response.url().endsWith('/api/actions')&&response.request().postDataJSON()?.action==='storage.historyDelete');
+  await storage.getByRole('button',{name:'Delete permanently',exact:true}).click();
+  const receipt=await(await response).json();
+  assert.equal(receipt.accepted,true,JSON.stringify(receipt));
+ };
+ await storage.getByRole('button',{name:/^Session data /}).click();
+ await storage.getByRole('searchbox',{name:'Filter storage'}).fill('Shared CLI');
+ await storage.getByRole('button',{name:'Shared CLI and Unified history',exact:true}).click();
+ await storage.getByRole('button',{name:info.project,exact:true}).click();
+ await expect(storage.getByRole('button',{name:'Review deletion of all project sessions',exact:true})).toBeVisible();
+ const before=await reads();await nav.getByRole('button',{name:'Shared CLI and Unified history',exact:true}).click();
+ await expect(storage.getByRole('button',{name:info.project,exact:true})).toBeVisible();
+ await storage.getByRole('button',{name:info.project,exact:true}).click();
+ await expect(storage.getByRole('button',{name:'Review deletion of all project sessions',exact:true})).toBeVisible();
+ assert.equal(await reads(),before,'back and reopening a cached folder must not rescan');
+ const filter=storage.getByRole('searchbox',{name:'Filter storage'}),sort=storage.getByRole('combobox',{name:'Sort storage'});
+ const boxes=await Promise.all([filter.boundingBox(),sort.boundingBox()]);assert.ok(Math.abs(boxes[0].y-boxes[1].y)<3,'filter and sort share a row');
+ assert.equal(await page.getByRole('button',{name:'Back to Privacy & files',exact:true}).count(),0);
+ await storage.getByRole('button',{name:'sessions',exact:true}).click();
+ await storage.getByRole('button',{name:`Review cleanup for ${info.ids[0]}`,exact:true}).click();
+ await expect(storage.getByRole('button',{name:'Delete permanently',exact:true})).toBeVisible();
+ const beforeCancel=await reads();await storage.getByRole('button',{name:'Keep session data',exact:true}).click();assert.equal(await reads(),beforeCancel,'canceling a review must not rescan');
+ await storage.getByRole('button',{name:info.ids[0],exact:true}).click();await storage.getByRole('button',{name:'Review session deletion',exact:true}).click();await confirmDeletion();
+ await expect.poll(async()=>page.evaluate(async()=> (await(await fetch('/api/fixture/history')).json()).exists)).toEqual([false,true]);
+ await expect(storage.getByRole('button',{name:info.ids[0],exact:true})).toHaveCount(0);
+ await expect.poll(reads).toBeGreaterThan(beforeCancel);
+ await nav.getByRole('button',{name:info.project,exact:true}).click();
+ await storage.getByRole('button',{name:'Review deletion of all project sessions',exact:true}).click();
+ await expect(storage.getByText(/Project working files and CLI configuration remain/)).toBeVisible();
+ await page.screenshot({path:'/tmp/unified-storage-history-review.png'});
+ await confirmDeletion();
+ await expect.poll(async()=>page.evaluate(async()=> (await(await fetch('/api/fixture/history')).json()).exists),{timeout:15000}).toEqual([false,false]).catch(async error=>{console.error(await storage.innerText());throw error});
+ assert.equal(await page.evaluate(async()=> (await(await fetch('/api/fixture/history')).json()).projectExists),true);
+ await nav.getByRole('button',{name:'Storage',exact:true}).click();await expect(storage.locator('.a-storage-categories li')).toHaveCount(6);
+ const refreshed=await reads();await storage.getByRole('button',{name:'Refresh storage',exact:true}).click();await expect.poll(reads).toBe(refreshed+1);
+ await nav.getByRole('button',{name:'Privacy & files',exact:true}).click();
+ await view({settingsSection:'privacy',settingsExpanded:['storage']});await expect(storage.locator('.a-storage-categories li')).toHaveCount(6);assert.ok(await reads()>refreshed+1,'leaving Storage discards the visit cache');
+ await storage.getByRole('button',{name:/^Session data /}).click();await page.setViewportSize({width:390,height:844});
+ await expect(filter).toBeVisible();assert.ok(await page.locator('#amp-one').evaluate(el=>el.scrollWidth<=el.clientWidth));
+ await page.screenshot({path:'/tmp/unified-storage-history-mobile.png'});
+ assert.deepEqual(errors,[]);console.log('PASS: project and single-session cleanup, retained project files, breadcrumbs, filter/sort layout, cached back/revisit/cancel, refresh and leave invalidation, mobile.');
+}catch(error){failure=error;throw error}
+finally{await finishFixture({label:"Storage history fixture",close:[["Storage browser",()=>browser?.close()],["Storage Vite",()=>vite?.close()]],stop,originalError:failure})}

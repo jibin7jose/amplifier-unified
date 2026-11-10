@@ -16,6 +16,7 @@ import zipfile
 
 from browser_check_runner import run_scenarios, initial_report, save
 from release_qualification import core_wheel
+from web_test_harness import stage_web_test_harness
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / 'output/compact-composer'
@@ -42,12 +43,12 @@ def plan(output, installed=False):
     rows = [] if installed else [{'id': 'composer-units', 'command': ['node', '--test',
         'tests/composer.test.mjs', 'tests/composer-ownership.test.mjs',
         'tests/markdown-composer.test.mjs', 'tests/message-delivery.test.mjs',
-        'tests/chat-controls.test.mjs', 'tests/bundle-controls.test.mjs']},
+        'tests/chat-controls.test.mjs', 'tests/bundle-controls.test.mjs'], 'cwd': '.build/web-client'},
         {'id': 'navigation-reaction-units', 'command': ['node', '--test',
          'tests/destination-history.test.mjs', 'tests/destination-history-ui.test.mjs',
          'tests/conversation-navigation.test.mjs', 'tests/message-reactions.test.mjs',
-         'tests/message-reaction-feedback.test.mjs']}]
-    rows += [{'id': name, 'command': ['node', f'tests/{name}-browser.mjs']} for name in names]
+         'tests/message-reaction-feedback.test.mjs'], 'cwd': '.build/web-client'}]
+    rows += [{'id': name, 'command': ['node', f'tests/web/{name}-browser.mjs']} for name in names]
     for row in rows:
         folder = str(output / row['id'])
         row['env'] = {'AMPLIFIER_TEST_ARTIFACTS': folder,
@@ -87,7 +88,7 @@ def readiness():
 const server=createServer((q,r)=>r.end('<button onclick=\"this.textContent=123\">check</button>'));
 await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
 try{browser=await chromium.launch({headless:true});const page=await browser.newPage();await page.goto('http://127.0.0.1:'+server.address().port);await page.getByRole('button').click();if(await page.getByRole('button').textContent()!=='123')throw Error('click failed');console.log(JSON.stringify({node:process.version,chromium:browser.version(),loopbackClick:true}));}finally{await browser?.close();await new Promise(r=>server.close(r));}"""
-    command(['node', '--input-type=module', '-e', probe], OUTPUT / 'browser-readiness.log', ROOT / 'frontend')
+    command(['node', '--input-type=module', '-e', probe], OUTPUT / 'browser-readiness.log', ROOT / 'tests/web')
     write(OUTPUT / 'readiness.json', {'ready': True, 'nativeWheel': sha(OUTPUT / 'native-wheel.json'),
                                     'python': sha(OUTPUT / 'python-readiness.log'), 'browser': sha(OUTPUT / 'browser-readiness.log')})
 
@@ -121,9 +122,7 @@ def installed(source):
     write(OUTPUT / 'installed-identity.json', {'wheel': wheel.name, 'sha256': sha(wheel),
           'static': expected, 'source': source['revision'], 'outsideCheckout': True,
           'requirementsSha256': sha(requirements), 'nativeWheel': core_wheel(python)})
-    shutil.copytree(ROOT / 'tests/fixtures', harness / 'tests/fixtures')
-    shutil.copytree(ROOT / 'frontend/tests', harness / 'frontend/tests')
-    (harness / 'frontend/node_modules').symlink_to(ROOT / 'frontend/node_modules', target_is_directory=True)
+    stage_web_test_harness(ROOT, harness)
     (harness / '.venv').symlink_to(venv, target_is_directory=True)
     selected = plan(OUTPUT / 'installed', installed=True)
     for row in selected['scenarios']:
@@ -148,7 +147,8 @@ def installed(source):
         write(OUTPUT / 'installed-served-proof.json', {'verified': True, 'assets': served})
     # Hosted job retires its workspace; retain explicit harness/process state, not an invented destroy receipt.
     write(OUTPUT / 'installed-layout.json', {'testOnlyHarness': True, 'sourceDirectoriesCopied': False,
-          'harnessTests': manifest(harness / 'tests'), 'browserTests': manifest(harness / 'frontend/tests'),
+          'harnessTests': manifest(harness / 'tests'), 'browserTests': manifest(harness / 'tests/web'),
+          'clientTestSupport': manifest(harness / '.build/web-client/tests'),
           'processCleanup': json.loads((OUTPUT / 'installed/results.json').read_text())['scenarios']})
     return result
 

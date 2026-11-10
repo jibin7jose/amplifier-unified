@@ -1,7 +1,7 @@
 # Execution observability acceptance (#293)
 
 Owner: Web client execution inspection. The additive `execution-observability`
-scenario in `frontend/tests/browser-checks.json` runs in the existing extended
+scenario in `tests/web/browser-checks.json` runs in the existing extended
 browser owner on affected changes and background post-release verification. It
 is not a new foreground release gate. The historical 65-scenario baseline is
 unchanged. The selected-only export replaces the previous full usage export;
@@ -11,12 +11,11 @@ Run in an owned DTU with synthetic state and prepared project dependencies:
 
 ```sh
 python -m pytest tests/test_execution_observability.py tests/test_capacity.py tests/test_browser_check_runner.py
-cd frontend
-node --test tests/execution-observability*.test.mjs tests/conversation-usage.test.mjs tests/usage-details.test.mjs tests/timeline.test.mjs
-npm run build
-node tests/execution-observability-browser.mjs
-node tests/usage-details-browser.mjs
-node tests/standard-ux-chat-info-browser.mjs
+node --test .build/web-client/tests/execution-observability*.test.mjs .build/web-client/tests/conversation-usage.test.mjs .build/web-client/tests/usage-details.test.mjs .build/web-client/tests/timeline.test.mjs
+python scripts/web_client_build.py build
+node tests/web/execution-observability-browser.mjs
+node tests/web/usage-details-browser.mjs
+node tests/web/standard-ux-chat-info-browser.mjs
 ```
 
 The browser fixture allocates a loopback port and disposable history; the script

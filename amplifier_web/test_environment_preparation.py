@@ -35,6 +35,8 @@ MAX_INPUT = 16 * 1024 * 1024
 PREPARATION_SECONDS = 1800
 LOG_BYTES = 128 * 1024
 RECIPE_FILES = ('test_environment_prepare_guest.py', 'test_environment_initialize_guest.py')
+CLIENT_SELECTION = 'components/web-client.source.json'
+CLIENT_DIRECTORY = '.build/web-client'
 
 
 class PreparationCancelled(Exception):
@@ -76,6 +78,61 @@ def write(path, value):
         os.close(descriptor)
 
 
+def node_projects(value):
+    """The existing browser project plus the optional selected client build."""
+    return value.get('nodeProjects', [{'directory': value['nodeDirectory'],
+                                      'key': value.get('nodeKey', value['nodeDirectory'] or 'root'),
+                                      'manifestDirectory': value['nodeDirectory']}])
+
+
+def browser_projects(archive, files):
+    if 'tests/web/package-lock.json' in files:
+        directory, key = 'tests/web', 'tests-web'
+    elif 'frontend/package-lock.json' in files:
+        # Historical target adapter: an explicitly selected older checkout may
+        # still own this project. Current Unified has no such directory/view.
+        directory = key = 'frontend'
+    else:
+        directory, key = '', 'root'
+    projects = [{'directory': directory, 'key': key, 'manifestDirectory': directory}]
+    if CLIENT_SELECTION not in files or directory != 'tests/web':
+        return projects
+    try:
+        selection = json.loads(files[CLIENT_SELECTION])
+        delivery = selection['delivery']
+        if delivery['type'] == 'directory':
+            source = delivery['path']
+        elif delivery['type'] == 'repository':
+            source = CLIENT_DIRECTORY
+        else:
+            raise ValueError('Unknown selected client delivery')
+        path = PurePosixPath(source)
+        if not source or path.is_absolute() or '..' in path.parts or str(path) != source:
+            raise ValueError('Invalid selected client manifest directory')
+        if source == directory:
+            raise ValueError('Client and browser tools must own separate dependency projects')
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError('The selected client dependency source is invalid.') from error
+    required = {source + '/' + name for name in ('package.json', 'package-lock.json')}
+    if delivery['type'] == 'repository':
+        required.add(source + '/.client-source.json')
+    with tarfile.open(archive) as stream:
+        for item in stream:
+            if item.name in required:
+                if not item.isfile() or item.size > MAX_INPUT:
+                    raise ValueError('Selected client manifests must be bounded ordinary files.')
+                files[item.name] = stream.extractfile(item).read()
+    if not required <= files.keys():
+        raise ValueError('Prepare the selected client before transferring this source: '
+                         'python scripts/web_client_build.py prepare')
+    if delivery['type'] == 'repository' and json.loads(files[source + '/.client-source.json']) != selection:
+        raise ValueError('Prepared client manifests belong to another selection; run '
+                         'python scripts/web_client_build.py prepare before transferring source.')
+    projects.append({'directory': CLIENT_DIRECTORY, 'key': 'web-client', 'manifestDirectory': source,
+                     **({'preparedManifestsOnly': True} if delivery['type'] == 'repository' else {})})
+    return projects
+
+
 def plan(archive, snapshot, profile_id):
     profile = profiles.get(profile_id)
     if not profile['preparationRequired']:
@@ -100,6 +157,7 @@ def plan(archive, snapshot, profile_id):
             if any(part in {'node_modules', '.venv', '.unified-prepared-dependencies.json'} for part in path.parts):
                 raise ValueError('Prepare dependencies from lockfiles, not a copied environment.')
             if name in {'pyproject.toml', 'uv.lock', 'package.json', 'package-lock.json',
+                        'tests/web/package.json', 'tests/web/package-lock.json', CLIENT_SELECTION,
                         'frontend/package.json', 'frontend/package-lock.json'}:
                 if not item.isfile() or item.size > MAX_INPUT:
                     raise ValueError('Dependency manifests must be bounded ordinary files.')
@@ -115,9 +173,12 @@ def plan(archive, snapshot, profile_id):
     value = {'version': 1, 'profileId': profile_id, 'sourceSha256': source_hash, 'pythonProject': python_project,
              'executionContract': profiles.execution_contract(profile_id, source)}
     if profile_id == 'browser-test':
-        directory = 'frontend' if 'frontend/package-lock.json' in files else ''
+        projects = browser_projects(archive, files)
+        directory = projects[0]['directory']
         prefix = directory + '/' if directory else ''
-        required.update({prefix + 'package.json', prefix + 'package-lock.json'})
+        for project in projects:
+            manifest_prefix = project['manifestDirectory'] + '/' if project['manifestDirectory'] else ''
+            required.update({manifest_prefix + 'package.json', manifest_prefix + 'package-lock.json'})
         try:
             lock = json.loads(files[prefix + 'package-lock.json'])
             version = lock['packages']['node_modules/playwright']['version']
@@ -125,7 +186,8 @@ def plan(archive, snapshot, profile_id):
                 raise ValueError('Invalid locked Playwright version.')
         except (KeyError, TypeError, ValueError):
             raise ValueError('Browser preparation needs a package-lock.json containing Playwright.') from None
-        value.update(nodeDirectory=directory, nodeKey=directory or 'root', playwrightVersion=version)
+        value.update(nodeDirectory=directory, nodeKey=projects[0]['key'], playwrightVersion=version,
+                     nodeProjects=projects)
     if not required <= files.keys():
         raise ValueError('Project preparation requires committed pyproject.toml and uv.lock; browser checks also require package.json and package-lock.json.')
     value['lockfiles'] = [{'path': name, 'sha256': hashlib.sha256(files[name]).hexdigest()} for name in sorted(required)]

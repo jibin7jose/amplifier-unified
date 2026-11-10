@@ -6,7 +6,7 @@ on:
     paths:
       - 'components/web-client.source.json'
       - 'scripts/web_client_*.py'
-      - 'frontend/commands.json'
+      - 'components/web-client/commands.json'
       - 'components/web-client/src/appearance-*.js'
       - 'components/web-client/src/appearance-*.jsx'
       - 'components/web-client/src/appearance-*.css'
@@ -16,11 +16,12 @@ on:
       - 'components/web-client/src/execution-content.css'
       - 'components/web-client/src/main.jsx'
       - 'components/web-client/src/settings-action-queue.js'
-      - 'frontend/tests/appearance-*.mjs'
-      - 'frontend/tests/message-actions.test.mjs'
-      - 'frontend/tests/settings-action-queue.test.mjs'
-      - 'frontend/tests/peer-attribution-browser.mjs'
-      - 'frontend/tests/delegate-work-stream-browser.mjs'
+      - 'components/web-client/tests/appearance-*.mjs'
+      - 'tests/web/appearance-*.mjs'
+      - 'components/web-client/tests/message-actions.test.mjs'
+      - 'components/web-client/tests/settings-action-queue.test.mjs'
+      - 'tests/web/peer-attribution-browser.mjs'
+      - 'tests/web/delegate-work-stream-browser.mjs'
       - '.github/workflows/appearance-consistency.yml'
 permissions:
   contents: read
@@ -39,17 +40,22 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            tests/web/package-lock.json
+            components/web-client.source.json
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
-      - run: npm ci --prefix frontend
+        run: |
+          python scripts/web_client_build.py prepare
+      - run: |
+          npm ci --prefix .build/web-client
+          npm ci --prefix tests/web
       - name: Focused text, catalog and deterministic-document units
-        working-directory: frontend
+        working-directory: .build/web-client
         run: node --test tests/markdown.test.mjs tests/message-actions.test.mjs tests/appearance-settings.test.mjs tests/appearance-catalog.test.mjs tests/appearance-thumbnail-document.test.mjs tests/settings-action-queue.test.mjs
-      - run: npm run build --prefix frontend
+      - run: |
+          python scripts/web_client_build.py build
       - name: Prepare Chromium
-        working-directory: frontend
+        working-directory: tests/web
         run: npx playwright install --with-deps chromium
       - name: Run maintained focused browser paths through the canonical owner
         run: |
@@ -61,13 +67,13 @@ jobs:
           output = root / "output/appearance-consistency"
           env = {"AMPLIFIER_TEST_PYTHON": sys.executable}
           rows = [
-              {"id": "appearance-read-queue", "command": ["node", "tests/appearance-reads-browser.mjs"],
+              {"id": "appearance-read-queue", "command": ["node", "tests/web/appearance-reads-browser.mjs"],
                "env": {**env, "AMPLIFIER_TEST_ARTIFACTS": str(output / "read-queue")}},
-              {"id": "catalog-thumbnails", "command": ["node", "tests/appearance-library-browser.mjs", "--catalog-thumbnails-only"],
+              {"id": "catalog-thumbnails", "command": ["node", "tests/web/appearance-library-browser.mjs", "--catalog-thumbnails-only"],
                "env": {**env, "AMPLIFIER_TEST_ARTIFACTS": str(output / "gallery")}},
-              {"id": "peer-markdown", "command": ["node", "tests/peer-attribution-browser.mjs"],
+              {"id": "peer-markdown", "command": ["node", "tests/web/peer-attribution-browser.mjs"],
                "env": {**env, "AMPLIFIER_TEST_BUILT_STATIC": "1", "AMPLIFIER_PROOF_DIR": str(output / "peer")}},
-              {"id": "delegate-alignment", "command": ["node", "tests/delegate-work-stream-browser.mjs", "--appearance-scope-only"],
+              {"id": "delegate-alignment", "command": ["node", "tests/web/delegate-work-stream-browser.mjs", "--appearance-scope-only"],
                "env": {**env, "AMPLIFIER_TEST_OUTPUT_DIR": str(output / "delegate")}},
           ]
           output.mkdir(parents=True, exist_ok=True)

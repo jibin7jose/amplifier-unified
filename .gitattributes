@@ -7,13 +7,12 @@
 /.gitattributes source-context=configuration
 /AGENTS.md source-context=guidance
 /amplifier_*/** source-context=source
-/frontend/** source-context=source
 /packages/** source-context=source
 /examples/** source-context=source
 /scripts/** source-context=tooling
 /.github/** source-context=tooling
 /tests/** source-context=tests
-/frontend/tests/** source-context=tests
+/tests/web/** source-context=tests
 /scripts/**/tests/** source-context=tests
 /docs/** source-context=documentation
 /contracts/** source-context=contracts
@@ -28,7 +27,6 @@
 pyproject.toml source-context=configuration
 package.json source-context=configuration
 README.md source-context=documentation
-/frontend/vite.config.js source-context=configuration
 /amplifier_web/runtime_deps/compatibility.txt source-context=configuration
 /amplifier_web/THIRD_PARTY_NOTICES.txt source-context=documentation
 /tests/fixtures/library-performance.md source-context=documentation
@@ -49,8 +47,8 @@ package-lock.json source-context=locks
 /docs/shell/evidence/navigation-content-workspace.md source-context=evidence
 /BUILD-NOTES.md source-context=evidence
 /docs/settings-inventory.csv source-context=evidence
-/frontend/tests/standard-ux-controls.json source-context=evidence linguist-generated=true
-/frontend/tests/standard-ux-inventory.json source-context=evidence linguist-generated=true
+/tests/web/standard-ux-controls.json source-context=evidence linguist-generated=true
+/tests/web/standard-ux-inventory.json source-context=evidence linguist-generated=true
 # Exact historical qualification records; current guides and fixtures stay visible.
 /docs/workspaces/evidence/collaboration-fable-assets.json source-context=evidence
 /docs/workspaces/evidence/collaboration-fable-results.json source-context=evidence
@@ -78,14 +76,9 @@ package-lock.json source-context=locks
 /components/web-client/** source-context=generated linguist-vendored=true linguist-generated=true
 
 # Dependency entrypoints are generated from the selected client plus host commands.
-/frontend/package.json source-context=generated linguist-generated=true
-/frontend/package-lock.json source-context=generated linguist-generated=true
-/frontend/commands.json source-context=configuration
 
 # The selected component and locked shared inputs have platform-independent bytes.
 /components/web-client/** -text
-/frontend/package.json -text
-/frontend/package-lock.json -text
 /amplifier_web/ai_services.json text eol=lf
 /amplifier_web/provider_sources.json text eol=lf
 /amplifier_web/voice_options.json text eol=lf
@@ -94,3 +87,10 @@ package-lock.json source-context=locks
 /packages/shell-sdk/index.js text eol=lf
 /packages/shell-sdk/LICENSE text eol=lf
 /packages/shell-sdk/package.json text eol=lf
+/tests/web/package.json source-context=configuration
+/tests/web/package-lock.json source-context=generated linguist-generated=true
+
+# Frozen qualification drivers, retained with their measured source identities.
+/scripts/files1318_integrated_checks.py source-context=evidence linguist-generated=true
+/scripts/scale_runtime_browser.mjs source-context=evidence linguist-generated=true
+/scripts/scale_runtime_workspace_browser.mjs source-context=evidence linguist-generated=true

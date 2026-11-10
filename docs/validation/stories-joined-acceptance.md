@@ -39,7 +39,7 @@ python scripts/stories_acceptance/run.py \
   --state /owned/evidence/stories-run-1 --fixture /owned/fixtures/stories-run-1 \
   --stories-source /owned/sources/stories --stories-revision "$STORIES_SHA" \
   --node /owned/node/bin/node \
-  --playwright /owned/unified/frontend/node_modules/playwright/index.mjs
+  --playwright /owned/unified/tests/web/node_modules/playwright/index.mjs
 ```
 
 `--state` and `--fixture` must not already exist. The caller chooses browser

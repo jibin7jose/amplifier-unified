@@ -25,7 +25,7 @@ class ClientBuildTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='web-client-build-')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        self.source = self.root / 'frontend/.client'
+        self.source = self.root / '.build/web-client'
         self.selected = self.root / 'components/web-client.source.json'
         self.record = {'schema': 1, 'kind': 'amplifier-web-client-source',
                        'source': {'repository': 'https://github.com/microsoft/amplifier-client-web',
@@ -41,6 +41,8 @@ class ClientBuildTests(unittest.TestCase):
         write(self.source / '.client-source.json', self.record)
         write(self.source / 'build-inputs.lock.json', self.lock)
         write(self.source / 'src/main.js', 'selected')
+        write(self.source / 'tests/example.test.mjs', '// preserved test')
+        write(self.source / '.client-development.json', build.delivery.development_inventory(self.source))
         self.commands = []
 
         def command(*args, **kwargs):
@@ -61,9 +63,6 @@ class ClientBuildTests(unittest.TestCase):
         mock = patch.object(build, 'command', side_effect=command)
         mock.start()
         self.addCleanup(mock.stop)
-        wrapper = patch.object(build, 'verify_wrapper')
-        wrapper.start()
-        self.addCleanup(wrapper.stop)
 
     def test_equal_selection_retains_prepared_source_and_uses_offline_inputs(self):
         before = (self.source / 'src/main.js').stat().st_mtime_ns
@@ -71,7 +70,7 @@ class ClientBuildTests(unittest.TestCase):
         build.prepare(self.root)
         self.assertEqual((self.source / 'src/main.js').stat().st_mtime_ns, before)
         self.assertEqual(sum(str(args[1]).endswith('prepare-inputs.mjs') for args in self.commands), 1)
-        self.assertFalse(list((self.root / 'frontend').glob('.web-client-inputs-*')))
+        self.assertFalse(list((self.root / '.build').glob('.web-client-inputs-*')))
 
     def test_changed_shared_input_preserves_prior_output(self):
         build.prepare(self.root)
@@ -101,7 +100,7 @@ class ClientBuildTests(unittest.TestCase):
         with patch.object(build.delivery, 'prepare', side_effect=prepare):
             build.prepare(self.root)
         self.assertEqual(build.read(self.source / '.client-source.json'), self.record)
-        self.assertFalse(list((self.root / 'frontend').glob('.web-client-*')))
+        self.assertFalse(list((self.root / '.build').glob('.web-client-*')))
 
     def package(self):
         package = self.root / 'package'
@@ -126,8 +125,8 @@ class ClientBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'provenance'):
             build.verify_artifact(self.root, self.source, component, package / 'static')
 
-    def test_build_packages_selected_source_with_historical_peer_not_development_view(self):
-        write(self.root / 'frontend/src/main.js', 'unrelated developer experiment')
+    def test_build_packages_selected_source_with_historical_peer_not_unrelated_sources(self):
+        write(self.root / 'unrelated-source/main.js', 'unrelated developer experiment')
         (self.root / 'amplifier_web').mkdir()
         original = build.command
         package, component = self.package()
@@ -149,7 +148,7 @@ class ClientBuildTests(unittest.TestCase):
         with patch.object(build, 'command', side_effect=command):
             self.assertEqual(build.build(self.root), component)
         self.assertEqual(build.verify(self.root), component)
-        self.assertEqual((self.root / 'frontend/src/main.js').read_text(), 'unrelated developer experiment')
+        self.assertEqual((self.root / 'unrelated-source/main.js').read_text(), 'unrelated developer experiment')
         self.assertTrue(any(str(args[1]).endswith('package-client.mjs') for args in calls))
 
     def test_windows_resolves_npm_cmd_before_starting_build(self):

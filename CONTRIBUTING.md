@@ -9,13 +9,22 @@ evidence. The path selector does not change packaging or release validation.
 A raw Git checkout is a development source tree, distinct from a published source
 archive. Use Python 3.13, uv and Node.js 22 with npm in an owned test environment,
 following the workspace's DTU rules. Prepare dependencies once, then build the
-client after relevant frontend or package-version changes:
+client after relevant client or build-input changes:
 
 ```sh
 uv sync --locked --group dev --group artifacts
-npm ci --prefix frontend
-npm run build --prefix frontend
+python scripts/web_client_build.py prepare
+npm ci --prefix .build/web-client
+npm ci --prefix tests/web
+python scripts/web_client_build.py build
 ```
+
+Author the client in [amplifier-client-web](https://github.com/microsoft/amplifier-client-web).
+[Component ownership and assembly](components/README.md) explains the selected
+delivery copy and disposable prepared source. `npm test --prefix .build/web-client`
+runs client units; `npm test --prefix tests/web` runs Unified's integration/producer
+units. Built-asset checks use `npm run test:artifact-assets --prefix .build/web-client`.
+See [host browser checks](tests/web/README.md) for affected real-server journeys.
 
 These are development setup commands, not a per-release checklist. For releases,
 use the [Fast Release Guide](docs/validation/release-qualification.md): reuse the
