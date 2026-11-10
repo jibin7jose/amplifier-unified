@@ -36,7 +36,7 @@ def ids(page):return [row['id'] for row in page['items']]
 
 @pytest.mark.parametrize('key,values', [
     ('navGroup', ['recent', 'workspace', 'status']),
-    ('navAge', ['24h', '7d', '30d', '90d', '1y', 'all']),
+    ('navAge', ['24h', '7d', '14d', '30d', '90d', '1y', 'all']),
 ])
 def test_catalog_view_preferences_validate_direct_and_nested(key, values):
     for value in values:
@@ -45,6 +45,14 @@ def test_catalog_view_preferences_validate_direct_and_nested(key, values):
     for value in [None, False, 0, 'invalid']:
         with pytest.raises(ValueError):
             chat_navigation.view_patch({key: value})
+
+
+@pytest.mark.parametrize('days,title', [(1, 'Last 24 hours'), (7, '1–7 days ago'),
+    (14, '7–30 days ago'), (30, '7–30 days ago'), (90, '30–90 days ago'),
+    (365, '90 days–1 year ago'), (366, 'Over 1 year ago')])
+def test_date_groups_are_independent_of_slider_stops(days, title):
+    assert chat_navigation.list_group('recent', False, 1_800_000_000-days*86400,
+                                     None, None, 'idle', 1_800_000_000)[1] == title
 
 
 @pytest.mark.parametrize('section', ['search', 'workspace', 'recent', 'shortcuts'])

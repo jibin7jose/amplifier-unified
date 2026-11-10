@@ -47,7 +47,7 @@ jobs:
           SELECTED_RELEASE_REVISION: ${{ inputs.release_revision }}
         run: |
           mkdir -p "$RUNNER_TEMP/release-tools"
-          cp scripts/release.py scripts/release_qualification.py scripts/frontend_release_proof.py "$RUNNER_TEMP/release-tools/"
+          cp scripts/release.py scripts/release_qualification.py scripts/frontend_release_proof.py scripts/historical_web_layout.py "$RUNNER_TEMP/release-tools/"
           python "$RUNNER_TEMP/release-tools/release.py" plan --revision "$SELECTED_RELEASE_REVISION" --fetch-tag --output "$GITHUB_OUTPUT"
       - name: Pin the verified selected commit
         env:
@@ -70,14 +70,16 @@ jobs:
         env:
           RELEASE_CANDIDATE: ${{ steps.candidate.outputs.candidate }}
         run: echo "RELEASE_CANDIDATE=$RELEASE_CANDIDATE" >> "$GITHUB_ENV"
+      - name: Select immutable checkout web layout
+        id: web-layout
+        run: python "$RUNNER_TEMP/release-tools/historical_web_layout.py" describe --output "$GITHUB_OUTPUT"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: ${{ steps.web-layout.outputs.cache-files }}
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
+        run: python "$RUNNER_TEMP/release-tools/historical_web_layout.py" prepare
       - name: Find exact trusted PR frontend proof
         id: frontend-proof
         env:
@@ -86,9 +88,7 @@ jobs:
       - name: Validate frontend and committed assets
         if: steps.frontend-proof.outputs.reused != 'true'
         run: |
-          npm ci --prefix frontend
-          npm test --prefix frontend
-          npm run build --prefix frontend
+          python "$RUNNER_TEMP/release-tools/historical_web_layout.py" validate
           git diff --exit-code -- amplifier_web/static
       - name: Record frontend qualification for this candidate
         run: |

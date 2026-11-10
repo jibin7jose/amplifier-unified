@@ -496,7 +496,13 @@ def execute_call(payload, *, _engine_owner=None):
             return reconcile(config, env, name, payload, backend_identity, binding_source)
         if action == 'prepare':
             from digital_twin_universe import lib
-            snapshot = common.serialize(lib.export_repository_snapshot(Path(payload['source']), root / 'source.tar'))
+            try:
+                snapshot = common.source_transfer.export_snapshot(Path(payload['source']), root / 'source.tar',
+                    lambda: common.serialize(lib.export_repository_snapshot(Path(payload['source']), root / 'source.tar')))
+            except ValueError as error:
+                return {'ok': False, 'status': 'not-started', 'effectAdmitted': False,
+                        'universeId': name, 'snapshot': None, 'code': 'source-preparation-required',
+                        'message': str(error)}
             (root / 'snapshot.json').write_text(json.dumps(snapshot))
             return {'ok': True, 'universeId': name, 'snapshot': snapshot, 'backendIdentity': backend_identity, 'hostTarget': host_target(config, env)}
         if action == 'start':

@@ -1,7 +1,7 @@
 # Saved-conversation loading
 
 Run the production build, then
-`AMPLIFIER_PERF_EVIDENCE=/tmp/history-loading.json node frontend/tests/history-loading-performance.mjs`
+`AMPLIFIER_PERF_EVIDENCE=/tmp/history-loading.json node tests/web/history-loading-performance.mjs`
 inside an owned DTU. The fixture creates disposable native JSONL histories,
 uses the real history reader, HTTP/SSE delivery and production frontend, and
 rejects any model start or send. It verifies that source files remain unchanged.
@@ -76,7 +76,7 @@ browser message paging. Browser projection now caps passive native messages at
 100 independently of the retained server window. Message cursors and source
 ordinals preserve access to retained pages and older disk history.
 
-`node frontend/tests/retained-history-browser.mjs` runs the production frontend
+`node tests/web/retained-history-browser.mjs` runs the production frontend
 against a real 10,000-message JSONL transcript with 1,000 rows already retained.
 It checks the initial display bound, navigation to unloaded history, retained
 and disk paging, duplicate prevention, an independent reader's history

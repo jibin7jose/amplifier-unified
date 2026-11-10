@@ -483,7 +483,7 @@ locates delays; it neither fixes them nor establishes a live latency guarantee.
 
 ## Maintained client smoke
 
-`frontend/tests/client-traffic-browser.mjs` uses the real server and built client
+`tests/web/client-traffic-browser.mjs` uses the real server and built client
 with synthetic retained task history. It grows history from one to 128 large
 records while holding current fields fixed; opens Work, details and runtime
 panels; observes causal-only updates and reconnect; and reads a complete historical

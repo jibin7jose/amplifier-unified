@@ -188,13 +188,13 @@ managed bash module is importable, it also exercises a real subprocess and durab
 output beyond its local ring; otherwise that optional integration test skips.
 `tests/test_operation_output_retention.py` checks prospective policy, protected
 authority, atomic expiry, exact retries, bounded pages and inter-candidate changes.
-`node frontend/tests/storage-cleanup-settings-browser.mjs` checks the shipped
-Storage controls. `node frontend/tests/operation-output-retention-browser.mjs`
+`node tests/web/storage-cleanup-settings-browser.mjs` checks the shipped
+Storage controls. `node tests/web/operation-output-retention-browser.mjs`
 drives a real Python cell through the public HTTP actions, expires its journal
 stdout and verifies retained result/outcome and no replay. It does not claim a
 mounted Operations/Computation panel or a live-provider conversation.
 
-`node frontend/tests/operations-http-browser.mjs` checks authenticated HTTP
+`node tests/web/operations-http-browser.mjs` checks authenticated HTTP
 observation, real command submission/input, exact retries and one side effect
 across browser reload, while preserving the selected conversation and draft.
 It uses an isolated fixture and the production build; the bundled chat has no

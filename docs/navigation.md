@@ -88,9 +88,9 @@ that retention lasts only while this page stays open.
 
 Focused checks (run against the candidate in an owned isolated environment):
 `tests/test_auth.py`, `tests/test_history_scope.py`,
-`frontend/tests/destination-history.test.mjs`,
-`frontend/tests/destination-history-ui.test.mjs`, and
-`frontend/tests/destination-history-browser.mjs`. The browser script requires an
+`components/web-client/tests/destination-history.test.mjs`,
+`components/web-client/tests/destination-history-ui.test.mjs`, and
+`tests/web/destination-history-browser.mjs`. The browser script requires an
 owned `AMPLIFIER_TEST_OUTPUT` directory and rebuilt production assets. These
 instructions are not evidence that the checks have passed.
 
@@ -205,12 +205,11 @@ that checks have run. Do not use a production service or model/SDK runtime.
    ```
 2. Run the frontend unit source:
    ```sh
-   cd frontend
-   node --test tests/work-shell.test.mjs
+   node --test .build/web-client/tests/work-shell.test.mjs
    ```
 3. Run the new real HTTP/SSE receiving-build harness:
    ```sh
-   AMPLIFIER_RECENT_EXPECTED_PACKAGE="$INSTALLED_AMPLIFIER_WEB_PACKAGE" AMPLIFIER_RECENT_EVIDENCE=/test-evidence/recent.json node tests/recent-visibility-browser.mjs
+   AMPLIFIER_RECENT_EXPECTED_PACKAGE="$INSTALLED_AMPLIFIER_WEB_PACKAGE" AMPLIFIER_RECENT_EVIDENCE=/test-evidence/recent.json node tests/web/recent-visibility-browser.mjs
    ```
    Set `INSTALLED_AMPLIFIER_WEB_PACKAGE` to the interpreter's actual installed
    `amplifier_web` directory. The fixture rejects a different import and records
@@ -329,8 +328,7 @@ against the original candidate and corrected candidate:
    promotion-before-ACK, eight-row cutoff, progress stability, duplicate-input,
    other-client draft/reference and ready/attention expectations:
    ```sh
-   cd frontend
-   AMPLIFIER_HUMAN_POST_ONLY=1 npm run test:sidebar-activity-browser
+   AMPLIFIER_HUMAN_POST_ONLY=1 npm run test:sidebar-activity-browser --prefix tests/web
    ```
 4. Review the exact integrated candidate and these observed outcomes before a PR.
    Syntax/AST/diff checks alone qualify only a source candidate; they do not
@@ -462,7 +460,9 @@ Agents use the same `shell.view.update` and `shell.command` paths as the UI:
 - Workspace instance: `navWorkspaceMode` (`recent`, `folders`), plus the existing
   folder path, wildcard search, and page keys.
 - The bundled sidebar's **Last activity** slider owns the attached client's
-  `view.navAge` (`24h`, `7d`, `30d`, `90d`, `1y`, or default `all`).
+  `view.navAge` (`24h`, `7d`, `14d`, `30d`, `90d`, or default `all`).
+  Saved/API `1y` retains its year meaning for existing clients and custom modules;
+  the bundled control shows that current value until an explicit six-stop choice.
   Home/status cards, workspace chats, All chats/search, Recent, and workspace
   session counts use that same age before counting or paging. Pins bypass age;
   unknown activity dates appear under All. Folder registrations stay navigable.

@@ -19,7 +19,7 @@ on:
     paths:
       - 'components/web-client.source.json'
       - 'scripts/web_client_*.py'
-      - 'frontend/commands.json'
+      - 'components/web-client/commands.json'
       - .github/workflows/platform-mechanisms.yml
       - amplifier_web/generation_leases.py
       - amplifier_web/reset.py
@@ -161,7 +161,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows Python preflight failed.' }
           python -m venv .native-test-venv
           if ($LASTEXITCODE -ne 0) { throw 'Test environment creation failed.' }
-          .\.native-test-venv\Scripts\python.exe -m pip install --index-url https://pypi.org/simple --only-binary=:all: "pytest>=8,<10" "cryptography>=44,<51" "PyYAML>=6.0.3,<7" "filelock>=3.20,<4" "aiohttp==3.14.4"
+          .\.native-test-venv\Scripts\python.exe -m pip install --index-url https://pypi.org/simple --only-binary=:all: "pytest>=8,<10" "cryptography>=44,<51" "PyYAML>=6.0.3,<7" "filelock>=4.2.1,<5" "aiohttp==3.14.4"
           if ($LASTEXITCODE -ne 0) { throw 'Focused test dependency installation failed.' }
           .\.native-test-venv\Scripts\python.exe -I -B -c "import importlib.metadata as m; print({name:m.version(name) for name in ('pytest','cryptography','PyYAML','filelock','aiohttp')})"
           if ($LASTEXITCODE -ne 0) { throw 'Dependency readback failed.' }

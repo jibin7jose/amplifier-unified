@@ -4,7 +4,7 @@ on:
     paths:
       - 'components/web-client.source.json'
       - 'scripts/web_client_*.py'
-      - 'frontend/commands.json'
+      - 'components/web-client/commands.json'
       - 'amplifier_web/capacity.py'
       - 'amplifier_web/execution*.py'
       - 'amplifier_web/history_revision.py'
@@ -17,7 +17,7 @@ on:
       - 'components/web-client/src/runtime-settings.jsx'
       - 'tests/test_capacity.py'
       - 'tests/fixtures/capacity_ui_server.py'
-      - 'frontend/tests/capacity-browser.mjs'
+      - 'tests/web/capacity-browser.mjs'
       - '.github/workflows/capacity.yml'
 permissions:
   contents: read
@@ -33,13 +33,18 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            tests/web/package-lock.json
+            components/web-client.source.json
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
+        run: |
+          python scripts/web_client_build.py prepare
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - run: uv sync --locked --group dev
       - run: uv run --no-sync pytest tests/test_capacity.py tests/test_execution.py tests/test_execution_events.py tests/test_task_continuity.py tests/test_runtime.py tests/test_response_completion.py tests/test_session_fork.py -q
-      - run: npm ci --prefix frontend
-      - run: npm run build --prefix frontend
+      - run: |
+          npm ci --prefix .build/web-client
+          npm ci --prefix tests/web
+      - run: |
+          python scripts/web_client_build.py build
       # Browser coverage is available in browser-checks.yml (manual only).

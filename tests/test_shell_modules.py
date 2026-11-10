@@ -110,15 +110,17 @@ async def test_catalog_group_is_local_and_age_is_shared_per_client(service):
     assert service.state['selectedSessionId'] == before['selectedSessionId']
 
 
-@pytest.mark.parametrize('surface,expected', [('chats', '24h'), ('workspace', '7d'), ('home', '7d')])
-async def test_age_import_is_narrow_once_and_survives_reload(service, surface, expected):
+@pytest.mark.parametrize('surface', ['chats', 'workspace', 'home'])
+@pytest.mark.parametrize('list_age', ['7d', '14d', '1y'])
+async def test_age_import_is_narrow_once_and_survives_reload(service, surface, list_age):
+    expected = '24h' if surface == 'chats' else list_age
     saved = service.clients.attach('old-client')
     saved['view'].pop('navAge')
     saved['view'].update(workSurface=surface, draft='Private draft', workHomeQuery='retained')
     saved['drafts'][saved.get('selectedSessionId') or ''] = 'Private draft'
     old_shell = service.shell.client('old-client')
     old_shell['views']['chats'] = {'view': {
-        'navAge': '7d', 'navGroup': 'status',
+        'navAge': list_age, 'navGroup': 'status',
         'navRecentView': {'navAge': '24h', 'navGroup': 'workspace', 'navFilter': 'kept'}}}
     service.shell.put('client', 'old-client', old_shell)
     reloaded = service.clients.attach('reload', resume='old-client')
@@ -565,14 +567,22 @@ async def test_presentation_command_uses_current_preview_in_one_owner_unit(servi
 
 
 @pytest.mark.parametrize('change', ['package', 'host'])
+@pytest.mark.parametrize('override', [True, False])
 async def test_validation_external_await_rechecks_package_and_host_under_owner_lock(
-        service, tmp_path, monkeypatch, change):
+        service, tmp_path, monkeypatch, change, override):
     import shutil
     from amplifier_web import shell_modules
     digest = await stage(service)
-    toolchain = tmp_path / 'node-modules'
+    package = tmp_path / 'app/amplifier_web'
+    (package / 'static').mkdir(parents=True)
+    (package / 'static/shell-validation.html').write_text('fixture')
+    monkeypatch.setattr(shell_modules, '__file__', str(package / 'shell_modules.py'))
+    toolchain = tmp_path / 'node-modules' if override else package.parent / '.build/web-client/node_modules'
     (toolchain / 'playwright').mkdir(parents=True)
-    monkeypatch.setenv('AMPLIFIER_SHELL_NODE_MODULES', str(toolchain))
+    if override:
+        monkeypatch.setenv('AMPLIFIER_SHELL_NODE_MODULES', str(toolchain))
+    else:
+        monkeypatch.delenv('AMPLIFIER_SHELL_NODE_MODULES', raising=False)
     monkeypatch.setattr(shutil, 'which', lambda name: 'synthetic-node')
     monkeypatch.setattr(service.shell, 'host_fingerprint', lambda: 'host-before')
     entered, release = asyncio.Event(), asyncio.Event()
@@ -588,6 +598,7 @@ async def test_validation_external_await_rechecks_package_and_host_under_owner_l
 
     async def subprocess(*args, **kwargs):
         assert not service.lock.locked()
+        assert args[2] == str(toolchain)
         return Process()
 
     monkeypatch.setattr(shell_modules.asyncio, 'create_subprocess_exec', subprocess)

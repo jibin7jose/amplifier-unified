@@ -77,7 +77,7 @@ are revalidated at capture time by the [screen observation contract](VOICE-VISUA
 
 `tests/test_desktop_readiness.py` checks passive worker transport, caller scope,
 separate host/worker identities, source lifecycle and bounded status data.
-`frontend/tests/desktop-readiness-browser.mjs` runs production UI/routes in a
+`tests/web/desktop-readiness-browser.mjs` runs production UI/routes in a
 real isolated browser with synthetic native/runtime facts: blocked and ready
 states, existing tool invocation, aged diagnostic facts, setup navigation,
 UI/agent parity, source/conversation changes, failure handling and mobile layout.

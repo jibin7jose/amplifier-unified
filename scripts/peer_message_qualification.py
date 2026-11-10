@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 from browser_check_runner import run_scenarios
+from web_test_harness import stage_web_test_harness
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / 'output/peer-messages'
@@ -57,7 +58,7 @@ def initialize():
               'files': {name: digest(ROOT / name) for name in git('ls-files').splitlines()},
               'staticBefore': inventory(ROOT / 'amplifier_web/static'),
               'buildSystem': tomllib.loads((ROOT / 'pyproject.toml').read_text())['build-system']}
-    assert len(source['staticBefore']) == 311
+    assert source['staticBefore'], 'Source static inventory is empty'
     (OUTPUT / 'source.json').write_text(json.dumps(source, indent=2))
     (OUTPUT / 'qualification.json').write_text(json.dumps({
         'passed': False, 'checks': {name: {'status': 'not_run'} for name in CHECKS}}, indent=2))
@@ -65,9 +66,9 @@ def initialize():
 
 def browser(root, name, python, *, installed=False):
     evidence = OUTPUT / name
-    row = {'id': 'peer-preview', 'command': ['node', 'tests/peer-preview-browser.mjs'],
+    row = {'id': 'peer-preview', 'command': ['node', 'tests/web/peer-preview-browser.mjs'],
            'env': {'AMPLIFIER_TEST_PYTHON': str(python), 'AMPLIFIER_PROOF_DIR': str(evidence),
-                   'AMPLIFIER_SHELL_NODE_MODULES': str(ROOT / 'frontend/node_modules'),
+                   'AMPLIFIER_SHELL_NODE_MODULES': str(ROOT / '.build/web-client/node_modules'),
                    'AMPLIFIER_TEST_INSTALLED_STATIC': '1' if installed else '0'}}
     plan = {'schemaVersion': 1, 'scenarios': [row]}
     (OUTPUT / (name + '-plan.json')).write_text(json.dumps(plan, indent=2))
@@ -124,18 +125,18 @@ def main():
         return {'cases': len(cases), 'failed': 0, 'skipped': 0}
 
     def node_checks():
-        run('browser-syntax', ['node', '--check', 'frontend/tests/peer-preview-browser.mjs'])
+        run('browser-syntax', ['node', '--check', 'tests/web/peer-preview-browser.mjs'])
         text = run('node', ['node', '--test', '--test-reporter=tap',
-            'frontend/tests/peer-groups.test.mjs', 'frontend/tests/artifact-placement.test.mjs',
-            'frontend/tests/peer-preview-pages.test.mjs'])
+            'tests/peer-groups.test.mjs', 'tests/artifact-placement.test.mjs',
+            'tests/peer-preview-pages.test.mjs'], cwd=ROOT / '.build/web-client')
         counts = dict(re.findall(r'^# (tests|pass|fail|cancelled|skipped|todo) (\d+)$', text, re.M))
         assert counts == {'tests': '10', 'pass': '10', 'fail': '0', 'cancelled': '0', 'skipped': '0', 'todo': '0'}
         return counts
 
     def build():
-        run('build', ['npm', 'run', 'build', '--prefix', 'frontend'])
+        run('build', [sys.executable, 'scripts/web_client_build.py', 'build'])
         files = inventory(ROOT / 'amplifier_web/static')
-        assert len(files) == 311
+        assert set(files) == set(source['staticBefore']), 'Built static members differ from the selected source'
         (OUTPUT / 'static-after.json').write_text(json.dumps(files, indent=2))
         with tarfile.open(OUTPUT / 'built-static.tar.gz', 'w:gz') as archive:
             archive.add(ROOT / 'amplifier_web/static', arcname='static')
@@ -145,7 +146,7 @@ def main():
     def negative():
         env = {**os.environ, 'AMPLIFIER_TEST_PYTHON': sys.executable,
                'AMPLIFIER_PROOF_DIR': str(OUTPUT / 'negative'), 'PEER_NEGATIVE_FLATTEN': '1'}
-        text = run('negative', ['node', 'frontend/tests/peer-preview-browser.mjs'], env=env, expected=1)
+        text = run('negative', ['node', 'tests/web/peer-preview-browser.mjs'], env=env, expected=1)
         assert 'PEER_NEGATIVE_CONTROL_CONFIRMED' in text and 'def sample():' in text
         unchanged()
         return {'expectedExit': 1, 'mutation': 'Whitespace-only text-node flattening; original element structure retained',
@@ -166,7 +167,7 @@ def main():
             with zipfile.ZipFile(wheel) as archive:
                 files = {name.removeprefix('amplifier_web/static/'): hashlib.sha256(archive.read(name)).hexdigest()
                          for name in archive.namelist() if name.startswith('amplifier_web/static/') and not name.endswith('/')}
-            assert files == inventory(ROOT / 'amplifier_web/static') and len(files) == 311
+            assert files == inventory(ROOT / 'amplifier_web/static') and set(files) == set(source['staticBefore'])
             return {'sha256': digest(wheel), 'staticFiles': len(files), 'declaredBuildSystem': source['buildSystem']}
 
         check('wheel', wheel_build)
@@ -175,12 +176,9 @@ def main():
         run('locked-dependencies-after', ['uv', 'pip', 'freeze', '--python', sys.executable])
         with tempfile.TemporaryDirectory(prefix='peer-installed-') as temporary:
             harness = Path(temporary)
-            shutil.copytree(ROOT / 'tests', harness / 'tests', ignore=shutil.ignore_patterns('__pycache__'))
-            shutil.copytree(ROOT / 'frontend/tests', harness / 'frontend/tests')
-            shutil.copy2(ROOT / 'frontend/package.json', harness / 'frontend/package.json')
-            (harness / 'frontend/src').mkdir()
-            shutil.copy2(ROOT / 'frontend/src/settings-navigation.js', harness / 'frontend/src/settings-navigation.js')
-            (harness / 'frontend/node_modules').symlink_to(ROOT / 'frontend/node_modules', target_is_directory=True)
+            support = stage_web_test_harness(ROOT, harness, python_tests=True,
+                                             source_helpers=('settings-navigation.js',))
+            (OUTPUT / 'installed-test-support.json').write_text(json.dumps(support, indent=2))
             env = dict(os.environ)
             env.pop('PYTHONPATH', None)
             origins = json.loads(run('wheel-origins', [sys.executable, '-c',

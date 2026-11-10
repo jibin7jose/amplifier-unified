@@ -24,8 +24,8 @@ def block(index):
 @pytest.mark.parametrize('change', ['none', 'new-static', 'wrong-witness',
                                   'tracked-source', 'untracked-source', 'canonical-source'])
 def test_mcp_plan_generation_preserves_source_and_fixed_rows(tmp_path, monkeypatch, change):
-    source = (ROOT / 'frontend/tests/mcp-recovery-browser.mjs').read_bytes()
-    target = tmp_path / 'frontend/tests/mcp-recovery-browser.mjs'
+    source = (ROOT / 'tests/web/mcp-recovery-browser.mjs').read_bytes()
+    target = tmp_path / 'tests/web/mcp-recovery-browser.mjs'
     target.parent.mkdir(parents=True)
     target.write_bytes(source + (b'\n' if change == 'canonical-source' else b''))
     folder = tmp_path / 'output/browser-checks/mcp-boundary/plans'
@@ -43,7 +43,7 @@ def test_mcp_plan_generation_preserves_source_and_fixed_rows(tmp_path, monkeypat
         if args == ['git', 'diff', '--name-only', 'HEAD']:
             return 'amplifier_web/service.py\n' if change == 'tracked-source' else 'amplifier_web/static/build.json\n'
         if args == ['git', 'ls-files', '--others', '--exclude-standard']:
-            return ('frontend/tests/unowned.mjs\n' if change == 'untracked-source' else
+            return ('tests/web/unowned.mjs\n' if change == 'untracked-source' else
                     'amplifier_web/static/new-hashed.js\n' if change == 'new-static' else
                     'output/browser-checks/mcp-boundary/revision.txt\n')
         assert args == ['git', 'diff', '--binary', 'HEAD', '--', 'amplifier_web/static']
@@ -61,9 +61,9 @@ def test_mcp_plan_generation_preserves_source_and_fixed_rows(tmp_path, monkeypat
     assert [row['id'] for row in positive] == [
         'mcp-recovery-repeat-1', 'mcp-recovery-repeat-2', 'mcp-recovery-repeat-3', 'mcp-clients-adjacent']
     assert [row['command'] for row in positive] == [
-        ['node', 'tests/mcp-recovery-browser.mjs']] * 3 + [['node', 'tests/mcp-clients-browser.mjs']]
+        ['node', 'tests/web/mcp-recovery-browser.mjs']] * 3 + [['node', 'tests/web/mcp-clients-browser.mjs']]
     negative = json.loads((folder / 'negative.json').read_text())['scenarios']
-    assert len(negative) == 1 and negative[0]['command'] == ['node', 'tests/.mcp-omit-close-negative.mjs']
+    assert len(negative) == 1 and negative[0]['command'] == ['node', 'tests/web/.mcp-omit-close-negative.mjs']
     assert all(value.startswith('{root}/output/browser-checks/mcp-boundary/')
                for row in positive + negative for value in row['env'].values())
     variant = (target.parent / '.mcp-omit-close-negative.mjs').read_text()
@@ -97,7 +97,7 @@ def test_mcp_plan_generation_preserves_source_and_fixed_rows(tmp_path, monkeypat
     env = {**os.environ, 'MCP_RECOVERY_SCREENSHOT': str(negative_dir / 'overlay-before-cleanup.png'),
            'MCP_NEGATIVE_PROOF': str(negative_dir / 'boundary.json'),
            'MCP_NEGATIVE_CLEANUP': str(negative_dir / 'cleanup.json')}
-    stub = "import {finishFixture} from " + json.dumps((ROOT / 'frontend/tests/fixture-lifecycle.mjs').as_uri()) + ";\n" + r"""
+    stub = "import {finishFixture} from " + json.dumps((ROOT / 'tests/web/fixture-lifecycle.mjs').as_uri()) + ";\n" + r"""
 import assert from 'node:assert/strict';
 import {writeFile as save} from 'node:fs/promises';
 const events=[],boundary='initial client',directory='synthetic-directory';
@@ -144,7 +144,7 @@ try{
 def test_mcp_cleanup_failure_cannot_certify_complete(tmp_path, has_original):
     # Exercise the canonical finally body when the lifecycle owner reports a
     # timeout/failure. The original assertion survives and completion stays false.
-    source = (ROOT / 'frontend/tests/mcp-recovery-browser.mjs').read_text()
+    source = (ROOT / 'tests/web/mcp-recovery-browser.mjs').read_text()
     cleanup = source.rsplit('}finally{', 1)[1].rsplit('}', 1)[0]
     program = r"""
 import assert from 'node:assert/strict';
@@ -277,7 +277,8 @@ def test_mcp_workflow_is_fixed_default_off_with_separate_bounded_job():
     assert steps[0]['with'] == {'ref': '${{ github.sha }}', 'persist-credentials': 'false'}
     commands = '\n'.join(step.get('run', '') for step in steps)
     assert 'uv sync --locked --group dev --group artifacts' in commands
-    assert 'npm ci --prefix frontend' in commands and 'npm run build --prefix frontend' in commands
+    assert 'npm ci --prefix .build/web-client' in commands and 'npm ci --prefix tests/web' in commands
+    assert 'python scripts/web_client_build.py build' in commands
     assert 'npx playwright install --with-deps chromium' in commands
     assert commands.count('bash scripts/mcp_boundary_checks.sh') == 1
     assert not any('continue-on-error' in step for step in steps)
@@ -317,7 +318,7 @@ def test_safe_evidence_survives_rejected_file_without_false_success(tmp_path, mo
     monkeypatch.setenv('RUNNER_TEMP', str(tmp_path / 'runner-temp'))
     raw = Path('output/browser-checks/mcp-boundary')
     plan = {'schemaVersion': 1, 'scenarios': [{
-        'id': 'mcp-recovery-repeat-1', 'command': ['node', 'tests/mcp-recovery-browser.mjs'],
+        'id': 'mcp-recovery-repeat-1', 'command': ['node', 'tests/web/mcp-recovery-browser.mjs'],
         'env': {'MCP_RECOVERY_SCREENSHOT': '{root}/output/browser-checks/mcp-boundary/journey.png'}}]}
     write_json(raw / 'plans/positive.json', plan)
     plan_bytes = (raw / 'plans/positive.json').read_bytes()

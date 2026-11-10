@@ -117,8 +117,8 @@ original human provenance, cross-workspace/managed locations, changed Stop and
 location boundaries, supersession and exactly-once answer admission. The runtime
 is scripted; these checks do not claim live-model cooperation.
 
-After installing frontend dependencies and building, run
-`node frontend/tests/questions-browser.mjs`. It exercises the actual UI, service,
+After [preparing the client and host test tools](../components/README.md) and building, run
+`node tests/web/questions-browser.mjs`. It exercises the actual UI, service,
 SQLite persistence and shared action path with an isolated deterministic runtime.
 It covers reconnects, options/free text, cancellation, duplicate rejection, voice
 transcript provenance, preserved drafts and mobile layout. It does not establish

@@ -57,6 +57,11 @@ class Runtime:
 
 
 async def main(home):
+    from contextlib import nullcontext
+    from configured_browser import synthetic_discovery
+    synthetic = '--synthetic-discovery' in sys.argv
+    if synthetic and any(flag in sys.argv for flag in ('--chat-controls', '--provider-resolution')):
+        raise ValueError('--synthetic-discovery cannot replace a provider scenario')
     if '--voice-settings' in sys.argv:
         # Credential storage only; never inherit usable provider credentials.
         os.environ.pop('OPENAI_API_KEY', None)
@@ -66,6 +71,14 @@ async def main(home):
         AMPLIFIER_WEB_HOME=str(home / "app"),
         AMPLIFIER_SESSION_STATE_HOME=str(home / "sessions"),
     )
+    # Set isolated homes before importing discovery owners. Keep replacements
+    # installed through create_app, requests and full cleanup, including errors;
+    # other browser scenarios retain their own probes.
+    with synthetic_discovery() if synthetic else nullcontext():
+        await serve(home)
+
+
+async def serve(home):
     from configured_browser import seed_connection
     seed_connection(home / 'shared-settings')
     from aiohttp import web

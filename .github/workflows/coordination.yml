@@ -4,7 +4,7 @@ on:
     paths:
       - 'components/web-client.source.json'
       - 'scripts/web_client_*.py'
-      - 'frontend/commands.json'
+      - 'components/web-client/commands.json'
       - 'amplifier_operations/coordination.py'
       - 'amplifier_web/coordination.py'
       - 'amplifier_web/peer_scope.py'
@@ -15,7 +15,7 @@ on:
       - 'tests/test_request_cancellation.py'
       - 'tests/test_outcome_acknowledgement.py'
       - 'tests/test_test_outcome_acknowledgement.py'
-      - 'frontend/tests/request-cancellation-browser.mjs'
+      - 'tests/web/request-cancellation-browser.mjs'
       - 'amplifier_web/collaboration*.py'
       - 'amplifier_web/app_guidance.py'
       - 'amplifier_web/assignments.py'
@@ -29,7 +29,7 @@ on:
       - 'tests/test_full_refit_authority.py'
       - 'amplifier_web/coordination_guidance.py'
       - 'components/web-client/src/workspace-awareness.jsx'
-      - 'frontend/tests/workspace-awareness-browser.mjs'
+      - 'tests/web/workspace-awareness-browser.mjs'
       - 'tests/test_workspace_awareness.py'
       - 'tests/test_coordination_delivery.py'
       - 'tests/test_app_guidance.py'
@@ -105,19 +105,19 @@ on:
       - 'components/web-client/src/workspace-test-environments.jsx'
       - 'components/web-client/src/work-shell.jsx'
       - 'tests/fixtures/test_environments_ui_server.py'
-      - 'frontend/tests/test-environments-browser.mjs'
-      - 'frontend/tests/standard-ux-inventory.json'
+      - 'tests/web/test-environments-browser.mjs'
+      - 'tests/web/standard-ux-inventory.json'
       - 'components/web-client/src/workspace-resource-*.jsx'
       - 'tests/test_resource_reservations.py'
       - 'tests/test_multi_repository_worktrees.py'
       - 'components/web-client/src/worktrees.jsx'
       - 'tests/fixtures/worktrees_ui_server.py'
-      - 'frontend/tests/multi-repository-worktrees-browser.mjs'
-      - 'frontend/tests/resource-reservations-browser.mjs'
+      - 'tests/web/multi-repository-worktrees-browser.mjs'
+      - 'tests/web/resource-reservations-browser.mjs'
       - 'skills/coordinate-work/**'
       - 'tests/fixtures/coordination_ui_server.py'
-      - 'frontend/tests/coordination-browser.mjs'
-      - 'frontend/tests/coordination-disclosure-diagnostics.mjs'
+      - 'tests/web/coordination-browser.mjs'
+      - 'tests/web/coordination-disclosure-diagnostics.mjs'
       - '.github/workflows/coordination.yml'
 permissions:
   contents: read
@@ -133,10 +133,12 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            tests/web/package-lock.json
+            components/web-client.source.json
       - name: Prepare selected client source for host checks
-        if: hashFiles('scripts/web_client_development.py') != ''
-        run: python scripts/web_client_development.py prepare-view
+        run: |
+          python scripts/web_client_build.py prepare
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - run: uv sync --locked --group dev
       - name: Resolve the declared live-runtime source
@@ -309,14 +311,18 @@ jobs:
           sys.exit(pytest.main(['-q', 'tests/test_child_app_authority.py', 'tests/test_child_file_policy.py',
           'tests/test_child_image_policy.py', 'tests/test_child_resume_admission.py', 'tests/test_runtime_worker.py',
           'tests/test_app_guidance.py']))"
-      - run: npm ci --prefix frontend
-      - run: npm run build --prefix frontend
-      - run: npx --prefix frontend playwright install --with-deps chromium
+      - run: |
+          npm ci --prefix .build/web-client
+          npm ci --prefix tests/web
+      - run: |
+          python scripts/web_client_build.py build
+      - run: |
+          npx --prefix tests/web playwright install --with-deps chromium
       - name: Exercise related work through the browser
-        working-directory: frontend
         env:
           AMPLIFIER_TEST_OUTPUT_DIR: ${{ runner.temp }}/coordination-browser
-        run: node tests/coordination-browser.mjs
+        run: |
+          node tests/web/coordination-browser.mjs
       - name: Retain coordination disclosure failure facts
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -325,22 +331,22 @@ jobs:
           path: ${{ runner.temp }}/coordination-browser/**/coordination-disclosure-failure.json
           if-no-files-found: ignore
       - name: Exercise exact request withdrawal and cancellation
-        working-directory: frontend
-        run: node tests/request-cancellation-browser.mjs
+        run: |
+          node tests/web/request-cancellation-browser.mjs
       - name: Exercise resource reservations through the browser
-        working-directory: frontend
-        run: node tests/resource-reservations-browser.mjs
+        run: |
+          node tests/web/resource-reservations-browser.mjs
       - name: Exercise explicit repository selection through the browser
-        working-directory: frontend
-        run: node tests/multi-repository-worktrees-browser.mjs
+        run: |
+          node tests/web/multi-repository-worktrees-browser.mjs
       - name: Exercise active work and private file declarations through the browser
-        working-directory: frontend
-        run: node tests/workspace-awareness-browser.mjs
+        run: |
+          node tests/web/workspace-awareness-browser.mjs
       - name: Exercise owned test environment recovery and saved-copy choices
-        working-directory: frontend
         env:
           AMPLIFIER_TEST_OUTPUT_DIR: ${{ runner.temp }}/test-environments
-        run: node tests/test-environments-browser.mjs
+        run: |
+          node tests/web/test-environments-browser.mjs
       - name: Retain test environment browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

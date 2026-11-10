@@ -184,7 +184,9 @@ class WindowsRepairLockTests(unittest.TestCase):
         )
         # Do not patch the real os.name: pathlib must keep its native flavor.
         self.enterContext(patch.object(
-            reset, "os", SimpleNamespace(name="nt", set_inheritable=self.set_inheritable)
+            reset, "os", SimpleNamespace(**{
+                **vars(os), "name": "nt", "set_inheritable": self.set_inheritable,
+            })
         ))
 
     def test_win32_abi_flags_range_and_checked_unlock(self):

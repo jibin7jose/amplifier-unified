@@ -20,7 +20,7 @@ const receipt={hostInstanceId:'fixture-shell-host',sessionId:session.id,generati
 let server,browser,page,releaseEarlier,releaseSend,sendBody,earlierReads=0;
 try{
  server=await preview({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),
-  build:{outDir:fileURLToPath(new URL('../../amplifier_web/static',import.meta.url))},
+  build:{outDir:fileURLToPath(new URL('../dist',import.meta.url))},
   preview:{host:'127.0.0.1',port:0}});
  browser=await chromium.launch({headless:true});
  page=await browser.newPage({viewport:{width:1280,height:950}});page.setDefaultTimeout(10000);

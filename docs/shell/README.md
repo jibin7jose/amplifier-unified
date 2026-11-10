@@ -37,8 +37,8 @@ chat list shows All chats, without discarding the manager's view state.
 | Package manifests, immutable digests, host validation receipts | `amplifier_web/shell_modules.py` | Digest, stale-host, compatibility and capability tests |
 | Client compositions, revisions, prepared changes, instance UI state | Shell records in the existing app database | Isolation, persistence, compare-and-set, idempotency and revert tests |
 | Bounded navigation queries | Adapters over the existing workspace/chat projections | Existing 206-chat browser fixture; no additional conversation store |
-| Loading, subscriptions, component errors and browser status | `frontend/src/shell/runtime.jsx` | Production browser proof and validation harness |
-| Workspace and chat controls | `frontend/src/shell/navigation-components.jsx` | Existing component tests run against public host fixtures |
+| Loading, subscriptions, component errors and browser status | `components/web-client/src/shell/runtime.jsx` | Production browser proof and validation harness |
+| Workspace and chat controls | `components/web-client/src/shell/navigation-components.jsx` | Existing component tests run against public host fixtures |
 | Public authoring API | `packages/shell-sdk` | External navigator in `examples/shell-navigator` |
 | Theme tokens and layout presentation | Host root and existing panel layout | Live preview, CSS reordering, revert and stable iframe checks |
 | Artifact card, disclosure, viewer and saved-output controls | [Artifact controls and reuse](../canvas.md#artifact-controls-and-reuse) | Exact-version presentation, control parity, dirty-state and narrow-layout checks |
@@ -149,7 +149,7 @@ does not transfer arbitrary React local state or implement schema migrations.
 ## Validation and recovery
 
 The validator requires Node and a toolchain containing Playwright/Chromium and
-Rollup. A source checkout uses `frontend/node_modules`; a packaged installation
+Rollup. A prepared source checkout uses `.build/web-client/node_modules`; a packaged installation
 can set `AMPLIFIER_SHELL_NODE_MODULES` to an explicitly installed toolchain.
 Missing tooling prevents approval rather than accepting an agent's test claim.
 
@@ -183,13 +183,15 @@ all historical verification as a routine release requirement.
 
 ```sh
 uv sync --frozen
-npm ci --prefix frontend
-npm exec --prefix frontend playwright install chromium
-npm run build --prefix frontend
-npm run test:shell-browser --prefix frontend
+python scripts/web_client_build.py prepare
+npm ci --prefix .build/web-client
+npm ci --prefix tests/web
+npm exec --prefix tests/web playwright install chromium
+python scripts/web_client_build.py build
+npm run test:shell-browser --prefix tests/web
 ```
 
-The maintained [shell browser scenario](../../frontend/tests/shell-browser.mjs)
+The maintained [shell browser scenario](../../tests/web/shell-browser.mjs)
 exercises the production host and a separately authored navigation package.
 [Shell module tests](../../tests/test_shell_modules.py) cover host-side package,
 revision, capability and recovery behavior. Fixture validation, live browser
@@ -347,25 +349,25 @@ large-workload performance claim.
 After the dependencies and production build described above:
 
 ```sh
-npm run test:canvas-renderers-browser --prefix frontend
-npm run test:canvas-dirty-browser --prefix frontend
-npm run test:smart-tools-browser --prefix frontend
+npm run test:canvas-renderers-browser --prefix tests/web
+npm run test:canvas-dirty-browser --prefix tests/web
+npm run test:smart-tools-browser --prefix tests/web
 uv run pytest tests/test_canvas_views.py -q
 ```
 
-The maintained [renderer browser scenario](../../frontend/tests/canvas-renderers-browser.mjs)
+The maintained [renderer browser scenario](../../tests/web/canvas-renderers-browser.mjs)
 checks a single Canvas viewer, independently built/staged/validated renderer
 loading, immutable content, saved renderer preferences, composer retention,
 reload, stale HTTP reads/actions and failed-render recovery. It also distinguishes
 an optimistic Details change from an accepted receipt before reloading.
 
-The [dirty-view scenario](../../frontend/tests/canvas-dirty-browser.mjs) uses an
+The [dirty-view scenario](../../tests/web/canvas-dirty-browser.mjs) uses an
 editor whose unfinished text exists only in React state. It checks preservation
 through Overview, panel hiding and Details layout changes; guarded tab/selection
 transitions; a delayed dirty declaration racing navigation; and explicit recovery.
 [Host-side tests](../../tests/test_canvas_views.py) cover legacy secondary-state
 inertness, exact targets, renderer compatibility/capabilities and dirty guards.
-The [MCP scenario](../../frontend/tests/smart-tools-browser.mjs) checks the real
+The [MCP scenario](../../tests/web/smart-tools-browser.mjs) checks the real
 local tool adapter, frame isolation and presentation changes without mutation replay.
 
 These synthetic fixtures do not establish live-provider, voice or arbitrary

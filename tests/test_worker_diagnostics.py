@@ -1167,7 +1167,7 @@ def test_real_atomic_replace_permission_error_keeps_only_closed_facts(tmp_path, 
     # are not under test; fdopen/write/flush/fsync/temp cleanup remain real.
     native_os = storage.os
     monkeypatch.setattr(storage, 'os', SimpleNamespace(
-        fdopen=native_os.fdopen, fchmod=lambda *args: None, fsync=native_os.fsync,
+        name='posix', fdopen=native_os.fdopen, fchmod=lambda *args: None, fsync=native_os.fsync,
         replace=fail_replace, path=native_os.path, unlink=native_os.unlink))
     slot = vars(storage.SessionStore)['_atomic']
     assert type(slot) is staticmethod

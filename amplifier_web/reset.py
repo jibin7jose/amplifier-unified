@@ -1,7 +1,7 @@
 """Dependency-free emergency repair, also runnable with ``python3 reset.py``.
 
 Only named, regenerable installation paths are retired. Unknown/user state is
-never classified as disposable. Backups are kept until the owner removes them.
+never classified as disposable. Successful resets replace the recovery point.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import shutil
 import signal
 import socket
 import ssl
+import stat
 import sqlite3
 import subprocess
 import sys
@@ -23,6 +24,16 @@ import traceback
 import uuid
 import urllib.request
 import urllib.error
+
+if __package__:
+    from . import reset_retention
+else:
+    # -I excludes the script directory from sys.path. Load only our inspected
+    # sibling, not cwd/PYTHONPATH or the ordinary application package.
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("reset_retention", Path(__file__).with_name("reset_retention.py"))
+    reset_retention = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(reset_retention)
 
 REPOSITORY = "microsoft/amplifier-unified"
 REGENERABLE = ("updates", "runtime", "foundation", "source-store")
@@ -45,6 +56,7 @@ def options(parser):
     parser.add_argument("--dry-run", action="store_true", help="Show what would be repaired without changing anything")
     parser.add_argument("--source", help="Override the latest published release with a trusted wheel or Git source")
     parser.add_argument("--no-start", action="store_true", help="Leave the managed service stopped after repair")
+    parser.add_argument("--cleanup-only", action="store_true", help="Retry older successful reset recovery cleanup without resetting or starting Unified")
     parser.add_argument("--anonymous", action="store_true", help="Download public sources without GitHub sign-in or personal Git configuration")
     # Also accept the customary post-command spelling, retaining a global value.
     parser.add_argument("--data-dir", default=argparse.SUPPRESS, help="Unified data directory to repair")
@@ -403,7 +415,13 @@ def repair_lock(home, *, shared=False):
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = home / ".reset.lock"
     # Never unlink a lock: waiters must continue to agree on the same inode.
-    with path.open("a") as stream:
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "a") as stream:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or hasattr(os, "getuid") and info.st_uid != os.getuid()):
+            raise ValueError("The repair lock is not a private regular file")
         unlock = None
         try:
             if os.name == "nt":
@@ -591,12 +609,41 @@ def tool_recovery_root(tool_root):
 
 
 def repair(home, uv, tool_root, bin_root, source, env, service, no_start):
+    # Different profiles can share one uv tool directory. Acquire in the same
+    # order as explicit/in-app retention; never invert these two process leases.
+    with reset_retention.lease(home) as owner:
+        with repair_lock(tool_recovery_root(tool_root)):
+            operation = owner.begin("cli", tool_root=tool_root)
+            try:
+                backup = _repair(home, uv, tool_root, bin_root, source, env, service, no_start, operation)
+            except BaseException:
+                owner.fail(operation)
+                raise
+        # Other profiles' tool leases are acquired separately during cleanup.
+        # Cleanup failure cannot turn a healthy replacement into a failed reset.
+        try:
+            owner.succeed(operation)
+            result = owner.cleanup()
+            if result["errors"]:
+                print("Reset succeeded; older-backup cleanup incomplete. Retry: amplifier-unified reset --cleanup-only")
+                for error in result["errors"]:
+                    print("  " + error)
+            if result["preservedUnresolved"] or result["legacyReview"]:
+                print("Unresolved or legacy recovery copies were preserved for explicit review.")
+            if _REPORT:
+                _REPORT.write("Reset retention: " + json.dumps(result))
+        except (OSError, ValueError, RuntimeError) as error:
+            print("Reset succeeded; older-backup cleanup incomplete. Retry: amplifier-unified reset --cleanup-only")
+            if _REPORT:
+                _REPORT.write("Retention cleanup: " + str(error))
+        return backup
+
+
+def _repair(home, uv, tool_root, bin_root, source, env, service, no_start, operation):
     prefix = tool_root / "amplifier-unified"
     launcher = bin_root / "amplifier-unified"
-    backup = home / "reset-backups" / uuid.uuid4().hex
-    backup.mkdir(parents=True, mode=0o700)
+    backup = home / "reset-backups" / operation
     recovery = tool_recovery_root(tool_root) / backup.name
-    recovery.mkdir(parents=True, mode=0o700)
     tool_backup = recovery / "previous"
     moves = []
     had_launcher = launcher.exists() or launcher.is_symlink()
@@ -708,11 +755,20 @@ def run(args):
         home = home_path(args)
         if home in {Path.home().resolve(), Path(home.anchor)}:
             raise ValueError("Use a dedicated Unified data directory, not a home or filesystem root.")
+        if getattr(args, "cleanup_only", False):
+            if args.dry_run:
+                print("Nothing changed. Cleanup retries only obsolete committed successful reset sets.")
+                return
+            result = reset_retention.retry_cleanup(home)
+            print(json.dumps(result, indent=2))
+            if not result["cleanupComplete"]:
+                raise RuntimeError("Older-backup cleanup incomplete; inspect the reported errors and retry --cleanup-only.")
+            return
         service = service_commands(home)
         print("Amplifier Unified · " + ("Repair preview" if args.dry_run else "Repair"))
         print("\nWe’ll reinstall Unified and rebuild its downloaded components.")
         print("Your chats, settings, sign-ins, and files will be kept.")
-        print("A recovery backup will also be saved.")
+        print("A recovery backup will be saved. A successful reset automatically replaces the previous reset recovery point.")
         if args.source:
             print("Install from: " + args.source)
         else:
@@ -781,8 +837,7 @@ def perform(args, home, service):
     if args.source and Path(args.source).expanduser().exists():
         source = str(Path(args.source).expanduser().resolve())
     progress("Installation source found", done=True)
-    with repair_lock(tool_recovery_root(tool_root)):
-        repair(home, uv, tool_root, bin_root, source, env, service, args.no_start)
+    repair(home, uv, tool_root, bin_root, source, env, service, args.no_start)
 
 
 if __name__ == "__main__":

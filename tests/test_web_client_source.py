@@ -163,6 +163,61 @@ class WebClientSourceTests(unittest.TestCase):
         self.assertEqual(sorted(str(p.relative_to(self.output)) for p in self.output.rglob('*')
                                 if p.is_file()), ['package.json', 'scripts/client-source.mjs'])
 
+    def test_git_free_development_copies_only_production_and_test_support(self):
+        source = self.root / 'export'
+        authored = ['package.json', 'scripts/client-source.mjs', 'scripts/build-identity.mjs']
+        for name in [*authored, '.gitattributes', 'tests/example.test.mjs', 'tests/support/fixture.json',
+                     'private-local-note', 'node_modules/private-dependency/index.js']:
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(name)
+        self.record['delivery']['path'] = 'export'
+        record = self.root / 'selection.json'
+        record.write_text(json.dumps(self.record))
+        actual_command = delivery.command
+
+        def command(*args, **kwargs):
+            if args[0] == 'development-node':
+                if '--input-type=module' in args:
+                    data = authored if 'selectedInputs' in args[3] else ['branding-fixture']
+                    return subprocess.CompletedProcess(args, 0, json.dumps(data))
+                self.assertEqual(args[2], 'verify')
+                return subprocess.CompletedProcess(args, 0, '')
+            return actual_command(*args, **kwargs)
+
+        with patch.object(delivery, 'command', side_effect=command):
+            delivery.prepare(self.root, record, self.output, node='development-node', development=True)
+        actual = sorted(str(p.relative_to(self.output)) for p in self.output.rglob('*') if p.is_file())
+        self.assertEqual(actual, sorted([*authored, '.gitattributes', 'tests/example.test.mjs', 'tests/support/fixture.json',
+                                       '.client-source.json', '.client-development.json']))
+        guard = json.loads((self.output / '.client-development.json').read_text())
+        self.assertEqual(guard['generatedPublic'], ['branding-fixture'])
+        self.assertEqual(set(guard['files']), {*authored, '.gitattributes', 'tests/example.test.mjs', 'tests/support/fixture.json'})
+        delivery.verify_development(self.output)
+
+    def test_git_free_development_rejects_linked_test_support(self):
+        source = self.root / 'export'
+        (source / 'tests').mkdir(parents=True)
+        external = self.root / 'private'
+        external.mkdir()
+        (external / 'secret').write_text('not a test input')
+        try:
+            (source / 'tests/linked').symlink_to(external, target_is_directory=True)
+        except OSError:
+            self.skipTest('Symlink creation unavailable')
+        actual_command = delivery.command
+
+        def command(*args, **kwargs):
+            if args[0] == 'manifest-node':
+                return subprocess.CompletedProcess(args, 0, '[]')
+            return actual_command(*args, **kwargs)
+
+        with patch.object(delivery, 'command', side_effect=command):
+            with self.assertRaisesRegex(ValueError, 'regular test source'):
+                delivery.copy_tracked(source, self.output, node='manifest-node', development=True)
+        self.assertFalse(self.output.exists())
+        self.assertEqual((external / 'secret').read_text(), 'not a test input')
+
 
 if __name__ == '__main__':
     unittest.main()

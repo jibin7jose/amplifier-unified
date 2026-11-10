@@ -80,7 +80,7 @@ This is a softened join, not a gradient rendered by native window controls.
 
 Acceptance must include preview/apply parity, light/dark/system, decoration
 on/off, a new theme clearing earlier artwork, revert, reload, and preservation
-of unsent drafts and conversations. `frontend/tests/theme-definitions-browser.mjs`
+of unsent drafts and conversations. `tests/web/theme-definitions-browser.mjs`
 exercises the production browser against a disposable host. It makes no model
 calls and does not establish acceptance on a deployed user host.
 

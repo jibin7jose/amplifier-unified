@@ -40,7 +40,7 @@ seconds; forced reaping after that bound is still a failure. Existing assertion
 errors remain the primary error, with cleanup errors reported alongside them.
 No UI assertion or outer process-owner requirement changes.
 
-`node --test frontend/tests/fixture-lifecycle.test.mjs` owns the child lifecycle,
+`node --test tests/web/fixture-lifecycle.test.mjs` owns the child lifecycle,
 forced-cleanup failure, original-error preservation and browser-close failure
 controls. `pytest tests/test_settings_fixture_lifecycle.py` owns real POSIX
 SIGTERM/SIGINT cleanup of the application's private home and listener. These are

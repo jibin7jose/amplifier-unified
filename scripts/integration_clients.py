@@ -98,7 +98,11 @@ def checked_source(path: Path) -> dict:
 
 def browser_prepare_commands(repo: Path, uv: str, interpreter: str, *, install_dependencies=False) -> list[list[str]]:
     """Reuse the locked browser setup without replacing an installed-wheel env."""
-    lock = json.loads((repo / "frontend/package-lock.json").read_text())
+    tools = repo / "tests/web"
+    # An explicitly supplied older source keeps its own recorded lock.
+    if not tools.exists() and (repo / "frontend/package-lock.json").is_file():
+        tools = repo / "frontend"
+    lock = json.loads((tools / "package-lock.json").read_text())
     version = lock["packages"]["node_modules/playwright"]["version"]
     install = [interpreter, "-m", "playwright", "install"]
     if install_dependencies:

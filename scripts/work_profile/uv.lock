@@ -264,7 +264,7 @@ source = { git = "https://github.com/microsoft/amplifier-bundle-context-managed?
 
 [[package]]
 name = "amplifier-unified"
-version = "0.59.0"
+version = "0.73.3"
 source = { directory = "../../" }
 dependencies = [
     { name = "aiohttp" },
@@ -305,11 +305,13 @@ requires-dist = [
     { name = "amplifier-module-provider-openai", extras = ["decisions"], marker = "extra == 'decisions-openai'", git = "https://github.com/microsoft/amplifier-module-provider-openai?rev=main" },
     { name = "amplifier-module-tool-computer-use", marker = "extra == 'native-desktop'", git = "https://github.com/microsoft/amplifier-bundle-computer-use?subdirectory=modules%2Ftool-computer-use&rev=main" },
     { name = "cryptography", specifier = ">=44,<51" },
-    { name = "filelock", specifier = ">=3.20,<4" },
+    { name = "filelock", specifier = ">=4.2.1,<5" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "mcp", specifier = ">=2.2,<3" },
     { name = "packaging", specifier = ">=24" },
+    { name = "pillow", marker = "extra == 'decisions-openai'", specifier = ">=13,<14" },
+    { name = "pillow", marker = "extra == 'native-desktop'", specifier = ">=13,<14" },
     { name = "python-pam", specifier = ">=2.0.2,<3" },
     { name = "pyyaml", specifier = ">=6.0.3,<7" },
     { name = "qrcode", specifier = ">=8.2,<9" },
@@ -322,7 +324,7 @@ provides-extras = ["tui", "native-desktop", "managed-browser", "decisions-openai
 [package.metadata.requires-dev]
 artifacts = [
     { name = "openpyxl", specifier = ">=3.1,<4" },
-    { name = "pillow", specifier = ">=11,<13" },
+    { name = "pillow", specifier = ">=13,<14" },
     { name = "pypdf", specifier = ">=6,<7" },
     { name = "python-docx", specifier = ">=1.1,<2" },
     { name = "python-pptx", specifier = ">=1,<2" },
@@ -332,8 +334,9 @@ dev = [
     { name = "amplifier-module-context-managed", git = "https://github.com/microsoft/amplifier-bundle-context-managed?subdirectory=modules%2Fcontext-managed&rev=12166f8effb5e26737bb5f9f7885cbb9bd4cdf43" },
     { name = "amplifier-module-context-simple", git = "https://github.com/microsoft/amplifier-module-context-simple?rev=main" },
     { name = "amplifier-module-hook-context-intelligence", git = "https://github.com/microsoft/amplifier-bundle-context-intelligence?subdirectory=modules%2Fhook-context-intelligence&rev=a80ce69d0e96e9a343501f238dcd867350dd9aa2" },
-    { name = "amplifier-module-loop-live", git = "https://github.com/microsoft/amplifier-module-loop-live?rev=670f405f711658c3c38e81dbd50a35d3d8c2ac3c" },
+    { name = "amplifier-module-loop-live", git = "https://github.com/microsoft/amplifier-module-loop-live?rev=d4b1e69e3222780ccebdfdb7c07915fdcd5d161f" },
     { name = "amplifier-module-provider-openai", extras = ["native"], git = "https://github.com/microsoft/amplifier-module-provider-openai?rev=main" },
+    { name = "amplifier-module-tool-exec", git = "https://github.com/microsoft/amplifier-module-tool-exec?rev=f267548ccd1b38a236a46afb96252bb6dd474dcd" },
     { name = "amplifier-module-tool-filesystem", git = "https://github.com/microsoft/amplifier-module-tool-filesystem?rev=663f26a878ae71e136f439fa73ded52b2eb24174" },
     { name = "amplifier-module-tool-skills", git = "https://github.com/microsoft/amplifier-bundle-skills?subdirectory=modules%2Ftool-skills&rev=2f58408a879535df36da5c92d2b073f49271ade4" },
     { name = "hatchling", specifier = ">=1.27" },
@@ -740,11 +743,11 @@ wheels = [
 
 [[package]]
 name = "filelock"
-version = "3.32.7"
+version = "4.2.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0f/59/e19834834cb01a32febfbb0f8a23a9088088f5d45991824ff2bc3b5e8acb/filelock-3.32.7.tar.gz", hash = "sha256:37b8a3d9811b0f9aef7e5ec5c71bb320de52df51e6ca9bcd6f5ad81187660da7", size = 225154, upload-time = "2026-09-16T00:24:20.907Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/98/771d8ca889f220d7d7e352addf500666368f0fd081c6080a83767580c6e4/filelock-4.2.1.tar.gz", hash = "sha256:c4c937ccac2a813cee448e662a56366cfb374c0f8702e75f295c412cc1c5d5a3", size = 650997, upload-time = "2026-10-17T16:48:14.435Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/15/df/31098c5aeb4d966b553641472bd55fcf5fdfac953549894b8a765ba44e91/filelock-3.32.7-py3-none-any.whl", hash = "sha256:65ff0d0190ea42038b32bda4b77834fb05be2cad4c5b9b01aa4dfb3614536e52", size = 100157, upload-time = "2026-09-16T00:24:19.543Z" },
+    { url = "https://files.pythonhosted.org/packages/28/00/db89d339bc4ecdc8087fa7b8607ba22ffc27bf96286f340c9620bea428b3/filelock-4.2.1-py3-none-any.whl", hash = "sha256:7be2662e9e826b9bba28afc0f843a123280d799a2ea44bb5d35ccec67905ae44", size = 162455, upload-time = "2026-10-17T16:48:12.937Z" },
 ]
 
 [[package]]

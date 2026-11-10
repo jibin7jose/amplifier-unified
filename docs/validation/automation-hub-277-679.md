@@ -18,13 +18,13 @@ It does not reproduce the historical M365 incident or diagnose that worker's exi
 | AUTO-08 | Unknown prior work, stale schedule/configuration/Stop/execution, assignment suspension or missing workspace refuse | Focused host tests; no blind resume retry after lost browser acknowledgement |
 | AUTO-09 | 390px review remains readable, controls usable, no horizontal overflow; confirm at mobile width | Packaged-browser screenshot and geometry; target all review/confirmation content reachable |
 
-`frontend/tests/automation-hub-browser.mjs` is registered once in
-`frontend/tests/browser-checks.json`, owned by extended Browser checks after
+`tests/web/automation-hub-browser.mjs` is registered once in
+`tests/web/browser-checks.json`, owned by extended Browser checks after
 publication (and manually for affected changes before release). It starts and
 retires its own loopback fixture with synthetic state and a fixed scheduler clock;
 no provider/account credentials, active user schedules or external work are used.
 `tests/test_automation_overview.py` belongs to the ordinary full Python suite;
-`frontend/tests/automation-hub.test.mjs` belongs to client tests. Existing recurrence,
+`components/web-client/tests/automation-hub.test.mjs` belongs to client tests. Existing recurrence,
 new-task lifecycle, unknown no-replay and peer-repair tests retain their owners.
 
 ## Invocation
@@ -33,9 +33,8 @@ In an owned DTU with the project's normal test dependencies and built client:
 
 ```sh
 python -m pytest -q tests/test_automation_overview.py tests/test_schedule_new_tasks.py tests/test_schedule_handoff.py tests/test_schedule_projection.py tests/test_browser_check_runner.py
-cd frontend
-node --test tests/automation-hub.test.mjs
-AMPLIFIER_TEST_ARTIFACTS=/owned/evidence/automation node tests/automation-hub-browser.mjs
+node --test .build/web-client/tests/automation-hub.test.mjs
+AMPLIFIER_TEST_ARTIFACTS=/owned/evidence/automation node tests/web/automation-hub-browser.mjs
 ```
 
 ARM DTU Chromium uses the repository's documented process-local single-process

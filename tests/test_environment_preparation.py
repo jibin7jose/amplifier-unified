@@ -73,7 +73,7 @@ def test_plan_binds_source_locks_and_fixed_recipe(tmp_path):
         preparation.plan(tmp_path / 'source.tar', {'archive_sha256': 'wrong'}, 'python-project')
 
 
-@pytest.mark.parametrize('name', ['../escape', '/absolute', 'frontend/node_modules/lib.js', '.venv/bin/python', '.unified-prepared-dependencies.json'])
+@pytest.mark.parametrize('name', ['../escape', '/absolute', 'tests/web/node_modules/lib.js', '.venv/bin/python', '.unified-prepared-dependencies.json'])
 def test_untrusted_archive_layout_rejected(tmp_path, name):
     snapshot = archive(tmp_path, {'pyproject.toml': 'project', 'uv.lock': 'lock', name: 'data'})
     with pytest.raises(ValueError):
@@ -81,10 +81,10 @@ def test_untrusted_archive_layout_rejected(tmp_path, name):
 
 
 def test_browser_requires_playwright_in_committed_lock(tmp_path):
-    snapshot = archive(tmp_path, {'pyproject.toml': 'project', 'uv.lock': 'lock', 'frontend/package.json': '{}',
-        'frontend/package-lock.json': json.dumps({'packages': {'node_modules/playwright': {'version': '1.63.0'}}})})
+    snapshot = archive(tmp_path, {'pyproject.toml': 'project', 'uv.lock': 'lock', 'tests/web/package.json': '{}',
+        'tests/web/package-lock.json': json.dumps({'packages': {'node_modules/playwright': {'version': '1.63.0'}}})})
     value = preparation.plan(tmp_path / 'source.tar', snapshot, 'browser-test')
-    assert value['nodeDirectory'] == 'frontend' and value['playwrightVersion'] == '1.63.0'
+    assert value['nodeDirectory'] == 'tests/web' and value['playwrightVersion'] == '1.63.0'
     assert len(value['lockfiles']) == 4
     snapshot = archive(tmp_path)
     with pytest.raises(ValueError, match='Playwright'):
@@ -170,13 +170,13 @@ def test_real_wait_observes_cancellation_promptly_and_bounds_log(tmp_path):
 
 def test_initializer_copies_writable_node_modules_and_rejects_conflicting_source(tmp_path):
     prefix, workspace, artifacts = [tmp_path / name for name in ('prefix', 'workspace', 'artifacts')]
-    for folder in (prefix / 'node/frontend', workspace / 'frontend'):
+    for folder in (prefix / 'node/tests-web', workspace / 'tests/web'):
         folder.mkdir(parents=True)
-    (prefix / 'node/frontend/dependency.js').write_text('dependency')
-    (prefix / 'plan.json').write_text(json.dumps({'profileId': 'browser-test', 'preparationId': 'exact', 'nodeDirectory': 'frontend', 'nodeKey': 'frontend'}))
+    (prefix / 'node/tests-web/dependency.js').write_text('dependency')
+    (prefix / 'plan.json').write_text(json.dumps({'profileId': 'browser-test', 'preparationId': 'exact', 'nodeDirectory': 'tests/web', 'nodeKey': 'tests-web'}))
     initializer.initialize(prefix, workspace)
     assert not artifacts.exists()
-    target = workspace / 'frontend/node_modules'
+    target = workspace / 'tests/web/node_modules'
     assert not target.is_symlink() and (target / 'dependency.js').read_text() == 'dependency'
     (target / 'output').write_text('writable')
     initializer.initialize(prefix, workspace)
@@ -185,39 +185,59 @@ def test_initializer_copies_writable_node_modules_and_rejects_conflicting_source
         initializer.initialize(prefix, workspace)
 
 
+@pytest.mark.parametrize('delivery', ['directory', 'repository'])
 @pytest.mark.parametrize('failure', [False, True])
-def test_initializer_prepares_selected_client_after_full_source_before_completion(tmp_path, failure):
+def test_initializer_prepares_selected_client_after_full_source_before_completion(tmp_path, failure, delivery):
     prefix, workspace = tmp_path / 'prefix', tmp_path / 'workspace'
-    for folder in (prefix / 'node/frontend', prefix / 'venv/bin', prefix / 'node-runtime/bin',
-                   workspace / 'frontend', workspace / 'components', workspace / 'scripts'):
+    for folder in (prefix / 'node/tests-web', prefix / 'node/web-client', prefix / 'venv/bin',
+                   prefix / 'node-runtime/bin', workspace / 'tests/web', workspace / 'components', workspace / 'scripts'):
         folder.mkdir(parents=True)
     (prefix / 'venv/bin/python').symlink_to(sys.executable)
-    (prefix / 'node/frontend/dependency.js').write_text('dependency')
+    (prefix / 'node/tests-web/dependency.js').write_text('browser tools')
+    (prefix / 'node/web-client/dependency.js').write_text('client build')
+    record = {'delivery': {'type': delivery, **({'path': 'components/web-client'} if delivery == 'directory' else {})}}
+    manifest_dir = 'components/web-client' if delivery == 'directory' else '.build/web-client'
+    projects = [{'directory': 'tests/web', 'key': 'tests-web', 'manifestDirectory': 'tests/web'},
+                {'directory': '.build/web-client', 'key': 'web-client', 'manifestDirectory': manifest_dir,
+                 **({'preparedManifestsOnly': True} if delivery == 'repository' else {})}]
+    locks = []
+    for directory in ('tests/web', manifest_dir):
+        (workspace / directory).mkdir(parents=True, exist_ok=True)
+        for name in ('package.json', 'package-lock.json'):
+            data = json.dumps({'owner': directory, 'file': name})
+            (workspace / directory / name).write_text(data)
+            locks.append({'path': directory + '/' + name, 'sha256': hashlib.sha256(data.encode()).hexdigest()})
+    (workspace / 'components/web-client.source.json').write_text(json.dumps(record))
+    if delivery == 'repository':
+        (workspace / manifest_dir / '.client-source.json').write_text(json.dumps(record))
     (prefix / 'plan.json').write_text(json.dumps({'profileId': 'browser-test', 'preparationId': 'exact',
-                                                'nodeDirectory': 'frontend', 'nodeKey': 'frontend'}))
-    (workspace / 'components/web-client.source.json').write_text('{}')
-    # A real subprocess verifies ordering and the prepared runtime environment,
-    # without importing or executing a project during dependency-only seeding.
-    (workspace / 'scripts/web_client_development.py').write_text(
+        'nodeDirectory': 'tests/web', 'nodeKey': 'tests-web', 'nodeProjects': projects, 'lockfiles': locks}))
+    client_files = {name: (workspace / manifest_dir / name).read_text() for name in ('package.json', 'package-lock.json')}
+    # Actual isolated subprocess proves preparation precedes dependency copies;
+    # it does not execute an application or install dependencies.
+    (workspace / 'scripts/web_client_build.py').write_text(
         'import os, sys\nfrom pathlib import Path\n'
-        'assert sys.argv[1:] == ["prepare-view"]\n'
-        'assert Path("components/web-client.source.json").is_file()\n'
-        'assert not Path("frontend/node_modules").exists()\n'
+        'assert sys.argv[1:] == ["prepare"]\n'
+        'assert not Path("tests/web/node_modules").exists()\n'
+        'assert not Path(".build/web-client/node_modules").exists()\n'
         'assert not Path(".unified-prepared-dependencies.json").exists()\n'
         f'assert os.environ["PATH"].split(os.pathsep)[0] == {str(prefix / "node-runtime/bin")!r}\n'
         f'sys.exit(3) if {failure!r} else None\n'
-        'Path("frontend/src").mkdir()\n'
-        'Path("frontend/src/selected.js").write_text("selected component")\n')
+        'Path(".build/web-client").mkdir(parents=True, exist_ok=True)\n'
+        f'files = {client_files!r}\n'
+        'for name, data in files.items(): (Path(".build/web-client") / name).write_text(data)\n'
+        'Path(".build/web-client/selected.js").write_text("selected component")\n')
     if failure:
         with pytest.raises(subprocess.CalledProcessError):
             initializer.initialize(prefix, workspace)
         assert not (workspace / '.unified-prepared-dependencies.json').exists()
-        assert not (workspace / 'frontend/node_modules').exists()
+        assert not (workspace / 'tests/web/node_modules').exists()
     else:
         initializer.initialize(prefix, workspace)
-        assert (workspace / 'frontend/src/selected.js').read_text() == 'selected component'
-        assert (workspace / 'frontend/node_modules/dependency.js').read_text() == 'dependency'
-        initializer.initialize(prefix, workspace)  # Completed initialization is idempotent.
+        assert (workspace / '.build/web-client/selected.js').read_text() == 'selected component'
+        assert (workspace / 'tests/web/node_modules/dependency.js').read_text() == 'browser tools'
+        assert (workspace / '.build/web-client/node_modules/dependency.js').read_text() == 'client build'
+        initializer.initialize(prefix, workspace)
 
 
 def test_python_project_does_not_run_client_preparation(tmp_path):
@@ -228,6 +248,34 @@ def test_python_project_does_not_run_client_preparation(tmp_path):
     (prefix / 'plan.json').write_text(json.dumps({'profileId': 'python-project', 'preparationId': 'exact'}))
     initializer.initialize(prefix, workspace)
     assert (workspace / '.unified-prepared-dependencies.json').is_file()
+
+
+@pytest.mark.parametrize('change', ['unexpected-file', 'edited-manifest', 'source-record'])
+def test_manifest_only_client_staging_preserves_unknown_changes(tmp_path, change, monkeypatch):
+    workspace, prefix = tmp_path / 'workspace', tmp_path / 'prefix'
+    client = workspace / '.build/web-client'
+    client.mkdir(parents=True)
+    (workspace / 'components').mkdir()
+    record = {'delivery': {'type': 'repository'}}
+    (workspace / 'components/web-client.source.json').write_text(json.dumps(record))
+    (client / '.client-source.json').write_text(json.dumps(record))
+    locks = {}
+    for name in ('package.json', 'package-lock.json'):
+        (client / name).write_text('{}')
+        locks['.build/web-client/' + name] = hashlib.sha256(b'{}').hexdigest()
+    if change == 'unexpected-file':
+        (client / 'experiment.js').write_text('keep')
+    elif change == 'edited-manifest':
+        (client / 'package.json').write_text('{"edited":true}')
+    else:
+        (client / '.client-source.json').write_text('{}')
+    before = {p.name: p.read_bytes() for p in client.iterdir()}
+    monkeypatch.setattr(initializer.subprocess, 'run', lambda *a, **k: pytest.fail('changed staging must not execute prepare'))
+    with pytest.raises(ValueError):
+        initializer.prepare_client(prefix, workspace,
+            {'directory': '.build/web-client', 'key': 'web-client',
+             'manifestDirectory': '.build/web-client', 'preparedManifestsOnly': True}, locks)
+    assert {p.name: p.read_bytes() for p in client.iterdir()} == before
 
 
 def test_docker_builder_has_bounded_resources_no_mounts_and_immutable_commit(tmp_path, monkeypatch):

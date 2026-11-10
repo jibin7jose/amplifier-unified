@@ -992,7 +992,7 @@ command idempotency, and agent scope. `tests/fixtures/standalone_children_probe.
 also exercises real Foundation/Rust child sessions with a deterministic
 orchestrator, including explicit message receipt IDs and report lifecycle.
 
-`npm run test:coordination-browser --prefix frontend` runs an isolated production
+`npm run test:coordination-browser --prefix tests/web` runs an isolated production
 service and production assets in Chromium. Its deterministic runtime supplies
 worker events; it verifies two watched targets, a follow-up, reconnect,
 interruption during a wait, draft/selection preservation, and mobile bounds.

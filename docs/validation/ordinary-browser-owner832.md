@@ -6,7 +6,7 @@ historical 141-script ledger). That count is not 80 failed workflows
 or 80 proven duplicates. The retained per-script crosswalk separates partial
 overlap, specialized/Advanced checks and unqualified effects. A related passing
 script gives credit only for its actual assertions, under
-`frontend/tests/standard-ux-completion-policy.json`; it does not qualify all
+`tests/web/standard-ux-completion-policy.json`; it does not qualify all
 assertions in another script.
 
 Four existing scripts now have additive extended-runner owners. Each retains its

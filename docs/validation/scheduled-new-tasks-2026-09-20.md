@@ -51,6 +51,6 @@ Run with the existing development environment (including current loop-live):
 
 ```sh
 python -m pytest tests/test_schedule_new_tasks.py tests/test_schedules.py tests/test_schedule_policy.py tests/test_scheduled_input.py
-npm run build --prefix frontend
-node frontend/tests/scheduled-new-tasks-browser.mjs
+python scripts/web_client_build.py build
+node tests/web/scheduled-new-tasks-browser.mjs
 ```

@@ -109,7 +109,8 @@ def restore_browser(plan, uv):
     wheels = saved.get('browserWheels')
     if (saved.get('profileId') != 'browser-test' or node.get('playwright') != plan['playwrightVersion']
             or node.get('version') != 'v' + NODE_VERSION or not isinstance(wheels, list)
-            or not 1 <= len(wheels) <= 32 or any(not isinstance(wheel, dict) for wheel in wheels)):
+            or not 1 <= len(wheels) <= 32 or any(not isinstance(wheel, dict) for wheel in wheels)
+            or ('nodeProjects' in plan and node.get('projects') != plan['nodeProjects'])):
         raise ValueError('The reusable browser inventory changed.')
     folder = PREFIX / 'browser-wheels'
     for wheel in wheels:
@@ -131,6 +132,36 @@ def restore_browser(plan, uv):
     if any(installed.get(name) != version for name, version in locked.items()):
         raise ValueError('Browser dependency preparation changed a locked Python project dependency.')
     return {'node': node, 'browserWheels': wheels}
+
+
+def prepare_node_projects(plan, workspace=Path('/workspace')):
+    """Install each lock in its own directory; only browser tools choose Python's Playwright."""
+    projects = plan.get('nodeProjects', [{'directory': plan['nodeDirectory'],
+                                        'key': plan['nodeKey'],
+                                        'manifestDirectory': plan['nodeDirectory']}])
+    for project in projects:
+        root = workspace / project['manifestDirectory']
+        run('npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund', cwd=root)
+    installed = set()
+    for project in projects:
+        browser = workspace / project['manifestDirectory']
+        cli = browser / 'node_modules/playwright/cli.js'
+        if not cli.is_file():
+            if project['key'] == plan['nodeKey']:
+                raise ValueError('The locked browser project must include Playwright.')
+            continue
+        version = json.loads(cli.with_name('package.json').read_text())['version']
+        if version not in installed:
+            run('node', str(cli), 'install', '--with-deps', 'chromium', cwd=browser)
+            installed.add(version)
+    return projects
+
+
+def retain_node_projects(projects, workspace=Path('/workspace')):
+    for project in projects:
+        target = PREFIX / 'node' / project['key']
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(workspace / project['manifestDirectory'] / 'node_modules'), str(target))
 
 
 def main():
@@ -210,14 +241,7 @@ def main():
             archive.extractall(PREFIX, filter='data')
         (PREFIX / name).rename(PREFIX / 'node-runtime')
         os.environ['PATH'] = str(PREFIX / 'node-runtime/bin') + ':' + os.environ['PATH']
-        project = Path('/workspace') / plan['nodeDirectory']
-        run('npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund', cwd=project)
-        # esbuild's platform executable is present in the locked optional package;
-        # npm lifecycle scripts are not needed for Vite/Playwright installation.
-        cli = project / 'node_modules/playwright/cli.js'
-        if not cli.is_file():
-            raise ValueError('The locked browser project must include Playwright.')
-        run('node', str(cli), 'install', '--with-deps', 'chromium', cwd=project)
+        projects = prepare_node_projects(plan)
         # Python browser probes use the same Playwright release as the locked
         # JavaScript project. Resolve its platform wheels once, retain their
         # exact hashes, then install only from that local wheel set.
@@ -242,10 +266,10 @@ def main():
         if not layer:
             shutil.rmtree(wheels)
         run('apt-get', 'install', '-y', '--no-install-recommends', 'xvfb', 'xauth', 'libxss1', 'x11-utils')
-        (PREFIX / 'node').mkdir(exist_ok=True)
-        shutil.move(str(project / 'node_modules'), str(PREFIX / 'node' / plan['nodeKey']))
+        retain_node_projects(projects)
         inventory['node'] = {'version': run('node', '--version', capture=True).strip(),
-                             'archiveSha256': actual, 'playwright': plan['playwrightVersion']}
+                             'archiveSha256': actual, 'playwright': plan['playwrightVersion'],
+                             'projects': projects}
     inventory['pythonPackages'] = run(uv, 'pip', 'freeze', '--python', str(PREFIX / 'venv/bin/python'), capture=True).splitlines()
     inventory['systemPackages'] = run('dpkg-query', '-W', '-f=${Package}=${Version}\n', capture=True).splitlines()
     inventory['preparedFiles'] = {}

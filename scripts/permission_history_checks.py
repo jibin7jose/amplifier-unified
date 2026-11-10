@@ -146,7 +146,8 @@ def node_names(text):
 def node_selection(root):
     selected = {}
     for path in NODE_TESTS:
-        selected[path] = node_names((root / 'frontend' / path).read_text())
+        owner = root / 'tests/web/fixture-lifecycle.test.mjs' if path == 'tests/fixture-lifecycle.test.mjs' else root / '.build/web-client' / path
+        selected[path] = node_names(owner.read_text())
     names = [name for group in selected.values() for name in group]
     assert len(names) == len(set(names)), 'TAP names must be unique across the fixed selection'
     return selected
@@ -281,6 +282,7 @@ def main():
     from browser_check_runner import run_scenarios
     from cold_restore_checks import git, manifest, sha, verify_wheel
     from frontend_build_artifact import create, source_identity, verify
+    from web_test_harness import stage_web_test_harness
     assert sys.version_info[:2] == (3, 13) and not sys.flags.optimize
     assert os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
     # run_scenarios merges os.environ with each phase's fixed env. Filter the
@@ -338,11 +340,11 @@ def main():
         source_env = {**common, 'PYTHONPATH': str(ROOT), 'AMPLIFIER_TEST_ROOT': str(ROOT),
                       'AMPLIFIER_TEST_PYTHON': str(host), 'UNIFIED_RUNTIME_PYTHON': str(host),
                       'AMPLIFIER_TEST_PACKAGE_ROOT': str(ROOT / 'amplifier_web'),
-                      'AMPLIFIER_SHELL_NODE_MODULES': str(ROOT / 'frontend/node_modules'),
+                      'AMPLIFIER_SHELL_NODE_MODULES': str(ROOT / '.build/web-client/node_modules'),
                       'AMPLIFIER_TEST_OUTPUT_DIR': str(OUTPUT / 'source-approval-evidence')}
         installed_env = {**common, 'AMPLIFIER_TEST_ROOT': str(harness), 'AMPLIFIER_TEST_PYTHON': str(installed),
                          'AMPLIFIER_TEST_PACKAGE_ROOT': str(package), 'AMPLIFIER_TEST_INSTALLED_STATIC': '1',
-                         'AMPLIFIER_SHELL_NODE_MODULES': str(harness / 'frontend/node_modules'),
+                         'AMPLIFIER_SHELL_NODE_MODULES': str(harness / '.build/web-client/node_modules'),
                          'AMPLIFIER_TEST_OUTPUT_DIR': str(OUTPUT / 'installed-approval-evidence'),
                          'AMPLIFIER_QUESTIONS_FIXTURE': str(harness / 'tests/fixtures/questions_ui_server.py'),
                          'AMPLIFIER_QUESTIONS_OUTPUT': str(OUTPUT / 'questions-evidence')}
@@ -350,12 +352,13 @@ def main():
             ('locked-host', 150, ['uv', 'sync', '--project', str(ROOT), '--locked', '--group', 'dev', '--group', 'artifacts', '--no-install-project', '--python', sys.executable], common, ROOT),
             ('locked-freeze', 15, ['uv', '--quiet', 'pip', 'freeze', '--python', str(host)], common, ROOT),
             ('host-dependencies', 15, ['uv', 'pip', 'check', '--python', str(host)], common, ROOT),
-            ('npm-ci', 90, ['npm', 'ci', '--no-audit', '--no-fund'], common, ROOT),
-            ('chromium', 120, ['node', 'node_modules/playwright/cli.js', 'install', '--with-deps', 'chromium'], common, ROOT),
+            ('npm-ci', 90, ['npm', 'ci', '--prefix', 'tests/web', '--no-audit', '--no-fund'], common, ROOT),
+            ('client-npm-ci', 90, ['npm', 'ci', '--prefix', '.build/web-client', '--no-audit', '--no-fund'], common, ROOT),
+            ('chromium', 120, ['node', 'tests/web/node_modules/playwright/cli.js', 'install', '--with-deps', 'chromium'], common, ROOT),
             ('python', 90, [str(host), '-I', str(Path(__file__).resolve()), '--source-pytest'], source_env, ROOT),
-            ('node', 30, ['node', '--test', '--test-reporter=tap', *NODE_TESTS], common, ROOT),
-            ('build', 90, ['npm', 'run', 'build'], common, ROOT),
-            ('source-approval', 120, ['node', 'tests/approval-lifecycle-browser.mjs'], source_env, ROOT),
+            ('node', 30, ['node', '--test', '--test-reporter=tap', *['../../tests/web/fixture-lifecycle.test.mjs' if p == 'tests/fixture-lifecycle.test.mjs' else p for p in NODE_TESTS]], common, ROOT),
+            ('build', 90, [sys.executable, 'scripts/web_client_build.py', 'build'], common, ROOT),
+            ('source-approval', 120, ['node', 'tests/web/approval-lifecycle-browser.mjs'], source_env, ROOT),
             ('wheel', 30, ['uv', 'build', '--wheel', '--no-build-isolation', '--python', str(host), '--out-dir', str(wheel.parent), str(ROOT)], common, ROOT),
             ('fresh-runtime', 15, ['uv', 'venv', '--python', sys.executable, str(work / 'installed')], common, ROOT),
             ('install-dependencies', 90, ['uv', 'pip', 'install', '--python', str(installed), '--no-deps', '-r', str(OUTPUT / 'locked-requirements.txt')], common, ROOT),
@@ -363,14 +366,14 @@ def main():
             ('installed-dependencies', 15, ['uv', 'pip', 'check', '--python', str(installed)], common, ROOT),
             ('installed-freeze', 15, ['uv', '--quiet', 'pip', 'freeze', '--python', str(installed)], common, ROOT),
             ('installed-imports', 20, [str(installed), '-I', str(Path(__file__).resolve()), '--probe-installed'], common, harness),
-            ('installed-approval', 120, ['node', 'tests/approval-lifecycle-browser.mjs'], installed_env, harness),
-            ('questions', 120, ['node', 'tests/questions-browser.mjs'], installed_env, harness),
+            ('installed-approval', 120, ['node', 'tests/web/approval-lifecycle-browser.mjs'], installed_env, harness),
+            ('questions', 120, ['node', 'tests/web/questions-browser.mjs'], installed_env, harness),
         ]
         save(OUTPUT / 'plan.json', [{'id': n, 'timeoutSeconds': cap, 'command': cmd, 'env': env,
-                                   'cwd': str(root / 'frontend')} for n, cap, cmd, env, root in plans])
+                                   'cwd': str(root / '.build/web-client' if n == 'node' else root)} for n, cap, cmd, env, root in plans])
         report['phases'] = {name: {'status': 'not_run'} for name, *_ in plans}
         save(OUTPUT / 'report.json', report)
-        (harness / 'frontend').mkdir(parents=True)
+        harness.mkdir(parents=True)
         for folder in ('source-approval-evidence', 'installed-approval-evidence', 'questions-evidence'):
             (OUTPUT / folder).mkdir()
         for phase, cap, command, env, root in plans:
@@ -378,7 +381,8 @@ def main():
             assert remaining > 1, 'Overall qualification budget exhausted'
             report['phases'][phase] = {'status': 'running'}
             save(OUTPUT / 'report.json', report)
-            plan = {'schemaVersion': 1, 'scenarios': [{'id': phase, 'command': command, 'env': env}]}
+            plan = {'schemaVersion': 1, 'scenarios': [{'id': phase, 'command': command, 'env': env,
+                'cwd': '.build/web-client' if phase == 'node' else '.'}]}
             code = run_scenarios(root, plan, OUTPUT / phase, budget=min(cap, remaining), case_timeout=cap,
                                  provenance={'commit': revision, 'tree': source['tree']})
             result = json.loads((OUTPUT / phase / 'results.json').read_text())
@@ -433,15 +437,10 @@ def main():
                 assert not dist['direct'].get('dir_info', {}).get('editable')
                 save(OUTPUT / 'installed.json', origins)
                 save(OUTPUT / 'installed-wheel.json', verify_wheel(wheel, candidate, package.parent))
-                (harness / 'tests/fixtures').mkdir(parents=True)
-                for fixture in FIXTURES:
-                    shutil.copy2(ROOT / 'tests/fixtures' / fixture, harness / 'tests/fixtures' / fixture)
-                shutil.copytree(ROOT / 'frontend/tests', harness / 'frontend/tests')
-                shutil.copytree(ROOT / 'frontend/node_modules', harness / 'frontend/node_modules', symlinks=False)
-                shutil.copy2(ROOT / 'frontend/package.json', harness / 'frontend/package.json')
+                stage_web_test_harness(ROOT, harness, copy_dependencies=True)
                 copied = manifest(harness)
                 assert all(sha(ROOT / p) == value for p, value in copied.items())
-                assert not any((harness / p).exists() for p in (*candidate['packages'], 'frontend/src'))
+                assert not any((harness / p).exists() for p in (*candidate['packages'], '.build/web-client/src'))
                 save(OUTPUT / 'harness.json', {'path': str(harness), 'nodeModules': 'real copy', 'files': copied})
             elif phase == 'questions':
                 report['questions'] = verify_questions(OUTPUT / 'questions-evidence', log, package)

@@ -1,6 +1,6 @@
 [project]
 name = "amplifier-unified"
-version = "0.73.3"
+version = "0.74.2"
 description = "A local voice-first Amplifier workspace with a shared user and agent interface"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -18,7 +18,7 @@ dependencies = [
     "jsonschema>=4.23,<5",
     "tinycss2>=1.4,<2",
     "pyyaml>=6.0.3,<7",
-    "filelock>=3.20,<4",
+    "filelock>=4.2.1,<5",
     "qrcode>=8.2,<9",
     "watchfiles>=1.1,<2",
     "mcp>=2.2,<3",
@@ -29,9 +29,9 @@ dependencies = [
 
 [project.optional-dependencies]
 tui = ["amplifier-app-tui @ git+https://github.com/microsoft/amplifier-app-tui@main"]
-native-desktop = ["amplifier-module-tool-computer-use @ git+https://github.com/microsoft/amplifier-bundle-computer-use@main#subdirectory=modules/tool-computer-use"]
+native-desktop = ["amplifier-module-tool-computer-use @ git+https://github.com/microsoft/amplifier-bundle-computer-use@main#subdirectory=modules/tool-computer-use", "Pillow>=13,<14"]
 managed-browser = ["amplifier-bundle-ui-use[browser] @ git+https://github.com/microsoft/amplifier-bundle-ui-use@main"]
-decisions-openai = ["amplifier-module-provider-openai[decisions] @ git+https://github.com/microsoft/amplifier-module-provider-openai@main"]
+decisions-openai = ["amplifier-module-provider-openai[decisions] @ git+https://github.com/microsoft/amplifier-module-provider-openai@main", "Pillow>=13,<14"]
 decisions-azure = ["amplifier-module-provider-azure-openai[decisions] @ git+https://github.com/microsoft/amplifier-module-provider-azure-openai@main"]
 decisions-jev = ["amplifier-module-provider-jev @ git+https://github.com/microsoft/amplifier-module-provider-jev@main"]
 decisions-local = ["amplifier-module-provider-local-decisions @ git+https://github.com/microsoft/amplifier-module-provider-local-decisions@main"]
@@ -106,7 +106,7 @@ dev = [
     "amplifier-module-tool-skills @ git+https://github.com/microsoft/amplifier-bundle-skills@2f58408a879535df36da5c92d2b073f49271ade4#subdirectory=modules/tool-skills",
     "amplifier-module-tool-filesystem @ git+https://github.com/microsoft/amplifier-module-tool-filesystem@663f26a878ae71e136f439fa73ded52b2eb24174",
 ]
-artifacts = ["python-docx>=1.1,<2", "python-pptx>=1,<2", "openpyxl>=3.1,<4", "reportlab>=4,<5", "pypdf>=6,<7", "Pillow>=11,<13"]
+artifacts = ["python-docx>=1.1,<2", "python-pptx>=1,<2", "openpyxl>=3.1,<4", "reportlab>=4,<5", "pypdf>=6,<7", "Pillow>=13,<14"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

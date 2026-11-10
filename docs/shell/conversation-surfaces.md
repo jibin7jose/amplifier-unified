@@ -325,7 +325,8 @@ same tab, retained notes, previews, application, reversal, refresh, restoration,
 and preserved composer drafts. It also checks sandbox DOM/network isolation.
 The theme chooser is test/demo content and is not loaded into ordinary chats.
 
-Run `npm run test:canvas-apps-browser` in `frontend` after building the frontend.
+Run `npm run test:canvas-apps-browser --prefix tests/web` from the Unified root
+after `python scripts/web_client_build.py build`.
 `AMPLIFIER_TEST_PYTHON` may point to the repository's Python environment.
 Backend coverage lives in `tests/test_canvas_apps.py`.
 

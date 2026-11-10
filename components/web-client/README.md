@@ -15,15 +15,18 @@ This experimental extraction preserves the client history from Unified v0.70.0
 (`4854dbd9ec555690269747b7dbe273f008e9e179`, `LICENSE` and `frontend/`).
 The browser interface matches accepted Unified main
 `5692ad7bb7b79e0a000ccc7415cd0ac97d58738e`, preserving the current HTTP/SSE
-behavior. This `0.2.0` candidate changes build assembly and source ownership;
-it does not include the pending compact-sidebar or reset-cleanup interface.
+behavior. Version `0.3.1` retains the compact-sidebar controls and reset-cleanup
+interface accepted in Unified `0.74.0`, and gives client tests one canonical
+owner. Backend reset behavior is qualified by that paired Unified release,
+not by standalone client fixtures.
 The 14 canonical shared inputs are selected from accepted Unified main
 `816c7a67dbafc20bfb28723dd317c71d3bd2bb28`; their bytes still match the current
 accepted server. Shared-input provenance and actual server qualification are distinct.
 The repository is currently private. Its independent package is
-`@amplifier/client-web`, currently `0.2.0`; no registry release or default
-Unified adoption is claimed. Current source changes remain coordinated with
-Unified until that handoff is accepted. The retained AHP client is separate.
+`@amplifier/client-web`, currently `0.3.1`; this candidate's registry publication
+and Unified release adoption remain separate. Client source and tests are authored here. Unified owns selection, host integration
+checks and distribution assembly; its temporary delivery copy and disposable
+prepared tree are consumers of this source. The retained AHP client is separate.
 
 The [family vision](https://github.com/microsoft/amplifier-unified/blob/816c7a67dbafc20bfb28723dd317c71d3bd2bb28/docs/architecture/VISION.md),
 [component boundaries](https://github.com/microsoft/amplifier-unified/blob/816c7a67dbafc20bfb28723dd317c71d3bd2bb28/contracts/component-boundaries.v1.md) and
@@ -49,8 +52,9 @@ Choose fresh, owned package-output and consumer directories for each attempt.
 npm ci
 npm run prepare:inputs
 # Offline alternative: npm run prepare:inputs -- /path/to/canonical-export
-npm run test:portable
+npm test
 npm run build
+npm run test:artifact-assets
 npm run package:artifact -- /tmp/client-package PAIRED_SERVER_COMMIT
 (cd /tmp/client-package && npm pack --pack-destination /tmp)
 ```
@@ -68,7 +72,7 @@ browser cache. Install the archive in an empty consumer with scripts disabled,
 then run the named fixture from this checkout:
 
 ```sh
-npm install --prefix /tmp/client-consumer --ignore-scripts --no-audit --no-fund /tmp/amplifier-client-web-0.2.0.tgz
+npm install --prefix /tmp/client-consumer --ignore-scripts --no-audit --no-fund /path/to/produced-client-archive.tgz
 npm run test:artifact -- /tmp/client-consumer/node_modules/@amplifier/client-web PAIRED_SERVER_COMMIT
 ```
 
@@ -175,23 +179,28 @@ than remote URLs.
 
 ## Validation
 
-`npm run test:portable` names the initial standalone checks: app reload, draft
-journal, state stream, build identity, branding synchronization, AI connection
-actions, chat rows, navigation/grouping, work rendering,
-media, explicit and passive delivery recovery, canonical-input preparation and
-copied-source provenance.
-`npm run test:updates` checks update summaries, component progress and application
-check attention without server fixtures.
-`npm run test:navigation` names the focused shared-age, workspace view,
-resource demand/snapshot and chat-row checks.
-`npm run test:delivery-recovery-browser` exercises passive recovery and new-chat
-source changes against a synthetic HTTP/SSE fixture; it is not an actual server. `npm run test:artifact`
-checks the installed archive. Neither command claims the entire inherited suite.
+`npm test` runs the client unit suite. `npm run test:portable` is an alias for
+that same suite, not a separate partial owner. `npm run test:updates` and
+`npm run test:navigation` select focused client units. After building,
+`npm run test:artifact-assets` checks the produced assets.
 
-The other inherited test bodies and browser commands remain pending dependency
-classification. `npm test` retains its broad unit glob and may require Unified
-source; it is not a qualified standalone entrypoint. Do not silently skip failures,
-remove assertions or describe the selected portable checks as full-suite success.
+The named browser commands and `tests/browser-checks.json` own client-only
+journeys against synthetic HTTP/SSE peers. `npm run test:artifact` checks the
+installed archive. These are separate scopes from unit tests and actual-server
+acceptance; a passing synthetic fixture does not establish live-provider or
+paired-release behavior. Prepare shared inputs and matching browser dependencies
+before the affected checks. Preserve assertions and report failures and skips.
+
+Test ownership is classified: client behavior and its synthetic peers live here;
+Unified owns host/browser integration, canonical-input production, release and
+examples in `tests/web` and `scripts/`. Shared generic helper APIs use one
+canonical implementation with injected test-framework facades. Unified's normal
+browser runner composes the two registries and records each identity; copying
+client tests back into the host would create a second owner.
+
+The following pinned links retain the earlier owner locations as historical
+references. For the current layout and commands, use Unified's
+[component ownership guide](https://github.com/microsoft/amplifier-unified/blob/main/components/README.md).
 
 Known Unified owners were removed from this current tree, with their history
 preserved in the import and their live source/coverage retained upstream:
@@ -215,7 +224,7 @@ preserved in the import and their live source/coverage retained upstream:
   their three wrappers and canonical examples/SDK.
 
 Application builds and browser acceptance follow the owning workspace's DTU
-rules. Record exact sources and limits. Main owns Unified release/adoption;
+rules. Record exact sources and limits. Unified owns its release/adoption;
 this private component does not automatically replace its tested default.
 
 The [build identity owner](scripts/build-identity.mjs) includes authored browser,

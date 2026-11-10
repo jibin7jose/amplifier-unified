@@ -146,7 +146,7 @@ value without shell quoting inside the value or additional command arguments.
 Existing per-fixture `FIXTURE_PYTHON` / `UNIFIED_TEST_PYTHON` overrides remain
 fallbacks when the common setting is unset or empty, followed by the existing
 checkout-local path. New launchers should use `fixturePython` from
-`frontend/tests/fixture-python.mjs`. This chooses only the interpreter; readiness,
+`tests/web/fixture-python.mjs`. This chooses only the interpreter; readiness,
 fixture arguments, browser installation and product assertions stay separate.
 
 Use Python 3.13, uv and Node.js 22 with npm. Establish environment ownership and a
@@ -186,8 +186,11 @@ verifies the selected client and records its source/input/build provenance in
 `static/client-component.json`. See [client assembly](../../components/README.md).
 Verify `uv sync --locked --dry-run --group dev --group artifacts`
 in the owned environment. Reuse installed dependencies that match the current
-lockfiles and toolchain; run `npm ci --prefix frontend` only when preparation is
-missing or stale. Include the four prepared metadata files and all resulting
+lockfiles and toolchain; prepare the selected client with
+`python scripts/web_client_build.py prepare`, then use
+`npm ci --prefix .build/web-client` and `npm ci --prefix tests/web` only when the
+respective dependencies are missing or stale. Include the four prepared metadata
+files and all resulting
 `amplifier_web/static` changes in the release commit. A host-only version change
 does not restamp the client identity. Commit:
 
@@ -381,12 +384,15 @@ this is not a mandatory every-release checklist:
 ```sh
 # Prepare dependencies only when the existing environment does not match.
 uv sync --locked --group dev --group artifacts
-npm ci --prefix frontend
+python scripts/web_client_build.py prepare
+npm ci --prefix .build/web-client
+npm ci --prefix tests/web
 # Qualify changed behavior; reuse matching prior evidence for unchanged inputs.
 uv run --no-sync pytest -q --tb=short tests/test_affected_feature.py
-(cd frontend && node --test tests/affected-feature.test.mjs)
+node --test .build/web-client/tests/affected-feature.test.mjs
+# Host integration/producer units live in tests/web/*.test.mjs.
 # For release version/notes/assets, use prepare --build above; do not build twice.
-# Select relevant browser scripts from frontend/package.json.
+# Select relevant browser scripts from tests/web/package.json.
 # Full suites and committed-assets comparison remain with their CI owners.
 ```
 
@@ -543,7 +549,7 @@ not hard preemption of filesystem/parser calls. These are finalization and
 retention bounds, not limits on pytest's existing in-process XML construction
 or pending-file growth. The verbose log retains its separate head/tail bound.
 
-Extended browser checks use the explicit `frontend/tests/browser-checks.json`
+Extended browser checks use the explicit `tests/web/browser-checks.json`
 plan, preserving distinct flags and modes. Scenarios run serially in separate
 process groups, with a complete intended-coverage record written before execution.
 A failed scenario remains failed while later independent scenarios run. The

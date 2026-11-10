@@ -13,11 +13,11 @@ copying an exhaustive route/component table into this guide:
 
 | Responsibility | Owner |
 | --- | --- |
-| Section titles, destination IDs, parent routes and public aliases | [settings-navigation.js](../frontend/src/settings-navigation.js) and [navigation checks](../frontend/tests/settings-navigation.test.mjs) |
+| Section titles, destination IDs, parent routes and public aliases | [settings-navigation.js](../components/web-client/src/settings-navigation.js) and [navigation checks](../components/web-client/tests/settings-navigation.test.mjs) |
 | Host routing of legacy destinations and Settings state for agents | [settings_navigation.py](../amplifier_web/settings_navigation.py) |
-| Destination-to-editor mapping, generic contributed sections and retained editor mounts | [settings-experience.jsx](../frontend/src/settings-experience.jsx) |
-| Compact hierarchy, browser history, scroll restoration and footer actions | [settings-mobile.js](../frontend/src/settings-mobile.js) and [settings-layout.jsx](../frontend/src/settings-layout.jsx) |
-| Dirty-editor registration and review/discard decisions | [settings-drafts.jsx](../frontend/src/settings-drafts.jsx) |
+| Destination-to-editor mapping, generic contributed sections and retained editor mounts | [settings-experience.jsx](../components/web-client/src/settings-experience.jsx) |
+| Compact hierarchy, browser history, scroll restoration and footer actions | [settings-mobile.js](../components/web-client/src/settings-mobile.js) and [settings-layout.jsx](../components/web-client/src/settings-layout.jsx) |
+| Dirty-editor registration and review/discard decisions | [settings-drafts.jsx](../components/web-client/src/settings-drafts.jsx) |
 
 `settingsSection`, `settingsExpanded` and `panel: appearance` remain supported
 navigation inputs. Older Setup/Capabilities/Maintenance destinations resolve
@@ -53,7 +53,7 @@ Follow the [release qualification policy](validation/release-qualification.md):
 run affected unit and browser checks against exact source in an owned DTU with
 synthetic state. Broad suites run nightly or by explicit request, not automatically
 per release; this guide adds no exhaustive merge or publication gate. Maintained commands live in
-[frontend/package.json](../frontend/package.json), including:
+[tests/web/package.json](../tests/web/package.json), including:
 
 | Changed behavior | Relevant browser journey |
 | --- | --- |

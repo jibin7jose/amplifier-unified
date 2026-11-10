@@ -11,12 +11,39 @@ from pathlib import Path
 import re
 import shlex
 import stat
+import subprocess
+import sys
 import tempfile
 
 MAX_ARCHIVE = 512 * 1024 * 1024
 SINGLE_FILE_LIMIT = 128 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024 * 1024
 BUFFER_BYTES = 1024 * 1024
+
+
+def repository_client(source):
+    path = Path(source) / 'components/web-client.source.json'
+    if not path.is_file():
+        return False
+    with path.open('rb') as stream:
+        content = stream.read(16 * 1024 + 1)
+    if len(content) > 16 * 1024:
+        raise ValueError('The selected client source record exceeds its bound.')
+    return json.loads(content).get('delivery', {}).get('type') == 'repository'
+
+
+def export_snapshot(source, destination, ordinary_export):
+    """Use the existing raw snapshot owner when ignored client inputs are required."""
+    if not repository_client(source):
+        return ordinary_export()
+    result = subprocess.run([sys.executable, '-I', '-B',
+                             str(Path(__file__).with_name('test_origin_snapshot.py')),
+                             str(source), str(destination)], capture_output=True, timeout=300)
+    if result.returncode or len(result.stdout) > 65536:
+        raise ValueError('Selected client source export failed. Run '
+                         'python scripts/web_client_build.py prepare before transferring source; '
+                         'keep the source stable and inspect its prepared selection.')
+    return json.loads(result.stdout)
 
 
 def identity(info):

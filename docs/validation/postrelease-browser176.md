@@ -43,7 +43,7 @@ unreproduced post-release test failure requiring its next failing receipt.
 
 ## Owner and evidence
 
-Both scenarios remain in `frontend/tests/browser-checks.json`, owned by the
+Both scenarios remain in `tests/web/browser-checks.json`, owned by the
 extended-browser post-release/manual lane. Case-specific artifact destinations
 are within the existing uploaded `output/browser-checks/` tree. The 88-scenario
 count and original 65-command migration fingerprint remain unchanged.

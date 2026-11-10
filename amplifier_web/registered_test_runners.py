@@ -22,7 +22,7 @@ FILES = ('managed_runner_isolation.py', 'incus_engine_core_binding.py', 'managed
          'managed_incus_target.py', 'test_runner_backend_policy.py', 'test_runner_controller.py', 'incus_environment_worker.py', 'test_environment_worker.py',
          'test_host_resources.py', 'test_environment_profiles.py', 'environment_retention.py',
          'test_job_transport.py', 'test_environment_preparation.py', 'test_source_transfer.py', 'test_dependency_layers.py', 'test_environment_prepare_guest.py',
-         'test_environment_initialize_guest.py', 'test_job_guest.py')
+         'test_environment_initialize_guest.py', 'test_job_guest.py', 'test_origin_snapshot.py', 'test_origin_files.py')
 CHUNK = 512 * 1024
 MAX_SOURCE = 512 * 1024**2
 
@@ -231,7 +231,8 @@ def qualify_retained(app, config):
 
 
 def export_source(config, folder, source):
-    if config.get('originSnapshotVersion') == 1:
+    from .test_source_transfer import repository_client
+    if config.get('originSnapshotVersion') == 1 or repository_client(source):
         from .test_origin_snapshot import export_archive
         return export_archive(Path(source), folder / 'source.tar')
     script = "import json,dataclasses;from pathlib import Path, PurePosixPath;from digital_twin_universe import lib;s=lib.export_repository_snapshot(Path(__import__('sys').argv[1]),Path(__import__('sys').argv[2]));print(json.dumps(s.model_dump(mode='json')))"

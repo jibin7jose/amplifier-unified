@@ -18,11 +18,11 @@ Commit the generated lockfile in your own component project. React comes from
 the host and must not be added to this bundle.
 
 Unified contributors can produce that tarball with `npm pack` in
-`packages/shell-sdk`. The existing frontend-toolchain entrypoint remains available
+`packages/shell-sdk`. The Unified example-build entrypoint remains available
 for in-repository tests:
 
 ```sh
-node frontend/scripts/build-shell-controls-example.mjs
+node scripts/examples/build-shell-controls-example.mjs
 ```
 
 Stage `dist/manifest.json` and `dist/module.mjs` with `shell.packages.stage`, run
