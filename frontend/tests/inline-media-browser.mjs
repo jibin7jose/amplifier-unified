@@ -10,6 +10,7 @@ import {chromium,expect,request} from '@playwright/test';
 import assert from 'node:assert/strict';
 import {setTimeout as delay} from 'node:timers/promises';
 import './composer-test-helpers.mjs';
+import {launchNativeBrowser,nativeKey,nativeControl,nativeTab,nativeInput,zoomMetrics} from './inline-media-native-input.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const evidenceDir=process.env.INLINE_MEDIA_EVIDENCE_DIR;
@@ -20,6 +21,11 @@ const headed=process.env.INLINE_MEDIA_HEADED==='1';
 if(process.env.INLINE_MEDIA_HEADED&&!['0','1'].includes(process.env.INLINE_MEDIA_HEADED))
  throw Error('INLINE_MEDIA_HEADED must be 0 or 1');
 const selectedPhases=process.env.INLINE_MEDIA_PHASES?new Set(JSON.parse(process.env.INLINE_MEDIA_PHASES)):null;
+const guestNative=process.env.INLINE_MEDIA_NATIVE_INPUT==='x11';
+if(process.env.INLINE_MEDIA_NATIVE_INPUT&&!guestNative)throw Error('Unsupported native input route');
+if(guestNative&&(!headed||!selectedPhases||[...selectedPhases].some(name=>
+ !['gif-live-attach','mp4-native','mp4-native-controls','visibility','keyboard-200-percent'].includes(name))))
+ throw Error('Guest native input requires headed, explicitly selected media interaction phases');
 if(selectedPhases&&![...selectedPhases].every(name=>typeof name==='string'))
  throw Error('INLINE_MEDIA_PHASES must contain phase names');
 const browserArgs=process.env.CHROMIUM_ARGS?JSON.parse(process.env.CHROMIUM_ARGS):
@@ -33,7 +39,7 @@ const scenarioPhases=['gif-live-attach','metadata-malformed-retry','gif-resume',
  'mp4-native','mp4-native-controls','mp4-decode-error','mp4-explicit-cleanup','partial-disposal','large-native',
  'reduced-motion','visibility','offscreen','decoder-error','unsupported-decoder','decoder-late-cleanup',
  'preservation','worker-history-descriptor','gif-canvas','gif-canvas-errors','endpoints','layout','keyboard-200-percent'];
-let browser,fixture,boot,sharedStorage,sharedContext,exit,forcedKill=false;
+let browser,nativeBrowser,fixture,boot,sharedStorage,sharedContext,exit,forcedKill=false;
 await mkdir(resolve(evidenceDir),{recursive:true});
 const privateHeaders={'X-Inline-Media-Fixture':'synthetic-control'};
 const phasePath=name=>join(evidenceDir,name+'.json');
@@ -213,7 +219,7 @@ async function newClient(options={}){
  // Distinct pages have distinct host client identities. One browser context
  // preserves that discriminator without unsupported single-process multi-contexts.
  if(!sharedContext){
-  sharedContext=await browser.newContext({baseURL:boot.url,viewport:{width:1280,height:950},storageState:sharedStorage});
+  sharedContext=nativeBrowser?.context||await browser.newContext({baseURL:boot.url,viewport:{width:1280,height:950},storageState:sharedStorage});
   // Library-mode Playwright otherwise waits forever for actions/events. Keep
   // failures local so phase evidence and cleanup survive a missing control.
   await sharedContext.tracing.start({screenshots:true,snapshots:true});
@@ -431,12 +437,13 @@ try{
   });
   const timeout=setTimeout(()=>rejectBoot(Error('Fixture startup deadline exceeded')),120000);
   try{boot=await pendingBoot}finally{clearTimeout(timeout)}
-  browser=await chromium.launch({headless:!headed,
+  if(guestNative){nativeBrowser=await launchNativeBrowser();browser=nativeBrowser.browser}
+  else browser=await chromium.launch({headless:!headed,
    ...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{}),
    args:browserArgs});
   assert.equal(boot.mode,mode);
   assert.ok(boot.frontendAssets.some(row=>row.filename.endsWith('.js')));
-  return {mode:boot.mode,python:boot.python,browserVersion:browser.version(),headed,samples:boot.samples,
+  return {mode:boot.mode,python:boot.python,browserVersion:browser.version(),headed,guestNative,samples:boot.samples,
    servedPackageFrontend:boot.frontendAssets,
    security:'production authentication, origin boundaries, CSP and media routes unchanged'};
  });
@@ -753,6 +760,31 @@ try{
   await phase('mp4-native-controls',async()=>{
    if(!videoClient||!mp4)throw new CantCheck('MP4 setup did not reach native controls');
    const {page}=videoClient;
+   if(guestNative){
+    const inputStart=nativeInput.length,video=figureFor(page,mp4.id).locator('video');
+    const selector=`[data-media-id="${mp4.id}"] video`;
+    await page.bringToFront();await video.scrollIntoViewIfNeeded();
+    assert.equal(await video.evaluate(node=>node.paused),true);
+    const fullscreen=await nativeControl(page,selector,'button',/^enter full screen$/i);
+    nativeKey('space');
+    await expect.poll(()=>video.evaluate(node=>document.fullscreenElement===node)).toBe(true);
+    await page.screenshot({path:join(evidenceDir,'mp4-fullscreen.png')});
+    nativeKey('Escape');
+    await expect.poll(()=>page.evaluate(()=>document.fullscreenElement===null)).toBe(true);
+    await nativeControl(page,selector,'button',/^unmute$/i);nativeKey('space');
+    await expect.poll(()=>video.evaluate(node=>node.muted)).toBe(false);
+    const before=await video.evaluate(node=>node.volume);
+    const volume=await nativeControl(page,selector,'slider',/^volume$/i);
+    nativeKey(before>.5?'Left':'Right');
+    await expect.poll(()=>video.evaluate(node=>node.volume)).not.toBe(before);
+    const after=await video.evaluate(node=>({volume:node.volume,paused:node.paused,muted:node.muted}));
+    assert.equal(after.paused,true);
+    await page.screenshot({path:join(evidenceDir,'mp4-volume.png')});
+    await nativeControl(page,selector,'button',/^mute$/i);nativeKey('space');
+    await expect.poll(()=>video.evaluate(node=>node.muted)).toBe(true);
+    return {fullscreenUI:true,fullscreenVideo:true,fullscreenExitNull:true,volumeUI:true,
+     fullscreen,volume,volumeBefore:before,volumeAfter:after,input:nativeInput.slice(inputStart)};
+   }
    // UA shadow controls are not portable DOM. Only claim when THIS browser
    // exposes usable accessibility targets; absence is explicit, never PASS.
    const fullscreen=page.getByRole('button',{name:/full.?screen/i}),volume=page.getByRole('slider',{name:/volume/i});
@@ -762,6 +794,7 @@ try{
    await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
    await page.screenshot({path:join(evidenceDir,'mp4-fullscreen.png')});
    await page.keyboard.press('Escape');
+   await expect.poll(()=>page.evaluate(()=>document.fullscreenElement===null)).toBe(true);
    const video=figureFor(page,mp4.id).locator('video');
    const before=await video.evaluate(node=>node.volume);
    await volume.focus();await page.keyboard.press(before>.5?'ArrowDown':'ArrowUp');
@@ -890,16 +923,29 @@ try{
   });
   await phase('visibility',async()=>{
    if(!primary||!saved)throw new CantCheck('GIF setup unavailable');
+   if(guestNative)await primary.page.bringToFront();
    const {page,context}=primary,figure=await readyFigure(page,saved.id);
-   const other=await context.newPage();pages.add(other);
+   let other;
    try{
     await page.bringToFront();await figure.getByRole('button',{name:'Play GIF',exact:true}).click();
+    const foreground=await zoomMetrics(page),drawsBefore=(await draws(page,saved.id)).length;
+    await expect.poll(async()=>(await draws(page,saved.id)).length).toBeGreaterThan(drawsBefore);
+    other=guestNative?await nativeTab(page):await context.newPage();pages.add(other);
     await other.goto(boot.url+'/api/health');await other.bringToFront();
     if(!await page.evaluate(()=>document.hidden))throw new CantCheck('This browser does not mark background tabs hidden');
     await expect(figure).toHaveAttribute('data-playback','paused');
-    return {actualDocumentHidden:true,paused:true};
+    const background=await zoomMetrics(page),pixels=await canvasPixels(figure),pausedDraws=await draws(page,saved.id);
+    assert.equal(background.visibilityState,'hidden');
+    const interval=Math.max(...pausedDraws.map(row=>row.duration))/1000+100;
+    await clockWait(page,interval);
+    assert.equal((await draws(page,saved.id)).length,pausedDraws.length);
+    assert.deepEqual(await canvasPixels(figure),pixels);
+    await other.screenshot({path:join(evidenceDir,'visibility-foreground-tab.png')});
+    return {actualDocumentHidden:true,paused:true,foreground,background,
+     stableIntervalMs:interval,draws:pausedDraws.length,pixels,nativeTab:guestNative};
    }finally{
-    await other.close();pages.delete(other);await page.bringToFront();
+    if(other){await other.close();pages.delete(other)}await page.bringToFront();
+    if(guestNative)await expect.poll(()=>page.evaluate(()=>document.hidden)).toBe(false);
     // An unsupported headless visibility sensor leaves playback running.
     // Settle this phase explicitly; the next phase must not inherit that state.
     const pause=figure.getByRole('button',{name:'Pause GIF',exact:true});
@@ -1567,27 +1613,44 @@ try{
   await phase('keyboard-200-percent',async()=>{
    if(!primary)throw new CantCheck('Browser setup unavailable');
    const {page}=primary;
+   const inputStart=nativeInput.length,proof={};
+   await page.bringToFront();
+   const reset=async()=>{
+    if(guestNative){nativeKey('Control_L','0');await expect.poll(()=>page.evaluate(()=>devicePixelRatio)).toBe(1)}
+    else await page.keyboard.press('Control+0');
+   };
    try{
    // Browser keyboard zoom, not CSS transform masquerading as zoom.
-   await page.keyboard.press('Control+0');
+   await reset();proof.baseline=await zoomMetrics(page);
    const before=await page.evaluate(()=>devicePixelRatio);
    let after=before;
    for(let n=0;n<8&&after/before<1.99;n++){
-    await page.keyboard.press('Control++');
+    if(guestNative){
+     nativeKey('Control_L','equal');
+     await expect.poll(()=>page.evaluate(()=>devicePixelRatio)).not.toBe(after);
+    }else await page.keyboard.press('Control++');
     after=await page.evaluate(()=>devicePixelRatio);
    }
    if(after/before<1.99||after/before>2.01)throw new CantCheck('This browser does not apply true 200% keyboard page zoom');
+   proof.zoomed=await zoomMetrics(page);
+   if(guestNative){
+    assert.equal(before,1);assert.equal(after,2);assert.equal(proof.zoomed.visualScale,1);
+    assert.equal(proof.zoomed.outerWidth,proof.baseline.outerWidth);
+    assert.equal(proof.zoomed.screenWidth,proof.baseline.screenWidth);
+   }
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
    const play=page.getByRole('button',{name:'Play GIF',exact:true}).first();
    await play.scrollIntoViewIfNeeded();
    const id=await play.evaluate(node=>node.closest('[data-media-id]').dataset.mediaId),figure=figureFor(page,id);
-   await play.focus();await page.keyboard.press('Space');
+   await play.focus();
+   if(guestNative)nativeKey('space');else await page.keyboard.press('Space');
    await expect(figure).toHaveAttribute('data-playback','playing');
-   await page.keyboard.press('Space');
+   if(guestNative)nativeKey('space');else await page.keyboard.press('Space');
    await expect(figure).toHaveAttribute('data-playback','paused');
    await page.screenshot({path:join(evidenceDir,'keyboard-200-percent.png')});
-   return {zoomRatio:after/before,keyboard:true};
-   }finally{await page.keyboard.press('Control+0')}
+   Object.assign(proof,{zoomRatio:after/before,keyboard:true,tabTraversalQualified:false});
+   return proof;
+   }finally{await reset();proof.reset=await zoomMetrics(page);proof.input=nativeInput.slice(inputStart)}
   },{required:false});
  }
 }catch(error){
@@ -1599,6 +1662,9 @@ try{
   // browser without observing frame disposal is not cleanup proof.
   for(const context of [...contexts]){
    for(const page of context.pages()){
+    // A real Chrome exits when its last tab closes. Keep its initial blank tab
+    // alive until trace retention and the explicit observed Browser.close.
+    if(page===nativeBrowser?.keepAlive)continue;
     if(page.isClosed())continue;
     try{
      if(blockedApplicationCleanup.has(page))throw Error('Application cleanup remains incomplete; final sweep must not enqueue behind unresolved dispatch');
@@ -1614,16 +1680,25 @@ try{
      catch(error){errors.push('Page close: '+error.message)}
     }
    }
-   try{await context.tracing.stop({path:join(evidenceDir,`browser-trace-${Date.now()}.zip`)});await context.close();contexts.delete(context)}catch(error){errors.push('Context close: '+error.message)}
+   try{
+    await context.tracing.stop({path:join(evidenceDir,`browser-trace-${Date.now()}.zip`)});
+    if(!nativeBrowser)await context.close();contexts.delete(context);
+   }catch(error){errors.push('Context close: '+error.message)}
   }
-  if(browser)try{await browser.close();assert.equal(browser.isConnected(),false)}catch(error){errors.push('Browser close: '+error.message)}
+  let nativeCleanup;
+  if(browser)try{
+   if(nativeBrowser)nativeCleanup=await nativeBrowser.close();else await browser.close();
+   assert.equal(browser.isConnected(),false);
+  }catch(error){errors.push('Browser close: '+error.message)}
+  if(guestNative)try{await writeEvidence(join(evidenceDir,'native-input.json'),nativeInput)}
+  catch(error){errors.push('Native input evidence: '+error.message)}
   if(fixture&&fixture.exitCode===null){
    fixture.kill('SIGTERM');
    const timer=setTimeout(()=>{forcedKill=true;fixture.kill('SIGKILL')},10000);
    try{await exit}finally{clearTimeout(timer)}
   }
   const processResult=exit?await exit:null;
-  const evidence={decoderEvidence,errors,pageErrors,pageClosed:pages.size===0,contextClosed:contexts.size===0,
+  const evidence={decoderEvidence,errors,pageErrors,nativeCleanup,pageClosed:pages.size===0,contextClosed:contexts.size===0,
    browserDisconnected:!browser?.isConnected(),fixture:fixtureRows.filter(row=>row.phase),process:processResult,forcedKill};
   await writeEvidence(join(evidenceDir,'cleanup-observations.json'),evidence);
   assert.equal(forcedKill,false,'Forced kill is a cleanup failure, never success');

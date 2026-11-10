@@ -476,6 +476,284 @@ def test_media_diagnostic_applies_ui_guard_before_cleanup_mutations():
     assert final.index('blockedApplicationCleanup.has(page)') < final.index("await action(page,'session.create'")
 
 
+def test_media_native_route_is_opt_in_and_partial_result_stays_unqualified():
+    source = (ROOT / 'frontend/tests/inline-media-browser.mjs').read_text()
+    assert "process.env.INLINE_MEDIA_NATIVE_INPUT==='x11'" in source
+    assert 'guestNative&&(!headed||!selectedPhases' in source
+    assert 'qualified:fullScenario&&!failed&&remainingPhysical.length===0' in source
+    assert "coreChecks:fullScenario?(corePassed?'PASS':'NOT_QUALIFIED'):'NOT_RUN'" in source
+    assert "if(guestNative)await primary.page.bringToFront();" in source
+    assert 'if(page===nativeBrowser?.keepAlive)continue;' in source
+    assert 'assert.equal((await draws(page,saved.id)).length,pausedDraws.length)' in source
+    assert 'assert.deepEqual(await canvasPixels(figure),pixels)' in source
+    assert 'assert.equal(before,1);assert.equal(after,2)' in source
+    assert 'tabTraversalQualified:false' in source
+
+
+def test_media_native_helper_uses_real_input_and_bounded_owned_cleanup():
+    source = (ROOT / 'frontend/tests/inline-media-native-input.mjs').read_text()
+    assert 'connectOverCDP(endpoint,{noDefaults:true})' in source
+    assert "shadow.shadowRootType,'user-agent'" in source
+    assert "cdp.send('DOM.focus',{backendNodeId})" in source
+    assert "bounded(exited,'Browser process exit')" in source
+    assert 'async function settleProcess(errors)' in source
+    assert "assert.equal(startTime(),binding?.startTime" in source
+    assert "status:'attempted'" in source
+    for forbidden in ('requestFullscreen(', '.volume=', 'setFocusEmulationEnabled',
+                      'setDeviceMetricsOverride', 'dispatchKeyEvent'):
+        assert forbidden not in source
+    keyboard = (ROOT / 'frontend/tests/inline-media-x11.py').read_text()
+    assert "contract.get('profileId') != 'browser-test'" in keyboard
+    assert 'XTestFakeKeyEvent(display, code, 1, 0)' in keyboard
+    assert 'XTestFakeKeyEvent(display, code, 0, 0)' in keyboard
+    assert "if owner != pid:" in keyboard
+    assert "result.update(status='uncertain' if started else 'rejected'" in keyboard
+
+
+@pytest.mark.parametrize('mode', ['rejected', 'uncertain', 'page-rejected', 'success'])
+def test_media_native_tab_retains_input_failure_and_observes_page_wait(tmp_path, mode):
+    import subprocess
+    source = (ROOT / 'frontend/tests/inline-media-native-input.mjs').read_text()
+    helper = re.search(r'export async function nativeTab\(page\)\{\n.*?\n\}', source, re.S)
+    assert helper, 'Exercise the maintained helper without loading browser dependencies'
+    evidence_path = tmp_path / 'native-tab-final.json'
+    program = """
+import assert from 'node:assert/strict';
+import {writeFileSync} from 'node:fs';
+import {setImmediate as nextTurn} from 'node:timers/promises';
+const mode=MODE,evidencePath=EVIDENCE;
+const inputError=Object.assign(Error('original native input '+mode),{input:{status:mode}});
+const pageError=Error('later page wait rejected');
+const openedPage={id:'synthetic-page'};
+let attempts=0,waits=0,eventSettled=false,cleanup=false,failure=null,result;
+function nativeKey(...keys){
+ attempts++;assert.deepEqual(keys,['Control_L','t']);
+ if(mode==='rejected'||mode==='uncertain')throw inputError;
+}
+const page={async bringToFront(){},context(){return {
+ waitForEvent(name,options){
+  waits++;assert.equal(name,'page');assert.equal(options.timeout,5000);
+  return new Promise((resolve,reject)=>setImmediate(()=>{
+   eventSettled=true;
+   if(mode==='success')resolve(openedPage);else reject(pageError);
+  }));
+ }
+}}};
+HELPER
+try{result=await nativeTab(page)}
+catch(error){failure=error}
+finally{
+ // Model async cleanup crossing the event-loop boundary where an abandoned
+ // promise would terminate Node under --unhandled-rejections=strict.
+ await nextTurn();await nextTurn();cleanup=true;
+ writeFileSync(evidencePath,JSON.stringify({mode,attempts,waits,eventSettled,cleanup,
+  success:result===openedPage,error:failure?.message||null,
+  inputStatus:failure?.input?.status||null,
+  originalIdentity:failure===(mode==='page-rejected'?pageError:inputError)}));
+}
+""".replace('MODE', json.dumps(mode)).replace('EVIDENCE', json.dumps(str(evidence_path))).replace(
+        'HELPER', helper.group(0))
+    result = subprocess.run(
+        ['node', '--unhandled-rejections=strict', '--input-type=module', '-e', program],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    saved = json.loads(evidence_path.read_text())
+    assert saved['attempts'] == saved['waits'] == 1
+    assert saved['eventSettled'] is True and saved['cleanup'] is True
+    assert saved['success'] is (mode == 'success')
+    if mode == 'success':
+        assert saved['error'] is None
+    elif mode == 'page-rejected':
+        assert saved['originalIdentity'] is True
+        assert saved['error'] == 'later page wait rejected'
+    else:
+        assert saved['originalIdentity'] is True
+        assert saved['inputStatus'] == mode
+        assert saved['error'] == 'original native input ' + mode
+
+
+def test_media_native_preflight_retains_launch_failure(tmp_path):
+    import subprocess
+    source = (ROOT / 'frontend/tests/inline-media-native-preflight.mjs').read_text()
+    # Execute the maintained preflight with a failing launch dependency. There
+    # must still be durable phase identity and no false successful exit.
+    source = source.replace(
+        "from './inline-media-native-input.mjs'", "from './failed-launch.mjs'")
+    (tmp_path / 'preflight.mjs').write_text(source)
+    (tmp_path / 'failed-launch.mjs').write_text("""
+export const nativeInput=[];
+export function nativeKey(){}
+export function nativeControl(){}
+export function nativeTab(){}
+export function wrongWindowControl(){}
+export async function bounded(promise){return promise}
+export async function launchNativeBrowser(){throw Error('negative launch control')}
+""")
+    import os
+    result = subprocess.run(
+        ['node', str(tmp_path / 'preflight.mjs')],
+        env={**os.environ, 'INLINE_MEDIA_EVIDENCE_DIR': str(tmp_path)},
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 1
+    evidence = json.loads((tmp_path / 'preflight.json').read_text())
+    assert evidence['qualified'] is False
+    assert evidence['phases']['launch']['status'] == 'NOT_QUALIFIED'
+    assert evidence['error']['message'] == 'negative launch control'
+    assert evidence['phases']['volume']['status'] == 'NOT_RUN'
+    assert (tmp_path / 'preflight-before-cleanup.json').exists()
+    assert source.index("out+'/preflight-before-cleanup.json'") < source.index('await native.close()')
+    assert "catch(error){evidence.cleanup={status:'FAIL',reason:error.message,...error.cleanup}}" in source
+
+
+@pytest.mark.parametrize('fail_write', [False, True])
+def test_media_native_preflight_cleanup_independent_of_primary_and_write(tmp_path, fail_write):
+    import os
+    import subprocess
+    source = (ROOT / 'frontend/tests/inline-media-native-preflight.mjs').read_text().replace(
+        "from './inline-media-native-input.mjs'", "from './failed-sample.mjs'")
+    (tmp_path / 'preflight.mjs').write_text(source)
+    (tmp_path / 'failed-sample.mjs').write_text("""
+import {writeFileSync} from 'node:fs';
+export const nativeInput=[];
+export function nativeKey(){}
+export function nativeControl(){}
+export function nativeTab(){}
+export function wrongWindowControl(){}
+export async function bounded(promise){return promise}
+export async function launchNativeBrowser(){return {
+ browser:{version:()=> 'negative',isConnected:()=>false},
+ context:{setDefaultTimeout(){},async newPage(){return {
+  async setContent(){throw Error('negative sample control')}
+ }}},
+ async close(){
+  writeFileSync(process.env.INLINE_MEDIA_EVIDENCE_DIR+'/cleanup-ran','yes');
+  throw Object.assign(Error('negative cleanup control'),{cleanup:{processExited:false,custody:{pid:123}}});
+ }
+}}
+""")
+    if fail_write:
+        (tmp_path / 'preflight-before-cleanup.json').mkdir()
+    result = subprocess.run(
+        ['node', str(tmp_path / 'preflight.mjs')],
+        env={**os.environ, 'INLINE_MEDIA_EVIDENCE_DIR': str(tmp_path)},
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 1
+    evidence = json.loads((tmp_path / 'preflight.json').read_text())
+    assert (tmp_path / 'cleanup-ran').read_text() == 'yes'
+    assert evidence['error']['message'] == 'negative sample control'
+    assert evidence['cleanup']['reason'] == 'negative cleanup control'
+    assert evidence['cleanup']['custody'] == {'pid': 123}
+    assert evidence['closed'] is False
+    assert evidence['qualified'] is False
+    assert bool(evidence.get('retentionError')) is fail_write
+
+
+def test_media_native_input_write_failure_does_not_skip_fixture_stop():
+    source = (ROOT / 'frontend/tests/inline-media-browser.mjs').read_text()
+    cleanup = source.split("await phase('cleanup',async()=>{", 1)[1]
+    assert "catch(error){errors.push('Native input evidence: '+error.message)}" in cleanup
+    assert cleanup.index("Native input evidence: ") < cleanup.index("fixture.kill('SIGTERM')")
+
+
+@pytest.mark.skipif(not Path('/proc/self/stat').exists(), reason='Linux managed-guest process identity')
+def test_media_native_foreign_window_owner_refuses_before_any_key(monkeypatch, tmp_path, capsys):
+    import ctypes as c
+    import os
+    import runpy
+    import sys
+    contract = tmp_path / 'contract.json'
+    contract.write_text(json.dumps({'profileId': 'browser-test', 'workspace': '/workspace'}))
+    pid = os.getpid()
+    start = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19]
+    monkeypatch.setenv('AMPLIFIER_TEST_CONTRACT', str(contract))
+    monkeypatch.setenv('DISPLAY', ':99')
+    monkeypatch.setenv('INLINE_MEDIA_X11_BINDING', json.dumps(
+        {'pid': pid, 'startTime': start, 'profile': '/tmp/owned-test-browser', 'display': ':99'}))
+    monkeypatch.delenv('INLINE_MEDIA_EXPECT_WINDOW', raising=False)
+    original = Path.read_bytes
+    monkeypatch.setattr(Path, 'read_bytes', lambda p: b'--user-data-dir=/tmp/owned-test-browser\0'
+                        if str(p) == f'/proc/{pid}/cmdline' else original(p))
+    calls = []
+    foreign_pid = c.c_ulong(pid + 10000)
+
+    class Function:
+        def __init__(self, fn):
+            self.fn = fn
+
+        def __call__(self, *args):
+            return self.fn(*args)
+
+    def focus(display, window, revert):
+        c.cast(window, c.POINTER(c.c_ulong))[0] = 42
+        return 0
+
+    def property_value(display, window, atom, offset, length, delete, requested,
+                       kind, fmt, count, remaining, data):
+        c.cast(kind, c.POINTER(c.c_ulong))[0] = 7
+        c.cast(fmt, c.POINTER(c.c_int))[0] = 32
+        c.cast(count, c.POINTER(c.c_ulong))[0] = 1
+        c.cast(data, c.POINTER(c.c_void_p))[0] = c.addressof(foreign_pid)
+        return 0
+
+    class Library:
+        def __getattr__(self, name):
+            fn = {
+                'XOpenDisplay': lambda *args: 123,
+                'XGetInputFocus': focus,
+                'XInternAtom': lambda *args: 7,
+                'XGetWindowProperty': property_value,
+                'XTestFakeKeyEvent': lambda *args: calls.append(args) or 1,
+                'XKeysymToKeycode': lambda *args: 65,
+            }.get(name, lambda *args: 0)
+            value = Function(fn)
+            setattr(self, name, value)
+            return value
+
+    monkeypatch.setattr(c, 'CDLL', lambda name: Library())
+    monkeypatch.setattr(sys, 'argv', ['inline-media-x11.py', 'space'])
+    module = runpy.run_path(str(ROOT / 'frontend/tests/inline-media-x11.py'))
+    assert module['main']() == 2
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt['error'] == 'Focused X window is not the owned Chromium process'
+    assert receipt['windowPid'] == pid + 10000
+    assert receipt['status'] == 'rejected'
+    assert receipt['pressed'] == [] and calls == []
+
+
+@pytest.mark.parametrize('status,errors,expected', [
+    ('PASS', [], 0),
+    ('FAIL', ['CDP close failed after process exit'], 1),
+    ('PASS', ['unexpected cleanup error'], 1),
+])
+def test_media_native_preflight_all_phases_pass_cannot_hide_cleanup_failure(status, errors, expected):
+    import subprocess
+    source = (ROOT / 'frontend/tests/inline-media-native-preflight.mjs').read_text()
+    # Execute the exact maintained catch + qualification/exit statements with
+    # all phase oracles PASS, then inject a close error with settled resources.
+    catch = source.split('try{if(native)evidence.cleanup=await native.close()}', 1)[1].split(
+        'evidence.disconnected=', 1)[0].strip()
+    final = source.split('evidence.disconnected=', 1)[1].split(
+        "await writeFile(out+'/preflight.json'", 1)[0]
+    evidence = {'phases': {name: {'status': 'PASS'} for name in (
+        'launch', 'target-negative', 'sample', 'fullscreen', 'volume', 'zoom', 'visibility')},
+        'cleanup': {'status': status, 'errors': errors, 'processExited': True, 'profileRemoved': True}}
+    program = 'const evidence=' + json.dumps(evidence) + ';const browser={isConnected:()=>false};\n'
+    if status == 'FAIL':
+        program += "try{throw Object.assign(Error('injected close failure'),{cleanup:evidence.cleanup})}\n" + catch + '\n'
+    program += 'evidence.disconnected=' + final + '\nconsole.log(JSON.stringify(evidence));'
+    result = subprocess.run(['node', '--input-type=module', '-e', program],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == expected, result.stderr
+    saved = json.loads(result.stdout)
+    assert all(row['status'] == 'PASS' for row in saved['phases'].values())
+    assert saved['qualified'] is (expected == 0)
+    if status == 'FAIL':
+        assert saved['cleanup']['reason'] == 'injected close failure'
+
+
 def test_full_python_suite_is_post_release_or_manual_but_fast_proofs_remain():
     workflows = ROOT / '.github/workflows'
     manual = yaml.load((workflows / 'python-checks.yml').read_text(), Loader=yaml.BaseLoader)
