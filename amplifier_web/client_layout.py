@@ -6,7 +6,7 @@ import json
 DIMENSIONS = {'canvasWidth': 300, 'canvasOverviewWidth': 300, 'navWidth': 216}
 SWITCHES = {'canvasFocused', 'canvasControlsPinned', 'canvasControlsExpanded',
             'toolbarMenuOpen', 'navPinned', 'navExpanded'}
-KEYS = DIMENSIONS.keys() | SWITCHES
+KEYS = DIMENSIONS.keys() | SWITCHES | {'navAge'}
 
 
 def accepts(patch):
@@ -15,6 +15,12 @@ def accepts(patch):
 
 def update(service, patch, command_id, fingerprint, *, include_state):
     from .errors import AppError
+    if 'navAge' in patch:
+        from .chat_navigation import view_patch
+        try:
+            view_patch({'navAge': patch['navAge']})
+        except ValueError as exc:
+            raise AppError(str(exc)) from None
     for key, minimum in DIMENSIONS.items():
         if key in patch and (type(patch[key]) not in {int, float} or not minimum <= patch[key] <= 16384):
             raise AppError(f'{key} must be between {minimum} and 16384 pixels.')
@@ -39,6 +45,8 @@ def update(service, patch, command_id, fingerprint, *, include_state):
     receipt = {'accepted': True, 'revision': revision + 1, 'effects': []}
     try:
         client['view'].update(patch)
+        if 'navAge' in patch:
+            client['view'].update(workHomePages={}, navStatusPages={})
         service._state['revision'] = revision + 1
         # As with Canvas visibility, hostInstanceId bounds the shared revision
         # across restarts; the client view and retry receipt commit together.
@@ -51,7 +59,7 @@ def update(service, patch, command_id, fingerprint, *, include_state):
         service._state['revision'] = revision
         raise
     service._client_snapshots.pop(identity, None)
-    if cached and cached['revision'] == revision:
+    if cached and cached['revision'] == revision and 'navAge' not in patch:
         service._client_snapshots[identity] = {
             **cached, 'revision': revision + 1, 'view': {**cached['view'], **patch},
         }

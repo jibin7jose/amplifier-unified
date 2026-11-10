@@ -1,6 +1,6 @@
 from copy import deepcopy
 import pytest
-from amplifier_web.adaptive_work import work_home, work_status
+from amplifier_web.adaptive_work import work_home, work_home_context, work_home_inputs, work_status
 from amplifier_web.chat_navigation import view_patch
 from amplifier_web.shell_resource_diagnostics import rebuild_reasons
 from test_shell_modules import service
@@ -15,6 +15,13 @@ def test_home_query_rejects_invalid_inputs():
             view_patch(patch)
     view_patch({'workSurface': 'home', 'workHomeView': 'studio', 'workHomeScope': 'all',
                 'workHomePages': {'working': 2}})
+    for request in (None, {}, {'workspaceId': None, 'query': '', 'pages': {}},
+                    {'workspaceId': 'one', 'query': 'x'*501, 'pages': {}},
+                    {'workspaceId': 'one', 'query': '', 'pages': {'idle': True}},
+                    {'workspaceId': 'one', 'query': '', 'pages': {}, 'savedMap': {}}):
+        with pytest.raises(ValueError):
+            view_patch({'workWorkspaceChats': request})
+    view_patch({'workWorkspaceChats': {'workspaceId': 'two', 'query': 'beta', 'pages': {'idle': 1}}})
 
 
 def test_sidebar_choices_validate_without_changing_home_contract():
@@ -25,6 +32,24 @@ def test_sidebar_choices_validate_without_changing_home_contract():
             view_patch(patch)
     view_patch({'navMode': 'status', 'navStatusPages': {'idle': 2},
                 'navStatusCollapsed': ['working'], 'navStatusExpanded': ['idle']})
+
+
+def test_workspace_normalization_is_explicit_not_a_context_side_effect():
+    state = {'view': {'workSurface': 'workspace', 'workWorkspaceId': 'two',
+                       'navAge': '24h', 'workHomeScope': 'all',
+                       'workWorkspaceChats': {'workspaceId': 'two', 'query': 'beta', 'pages': {}}},
+             '_navigationListClock': 1_800_000_000,
+             'workspaces': [{'id': key, 'name': key, 'path': '/'+key, 'available': True} for key in ('one', 'two')]}
+    before = deepcopy(state)
+    untouched, pin = work_home_inputs(state, pinned_workspace_id='one')
+    assert untouched is state and pin == 'one'
+    assert work_home_context(state, pinned_workspace_id='one')['workspace']['id'] == 'one'
+    normalized, pin = work_home_inputs(state, pinned_workspace_id='one', workspace_chats=True)
+    assert work_home_context(normalized, pinned_workspace_id=pin)['workspace']['id'] == 'two'
+    assert normalized['view']['workHomeQuery'] == 'beta'
+    assert normalized['view']['navAge'] == '24h'
+    assert normalized['_navigationListClock'] == state['_navigationListClock']
+    assert state == before
 
 
 async def test_status_sidebar_is_independent_bounded_and_uses_same_catalog(service, monkeypatch):
@@ -38,6 +63,58 @@ async def test_status_sidebar_is_independent_bounded_and_uses_same_catalog(servi
     assert {row['id'] for row in work_status(service, changed, 'idle', pinned_workspace_id='two')['items']} == {'beta'}
     missing = work_status(service, changed, 'idle', pinned_workspace_id='missing')
     assert missing['unavailable'] and not missing['items']
+
+
+async def test_shared_age_precedes_home_status_counts_and_pages(service, monkeypatch):
+    from amplifier_web import chat_navigation
+    now = 1_800_000_000
+    monkeypatch.setattr(chat_navigation.time, 'time', lambda: now)
+    service.state['sessions'] = [chat('fresh', recent=now, workspace='one'),
+        chat('old-pin', recent=1), chat('old', recent=1), chat('unknown', recent=0)]
+    for row in service.state['sessions']:
+        row.update(workspace=service.state['workspaces'][0]['path'], messages=[])
+    service.state['pinnedSessionIds'] = ['old-pin']
+    service.projections.invalidate()
+    before = deepcopy(service.state)
+    filtered = {**service.state, 'view': {'navAge': '24h', 'workHomePages': {'idle': 9},
+                                        'navStatusPages': {'idle': 8}}}
+    home = work_home(service, filtered)
+    sidebar = work_status(service, filtered, 'idle')
+    assert home['age'] == sidebar['scope']['age'] == '24h'
+    assert home['groups']['idle']['total'] == sidebar['total'] == 2
+    assert {row['id'] for row in home['items']} == {'fresh', 'old-pin'}
+    assert home['groups']['idle']['index'] == sidebar['index'] == 0
+    assert work_home(service, service.state)['groups']['idle']['total'] == 4
+    assert service.state == before
+
+
+async def test_nested_age_and_group_do_not_override_global_home_or_workspace_age(service):
+    from amplifier_web.chat_navigation import frozen_list_clock
+    client = service.shell.client('catalog-home-integration')
+    instance = {'id': 'chats', 'package': 'builtin.chats', 'slot': 'navigation'}
+    client['views']['chats'] = {'view': {'navRecentView': {'navAge': '24h', 'navGroup': 'status'}}, 'generation': 0}
+    service.state['view'].update(workSurface='home', workHomeScope='all', navAge='all')
+    before = deepcopy(client['views'])
+    with frozen_list_clock(1_800_000_000):
+        home = service.shell.navigation(client, instance, navigation_resources=frozenset({'workHome'}))['workHome']
+        assert {row['id'] for row in home['items']} == {'alpha', 'beta'}
+        service.state['view']['workSurface'] = 'chats'
+        all_chats = service.shell.navigation(client, instance, navigation_resources=frozenset({'sidebarSearch'}))
+        search = all_chats['sidebarNavigation']['search']
+        assert search['scope']['age'] == 'all' and search['scope']['group'] == 'status'
+        assert {row['id'] for row in search['items']} == {'alpha', 'beta'}
+        service.state['view'].update(workSurface='workspace', workWorkspaceId='two',
+                                     workWorkspaceChats={'workspaceId': 'two', 'query': 'beta', 'pages': {}})
+        workspace = service.shell.navigation(client, instance, navigation_resources=frozenset({'workHome'}))['workHome']
+        assert workspace['scope'] == 'two' and {row['id'] for row in workspace['items']} == {'beta'}
+        service.state['view']['navAge'] = '24h'
+        finite = service.shell.navigation(client, instance, navigation_resources=frozenset({'workHome'}))['workHome']
+        assert finite['age'] == '24h' and not finite['items']
+        service.state['view']['navAge'] = 'all'
+        assert all('group' not in row for row in workspace['items']), 'Home cards retain their status-grouped producer'
+        service.state['view']['workSurface'] = 'home'
+        assert service.shell.navigation(client, instance, navigation_resources=frozenset({'workHome'}))['workHome'] == home
+    assert client['views'] == before, 'Browsing never rewrites All Chats grouping/age preferences'
 
 
 async def test_status_sidebar_pages_do_not_mutate_the_catalog(service):
@@ -99,6 +176,69 @@ async def test_home_resource_key_survives_diagnostics_and_query_change(service):
     two=shell.resources._page_key('workHome',state,instance,((1,2),3),client,7,(1,2,3,4,5,6))
     reasons,_=rebuild_reasons(('bootstrap',one),('bootstrap',two))
     assert reasons==('query',)
+
+
+async def test_workspace_chats_uses_shared_groups_but_not_home_query_or_component_pin(service, monkeypatch):
+    monkeypatch.setattr(service, '_session', lambda *a, **k: pytest.fail('Browsing hydrated a session'))
+    client = service.shell.client('workspace-chats')
+    instance = {'id': 'chats', 'package': 'builtin.chats', 'slot': 'navigation',
+                'scope': {'mode': 'pinned', 'workspaceId': 'one'}}
+    service.state['view'].update(workSurface='home', workHomeScope='one', workHomeQuery='alpha',
+                                 workHomePages={}, workWorkspaceChats={'workspaceId': 'two', 'query': 'beta', 'pages': {}})
+    home = service.shell.navigation(client, instance, navigation_resources=frozenset({'workHome'}))['workHome']
+    assert {row['id'] for row in home['items']} == {'alpha'}
+    service.state['view'].update(workSurface='workspace', workWorkspaceId='two')
+    snapshot = service.shell.navigation(client, instance, navigation_resources=frozenset({'workHome', 'workStatusIdle'}))
+    page = snapshot['workHome']
+    assert page['scope'] == page['requestedScope'] == 'two'
+    assert page['query'] == 'beta' and {row['id'] for row in page['items']} == {'beta'}
+    assert snapshot['workHomeContext']['workspace']['id'] == 'two'
+    assert set(page['groups']) == {'attention', 'unread', 'working', 'waiting', 'paused', 'idle'}
+    assert 'workspace' not in snapshot['sidebarNavigation'], 'Superseded workspace list is not demanded'
+    assert snapshot['workHomePinnedScope'] == snapshot['workStatusIdle']['workScope'] == 'one', 'Sidebar Status retains its own pin'
+    for missing_id in ('missing', None):
+        service.state['view']['workWorkspaceId'] = missing_id
+        missing = service.shell.navigation(client, instance, navigation_resources=frozenset({'workHome'}))
+        assert missing['workHome']['unavailable'] and not missing['workHome']['items']
+        assert missing['workHomeContext']['workspace'] is None
+    service.state['view']['workSurface'] = 'home'
+    assert service.shell.navigation(client, instance, navigation_resources=frozenset({'workHome'}))['workHome'] == home
+
+
+async def test_workspace_chat_resource_key_tracks_only_effective_query_scope_and_pin(service):
+    shell = service.shell
+    client = shell.client('workspace-chats-key')
+    instance = {'id': 'chats', 'package': 'builtin.chats', 'slot': 'navigation',
+                'scope': {'mode': 'pinned', 'workspaceId': 'two'}}
+    service.state['view'].update(workSurface='home', workHomeScope='one')
+    def key():
+        return shell.resources._page_key('workHome', shell.scoped_state(client, instance),
+            instance, ((1, 2), 3), client, 7, (1, 2, 3, 4, 5, 6))
+    home = key()
+    service.state['view'].update(workSurface='workspace', workWorkspaceId='one')
+    workspace = key()
+    assert workspace != home, 'Same requested scope with a different effective pin cannot reuse pages'
+    service.state['view'].update(workHomeScope='managed', workHomeQuery='ignored', workHomePages={'idle': 20})
+    assert key() == workspace
+    for field, value in [('workWorkspaceChats', {'workspaceId': 'one', 'query': 'beta', 'pages': {}}),
+                         ('workWorkspaceChats', {'workspaceId': 'one', 'query': 'beta', 'pages': {'idle': 1}}),
+                         ('workWorkspaceId', 'two'), ('navAge', '24h')]:
+        before = key()
+        service.state['view'][field] = value
+        assert key() != before
+
+
+async def test_late_workspace_query_never_becomes_another_workspaces_query(service):
+    client = service.shell.client('workspace-query-owner')
+    instance = {'id': 'chats', 'package': 'builtin.chats', 'slot': 'navigation'}
+    service.state['view'].update(workSurface='workspace', workWorkspaceId='one',
+                                 workWorkspaceChats={'workspaceId': 'two', 'query': 'beta', 'pages': {'idle': 2}})
+    page = service.shell.navigation(client, instance, navigation_resources=frozenset({'workHome'}))['workHome']
+    assert page['scope'] == 'one' and page['query'] == '' and page['requestedPages'] == {}
+    assert {row['id'] for row in page['items']} == {'alpha'}
+    service.state['view']['workWorkspaceChats'] = {'workspaceId': 'one', 'query': 'alpha', 'pages': {}}
+    page = service.shell.navigation(client, instance, navigation_resources=frozenset({'workHome'}))['workHome']
+    assert page['query'] == 'alpha' and {row['id'] for row in page['items']} == {'alpha'}
 
 
 async def test_pinned_home_request_identity_and_unavailable_scope_never_widen(service, monkeypatch):
@@ -175,7 +315,8 @@ async def test_home_choices_survive_navigation_and_client_resume_without_leaking
                'workHomeScope': 'two', 'workHomeQuery': 'beta',
                'workHomePages': {'idle': 2, 'unread': 1}, 'navPinned': True,
                'navMode': 'status', 'navStatusPages': {'idle': 1},
-               'navStatusExpanded': ['idle'], 'navStatusCollapsed': ['working']}
+               'navStatusExpanded': ['idle'], 'navStatusCollapsed': ['working'],
+               'workWorkspaceChats': {'workspaceId': 'one', 'query': 'alpha', 'pages': {'unread': 1}}}
     service.clients.attach('home-continuity', kind='web')
     with service.clients.bind('home-continuity'):
         await service.dispatch('view.update', {'patch': choices})
@@ -188,3 +329,4 @@ async def test_home_choices_survive_navigation_and_client_resume_without_leaking
     independent = service.clients.attach('home-independent', kind='web')
     assert 'workHomeQuery' not in independent['view']
     assert 'workHomePages' not in independent['view']
+    assert 'workWorkspaceChats' not in independent['view']

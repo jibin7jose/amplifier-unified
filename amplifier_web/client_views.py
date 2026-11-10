@@ -162,6 +162,28 @@ class ClientViews:
         if self.records[identity].get('view', {}).get('panel') == 'context-inspector':
             self.records[identity]['view']['panel'] = None
             self.dirty.add(identity)
+        view = self.records[identity].setdefault('view', {})
+        if 'navAge' not in view:
+            # Import only the former builtin list choice, once. Prefer the list
+            # being viewed; retain all other filters and custom module state.
+            from .shell_components import resolved
+            from .chat_navigation import AGE_SECONDS
+            shell = (self.service.shell.get('client', identity)
+                     or (self.service.shell.get('client', resume) if resume else None) or {})
+            composition = shell.get('composition', {'instances': []})
+            choices = []
+            for instance in resolved(composition):
+                if instance['package'] != 'builtin.chats':
+                    continue
+                local = {**shell.get('baselineView', {}),
+                         **shell.get('views', {}).get(instance['id'], {}).get('view', {})}
+                search = local.get('navRecentView', {})
+                choices.extend([search.get('navAge'), local.get('navAge')]
+                               if view.get('workSurface') == 'chats'
+                               else [local.get('navAge'), search.get('navAge')])
+            choices.extend([view.get('navRecentView', {}).get('navAge'), 'all'])
+            view['navAge'] = next(age for age in choices if isinstance(age, str) and age in (*AGE_SECONDS, 'all'))
+            self.dirty.add(identity)
         self.reconcile(identity)
         self.selection_revision(identity)
         return self.records[identity]

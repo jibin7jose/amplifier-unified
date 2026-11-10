@@ -1,6 +1,7 @@
 """Bounded arrival views over the canonical chat catalog; no runtime hydration."""
 
-WORK_QUERY_FIELDS = ('workHomeScope', 'workHomeQuery', 'workHomePages')
+WORK_QUERY_FIELDS = ('workHomeScope', 'workHomeQuery', 'workHomePages', 'navAge')
+BUNDLED_WORK_QUERY_FIELDS = ('workSurface', 'workWorkspaceId', 'workWorkspaceChats')
 STATUS_RESOURCES = {
     'workStatusAttention': 'attention', 'workStatusUnread': 'unread',
     'workStatusWorking': 'working', 'workStatusIdle': 'idle',
@@ -8,11 +9,27 @@ STATUS_RESOURCES = {
 }
 
 
+def work_home_inputs(state, *, pinned_workspace_id=None, workspace_chats=False):
+    """Normalize only the bundled workspace consumer, not public navigation."""
+    view = state.get('view', {})
+    if workspace_chats and view.get('workSurface') == 'workspace':
+        workspace_id = view.get('workWorkspaceId') or ''
+        request = view.get('workWorkspaceChats') or {}
+        if request.get('workspaceId') != workspace_id:
+            request = {}
+        return ({**state, 'view': {'workHomeScope': workspace_id,
+                                  'workHomeQuery': request.get('query'),
+                                  'workHomePages': request.get('pages'),
+                                  'navAge': view.get('navAge', 'all')}},
+                workspace_id)
+    return state, pinned_workspace_id
+
+
 def work_home_context(state, *, pinned_workspace_id=None):
     """Current project identity, independent of asynchronous result pages."""
     view = state.get('view', {})
     requested_scope = view.get('workHomeScope') or 'all'
-    scope = pinned_workspace_id or requested_scope
+    scope = pinned_workspace_id if pinned_workspace_id is not None else requested_scope
     workspace = next((row for row in state.get('workspaces', [])
                       if row['id'] == scope and row.get('available') is True
                       and isinstance(row.get('path'), str) and row['path']), None)
@@ -29,7 +46,8 @@ def status_page(service, state, context, status, *, query='', index=0):
     filters = {'navChatScope': 'workspace' if scope not in ('all', 'managed') else 'all',
                'navLocationFilter': 'managed' if scope == 'managed' else 'all',
                'navFilter': query, 'navArchive': 'active', 'navSort': 'activity',
-               'navShowAgentCreated': True, 'navStatusFilter': status}
+               'navShowAgentCreated': True, 'navStatusFilter': status,
+               'navAge': state.get('view', {}).get('navAge', 'all')}
     scoped = {**state, 'selectedWorkspaceId': workspace['id'] if workspace else None}
     page = service.projections.chats({**scoped, 'view': filters}, section='recent')
     if index:
@@ -55,6 +73,7 @@ def work_home(service, state, *, pinned_workspace_id=None):
                                 index=(view.get('workHomePages') or {}).get(status, 0))
              for status in STATUS_RESOURCES.values()}
     return {**context,
+            'age': view.get('navAge', 'all'),
             'query': query, 'requestedPages': view.get('workHomePages') or {},
             'groups': pages,
             'items': [row for page in pages.values() for row in page['items']]}

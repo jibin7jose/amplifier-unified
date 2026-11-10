@@ -27,13 +27,15 @@ try{
  browser=await chromium.launch(launchOptions);
  page=await browser.newPage({viewport:{width:1440,height:1000},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
  page.setDefaultTimeout(15000);page.on('pageerror',error=>report.errors.push(error.message));
- const state=()=>page.evaluate(()=>window.amplifier.getState());
- const shell=()=>page.evaluate(()=>window.amplifier.getShellState().snapshots.chats);
+ // The public API and shell snapshot can be absent during a legitimate reload.
+ // Observations stay pending; callers must still require real matching coverage.
+ const state=()=>page.evaluate(()=>window.amplifier?.getState?.());
+ const shell=()=>page.evaluate(()=>window.amplifier?.getShellState?.()?.snapshots?.chats);
  const act=(action,args={})=>page.evaluate(([action,args])=>window.amplifier.dispatch(action,args),[action,args]);
  const info=async()=>(await page.request.get(`http://127.0.0.1:${port}/api/fixture/info`)).json();
  const landing=page.locator('.a-adaptive-home:visible'),sidebar=page.locator('#workspace-navigation');
  const choose=mode=>landing.getByRole('group',{name:'Work view',exact:true}).getByRole('button',{name:mode,exact:true}).click();
- const settled=()=>expect.poll(async()=>Object.keys((await shell()).navigationResourcePending||{}).length).toBe(0);
+ const settled=()=>expect.poll(async()=>{const snapshot=await shell();return !!snapshot&&Array.isArray(snapshot.navigationResources)&&Object.keys(snapshot.navigationResourcePending||{}).length===0},{timeout:15000}).toBe(true);
  const openSidebar=async()=>{if(!await sidebar.isVisible())await page.locator('#navigation-toggle').click()};
  const destinationCommands=new Set();
  const acceptedDestination=async(surface,click)=>{
@@ -47,7 +49,7 @@ try{
   assert.equal(typeof command.id,'string');assert.ok(command.id);assert.ok(!destinationCommands.has(command.id));destinationCommands.add(command.id);
   const response=await request.response();assert.ok(response);assert.equal(response.request(),request);
   const receipt=await response.json();assert.equal(receipt.accepted,true);
-  await expect.poll(async()=>{const current=await state();return current.client.hostInstanceId===receipt.hostInstanceId&&current.revision>=receipt.stateRevision}).toBe(true);
+  await expect.poll(async()=>{const current=await state();return current?.client?.hostInstanceId===receipt.hostInstanceId&&current?.revision>=receipt.stateRevision},{timeout:15000}).toBe(true);
  };
  const home=async()=>{await openSidebar();await acceptedDestination('home',()=>sidebar.getByRole('button',{name:'Home',exact:true}).click());await expect(landing).toHaveAttribute('data-landing','home');await settled()};
  const allChats=async()=>{await openSidebar();await acceptedDestination('chats',()=>sidebar.getByRole('button',{name:'Search chats',exact:true}).click());await expect(landing.getByRole('heading',{level:1})).toHaveText('All chats');await settled()};
@@ -59,13 +61,13 @@ try{
   await expect(async()=>{
    // Capture coverage and rendered rows together; a new search can omit pending results.
    const observed=await page.evaluate(section=>{
-    const snapshot=window.amplifier.getShellState().snapshots.chats;
-    return {result:snapshot.sidebarNavigation[section],
-     pending:Object.keys(snapshot.navigationResourcePending||{}),
+    const snapshot=window.amplifier?.getShellState?.()?.snapshots?.chats;
+    return {result:snapshot?.sidebarNavigation?.[section],
+     pending:snapshot?Object.keys(snapshot.navigationResourcePending||{}):null,
      ids:[...document.querySelectorAll('.a-adaptive-home .a-landing-chat')].map(row=>row.dataset.sessionId)};
    },section);
    const result=observed.result;
-   assert.equal(observed.pending.length,0);assert.ok(result);
+   assert.ok(observed.pending);assert.equal(observed.pending.length,0);assert.ok(result);
    assert.equal(result.scope.statusFilter,'idle');assert.equal(result.scope.filter,filter);
    assert.ok(result.total>0);assert.equal(result.total,result.activityCounts.idle);
    assert.ok(result.items.every(row=>row.activity.kind==='idle'));
@@ -74,6 +76,8 @@ try{
   }).toPass({timeout:15000});
  };
  await page.goto(`http://127.0.0.1:${port}`);await expect(landing).toHaveAttribute('data-landing','home');await settled();
+ await expect(landing.getByText('Layout',{exact:true})).toHaveCount(0);
+ await expect(landing.getByRole('group',{name:'Work view',exact:true})).toBeVisible();
  const initial=await info();
  await openSidebar();
  await expect(sidebar.getByRole('button',{name:'Home',exact:true})).toHaveAttribute('aria-current','page');
@@ -93,7 +97,7 @@ try{
  await choose('Studio');await settled();await expect(landing.getByRole('button',{name:'Clear status filter'})).toBeVisible();
  await landing.getByRole('button',{name:'Clear status filter'}).click();
  await page.screenshot({path:join(output,'home-studio.png')});
- report.checks.push('Home icon shares the first sidebar line with Browse/Status; header toggle remains available; Layout choices stay stable across display detail; active status remains visible in Brief and Studio');
+ report.checks.push('Home has no visible Layout label but retains the accessible Work view group; Home icon and header toggle remain available; view choices stay stable across display detail and status remains visible');
 
  await allChats();await expect(page).toHaveTitle('All chats - Amplifier');
  await choose('Focus');await expect(focusRow()).toHaveCount(1);
@@ -121,12 +125,12 @@ try{
  await page.keyboard.press('Escape');
  await page.screenshot({path:join(output,'all-chats-brief.png')});
  await landing.getByRole('button',{name:'Show more conversations',exact:true}).click();await settled();
- await expect.poll(async()=>(await shell()).sidebarNavigation.search?.index).toBe(1);
+ await expect.poll(async()=>(await shell())?.sidebarNavigation?.search?.index).toBe(1);
  await choose('Focus');await expect(focusRow()).toHaveCount(1);
  await landing.getByRole('button',{name:'Previous Focus item',exact:true}).click();await settled();
- await expect.poll(async()=>(await shell()).sidebarNavigation.search?.index).toBe(0);
+ await expect.poll(async()=>(await shell())?.sidebarNavigation?.search?.index).toBe(0);
  await landing.getByRole('button',{name:'Next Focus item',exact:true}).click();await settled();
- await expect.poll(async()=>(await shell()).sidebarNavigation.search?.index).toBe(1);
+ await expect.poll(async()=>(await shell())?.sidebarNavigation?.search?.index).toBe(1);
  const later=await focusRow().getAttribute('data-session-id');
  await focusRow().locator('.a-nav-chat-select').click();await expect(page.getByRole('textbox',{name:'Message Amplifier'})).toBeVisible();
  await allChats();await expect(focusRow()).toHaveAttribute('data-session-id',later);
@@ -164,33 +168,128 @@ try{
  await landing.getByRole('button',{name:'Open chats in '+initial.paths.one,exact:true}).click();await settled();
  await expect(landing).toHaveAttribute('data-landing','workspace');
  await expect(landing.getByRole('group',{name:'Workspace view'})).toBeVisible();
+ const workspaceId=(await state()).view.workWorkspaceId;
+ const workspaceCards=()=>landing.locator('.a-work-card[data-session-id]');
+ const workspaceTabs=landing.getByRole('group',{name:'Workspace view',exact:true});
+ const workspaceReady=async(query='',id=workspaceId)=>{
+  await expect.poll(async()=>{const snapshot=await shell();return snapshot?.navigationResources?.includes('workHome')===true&&snapshot.workHome?.scope===id&&snapshot.workHome?.requestedScope===id&&snapshot.workHome?.query===query&&!snapshot.navigationResourcePending?.workHome},{timeout:15000}).toBe(true);
+  await settled();
+ };
+ await workspaceReady();
  await choose('Brief');
- await expect(landing.getByRole('searchbox',{name:'Filter conversations',exact:true})).toBeVisible();
- await landing.getByRole('group',{name:'Workspace view'}).getByRole('button',{name:'Files',exact:true}).click();
- await expect(landing.getByRole('region',{name:'Workspace files'})).toBeVisible();
- await landing.getByRole('group',{name:'Workspace view'}).getByRole('button',{name:'Details',exact:true}).click();
- await expect(landing.getByRole('button',{name:'Rename workspace',exact:true})).toBeVisible();
- await expect(landing.locator('.a-workspace-work-entry')).toBeVisible();
- await expect(landing.getByRole('group',{name:'Workspace view'}).getByRole('button',{name:'Work',exact:true})).toBeVisible();
- await landing.getByRole('group',{name:'Workspace view'}).getByRole('button',{name:'Chats',exact:true}).click();await settled();
+ await expect(landing.locator('.a-home-toolbar')).toHaveCount(1);
+ assert.ok((await landing.locator('.a-home-toolbar').boundingBox()).y>=(await workspaceTabs.boundingBox()).y+(await workspaceTabs.boundingBox()).height,'Chats toolbar is below workspace tabs');
+ await expect(landing.locator('.a-home-intro')).toHaveCount(1);
+ await expect(landing.locator('.a-adaptive-home,.a-home-project')).toHaveCount(0);
+ await expect(landing.getByLabel('Work scope',{exact:true})).toHaveCount(0);
+ await expect(landing.getByText('Layout',{exact:true})).toHaveCount(0);
+ await expect(landing.locator('[data-group="attention"] .a-work-card')).not.toHaveCount(0);
+ await expect(landing.locator('[data-group="unread"] .a-work-card')).not.toHaveCount(0);
+ assert.ok((await workspaceCards().evaluateAll(rows=>rows.map(row=>row.dataset.sessionId))).every(id=>!id.startsWith('beta-')),'Workspace cards are not global Home results');
+ for(const tab of ['Files','Work','Details']){
+  await workspaceTabs.getByRole('button',{name:tab,exact:true}).click();
+  await expect(landing.locator('.a-home-toolbar')).toHaveCount(0);
+  await expect(landing.getByRole('group',{name:'Work view',exact:true})).toHaveCount(0);
+  await expect(landing.getByRole('button',{name:'View appearance',exact:true})).toHaveCount(0);
+  await expect.poll(async()=>{const snapshot=await shell();return Array.isArray(snapshot?.navigationResources)&&!snapshot.navigationResources.includes('workHome')},{timeout:15000}).toBe(true);
+  if(tab==='Files')await expect(landing.getByRole('region',{name:'Workspace files'})).toBeVisible();
+  if(tab==='Details'){
+   await expect(landing.getByRole('button',{name:'Rename workspace',exact:true})).toBeVisible();
+   await expect(landing.locator('.a-workspace-work-entry')).toBeVisible();
+  }
+ }
+ await workspaceTabs.getByRole('button',{name:'Chats',exact:true}).click();await workspaceReady();
  await expect(landing.locator('.a-workspace-work-entry')).toHaveCount(0);
- await choose('Focus');await expect(focusRow()).toHaveCount(1);
+ await choose('Studio');await expect(landing.locator('.a-home-studio')).toBeVisible();
+ await choose('Focus');await expect(workspaceCards()).toHaveCount(1);
  await landing.getByRole('button',{name:'Next Focus item',exact:true}).click();
- const workspaceChat=await focusRow().getAttribute('data-session-id');
- await focusRow().locator('.a-nav-chat-select').click();
+ const workspaceChat=await workspaceCards().getAttribute('data-session-id');
+ await workspaceCards().locator('.a-work-card-open').click();
  await expect(page.getByRole('textbox',{name:'Message Amplifier'})).toBeVisible();
- await page.getByRole('navigation',{name:'Breadcrumb'}).getByRole('button').last().click();await settled();
- await expect(landing).toHaveAttribute('data-view','focus');await expect(focusRow()).toHaveAttribute('data-session-id',workspaceChat);
+ await page.getByRole('navigation',{name:'Breadcrumb'}).getByRole('button').last().click();await workspaceReady();
+ await expect(landing).toHaveAttribute('data-view','focus');await expect(workspaceCards()).toHaveAttribute('data-session-id',workspaceChat);
  await page.screenshot({path:join(output,'workspace-focus.png')});
- report.checks.push('All workspaces keeps search, archive, folder browsing and workspace action menus; workspace landing keeps Chats/Work/Files/Details with Workspace work inspection in Details; Focus cursors and layouts survive leaving and returning');
+ report.checks.push('Workspace Chats uses Home grouped cards and all three views, with one toolbar below tabs and no nested Home identity; Work/Files/Details retain their separate content and have no chat toolbar or demand; workspace Focus survives chat visits');
 
- await choose('Brief');await pickUpAgain().click();await checkIdle('workspace');
- await landing.locator('.a-landing-chat .a-nav-chat-select').first().click();
+ // Home and the workspace tab share presentation, not query or reading state.
+ const otherWorkspace=(await act('workspace.list',{query:initial.paths.two})).result.items.find(row=>row.path===initial.paths.two);
+ await home();await landing.getByLabel('Work scope',{exact:true}).selectOption(otherWorkspace.id);
+ await landing.getByRole('searchbox',{name:'Search your work',exact:true}).fill('Beta');
+ await landing.getByRole('searchbox',{name:'Search your work',exact:true}).press('Tab');
+ await expect.poll(async()=>(await shell())?.workHome?.query).toBe('Beta');
+ await pickUpAgain().click();await choose('Focus');await expect(workspaceCards()).toHaveCount(1);
+ await landing.getByRole('button',{name:'Next Focus item',exact:true}).click();
+ const homeChat=await workspaceCards().getAttribute('data-session-id');
+ await act('view.update',{patch:{workSurface:'workspace',workWorkspaceId:workspaceId,workWorkspaceTab:'chats'}});
+ await workspaceReady();await expect(workspaceCards()).toHaveAttribute('data-session-id',workspaceChat);
+ await choose('Brief');await pickUpAgain().click();
+ await landing.getByRole('searchbox',{name:'Search your work',exact:true}).fill('Alpha');
+ await landing.getByRole('searchbox',{name:'Search your work',exact:true}).press('Tab');await workspaceReady('Alpha');
+ const idle=(await shell()).workHome.groups.idle;
+ assert.ok(idle.total>50);assert.ok(idle.items.every(row=>row.activity.kind==='idle'));
+ assert.deepEqual(await workspaceCards().evaluateAll(rows=>rows.map(row=>row.dataset.sessionId)),idle.items.map(row=>row.id));
+ await landing.getByRole('button',{name:'Next',exact:true}).click();await workspaceReady('Alpha');
+ await expect.poll(async()=>(await shell())?.workHome?.groups?.idle?.index).toBe(1);
+ // A's later-page Focus and B's Studio/search choices are independent destinations.
+ await choose('Focus');await landing.getByRole('button',{name:'Next Focus item',exact:true}).click();
+ const alphaCursor=await workspaceCards().getAttribute('data-session-id');
+ await act('view.update',{patch:{workSurface:'workspace',workWorkspaceId:otherWorkspace.id,workWorkspaceTab:'chats'}});
+ await workspaceReady('',otherWorkspace.id);
+ await landing.getByRole('searchbox',{name:'Search your work',exact:true}).fill('Beta');
+ await landing.getByRole('searchbox',{name:'Search your work',exact:true}).press('Tab');await workspaceReady('Beta',otherWorkspace.id);
+ await pickUpAgain().click();await choose('Focus');
+ await landing.getByRole('button',{name:'Next Focus item',exact:true}).click();
+ const betaCursor=await workspaceCards().getAttribute('data-session-id');
+ await choose('Studio');await landing.getByRole('button',{name:'Clear status filter'}).click();
+ await act('view.update',{patch:{workSurface:'workspace',workWorkspaceId:workspaceId}});
+ await workspaceReady('Alpha');await expect(landing).toHaveAttribute('data-view','focus');
+ await expect(pickUpAgain()).toHaveAttribute('aria-pressed','true');
+ assert.equal((await shell()).workHome.groups.idle.index,1);
+ await expect(workspaceCards()).toHaveAttribute('data-session-id',alphaCursor);
+ await page.reload();await workspaceReady('Alpha');await expect(landing).toHaveAttribute('data-view','focus');
+ await expect(workspaceCards()).toHaveAttribute('data-session-id',alphaCursor);
+ await act('view.update',{patch:{workSurface:'workspace',workWorkspaceId:otherWorkspace.id}});
+ await workspaceReady('Beta',otherWorkspace.id);await expect(landing).toHaveAttribute('data-view','studio');
+ await expect(landing.getByRole('group',{name:'Filter work'}).getByRole('button',{name:'Overview',exact:true})).toHaveAttribute('aria-pressed','true');
+ assert.equal((await shell()).workHome.groups.idle.index,0);
+ await pickUpAgain().click();await choose('Focus');
+ await expect(workspaceCards()).toHaveAttribute('data-session-id',betaCursor);
+ await choose('Studio');await landing.getByRole('button',{name:'Clear status filter'}).click();
+ await page.reload();await workspaceReady('Beta',otherWorkspace.id);await expect(landing).toHaveAttribute('data-view','studio');
+ await act('view.update',{patch:{workSurface:'workspace',workWorkspaceId:workspaceId}});
+ await workspaceReady('Alpha');await expect(landing).toHaveAttribute('data-view','focus');
+ await expect(workspaceCards()).toHaveAttribute('data-session-id',alphaCursor);
+ report.checks.push('A Focus/Alpha/idle/page 1 and B Studio/Beta/Overview/page 0 survive A→B→A and reload, with independent Focus cursors');
+ await choose('Studio');await landing.evaluate(node=>{node.scrollTop=420});
+ await expect.poll(()=>landing.evaluate(node=>node.scrollTop)).toBeGreaterThan(300);
+ const workspaceTop=await landing.evaluate(node=>node.scrollTop);
+ await home();await expect(landing).toHaveAttribute('data-view','focus');
+ await expect(landing.getByLabel('Work scope',{exact:true})).toHaveValue(otherWorkspace.id);
+ await expect(landing.getByRole('searchbox',{name:'Search your work',exact:true})).toHaveValue('Beta');
+ await expect(pickUpAgain()).toHaveAttribute('aria-pressed','true');
+ await expect(workspaceCards()).toHaveAttribute('data-session-id',homeChat);
+ await act('view.update',{patch:{workSurface:'workspace',workWorkspaceId:workspaceId}});
+ await workspaceReady('Alpha');await expect(landing).toHaveAttribute('data-view','studio');
+ await expect.poll(()=>landing.evaluate(node=>node.scrollTop)).toBe(workspaceTop);
+ await expect(pickUpAgain()).toHaveAttribute('aria-pressed','true');
+ assert.equal((await shell()).workHome.groups.idle.index,1);
+ await page.reload();await expect(landing).toHaveAttribute('data-landing','workspace');await workspaceReady('Alpha');
+ await expect.poll(()=>landing.evaluate(node=>node.scrollTop)).toBe(workspaceTop);
+ await landing.getByRole('button',{name:'Clear status filter'}).click();await workspaceReady('Alpha');
+ await expect(landing.getByRole('searchbox',{name:'Search your work',exact:true})).toHaveValue('Alpha');
+ await landing.getByRole('searchbox',{name:'Search your work',exact:true}).fill('not-a-matching-chat');
+ // Blur flushes search while creation still uses independently fenced project context.
+ const draft=page.waitForRequest(request=>request.method()==='POST'&&new URL(request.url()).pathname==='/api/actions'&&request.postDataJSON()?.action==='session.draft');
+ await landing.getByRole('button',{name:'New chat',exact:true}).click();
+ assert.deepEqual((await draft).postDataJSON().args,{workspaceId,workspace:initial.paths.one,location:{kind:'workspace'}});
  await expect(page.getByRole('textbox',{name:'Message Amplifier'})).toBeVisible();
- await page.getByRole('navigation',{name:'Breadcrumb'}).getByRole('button').last().click();await checkIdle('workspace');
- await page.reload();await expect(landing).toHaveAttribute('data-landing','workspace');await checkIdle('workspace');
- await landing.getByRole('button',{name:'Clear status filter'}).click();await settled();
- report.checks.push('Pick up again is accepted through All chats and workspace controls, returns only quiet read chats, survives navigation/reload, and clears without losing search');
+ assert.equal((await state()).view.newSessionDraft.workspace,initial.paths.one);
+ await act('view.update',{patch:{workSurface:'workspace',workWorkspaceId:workspaceId}});
+ await workspaceReady('not-a-matching-chat');await expect(workspaceCards()).toHaveCount(0);
+ await expect(landing).toContainText('No matching work.');
+ await home();await expect(workspaceCards()).toHaveAttribute('data-session-id',homeChat);
+ await expect(landing.getByRole('searchbox',{name:'Search your work',exact:true})).toHaveValue('Beta');
+ report.checks.push('Home scope/query/filter/Focus stay independent from workspace search, paging and reading across navigation/reload; status reset retains search; New chat uses the workspace identity while search blurs, even with Home scoped elsewhere');
 
  // A user can choose a destination from the optimistic drawer before its open
  // request arrives. That older request must not reopen the drawer afterward.

@@ -90,6 +90,33 @@ def test_directory_page_matches_complete_catalog(tmp_path,section,view):
     assert working['sessions']==[]
 
 
+@pytest.mark.parametrize('section', [None, 'recent', 'shortcuts', 'workspace', 'search'])
+def test_shared_age_filters_before_counts_page_and_workspace_aggregates(tmp_path, monkeypatch, section):
+    now = 1_800_000_000
+    monkeypatch.setattr(chat_navigation.time, 'time', lambda: now)
+    state, directory = directory_fixture(tmp_path)
+    state['view']['navAge'] = '24h'
+    for row in state['sessions']:
+        row['navigationActivityAt'] = now-90000
+    for row in state['sessions'][100:180]:
+        row['navigationActivityAt'] = now-86400
+    directory.sync(state['sessions'], state)
+    dormant = {**state, 'sessions': []}
+    actual = chats(directory, dormant, section=section)
+    expected = chat_navigation.snapshot(state, section=section)
+    assert actual == expected and actual['scope']['age'] == '24h'
+    assert 50 < actual['total'] < 100
+    if section is not None:
+        assert actual['total'] > len(actual['items'])
+    expected_workspaces = workspace_navigation._index(state)
+    aggregates = workspace_counts(directory, dormant)
+    assert workspace_navigation._index(dormant, aggregates=aggregates) == expected_workspaces
+    assert sum(row['chatCount'] for row in aggregates.values()) == actual['total']
+    state['pinnedSessionIds'] = []
+    dormant['pinnedSessionIds'] = []
+    assert chats(directory, dormant, section=section)['total'] == actual['total']-2
+
+
 @pytest.mark.parametrize('group', ['recent', 'workspace', 'status'])
 @pytest.mark.parametrize('age', ['24h', '7d', '30d', '90d', '1y', 'all'])
 def test_group_and_age_query_filters_complete_catalog_before_paging(tmp_path, monkeypatch, group, age):

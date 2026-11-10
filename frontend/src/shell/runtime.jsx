@@ -54,7 +54,7 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
   for(const host of hosts.current.values()){
    const raw=next.snapshots?.[host.id]||empty;
    if(raw.generation!==host.generation)continue;
-   const snapshot=retainEqual(host.snapshot,navigationSnapshot({...raw,view:{...raw.view,...Object.assign({},...host.pending.map(item=>item.patch))}},latest.current.state,host.scope));
+   const snapshot=retainEqual(host.snapshot,navigationSnapshot({...raw,view:{...raw.view,...Object.assign({},...host.pending.map(item=>item.patch))}},latest.current.state,host.scope,host.sharedAge));
    if(snapshot!==host.snapshot){host.snapshot=freeze(snapshot);host.listeners.forEach(fn=>fn())}
   }
  },[]);
@@ -146,10 +146,10 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
  // Selection intent is private and immediate; it never causes a catalog GET.
  useLayoutEffect(()=>{
   for(const host of hosts.current.values()){
-   const snapshot=navigationSnapshot(host.snapshot,displayState,host.scope);
+   const snapshot=navigationSnapshot(host.snapshot,displayState,host.scope,host.sharedAge);
    if(snapshot!==host.snapshot){host.snapshot=freeze(snapshot);host.listeners.forEach(fn=>fn())}
   }
- },[displayState?.selectedSessionId,displayState?.selectedWorkspaceId,displayState?.navigationPending,displayState?.view?.workSurface,displayState?.view?.workWorkspaceId]);
+ },[displayState?.selectedSessionId,displayState?.selectedWorkspaceId,displayState?.navigationPending,displayState?.view?.workSurface,displayState?.view?.workWorkspaceId,displayState?.view?.navAge]);
  useEffect(()=>{
   const onShell=e=>{if(e.detail.shellClientId===clientId)diagnostics.current.record('notify')};
   const visibility=()=>{setVisible(!document.hidden);diagnostics.current.record('visibility')};
@@ -161,7 +161,8 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
   const generation=latest.current.data?.instanceGenerations?.[instance.id];
   const key=instance.id+':'+generation;
   if(!hosts.current.has(key)){
-   const record={id:instance.id,generation,scope:instance.scope,listeners:new Set(),pending:[],snapshot:freeze(navigationSnapshot(latest.current.data?.snapshots?.[instance.id]||empty,latest.current.state,instance.scope))};
+   const sharedAge=['builtin.chats','builtin.workspaces'].includes(instance.package);
+   const record={id:instance.id,generation,scope:instance.scope,sharedAge,listeners:new Set(),pending:[],snapshot:freeze(navigationSnapshot(latest.current.data?.snapshots?.[instance.id]||empty,latest.current.state,instance.scope,sharedAge))};
    let queue=Promise.resolve();
    const run=(action,args)=>{
     const pending=action==='shell.view.update'?{patch:args.patch}:null;

@@ -80,7 +80,9 @@ async def test_independent_instances_clients_and_bounded_queries(service):
 
 
 @pytest.mark.asyncio
-async def test_catalog_group_and_age_are_persisted_per_client_instance(service):
+async def test_catalog_group_is_local_and_age_is_shared_per_client(service):
+    service.clients.attach('browser-one')
+    service.clients.attach('browser-two')
     composition = deepcopy(DEFAULT)
     composition['instances'].append({'id': 'other-chats', 'package': 'builtin.chats',
         'slot': 'navigation', 'scope': {'mode': 'all'}})
@@ -88,20 +90,45 @@ async def test_catalog_group_and_age_are_persisted_per_client_instance(service):
     await command(service, 'shell.changes.apply', clientId='browser-one', changeId=change, expectedRevision=0)
     before = deepcopy(service.state)
     await command(service, 'shell.view.update', clientId='browser-one', instanceId='chats',
-                  patch={'navRecentView': {'navGroup': 'workspace', 'navAge': '24h'},
-                         'navGroup': 'status', 'navAge': '7d'})
-    first = service.shell.inspect('browser-one', snapshots=True)['snapshots']
+                  patch={'navRecentView': {'navGroup': 'workspace'}, 'navGroup': 'status'})
+    with service.clients.bind('browser-one'):
+        await service.dispatch('view.update', {'patch': {'navAge': '7d'}})
+        first = service.shell.inspect('browser-one', snapshots=True)['snapshots']
     assert first['chats']['sidebarNavigation']['search']['scope']['group'] == 'workspace'
-    assert first['chats']['sidebarNavigation']['search']['scope']['age'] == '24h'
+    assert first['chats']['sidebarNavigation']['search']['scope']['age'] == '7d'
     assert first['chats']['sidebarNavigation']['workspace']['scope']['group'] == 'status'
     assert first['chats']['sidebarNavigation']['workspace']['scope']['age'] == '7d'
-    assert first['other-chats']['sidebarNavigation']['search']['scope']['age'] == 'all'
-    second = service.shell.inspect('browser-two', snapshots=True)['snapshots']
+    assert first['other-chats']['sidebarNavigation']['search']['scope']['age'] == '7d'
+    with service.clients.bind('browser-two'):
+        second = service.shell.inspect('browser-two', snapshots=True)['snapshots']
     assert second['chats']['sidebarNavigation']['search']['scope']['group'] == 'recent'
     assert second['chats']['sidebarNavigation']['search']['scope']['age'] == 'all'
     saved = service.shell.get('client', 'browser-one')['views']['chats']['view']
-    assert saved['navRecentView'] == {'navGroup': 'workspace', 'navAge': '24h'}
-    assert service.state == before
+    assert saved['navRecentView'] == {'navGroup': 'workspace'}
+    assert service.state['sessions'] == before['sessions']
+    assert service.state['view'] == before['view']
+    assert service.state['selectedSessionId'] == before['selectedSessionId']
+
+
+@pytest.mark.parametrize('surface,expected', [('chats', '24h'), ('workspace', '7d'), ('home', '7d')])
+async def test_age_import_is_narrow_once_and_survives_reload(service, surface, expected):
+    saved = service.clients.attach('old-client')
+    saved['view'].pop('navAge')
+    saved['view'].update(workSurface=surface, draft='Private draft', workHomeQuery='retained')
+    saved['drafts'][saved.get('selectedSessionId') or ''] = 'Private draft'
+    old_shell = service.shell.client('old-client')
+    old_shell['views']['chats'] = {'view': {
+        'navAge': '7d', 'navGroup': 'status',
+        'navRecentView': {'navAge': '24h', 'navGroup': 'workspace', 'navFilter': 'kept'}}}
+    service.shell.put('client', 'old-client', old_shell)
+    reloaded = service.clients.attach('reload', resume='old-client')
+    assert reloaded['view']['navAge'] == expected
+    assert reloaded['view']['draft'] == 'Private draft'
+    assert reloaded['view']['workHomeQuery'] == 'retained'
+    assert service.shell.get('client', 'old-client') == old_shell
+    reloaded['view']['navAge'] = 'all'
+    assert service.clients.attach('reload')['view']['navAge'] == 'all'
+    assert service.clients.attach('unrelated')['view']['navAge'] == 'all'
 
 
 @pytest.mark.asyncio

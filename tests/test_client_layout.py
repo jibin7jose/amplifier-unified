@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 
 import pytest
 
@@ -33,6 +34,25 @@ async def test_duplicate_hover_value_does_not_publish_or_advance_revision(app, m
     assert (await command(app, {'canvasControlsExpanded': False}, command_id='same-value', include_state=False))['duplicate']
     app.unsubscribe(queue)
     monkeypatch.setattr(app, '_save', original_save)
+
+
+async def test_age_is_private_durable_and_never_saves_history(app, monkeypatch):
+    with app.clients.bind('one'):
+        await app.dispatch('view.update', {'patch': {'draft': 'Keep old reading draft'}})
+        app.state['view'].update(workHomePages={'idle': 4}, navStatusPages={'idle': 3})
+        before = deepcopy(app.state['sessions'])
+    other = deepcopy(app.clients.records['two'])
+    with monkeypatch.context() as patch:
+        patch.setattr(app, '_save', lambda: pytest.fail('Age must not save conversations'))
+        result = await command(app, {'navAge': '24h'}, command_id='age')
+    assert result['state']['view']['navAge'] == '24h'
+    assert result['state']['view']['draft'] == 'Keep old reading draft'
+    assert result['state']['view']['workHomePages'] == result['state']['view']['navStatusPages'] == {}
+    assert app.clients.records['two'] == other
+    assert app._state['sessions'] == before
+    assert json.loads(app.db.execute("SELECT value FROM client_views WHERE id='one'").fetchone()[0])['view']['navAge'] == '24h'
+    with pytest.raises(AppError):
+        await command(app, {'navAge': 'invalid'})
 
 
 async def test_layout_is_client_local_durable_and_does_not_rewrite_catalog(app, monkeypatch):

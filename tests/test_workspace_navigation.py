@@ -435,7 +435,7 @@ def test_workspace_cache_keys_cover_whole_pin_vector_including_unavailable_and_o
     value['pinnedWorkspaceIds'] = ['110', '109', '108']
     projections = StateProjections()
     first = projections.workspaces(value)
-    index = projections.values[('workspace-index', 'active')]
+    index = projections.values[('workspace-index', 'active', 'all', None)]
     key = projections.shell_key(value)
     chat_cache = object()
     projections.values[('chats', 'sentinel')] = chat_cache
@@ -447,7 +447,7 @@ def test_workspace_cache_keys_cover_whole_pin_vector_including_unavailable_and_o
     assert second is not first
     assert [row['workspaceId'] for row in second['rows']] == [row['workspaceId'] for row in first['rows']]
     assert projections.shell_key(value) != key
-    assert projections.values[('workspace-index', 'active')] is index
+    assert projections.values[('workspace-index', 'active', 'all', None)] is index
     assert projections.values[('chats', 'sentinel')] is chat_cache
     key = projections.shell_key(value)
     projections.invalidate(state=value, session_ids=set())

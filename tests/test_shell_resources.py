@@ -361,6 +361,9 @@ async def test_real_navigation_resources_reassemble_exact_existing_snapshot(serv
             actual = {}
             for item in envelope['instances'][instance['id']]['resources'].values():
                 for key,value in item['value'].items():
+                    if key=='navigationAge':
+                        assert value=='all'
+                        continue
                     if key=='sidebarNavigation': actual.setdefault(key,{}).update(value)
                     else: actual[key]=value
             expected.pop('navigationResources')

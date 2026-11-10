@@ -8,7 +8,8 @@ from amplifier_web.shell_resources import scope_for
 from test_shell_modules import service, settled_resources
 
 
-@pytest.mark.parametrize('resource,section', [('sidebarSearch', 'search'), ('sidebarWorkspace', 'workspace')])
+@pytest.mark.parametrize('resource,section', [('sidebarSearch', 'search'), ('sidebarWorkspace', 'workspace'),
+    ('workHome', None), ('workStatusIdle', None), ('recentNavigation', None), ('workspaceShortcuts', None)])
 async def test_grouped_cutoff_expires_through_settled_browser_delivery(service, monkeypatch, resource, section):
     from amplifier_web import chat_navigation
     now = [1_800_000_000]
@@ -18,16 +19,23 @@ async def test_grouped_cutoff_expires_through_settled_browser_delivery(service, 
     service._save_changes(sessions={'alpha', 'beta'}, globals={'workspaces'})
     client = service.clients.attach('age-client')
     client.update(selectedSessionId='alpha', selectedWorkspaceId='one')
-    shell_client = service.shell.client('age-client')
-    shell_client['views']['chats'] = {'view': {
-        'navAge': '24h', 'navRecentView': {'navAge': '24h'}}}
-    service.shell.put('client', 'age-client', shell_client)
+    client['view']['navAge'] = '24h'
     with service.clients.bind('age-client'):
         owner = service.shell.resources
         owner.register('age-client', 1, [resource], scope_for(service.state))
         await settled_resources(service, 'age-client')
         first = service.browser_state()
-        page = lambda frame: frame['shellResources']['instances']['chats']['resources'][resource]['value']['sidebarNavigation'][section]
+        def page(frame):
+            value = frame['shellResources']['instances']['chats']['resources'][resource]['value']
+            if section:
+                return value['sidebarNavigation'][section]
+            if resource == 'workHome':
+                return value['workHome']['groups']['idle']
+            if resource == 'workspaceShortcuts':
+                assert value['navigationAge'] == '24h'
+                rows = value['workspaceShortcuts']
+                return {'total': sum(row['chatCount'] for row in rows), 'items': [row for row in rows if row['chatCount']]}
+            return value[resource]
         assert page(first)['total'] > 0
         assert service.browser_state() is first
         revision = service.state['revision']
@@ -226,6 +234,9 @@ async def test_workspace_pin_reorder_does_not_accumulate_mixed_pages(service):
 
 @pytest.mark.parametrize('count', [270, 2700, 27000])
 async def test_scale_six_queries_reuse_100_observations(service, tmp_path, monkeypatch, count):
+    from amplifier_web import chat_navigation
+    # The reuse oracle changes child facts only, not relative-time inputs.
+    monkeypatch.setattr(chat_navigation, 'list_clock', lambda: 1_800_000_000)
     from amplifier_web.native_catalog import CatalogRows, CatalogPatchRows
     from test_native_directory import seed
     from test_history_directory_query_budget import measure_sql
@@ -285,6 +296,20 @@ async def test_scale_six_queries_reuse_100_observations(service, tmp_path, monke
             'p99Ms':times[98],'maxMs':times[-1], 'maxVm':max(row['vm'] for row in samples),
             'rootQueryCalls':0, 'decodedOverlayRows':reuse_decoded},
         'realChange':{'ms':changed_ms,'vm':changed_vm}, 'samples':samples}))
+
+
+async def test_search_clock_transition_invalidates_only_its_relative_time_identity(service, monkeypatch):
+    from amplifier_web import chat_navigation
+    now = [1_800_000_000]
+    monkeypatch.setattr(chat_navigation, 'list_clock', lambda: now[0])
+    service._save_changes(sessions={'alpha', 'beta'}, globals={'workspaces'})
+    state = {**service.state, 'view': {**service.state['view'], 'navChatScope': 'all'}}
+    first = service.projections.chats(state, section='search')
+    shortcuts = service.projections.chats(state, section='shortcuts')
+    assert service.projections.chats(state, section='search') is first
+    now[0] += 60
+    assert service.projections.chats(state, section='search') is not first
+    assert service.projections.chats(state, section='shortcuts') is shortcuts
 
 
 async def test_explicit_unknown_invalidation_drops_untracked_global_pages(service):

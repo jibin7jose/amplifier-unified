@@ -240,8 +240,13 @@ def _index(state, *, aggregates=None):
     unread_sessions = attention.get('sessions', {})
     reviewed_errors = reviewed_session_errors(attention)
     archived = state.get('conversationOrganization', {}).get('archived', {})
+    from .chat_navigation import age_scope, within_age
+    witness = age_scope(state)
+    pins = set(state.get('pinnedSessionIds', ()))
     for session in (() if aggregates is not None else state.get('sessions', [])):
         if not is_top_level(session) or session.get('id') in seen or session.get('id') in archived:
+            continue
+        if not within_age(session, state, witness=witness, pins=pins):
             continue
         seen.add(session.get('id'))
         workspace = by_id.get(session.get('workspaceId')) or by_path.get(_path(session.get('workspace')))

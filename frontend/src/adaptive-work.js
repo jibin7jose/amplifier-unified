@@ -10,10 +10,36 @@ export function homePatch(presentation={},extra={},view={}){
   navExpanded:view.navExpanded??false,navPinned:view.navPinned??((presentation.interfaceDetail||presentation.executionDetail)==='detailed'),...extra};
 }
 
+// Each workspace keeps one bounded set of tab-local choices. Only the active
+// query/page request goes to the producer; the browser's saved map never does.
+function workspaceChatChoices(value={}){
+ return {workHomeFilter:workKinds.includes(value?.workHomeFilter)?value.workHomeFilter:'all',
+  workHomeQuery:typeof value?.workHomeQuery==='string'?value.workHomeQuery.slice(0,500):'',
+  workHomePages:Object.fromEntries(workKinds.filter(kind=>Number.isSafeInteger(value?.workHomePages?.[kind])
+   &&value.workHomePages[kind]>=0&&value.workHomePages[kind]<=1_000_000).map(kind=>[kind,value.workHomePages[kind]]))};
+}
+export function readWorkspaceChatChoices(browser,workspaceId){
+ try{return workspaceChatChoices(JSON.parse(browser.sessionStorage.getItem('amplifier.workspace-chats.v1:'+workspaceId)))}catch{return workspaceChatChoices()}
+}
+export function saveWorkspaceChatChoices(browser,workspaceId,values){
+ const choices=workspaceChatChoices(values);
+ try{browser.sessionStorage.setItem('amplifier.workspace-chats.v1:'+workspaceId,JSON.stringify(choices))}catch{}
+ return choices;
+}
+export function workspaceChatQuery(view,workspaceId){
+ const choices=workspaceChatChoices(view);
+ return {workspaceId,query:choices.workHomeQuery,pages:choices.workHomePages};
+}
+export function currentWorkspaceChatQuery(value,view,workspaceId){
+ const query=workspaceChatQuery(view,workspaceId);
+ return value?.workspaceId===workspaceId&&value?.query===query.query
+  &&workKinds.every(kind=>(value?.pages?.[kind]||0)===(query.pages[kind]||0));
+}
+
 // Like chat reading positions, Home's scroll stays in this browser tab. Wait for
 // the matching resource before restoring; a loading placeholder has no height.
 export function workReadingKey(view,mode){
- return JSON.stringify([mode,view.workHomeScope||'all',view.workHomeQuery||'',view.workHomeFilter||'all',
+ return JSON.stringify([mode,view.workHomeScope||'all',view.workHomeQuery||'',view.workHomeFilter||'all',view.navAge||'all',
   ...workKinds.map(key=>view.workHomePages?.[key]||0)]);
 }
 export function rememberHomeScroll(pane,key,storageKey='amplifier.work-home-reading.v1'){
@@ -30,6 +56,7 @@ export function rememberHomeScroll(pane,key,storageKey='amplifier.work-home-read
 export function currentWorkPage(value,view={},pinnedScope=null){
  return value?.scope===(pinnedScope||view.workHomeScope||'all')
   &&value?.requestedScope===(view.workHomeScope||'all')&&value?.query===(view.workHomeQuery||'')
+  &&(value?.age||'all')===(view.navAge||'all')
   &&workKinds.every(key=>(value.requestedPages?.[key]||0)===(view.workHomePages?.[key]||0));
 }
 export function currentWorkContext(value,view={},pinnedScope=null){
@@ -39,16 +66,16 @@ export function currentWorkContext(value,view={},pinnedScope=null){
 
 // A Focus pass is a tab-local reading position, never a shared skip/read state.
 const focusStorageKey='amplifier.work-home-focus.v1';
-export function readFocusCursor(browser){
+export function readFocusCursor(browser,storageKey=focusStorageKey){
  try{
-  const value=JSON.parse(browser.sessionStorage.getItem(focusStorageKey));
+  const value=JSON.parse(browser.sessionStorage.getItem(storageKey));
   return value&&typeof value.key==='string'&&workKinds.includes(value.kind)
    &&Number.isSafeInteger(value.page)&&value.page>=0&&Number.isSafeInteger(value.index)&&value.index>=-1
    &&(value.id===null||typeof value.id==='string')?value:null;
  }catch{return null}
 }
-export function saveFocusCursor(browser,value){
- try{browser.sessionStorage.setItem(focusStorageKey,JSON.stringify(value))}catch{}
+export function saveFocusCursor(browser,value,storageKey=focusStorageKey){
+ try{browser.sessionStorage.setItem(storageKey,JSON.stringify(value))}catch{}
 }
 export function focusPosition(page,cursor){
  if(!page?.items?.length)return null;

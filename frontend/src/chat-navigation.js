@@ -59,7 +59,8 @@ export function chatPage(state,workspace,{section=null}={}){
  const scope={mode,workspaceId:mode==='all'?null:workspace?.id??null,filter,selectedSessionId};
  if(section)scope.section=section;
  const grouped=['search','workspace'].includes(section),group=view.navGroup||'recent',age=view.navAge||'all',now=Math.floor(Date.now()/60000)*60;
- if(grouped)Object.assign(scope,{group,age});
+ scope.age=age;
+ if(grouped)scope.group=group;
  if(section==='recent'||section==='search')scope.showAgentCreated=view.navShowAgentCreated===true;
  if(view.navSort&&view.navSort!=='activity')scope.sort=view.navSort;
  if(mode==='all'&&view.navLocationFilter==='managed')scope.locationFilter='managed';
@@ -83,7 +84,7 @@ export function chatPage(state,workspace,{section=null}={}){
  if(section==='pinned')chats=chats.filter(chat=>chat.pinned);
  if(section==='recent'||section==='search')chats=chats.filter(chat=>scope.showAgentCreated||chat.agentCreated!==true||chat.id===selectedSessionId);
  const seconds=ageSeconds[CHAT_AGES.indexOf(age)];
- if(grouped&&seconds)chats=chats.filter(chat=>chat.pinned||chat.recentActivityAt>0&&chat.recentActivityAt>=now-seconds);
+ if(seconds)chats=chats.filter(chat=>chat.pinned||chat.recentActivityAt>0&&chat.recentActivityAt>=now-seconds);
  const activityCounts={attention:0,working:0,unread:0,idle:0};
  chats=chats.map(chat=>({...chat,activity:activityFor(chat,state)}));
  for(const chat of chats)activityCounts[chat.activity.kind]=(activityCounts[chat.activity.kind]||0)+1;

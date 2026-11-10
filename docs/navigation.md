@@ -461,6 +461,17 @@ Agents use the same `shell.view.update` and `shell.command` paths as the UI:
   hidden and off-page pins. The original chat-only pinned projection is unchanged.
 - Workspace instance: `navWorkspaceMode` (`recent`, `folders`), plus the existing
   folder path, wildcard search, and page keys.
+- The bundled sidebar's **Last activity** slider owns the attached client's
+  `view.navAge` (`24h`, `7d`, `30d`, `90d`, `1y`, or default `all`).
+  Home/status cards, workspace chats, All chats/search, Recent, and workspace
+  session counts use that same age before counting or paging. Pins bypass age;
+  unknown activity dates appear under All. Folder registrations stay navigable.
+  This does not filter transcript messages, Work tasks, Files, notifications,
+  or change the selected chat, draft, read state, or runtime.
+  Reload imports the former builtin list's age once (current list first, then
+  the other saved choice), preserving unrelated filters and group-by choices.
+  Write it through `view.update`, not builtin `shell.view.update` or a nested
+  `navRecentView`. Independently authored modules retain their own view contract.
 - `shell.command` for `workspace.select` or `workspace.create` on the paired
   workspace instance opens that client's associated chat list. It preserves the
   other clients' library views and the normal app command semantics.

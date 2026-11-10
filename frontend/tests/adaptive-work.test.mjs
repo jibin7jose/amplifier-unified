@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {startingWorkView,homePatch,currentWorkPage,currentWorkContext,focusPosition,stepFocus,readFocusCursor,saveFocusCursor} from '../src/adaptive-work.js';
+import {startingWorkView,homePatch,readWorkspaceChatChoices,saveWorkspaceChatChoices,workspaceChatQuery,currentWorkspaceChatQuery,currentWorkPage,currentWorkContext,focusPosition,stepFocus,readFocusCursor,saveFocusCursor} from '../src/adaptive-work.js';
 test('appearance chooses arrival only; explicit starting preference wins',()=>{
  assert.equal(startingWorkView({interfaceDetail:'minimal'}),'focus');
  assert.equal(startingWorkView({interfaceDetail:'standard'}),'brief');
@@ -13,8 +13,48 @@ test('appearance chooses arrival only; explicit starting preference wins',()=>{
 test('late pages cannot answer a new project, search or page',()=>{
  const data={scope:'a',requestedScope:'a',query:'launch',requestedPages:{idle:1}};
  assert.equal(currentWorkPage(data,{workHomeScope:'a',workHomeQuery:'launch',workHomePages:{idle:1}}),true);
- for(const changes of [{workHomeScope:'b'},{workHomeQuery:'offsite'},{workHomePages:{idle:2}}])
+ for(const changes of [{workHomeScope:'b'},{workHomeQuery:'offsite'},{workHomePages:{idle:2}},{navAge:'24h'}])
   assert.equal(currentWorkPage(data,{workHomeScope:'a',workHomeQuery:'launch',workHomePages:{idle:1},...changes}),false);
+});
+
+test('A to B to A restores bounded workspace choices and cursor without sharing request keys',()=>{
+ const values=new Map(),browser={sessionStorage:{getItem:key=>values.get(key),setItem:(key,value)=>values.set(key,value)}};
+ const choices={workHomeQuery:'workspace',workHomeFilter:'idle',workHomePages:{idle:1}};
+ saveWorkspaceChatChoices(browser,'one',choices);
+ const view={workHomeScope:'one',...readWorkspaceChatChoices(browser,'one')};
+ const cursor={key:JSON.stringify(['one','one','workspace']),kind:'idle',page:1,index:2,id:'a-52'};
+ saveFocusCursor(browser,cursor,'focus:one');
+ saveWorkspaceChatChoices(browser,'two',{workHomeQuery:'other',workHomeFilter:'unread',workHomePages:{unread:2}});
+ saveFocusCursor(browser,{...cursor,id:'b-102'},'focus:two');
+ assert.deepEqual(readWorkspaceChatChoices(browser,'one'),choices);
+ assert.deepEqual(readFocusCursor(browser,'focus:one'),cursor);
+ const request=workspaceChatQuery(view,'one');
+ assert.deepEqual(request,{workspaceId:'one',query:'workspace',pages:{idle:1}});
+ assert.equal(currentWorkspaceChatQuery(request,view,'one'),true);
+ assert.equal(currentWorkspaceChatQuery({...request,workspaceId:'two'},view,'one'),false);
+ assert.equal(currentWorkspaceChatQuery({...request,query:'other'},view,'one'),false);
+ assert.equal(currentWorkspaceChatQuery({...request,pages:{idle:2}},view,'one'),false);
+ assert.equal(currentWorkspaceChatQuery({pages:{idle:1},query:'workspace',workspaceId:'one'},view,'one'),true,'Wire property order is not request identity');
+ assert.deepEqual(Object.keys(request),['workspaceId','query','pages'],'No saved map, mode, filter or storage keys leave the browser');
+ const page={scope:'one',requestedScope:'one',query:'workspace',requestedPages:{idle:1}};
+ assert.equal(currentWorkPage(page,view,'one'),true);
+ assert.equal(currentWorkPage(page,{...view,workHomeScope:'two'},'two'),false);
+ assert.equal(currentWorkPage(page,{...view,workHomeQuery:'changed'},'one'),false);
+ assert.equal(currentWorkPage(page,{...view,workHomePages:{idle:2}},'one'),false);
+    const finite={...view,navAge:'24h'};
+    assert.equal(currentWorkPage({...page,age:'24h'},finite,'one'),true);
+    assert.equal(currentWorkPage({...page,age:'all'},finite,'one'),false);
+    assert.deepEqual(workspaceChatQuery(finite,'one'),request,'Shared age never enters workspace-local requests');
+ saveWorkspaceChatChoices(browser,'one',{...choices,workHomeFilter:'all'});
+ assert.equal(readWorkspaceChatChoices(browser,'one').workHomeQuery,'workspace','Clearing status retains workspace search');
+ const context={scope:'one',requestedScope:'one',workspace:{id:'one',path:'/one'}};
+ assert.equal(currentWorkContext(context,view,'one'),context);
+ assert.equal(currentWorkContext(context,{...view,workHomeScope:'two'},'two'),null);
+ const blocked={get sessionStorage(){throw Error('Unavailable')}};
+ assert.deepEqual(readWorkspaceChatChoices(blocked,'one'),{workHomeFilter:'all',workHomeQuery:'',workHomePages:{}});
+ assert.doesNotThrow(()=>saveWorkspaceChatChoices(blocked,'one',choices));
+ saveWorkspaceChatChoices(browser,'bad',{workHomeQuery:'x'.repeat(501),workHomeFilter:'wrong',workHomePages:{idle:-1,unread:1_000_001,attention:true,paused:4,extra:1},extra:'never stored'});
+ assert.deepEqual(readWorkspaceChatChoices(browser,'bad'),{workHomeFilter:'all',workHomeQuery:'x'.repeat(500),workHomePages:{paused:4}});
 });
 
 test('pinned Home accepts its effective project while fencing request and pin changes',()=>{
@@ -94,6 +134,10 @@ test('Focus retains only a tab-local cursor and tolerates unavailable or invalid
  const values=new Map(),browser={sessionStorage:{getItem:key=>values.get(key),setItem:(key,value)=>values.set(key,value)}};
  const cursor={key:'scope/query',kind:'attention',page:2,index:0,id:'chat-a'};
  saveFocusCursor(browser,cursor);assert.deepEqual(readFocusCursor(browser),cursor);
+ const workspaceKey='amplifier.work-focus.v1:workspace:one:chats',workspaceCursor={...cursor,id:'workspace-chat'};
+ saveFocusCursor(browser,workspaceCursor,workspaceKey);
+ assert.deepEqual(readFocusCursor(browser,workspaceKey),workspaceCursor);
+ assert.deepEqual(readFocusCursor(browser),cursor,'Workspace browsing cannot overwrite the Home pass');
  saveFocusCursor(browser,{...cursor,index:'wrong'});assert.equal(readFocusCursor(browser),null);
  const blocked={get sessionStorage(){throw Error('Storage unavailable')}};
  assert.equal(readFocusCursor(blocked),null);assert.doesNotThrow(()=>saveFocusCursor(blocked,cursor));

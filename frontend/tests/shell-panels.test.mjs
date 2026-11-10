@@ -515,7 +515,7 @@ test('Recent pagination stays bounded and is shared with agents',async()=>{
  await renderAct(async()=>{root=create(render())});
  assert.equal(root.root.findAllByProps({className:'a-nav-chat-select'}).length,40);
  await renderAct(async()=>root.root.findByProps({'aria-label':'Show more conversations'}).props.onClick());
- assert.deepEqual(calls.at(-1).args.patch.navRecentView.navChatPage,{mode:'all',workspaceId:null,filter:'',selectedSessionId:'chat-0',section:'recent',showAgentCreated:false,index:1});
+ assert.deepEqual(calls.at(-1).args.patch.navRecentView.navChatPage,{mode:'all',workspaceId:null,filter:'',age:'all',selectedSessionId:'chat-0',section:'recent',showAgentCreated:false,index:1});
  await renderAct(async()=>root.update(render()));
  const rows=root.root.findAllByProps({className:'a-nav-chat-select'});
  assert.equal(rows[0].props['aria-label'],'Saved 40');assert.equal(rows.length,40);

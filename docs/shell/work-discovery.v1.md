@@ -70,6 +70,16 @@ layout and reading position independently. Focus steps through bounded results
 without changing their read state; Brief provides summaries and Studio exposes a
 denser collection. All layouts retain meaningful empty, unavailable and error states.
 
+The workspace's **Chats** tab reuses Home's status-grouped cards and Focus / Brief /
+Studio controls, pinned to that workspace even when Home has another scope. Its
+single chat toolbar sits below the workspace tabs; there are no workspace-wide
+layout or Display controls. Keep the workspace title and tabs, without a nested
+Home introduction, workspace banner or scope picker. Work, Files and Details remain
+separate tabs. Home and workspace Chats retain independent search, status filters,
+pages, reading positions and Focus passes; returning to one does not reset the other.
+The view choices keep their names and accessible **Work view** group, without a
+visible **Layout** label.
+
 Keep search, sorting, archive/restore, pinning, rename/remove, folder browsing,
 workspace creation/attachment, chat plans, Files, Details and Workspace work where
 applicable. Reuse existing controls rather than recreating their mutation logic.
@@ -77,18 +87,26 @@ An active status filter stays visible beside the results; clearing it preserves
 the search and workspace scope. Layout selection stays recognizable across
 Appearance detail levels; screen width may change its arrangement.
 
-All chats and workspace chat catalogs offer **Recent / date**, **Workspace** and
-**Status** grouping, independently of Focus / Brief / Studio layout. A visible,
-keyboard-operable age slider selects **24h, 7d, 30d, 90d, 1y or All**; All is the
-default. Age uses the catalog's meaningful navigation activity, not selection,
+The **All chats** catalog offers **Recent / date**, **Workspace** and
+**Status** grouping, independently of Focus / Brief / Studio layout. One visible,
+keyboard-operable **Last activity** slider in the sidebar selects **24h, 7d, 30d,
+90d, 1y or All** for the attached client; All is the default. It applies to Home,
+workspace Chats, All chats/search, Recent, Status and workspace session counts
+before counting or paging. Age uses meaningful navigation activity, not selection,
 rename or intermediate tool progress. Finite ranges include the cutoff, exclude
 unknown/nonpositive dates, and retain pinned chats in their saved order. Pins
 still honor search, archive, status and workspace scope. Unknown dates remain
 discoverable under All. Grouping and age apply to the complete eligible catalog
 before bounded paging; the existing sort applies within each group. Changing
-either starts at the first page. Preferences belong to the originating client's
-navigation instance and survive reload, without changing another instance or
-client, canonical history, or the quiet sidebar's Browse/Status/Recent controls.
+either starts at the first page. Grouping remains local to the originating list;
+age is shared by that client's discovery views and survives reload without
+changing another client, canonical history, the selected conversation, draft,
+read/attention state or runtime. Folder registrations remain navigable with no
+matching chats. The former builtin list age is imported once on attach/reload.
+Home-style workspace Chats keeps its independent search, status filter, pages and
+reading position while honoring that same sidebar age. The workspace catalog
+query retains grouping support for its existing consumers; the bundled workspace
+tab no longer renders that list.
 
 Use **Workspace** for the registered folder-backed entity and **No workspace** for
 a standalone chat. “Project” remains ordinary language for someone’s undertaking,
@@ -145,5 +163,6 @@ dependencies or new summary processing is authorized by this presentation change
 
 | Date | Change | Evidence |
 | --- | --- | --- |
+| 2026-11-09 | Reuse Home's chat presentation inside workspace Chats, remove workspace-wide appearance controls and the visible Layout label. | Product-owner narrowed implementation request; qualification remains separate. |
 | 2026-10-20 | Extend shared landing presentation, add sidebar Home, restore Workspace terminology, and clarify layout/filter controls. | [Follow-up direction](../ux/decisions/20261020-landing-pages.md). |
 | 2026-10-20 | Adopt the Home/sidebar promises, with plain names and quiet refresh/shared-row corrections. | [Product-owner decision](../ux/decisions/20261020.md); implementation evidence remains separate. |

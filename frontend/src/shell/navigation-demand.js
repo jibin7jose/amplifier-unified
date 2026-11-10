@@ -8,7 +8,7 @@ export function navigationResources(state,sidebarVisible=true,supportsStatus=tru
   :['pinnedNavigation','recentNavigation','workspaceShortcuts'];
  if(surface==='home')resources.push('workHome','workspaceShortcuts');
  if(surface==='chats')resources.push('sidebarSearch');
- if(surface==='workspace'&&(view.workWorkspaceTab||'chats')==='chats')resources.push('sidebarWorkspace');
+ if(surface==='workspace'&&(view.workWorkspaceTab||'chats')==='chats')resources.push('workHome');
  if(surface==='workspaces')resources.push('workspaceExplorer');
  // The visible overview reuses these bounded rows; a closed Canvas asks for none.
  if(surface==='chat'&&state?.canvas?.open&&(view.canvasDraft?.library||state.canvas.placeholder||!state.canvasWorkspace?.views?.length)&&!view.settingsCanvas)

@@ -67,7 +67,7 @@ def test_warm_catalog_pin_changes_rebuild_age_membership_and_group_metadata(monk
             assert set(ids(actual)) == {'fresh', *pins}
             assert all(row['group']['id'] == 'pin' for row in actual['items'] if row['pinned'])
         else:
-            assert ids(actual) == ['fresh', 'old-pin', 'expired']
+            assert set(ids(actual)) == {'fresh', *pins}
     assert first['items'][0]['pinned'] == (section in {'search', 'workspace'})
 
 
@@ -130,7 +130,7 @@ def test_all_chats_uses_only_available_roots_and_pins_then_actual_recency():
     state['sessions'][0]['updatedAt']=99999
     page=chat_navigation.snapshot(state)
     assert ids(page)==['old-pin','new-pin','newest','same-first','same-second','fork']
-    assert page['scope']=={'mode':'all','workspaceId':None,'filter':'','selectedSessionId':None}
+    assert page['scope']=={'mode':'all','workspaceId':None,'filter':'','selectedSessionId':None,'age':'all'}
     assert page['items'][0]['workspace']=='/projects/one/shared'
     assert page['items'][0]['pinned'] and not page['items'][2]['pinned']
     assert set(page['items'][0])=={'id','title','description','status','workspace','workspaceId','pinned','recentActivityAt','workspaceName','workspaceLabel','activity','runtimeSessionId','createdAt','agentCreated'}

@@ -135,8 +135,10 @@ class ShellResources:
     def list_clock(self, identity):
         from .chat_navigation import list_clock
         registration = self.clients.get(identity)
+        view = self.shell.service.clients.records.get(identity, {}).get('view', {})
         return (list_clock() if registration is not None
-                and registration['wanted'] & {'sidebarSearch', 'sidebarWorkspace'} else None)
+                and (registration['wanted'] & {'sidebarSearch', 'sidebarWorkspace'}
+                     or view.get('navAge', 'all') != 'all' and registration['wanted'] - {'workspaceOverview'}) else None)
 
     def _bound(self, identity):
         service = self.shell.service
@@ -227,14 +229,19 @@ class ShellResources:
             pinned = instance.get('scope', {}).get('workspaceId') if instance.get('scope', {}).get('mode') == 'pinned' else None
             return (((root_navigation_revision, workspace_revision), None), self._epochs(CHAT_GLOBALS),
                     pinned, scoped.get('selectedSessionId'),
-                    encoded({'index': (view.get('navStatusPages') or {}).get(STATUS_RESOURCES[name], 0)}))
+                    encoded({'index': (view.get('navStatusPages') or {}).get(STATUS_RESOURCES[name], 0),
+                             'navAge': view.get('navAge', 'all')}), self._age_clock(scoped))
         if name == 'workHome':
-            from .adaptive_work import WORK_QUERY_FIELDS
+            from .adaptive_work import work_home_inputs, WORK_QUERY_FIELDS
+            from .shell_modules import BUILTINS
+            work_state, work_pin = work_home_inputs(scoped,
+                pinned_workspace_id=instance.get('scope', {}).get('workspaceId') if instance.get('scope', {}).get('mode') == 'pinned' else None,
+                workspace_chats=instance['package'] in BUILTINS)
+            query = work_state.get('view', {})
             return (((root_navigation_revision, workspace_revision), None), self._epochs(CHAT_GLOBALS),
-                    view.get('workHomeScope'), scoped.get('selectedSessionId'),
-                    encoded({**{key: view.get(key) for key in WORK_QUERY_FIELDS},
-                             'pinnedWorkspaceId': instance.get('scope', {}).get('workspaceId')
-                             if instance.get('scope', {}).get('mode') == 'pinned' else None}))
+                    query.get('workHomeScope'), scoped.get('selectedSessionId'),
+                    encoded({**{key: query.get(key) for key in WORK_QUERY_FIELDS},
+                             'pinnedWorkspaceId': work_pin}), self._age_clock(work_state))
         saved = view.get('navRecentLimit', 20)
         from .chat_navigation import RECENT_LIMITS
         saved = saved if type(saved) is int and saved in RECENT_LIMITS else 20
@@ -244,7 +251,7 @@ class ShellResources:
         globals_key = self._epochs(CHAT_GLOBALS)
         if name in {'workspaceExplorer', 'workspaceShortcuts'}:
             navigation_revision = (workspace_revision, None)
-            globals_key = self._epochs({'workspaces', 'pinnedWorkspaceIds', 'conversationOrganization'})
+            globals_key = self._epochs({'workspaces', 'pinnedWorkspaceIds', 'pinnedSessionIds', 'conversationOrganization'})
         elif name != 'workspaceOverview':
             navigation_revision = ((root_navigation_revision, workspace_revision)
                 if name in {'pinnedNavigation', 'sidebarPinned'} else root_navigation_revision, None)
@@ -255,13 +262,14 @@ class ShellResources:
         if name in {'workspaceExplorer', 'workspaceShortcuts', 'workspaceOverview'}:
             filters = WORKSPACE_FILTERS if name != 'workspaceOverview' else ()
             return (navigation_revision, globals_key, workspace, mode,
-                    encoded({key: view.get(key) for key in filters}))
+                    encoded({key: view.get(key) for key in filters}),
+                    *((view.get('navAge', 'all'), self._age_clock(scoped)) if name != 'workspaceOverview' else ()))
         home = {**view, 'navChatScope': 'all', 'navArchive': 'active', 'navCollection': None,
                 'navFilter': '', 'navStatusFilter': 'all', 'navLocationFilter': 'all', 'navSort': 'activity'}
         home.pop('navChatPage', None)
         sidebar = {**home, 'navChatScope': 'workspace' if mode == 'pinned' else 'all'}
         if name in {'sidebarRecent', 'sidebarSearch'}:
-            query = {**sidebar, **view.get('navRecentView', {})}
+            query = {**sidebar, **view.get('navRecentView', {}), 'navAge': view.get('navAge', 'all')}
         elif name in {'sidebarPinned', 'pinnedNavigation', 'recentNavigation'}:
             query = sidebar
         elif name == 'sidebarWorkspace':
@@ -275,7 +283,12 @@ class ShellResources:
         return (navigation_revision, globals_key,
                 workspace if query.get('navChatScope') != 'all' else None,
                 scoped.get('selectedSessionId'), encoded({key: query.get(key) for key in fields}),
-                list_clock() if name in {'sidebarSearch', 'sidebarWorkspace'} else None)
+                list_clock() if name in {'sidebarSearch', 'sidebarWorkspace'} else self._age_clock(scoped))
+
+    @staticmethod
+    def _age_clock(state):
+        from .chat_navigation import age_scope
+        return age_scope(state)[1]
 
     @staticmethod
     def _record(value, previous, previous_revision=0):
@@ -425,7 +438,10 @@ class ShellResources:
                                     self.shell.service, 'shell.resources.pages', synchronous=True):
                                 built = self.shell.navigation(client, instance, identity=identity,
                                     navigation_resources=frozenset({resource}), _page_only=True)
-                            own[resource] = self._record(page_value(built, resource), previous.get(resource),
+                            value = page_value(built, resource)
+                            if resource in {'workspaceExplorer', 'workspaceShortcuts', 'pinnedNavigation'}:
+                                value['navigationAge'] = scoped['view'].get('navAge', 'all')
+                            own[resource] = self._record(value, previous.get(resource),
                                 prior.get('versions', {}).get(resource, 0))
                         except PendingQuery as wait:
                             pending[resource] = {'status': 'retry' if wait.retry_after else 'pending',

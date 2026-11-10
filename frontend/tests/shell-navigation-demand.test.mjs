@@ -80,7 +80,7 @@ test('same resource names in different workspaces are fenced by scope and demand
  const second=state({...first.view,workWorkspaceId:'two'}),third=state({...first.view,workWorkspaceId:'three'});
  await f.render(second);assert.equal(f.calls.length,2);
  assert.deepEqual(f.current().data.snapshots.chats.navigationResources,[],'previous-scope pages are pending immediately');
- assert.equal(f.current().data.snapshots.chats.sidebarNavigation?.workspace,undefined);
+ assert.equal(f.current().data.snapshots.chats.workHome,undefined);
  await f.render(third);await f.accept(1,second);
  assert.equal(f.calls.length,3);assert.notEqual(demandFor(f.calls[1]).demandId,demandFor(f.calls[2]).demandId);
  assert.notEqual(f.current().data.snapshots.chats.view.workWorkspaceId,'two');

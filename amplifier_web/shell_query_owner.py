@@ -186,8 +186,7 @@ class ShellQueryOwner:
     def _fence(self, operation='chats'):
         directory = self.service.directory
         semantic = directory.observation_revision
-        fields = {'workspaces'} if operation == 'workspace_counts' else {
-            'workspaces', 'pinnedSessionIds', 'conversationOrganization'}
+        fields = {'workspaces', 'pinnedSessionIds', 'conversationOrganization'}
         if operation == 'pinned_navigation':
             fields.update({'pinnedWorkspaceIds', 'pinnedItemIds', 'pinOrderCustomized'})
         # Native cache writers own their semantic generations. Its unrelated

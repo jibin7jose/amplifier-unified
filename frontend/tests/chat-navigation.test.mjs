@@ -21,12 +21,12 @@ test('pinning retains Recent membership and normal sort with stable ties',()=>{
 test('Recent accepts safe cumulative steps, keeps requested 120 at actual 101 exhaustion and fences every scope',()=>{
  for(const limit of [20,100,120,5000])assert.equal(recentLimit(limit),limit);
  for(const limit of [0,21,Infinity,Number.MAX_SAFE_INTEGER+1,true,'120'])assert.equal(recentLimit(limit),20);
- const scope={section:'shortcuts',mode:'all',workspaceId:null,filter:'',limit:120,showAgentCreated:false,
+ const scope={section:'shortcuts',mode:'all',workspaceId:null,filter:'',age:'all',limit:120,showAgentCreated:false,
   selectedSessionId:'selected',clientId:'client',instanceId:'chats',generation:2};
  const page={items:Array.from({length:101},(_,id)=>({id:String(id)})),total:101,end:101,remaining:0,scope};
  assert.equal(recentPageMatches(page,scope),true);
  for(const [key,value] of Object.entries({limit:101,showAgentCreated:true,selectedSessionId:'other',mode:'workspace',
-  workspaceId:'other',clientId:'other',instanceId:'other',generation:3,filter:'search'}))
+  workspaceId:'other',clientId:'other',instanceId:'other',generation:3,filter:'search',age:'24h'}))
   assert.equal(recentPageMatches(page,{...scope,[key]:value}),false,key);
 });
 

@@ -103,13 +103,13 @@ class StateProjections:
         positions = self.sessions(state).positions
         retained = {}
         for key, value in self.values.items():
-            if key[0] in {'session-index', 'attention', 'workspace-index', 'workspaces', 'chat-registry'}:
+            if key[0] in {'session-index', 'attention', 'chat-registry'}:
                 retained[key] = value
             elif key[0] == 'chat-index':
                 # Pins change grouped metadata and finite-age membership, not
                 # merely order. Rebuild from all roots so newly pinned old chats
                 # can enter, and unpinned expired chats can leave.
-                if key[-1] in {'search', 'workspace'}:
+                if key[-1] in {'search', 'workspace'} or value[1].get('age', 'all') != 'all':
                     continue
                 rows, scope, counts = value
                 sort = scope.get('sort', 'activity')
@@ -229,7 +229,13 @@ class StateProjections:
         from .workspace_navigation import workspace_pins
         return (state.get('selectedWorkspaceId'), tuple(workspace_pins(state)),
                 cls.view_scope(state, ('navWorkspaceBrowseFor', 'navWorkspacePath',
-                                      'navWorkspaceFilter', 'navWorkspacePage', 'navWorkspaceMode', 'navWorkspaceArchive')))
+                                      'navWorkspaceFilter', 'navWorkspacePage', 'navWorkspaceMode', 'navWorkspaceArchive')),
+                cls.age_scope(state))
+
+    @staticmethod
+    def age_scope(state):
+        from .chat_navigation import age_scope
+        return age_scope(state)
 
     @property
     def directory(self):
@@ -237,9 +243,12 @@ class StateProjections:
 
     def workspace_index(self, state):
         from .workspace_navigation import _index
+        age, clock = self.age_scope(state)
+        if clock is not None:
+            state = {**state, '_navigationListClock': clock}
         archive = state.get('view', {}).get('navWorkspaceArchive', 'active')
         directory = self.directory
-        key = ('workspace-index', archive, *self.workspace_dependencies(state)) if directory else ('workspace-index', archive)
+        key = ('workspace-index', archive, age, clock, *self.workspace_dependencies(state)) if directory else ('workspace-index', archive, age, clock)
         def build():
             aggregates = self.directory_read(('workspace-counts', *key[1:]), 'workspace_counts', state,
                 {'archive': archive}, lambda: directory.workspace_counts(state, archive=archive)) if directory else None
@@ -250,7 +259,7 @@ class StateProjections:
         resources = getattr(getattr(self.service, 'shell', None), 'resources', None)
         # Workspace summaries exclude archived chats. Both registry and archive
         # commits must refresh them; standalone owners have no commit publisher.
-        fields = {'workspaces', 'conversationOrganization'}
+        fields = {'workspaces', 'conversationOrganization', 'pinnedSessionIds'}
         registry = (resources._epochs(fields) if resources is not None else
                     json.dumps({key: state.get(key) for key in sorted(fields)},
                                sort_keys=True, separators=(',', ':')))
@@ -280,7 +289,7 @@ class StateProjections:
         workspace = None if view.get('navChatScope') == 'all' else state.get('selectedWorkspaceId')
         filters = {key: view.get(key) for key in ('navChatScope', 'navSort', 'navFilter', 'navStatusFilter', 'navLocationFilter', 'navArchive', 'navCollection', 'navGroup', 'navAge')}
         from .chat_navigation import list_clock
-        filters['listClock'] = state.get('_navigationListClock', list_clock()) if section in {'search', 'workspace'} else None
+        filters['listClock'] = state.get('_navigationListClock', list_clock()) if section in {'search', 'workspace'} or view.get('navAge', 'all') != 'all' else None
         if section:
             filters['navStatusFilter'] = 'all'
         catalog_state = {**state, 'view': {**view, 'navStatusFilter': 'all'}} if section else state
@@ -308,7 +317,7 @@ class StateProjections:
 
     def chats(self, state, *, section=None):
         from .chat_navigation import list_clock
-        clock = list_clock() if section in {'search', 'workspace'} else None
+        clock = state.get('_navigationListClock', list_clock()) if section in {'search', 'workspace'} or state.get('view', {}).get('navAge', 'all') != 'all' else None
         if clock is not None:
             state = {**state, '_navigationListClock': clock}
         directory = self.directory
@@ -351,7 +360,7 @@ class StateProjections:
         dependencies = ((*self.root_navigation_dependencies(state), *self.workspace_dependencies(state))
                         if self.directory is not None else ())
         key = ('pinned-navigation', *dependencies, tuple(ordered_ids(state)),
-               *self.navigation_page_scope(state, section='pinned'))
+               *self.navigation_page_scope(state, section='pinned'), self.age_scope(state))
         return self.get(key, lambda: self._pinned_navigation(state, key=key))
 
     def _pinned_navigation(self, state, *, key=None):

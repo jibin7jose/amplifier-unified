@@ -118,8 +118,9 @@ def _chat_query(directory, state, section, *, activity_counts=True, now=None):
     grouped = section in {'search', 'workspace'}
     group, age = view.get('navGroup', 'recent'), view.get('navAge', 'all')
     now = list_clock() if now is None else now
+    scope['age'] = age
     if grouped:
-        scope.update(group=group, age=age)
+        scope['group'] = group
     where = ["session_kind='root'", '(resolved_workspace_id IS NOT NULL OR managed)']
     if mode == 'workspace':
         where += ['NOT managed', 'resolved_workspace_id=?']
@@ -129,7 +130,7 @@ def _chat_query(directory, state, section, *, activity_counts=True, now=None):
     if query:
         where.append('directory_match(?,title,description,id,COALESCE(native_id,id),resolved_workspace,workspace_name)')
         params.append(query)
-    if grouped and age in AGE_SECONDS:
+    if age in AGE_SECONDS:
         where.append('(pin_position IS NOT NULL OR (recent>0 AND recent>=?))')
         params.append(now-AGE_SECONDS[age])
     if section:
@@ -225,7 +226,13 @@ def chats(directory, state: dict[str, Any], *, section: str | None = None) -> Ch
 
 def workspace_counts(directory, state, archive='active'):
     sql, params, _ = _base(directory, state, archive=archive)
-    sql += " SELECT resolved_workspace,COUNT(*),SUM(unread),MAX(recent),activity_kind,activity_label FROM navigation_rows WHERE session_kind='root' AND NOT archived AND resolved_workspace_id IS NOT NULL GROUP BY resolved_workspace,activity_kind,activity_label"
+    from .chat_navigation import age_scope
+    age, now = age_scope(state)
+    predicate = ''
+    if age in AGE_SECONDS:
+        predicate = ' AND (pin_position IS NOT NULL OR (recent>0 AND recent>=?))'
+        params.append(now - AGE_SECONDS[age])
+    sql += " SELECT resolved_workspace,COUNT(*),SUM(unread),MAX(recent),activity_kind,activity_label FROM navigation_rows WHERE session_kind='root' AND NOT archived AND resolved_workspace_id IS NOT NULL" + predicate + " GROUP BY resolved_workspace,activity_kind,activity_label"
     result = {}
     for path, count, unread, recent, kind, label in directory.db.execute(sql, params):
         entry = result.setdefault(path, {'chatCount':0,'unread':0,'recentActivityAt':0,

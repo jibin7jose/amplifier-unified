@@ -147,7 +147,6 @@
 /* Shared landing controls and collections; mutations remain in the existing rows. */
 #amp-one.a-approachable-shell .a-adaptive-home.a-work-browser{padding:24px clamp(20px,4vw,56px) 40px;width:100%}
 #amp-one .a-work-layout{display:flex;flex-wrap:wrap;align-items:center;gap:12px;min-width:0}
-#amp-one .a-work-layout-label{font-size:var(--a-text-xs,12px);color:var(--a-muted)}
 #amp-one .a-home-tools .a-home-settings{width:auto;padding:7px 10px;border:1px solid var(--a-line);border-radius:var(--a-radius,8px);background:none;color:var(--a-muted)}
 #amp-one .a-home-preferences>.a-caption{flex-basis:100%;margin:0}
 #amp-one .a-home-filter-bar{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin:0 0 24px}

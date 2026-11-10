@@ -101,7 +101,7 @@ async def test_delayed_grouped_completion_keeps_payload_clock_not_notification_c
         row.update(recentActivityAt=now[0]-86400, navigationActivityAt=now[0]-86400)
     owner = prepare(service)
     client = service.shell.client('browser')
-    client['baselineView']['navRecentView'] = {'navAge': '24h'}
+    service.clients.records['browser']['view']['navAge'] = '24h'
     service.shell.put('client', 'browser', client)
     owner.queries.factory = held_projector
     notified = []
@@ -145,7 +145,10 @@ async def test_exact_existing_query_oracle_and_independent_full_api(service, tmp
             # The independent explicit API still runs its exact full projection.
             expected = service.shell.navigation(client, instance, identity='browser', navigation_resources=wanted)
             for name in wanted:
-                assert actual['instances'][instance['id']]['resources'][name]['value'] == page_value(expected, name)
+                value = page_value(expected, name)
+                if name in {'workspaceExplorer', 'workspaceShortcuts', 'pinnedNavigation'}:
+                    value['navigationAge'] = expected['view'].get('navAge', 'all')
+                assert actual['instances'][instance['id']]['resources'][name]['value'] == value
 
 
 async def test_pending_retains_only_same_query_and_status_revision_orders_equal_values(service):
@@ -821,7 +824,10 @@ async def test_concurrent_child_progress_does_not_starve_cold_root_queries(servi
         expected = service.shell.navigation(client, {'id': 'chats', 'package': 'builtin.chats'},
             identity='browser', navigation_resources=wanted)
     for name in wanted:
-        assert result['instances']['chats']['resources'][name]['value'] == page_value(expected, name)
+        value = page_value(expected, name)
+        if name in {'workspaceExplorer', 'workspaceShortcuts', 'pinnedNavigation'}:
+            value['navigationAge'] = expected['view'].get('navAge', 'all')
+        assert result['instances']['chats']['resources'][name]['value'] == value
 
 
 @pytest.mark.parametrize('platform', ['darwin', 'win32'])

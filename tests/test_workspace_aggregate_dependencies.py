@@ -158,6 +158,30 @@ async def test_read_receipt_registry_archive_and_explicit_removal_remain_current
     assert service.projections.workspaces(service.state) != all_workspaces
 
 
+async def test_age_aggregates_expire_and_track_warm_pin_membership(service, monkeypatch):
+    from amplifier_web import chat_navigation
+    now = [1_800_000_000]
+    monkeypatch.setattr(chat_navigation.time, 'time', lambda: now[0])
+    for row in service.state['sessions']:
+        row.update(recentActivityAt=now[0]-86400, navigationActivityAt=now[0]-86400)
+    service.state['view'].update(navAge='24h', navWorkspaceMode='recent')
+    service._save_changes(sessions={'alpha', 'beta'}, globals={'workspaces'})
+    def counts():
+        return {row['workspaceId']: row['chatCount']
+                for row in service.projections.workspace_shortcuts(service.state)}
+    assert counts() == {'one': 1, 'two': 1}
+    now[0] += 60
+    assert counts() == {'one': 0, 'two': 0}, 'Registry remains navigable at zero chats'
+    service.state['pinnedSessionIds'] = ['alpha']
+    service._publish_changes(globals={'pinnedSessionIds'})
+    assert counts() == {'one': 1, 'two': 0}
+    service.state['pinnedSessionIds'] = []
+    service._publish_changes(globals={'pinnedSessionIds'})
+    assert counts() == {'one': 0, 'two': 0}
+    service.state['view']['navAge'] = 'all'
+    assert counts() == {'one': 1, 'two': 1}
+
+
 async def test_older_local_facts_derive_workspace_baseline_by_key_without_rewriting_catalog(service):
     from amplifier_web.history_directory_observations import initialize
     service._save_changes(sessions={'alpha', 'beta'}, globals={'workspaces'})
