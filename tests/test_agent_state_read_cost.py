@@ -1,10 +1,102 @@
 """An agent read prepares retained metadata once per synchronous projection."""
 from copy import deepcopy
+import json
 
 import pytest
 
 from test_shell_modules import service
 from test_cold_display import app, add_history
+
+
+@pytest.mark.parametrize('retained', [4, 4000])
+async def test_warm_session_page_does_not_encode_omitted_history(service, monkeypatch, retained):
+    from amplifier_web import agent_state
+
+    visits = []
+
+    class Messages(list):
+        def __iter__(self):
+            for item in super().__iter__():
+                visits.append(item['id'])
+                yield item
+
+    owner = service._state['sessions'][0]
+    owner['messages'] = Messages([
+        {'id': f'm-{n}', 'role': 'assistant', 'text': 'Retained synthetic text. ' * 50}
+        for n in range(retained)])
+    # Prepare the canonical notification projection separately: its initial
+    # history scan is not preview encoding. Repeated reads reuse that projection.
+    await service.app_bridge('get_state', {'path': '/revision'}, 'alpha')
+    visits.clear()
+    revision = service._state['revision']
+    encoded = []
+    size = agent_state._size
+
+    def measured_size(value):
+        length = size(value)
+        encoded.append(length)
+        return length
+
+    monkeypatch.setattr(agent_state, '_size', measured_size)
+    page = await service.app_bridge('get_state', {'path': '/sessions', 'limit': 50}, 'alpha')
+    # A warm two-owner page must not traverse/encode all historical messages merely
+    # to decide they do not fit. These budgets allow repeated bounded previews.
+    assert len(visits) < 100
+    assert sum(encoded) < 100_000
+    assert page['revision'] == revision
+    assert page['total'] == 2
+    assert 'Keep this unsent message' not in json.dumps(page)
+    selected = next(item for item in page['items'] if item['value'].get('id') == 'alpha'
+                    or item['value'].get('preview', {}).get('id') == 'alpha')
+    path = selected['path'] + '/messages'
+    args = {'path': path, 'offset': retained - 1, 'limit': 1,
+            'revision': revision, 'directoryRevision': page['directoryRevision']}
+    detail = await service.app_bridge('get_state', args, 'alpha')
+    assert detail['items'][0]['value'] == owner['messages'][-1]
+    assert detail['total'] == retained and detail['nextOffset'] is None
+    owner['messages'][-1]['text'] = 'Current nested edit, without a publication.'
+    updated = await service.app_bridge('get_state', args, 'alpha')
+    assert updated['items'][0]['value'] == owner['messages'][-1]
+    assert service._state['revision'] == revision
+
+
+@pytest.mark.parametrize('value', [
+    None, True, 123.5, [], {},
+    '日本語 café 😀' * 40,
+    '\n"\\' * 100,
+    {'escaped/key': ['é' * 300, {'~nested': '\t' * 100}]},
+    list(range(100)),
+])
+def test_preview_preserves_exact_json_character_boundary(value):
+    from amplifier_web.agent_state import _preview
+
+    length = len(json.dumps(value, ensure_ascii=False))
+    assert _preview(value, '/value', length) is value
+    below = _preview(value, '/value', length - 1, reference_key='$detail')
+    assert below['$detail'] == '/value'
+    assert below['type'] == type(value).__name__
+
+
+@pytest.mark.parametrize('characters', [5000, 1_000_000])
+def test_preview_does_not_encode_an_omitted_large_leaf(monkeypatch, characters):
+    from amplifier_web import agent_state
+
+    value = {'text': 'é' * characters}
+    encoded = []
+    size = agent_state._size
+
+    def measured_size(item):
+        length = size(item)
+        encoded.append(length)
+        return length
+
+    monkeypatch.setattr(agent_state, '_size', measured_size)
+    preview = agent_state._preview(value, '/source')
+    assert sum(encoded) < 10_000
+    assert preview['$statePath'] == '/source'
+    text = preview['preview']['text']
+    assert text['$statePath'] == '/source/text' and text['size'] == characters
+    assert value == {'text': 'é' * characters}
 
 
 @pytest.mark.parametrize('retained', [1, 90])
