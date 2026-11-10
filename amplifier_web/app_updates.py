@@ -35,7 +35,6 @@ try:
  import amplifier_web
  from amplifier_web import __version__
  from amplifier_web.server import create_app
- import pam
  facts["version"]=__version__
  facts["stage"]="package"
  p=Path(amplifier_web.__file__).resolve().parent
@@ -47,7 +46,12 @@ try:
  from amplifier_ui_use.browser import observation_for
  assert callable(observation_for)
  facts["stage"]="login"
- facts["loginAvailable"]=callable(pam.authenticate)
+ if sys.platform=="win32":
+  from amplifier_web.browser_entry import current_owner_sid
+  facts["loginAvailable"]=bool(current_owner_sid())
+ else:
+  import pam
+  facts["loginAvailable"]=callable(pam.authenticate)
  assert facts["loginAvailable"]
  if "native-desktop" in extras:
   facts["stage"]="capabilities"

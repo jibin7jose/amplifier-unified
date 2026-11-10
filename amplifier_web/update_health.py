@@ -333,7 +333,7 @@ def failure_events(state):
     return rows
 
 
-def current(state, evidence=None):
+def current(state, evidence=None, *, manual_verified=None):
     """Pure projection of operation/desired/active state; no IO and no read flags."""
     evidence = evidence or {}
     seq = state.get('sequence') or {}
@@ -400,6 +400,13 @@ def current(state, evidence=None):
         and 0 < application_batch.get('startedAt', 0)
             <= application_result.get('verifiedAt', 0) <= application_batch.get('completedAt', 0))
     def currently_verified(row):
+        manual = state.get('manualHandoff') or {}
+        if (manual.get('phase') == 'manual-handoff-reconciled'
+                and manual_verified is not None and manual_verified == manual.get('requestId')
+                and manual.get('revision') == app.get('runningRevision')
+                and manual.get('version') == app.get('current')
+                and row == manual.get('refusal')):
+            return True  # Exact historical pre-effect refusal, not generic recovery.
         # A later complete, applicable operation proves current readiness for
         # generic preparation/OS failures too, not just a reason-code allowlist.
         # Missing packages and unknown app feature scope remain unverified.
@@ -477,7 +484,8 @@ def publish(manager):
                 'actionRequired': False, 'action': None, 'component': None}
             return
         evidence = {}
-    state['currentStatus'] = current(state, evidence)
+    state['currentStatus'] = current(state, evidence,
+        manual_verified=getattr(manager, '_manual_handoff_verified', None))
 
 
 async def refresh(manager):

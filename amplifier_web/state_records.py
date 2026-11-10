@@ -179,7 +179,7 @@ def load_owner(db, identity):
     return session, runtime
 
 
-def save_working(db, state, references, identities, *, global_keys=None, deleted=()):
+def save_working(db, state, references, identities, *, global_keys=None, deleted=(), preserve_globals=()):
     """Save the working set without inferring deletion from non-residency.
 
     Explicit owner deletion is the only operation which clears an absent durable
@@ -192,6 +192,9 @@ def save_working(db, state, references, identities, *, global_keys=None, deleted
         global_keys = set(state) - {'sessions', 'runtimeControl', 'revision'}
         old = {key for key, in db.execute("SELECT id FROM state_records WHERE kind='global'")}
         global_keys.update(old)
+    # An owner with an unreadable commit must not overwrite its durable value
+    # from speculative memory, including during a full/shutdown checkpoint.
+    global_keys = set(global_keys) - set(preserve_globals)
     if deleted:
         references = {identity: value for identity, value in references.items() if identity not in deleted}
         state = {**state, 'runtimeControl': {identity: value for identity, value in state.get('runtimeControl', {}).items()

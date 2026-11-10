@@ -178,6 +178,17 @@ disk. The existing automatic retention owner covers ecosystem generations, not
 app-installation generations; this path does not infer that an older app directory
 is safe to delete.
 
+An explicit `updates.reconcileManualHandoff` verifies an already completed manual
+Windows handoff after the exact retained pre-effect `restart-capability` refusal.
+It is not automatic Windows activation or a historical restart acknowledgement.
+The host independently verifies the current official release wheel, installed
+payload, uv launcher, owner/data identity, dependencies/extras and pinned local
+listener, then rechecks the pending tuple before retiring only that stale intent.
+Missing proof, changed identity or any unfinished replacement remains a refusal.
+The old candidate and failed attempt remain inspectable. Exact retries read
+`manualHandoffResults`; interrupted verification is not replayed. This does not
+grant optional-feature eligibility or promote an inactive component generation.
+
 When a qualified application update is waiting, expand **View active work** to
 find **Force restart…**. Its confirmation explains that running chats, workers,
 tools and calls will be interrupted, saved history and drafts are retained, and

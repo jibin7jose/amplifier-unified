@@ -51,6 +51,16 @@ progress; work and calls must be idle for activation. A fresh process must prove
 its installation before component checks continue. Rollback cancels continuation
 and retains the existing rule that automatic installation is disabled.
 
+A separately verified manual Windows handoff can complete that sequence's app
+leg without inventing a successful automatic restart. Its identity-bound receipt
+continues the ordinary included/other component stages with only the saved Install
+intent; verification without that intent installs nothing. A newer published app
+remains visible but does not retarget this unfinished component leg. A later fresh
+check starts the normal app-first cycle. Reload revalidates the actual installation;
+copied receipts, changed dependencies and later conflicting intent do not inherit
+the earlier proof. Native installation qualification and fixture-based scheduling
+checks are distinct evidence, not a claim of live adoption.
+
 A failed optional Smart Tool update retains its current installation, failure
 receipt and explicit Retry/Skip controls. It must not block checking or staging
 a newer application, or silently retry when the application sequence resumes.
