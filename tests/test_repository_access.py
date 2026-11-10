@@ -130,6 +130,62 @@ def test_git_long_paths_are_windows_child_policy_without_restoring_auth(monkeypa
     assert env['HTTPS_PROXY'] == original['HTTPS_PROXY'] and original == before
 
 
+@pytest.mark.parametrize('platform', ['win32', 'linux', 'darwin'])
+@pytest.mark.parametrize('executable', ['git', r'C:\Program Files\Git\cmd\git.exe', 'uv'])
+@pytest.mark.parametrize('inherited', [False, True])
+async def test_update_git_filesystem_policy_preserves_ordinary_environment(monkeypatch, platform, executable, inherited):
+    original = {**os.environ, 'AMPLIFIER_GITHUB_ACCESS': 'auto',
+                'GIT_CONFIG_COUNT': '3',
+                'GIT_CONFIG_KEY_0': 'core.autocrlf', 'GIT_CONFIG_VALUE_0': 'false',
+                'GIT_CONFIG_KEY_1': 'http.extraHeader', 'GIT_CONFIG_VALUE_1': 'synthetic-auth',
+                'GIT_CONFIG_KEY_2': 'include.path', 'GIT_CONFIG_VALUE_2': '/fixture/extra',
+                'GIT_CONFIG_GLOBAL': '/fixture/global', 'GH_TOKEN': 'synthetic-token',
+                'HTTPS_PROXY': 'http://proxy.example:8080'}
+    for key, value in original.items():
+        monkeypatch.setenv(key, value)
+    parent = dict(os.environ)
+    monkeypatch.setattr(updates.sys, 'platform', platform)
+    child = AsyncMock()
+    child.returncode = 0
+    child.communicate.return_value = (b'ok', b'')
+    create = AsyncMock(return_value=child)
+    monkeypatch.setattr(updates.asyncio, 'create_subprocess_exec', create)
+    given = None if inherited else dict(original)
+    before = None if given is None else dict(given)
+    assert await updates.process(executable, 'status', env=given) == 'ok'
+    actual = create.call_args.kwargs['env']
+    if platform == 'win32' and executable != 'uv':
+        assert {key: actual[key] for key in original if key != 'GIT_CONFIG_COUNT'} == {
+            key: value for key, value in original.items() if key != 'GIT_CONFIG_COUNT'}
+        assert actual['GIT_CONFIG_COUNT'] == '4'
+        assert actual['GIT_CONFIG_KEY_3'] == 'core.longpaths'
+        assert actual['GIT_CONFIG_VALUE_3'] == 'true'
+    else:
+        assert actual is given
+    assert given == before and dict(os.environ) == parent
+
+
+@pytest.mark.parametrize('executable', ['git', 'git.exe'])
+async def test_windows_update_git_keeps_anonymous_sanitizer(monkeypatch, executable):
+    monkeypatch.setattr(reset.sys, 'platform', 'win32')
+    original = {'AMPLIFIER_GITHUB_ACCESS': 'anonymous', 'GH_TOKEN': 'synthetic-token',
+                'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'core.autocrlf',
+                'GIT_CONFIG_VALUE_0': 'true'}
+    child = AsyncMock()
+    child.returncode = 0
+    child.communicate.return_value = (b'ok', b'')
+    create = AsyncMock(return_value=child)
+    monkeypatch.setattr(updates.asyncio, 'create_subprocess_exec', create)
+    await updates.process(executable, 'status', env=original)
+    env = create.call_args.kwargs['env']
+    settings = {env[f'GIT_CONFIG_KEY_{i}']: env[f'GIT_CONFIG_VALUE_{i}']
+                for i in range(int(env['GIT_CONFIG_COUNT']))}
+    assert settings['core.longpaths'] == 'true' and 'core.autocrlf' not in settings
+    assert settings['credential.helper'] == settings['http.extraHeader'] == ''
+    assert env['GIT_CONFIG_GLOBAL'] == env['GIT_CONFIG_SYSTEM'] == os.devnull
+    assert 'GH_TOKEN' not in env and original['GH_TOKEN'] == 'synthetic-token'
+
+
 async def test_bundle_fetch_inherits_anonymous_policy(monkeypatch):
     monkeypatch.setenv('AMPLIFIER_GITHUB_ACCESS', 'anonymous')
     child = AsyncMock()

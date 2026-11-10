@@ -163,6 +163,17 @@ def command(*args, env=None, capture=False, check=True, timeout=120):
     return result
 
 
+def git_filesystem_environment(env=None):
+    """Add only the Windows Git child's filesystem capability, not auth policy."""
+    env = dict(os.environ if env is None else env)
+    if sys.platform == "win32":
+        count = int(env.get("GIT_CONFIG_COUNT", "0"))
+        env[f"GIT_CONFIG_KEY_{count}"] = "core.longpaths"
+        env[f"GIT_CONFIG_VALUE_{count}"] = "true"
+        env["GIT_CONFIG_COUNT"] = str(count + 1)
+    return env
+
+
 def repository_environment(env=None, *, anonymous=False):
     """Scope download policy to children; never edit the user's Git configuration.
 
@@ -183,18 +194,13 @@ def repository_environment(env=None, *, anonymous=False):
                     ("http.cookieFile", ""), ("core.askPass", "")]
     else:
         settings = [("credential.https://github.com.helper", "!gh auth git-credential")] if shutil.which("gh") else []
-    if sys.platform == "win32":
-        # Anonymous isolation intentionally discards personal Git configuration.
-        # Restore only Git for Windows' filesystem capability, not user auth or
-        # URL rewrites. This is child-scoped and never edits machine settings.
-        settings.append(("core.longpaths", "true"))
     count = int(env.get("GIT_CONFIG_COUNT", "0"))
     for key, value in settings:
         env[f"GIT_CONFIG_KEY_{count}"] = key
         env[f"GIT_CONFIG_VALUE_{count}"] = value
         count += 1
     env["GIT_CONFIG_COUNT"] = str(count)
-    return env
+    return git_filesystem_environment(env)
 
 
 def repository_auth_failure(*details):

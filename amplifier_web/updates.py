@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import sys
 import time
 import tomllib
 from types import SimpleNamespace
@@ -244,6 +245,11 @@ async def process(*args, cwd=None, env=None, timeout=90, raw=False):
     if (env if env is not None else os.environ).get('AMPLIFIER_GITHUB_ACCESS') == 'anonymous':
         from .reset import repository_environment
         env = repository_environment(env)
+    elif sys.platform == 'win32' and str(args[0]).replace('\\', '/').rsplit('/', 1)[-1].lower() in {'git', 'git.exe'}:
+        # Ordinary checkout/fetch must work in the same deep candidate paths as
+        # anonymous reads, without changing credential helpers, EOL or includes.
+        from .reset import git_filesystem_environment
+        env = git_filesystem_environment(env)
     started=time.monotonic()
     proc = await asyncio.create_subprocess_exec(*map(str,args), cwd=cwd, env=env,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=os.name != 'nt')
