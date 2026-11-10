@@ -310,6 +310,8 @@ async def test_cross_owner_no_effect_recovery_holds_existing_queued_input(proces
     await agent(b.app, source, 'coordination.send', {'sessionId': b.owner['id'],
         'text': 'Do not run incidentally during recovery', 'mode': 'queue'}, 'queued-before-recovery')
     assert b.app.collaboration.receipt('queued-before-recovery')['delivery'] == 'queued'
+
+
     await invoke(b, source, 'reconcile')
     await b.runtime._request(b.owner['id'], 'fixture.busy', count=0)
     await invoke(b, source, 'resume')
@@ -337,3 +339,132 @@ async def test_cross_owner_no_effect_recovery_holds_existing_queued_input(proces
             await asyncio.sleep(.01)
     assert admitted == ['fresh-after-recovery']
     assert b.app.collaboration.receipt('queued-before-recovery')['delivery'] == 'queued'
+
+
+@pytest.mark.parametrize('process_boundary', ['full'], indirect=True)
+@pytest.mark.parametrize('change', ['full-off-on', 'placement', 'task-epoch', 'target-native'])
+async def test_operator_capture_precedes_dispatch_wait(process_boundary, monkeypatch, change):
+    b = process_boundary
+    saved = await operator_failure(b)
+    source = await manager(b)
+    entered, release = asyncio.Event(), asyncio.Event()
+    route = b.app.collaboration.route
+    async def delayed(action, *args):
+        if action == 'configuration.operation.reconcile':
+            entered.set()
+            await release.wait()
+        return await route(action, *args)
+    monkeypatch.setattr(b.app.collaboration, 'route', delayed)
+    pending = asyncio.create_task(invoke(b, source, 'reconcile'))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        if change == 'full-off-on':
+            await mode_for(b, source, 'ask')
+            await mode_for(b, source, 'full')
+        elif change == 'placement':
+            source['executionRevision'] = 1
+        elif change == 'task-epoch':
+            source['task'] = {'id': 'new-task', 'status': 'active', 'continuationEpoch': 2}
+        else:
+            b.owner['runtimeSessionId'] = 'different-native-target'
+    finally:
+        release.set()
+    with pytest.raises(AppError):
+        await pending
+    assert operation(b) == saved
+
+
+@pytest.mark.parametrize('process_boundary', ['full'], indirect=True)
+async def test_late_old_wait_stays_evidence_without_waking_recovered_target(process_boundary):
+    b = process_boundary
+    source = await manager(b)
+    source['status'] = 'working'
+    watched = await agent(b.app, b.owner, 'coordination.watch', {
+        'sessionId': b.owner['id'], 'targetSessionId': source['id'],
+        'condition': 'idle', 'expiresInSeconds': 60}, 'old-target-wait')
+    saved = await operator_failure(b)
+    await invoke(b, source, 'reconcile')
+    await b.runtime._request(b.owner['id'], 'fixture.busy', count=0)
+    await invoke(b, source, 'resume')
+    task = b.app.management.pending_config_tasks.get(b.owner['id'])
+    if task:
+        await asyncio.wait_for(task, 12)
+    before = deepcopy(b.owner['messages'])
+    async with b.app.lock:
+        current = b.app.collaboration.receipt('old-target-wait')
+        b.app.collaboration.watches.finish(current, 'observed', 'Late old result after recovery')
+        # A backpressured return revisited later is the same old work.
+        current = b.app.collaboration.receipt('old-target-wait')
+        current['subscription']['status'] = 'backpressured'
+        b.app.collaboration.save('old-target-wait', current)
+        b.app.collaboration.resume_outcomes(b.owner['id'])
+    await b.app.collaboration.drain(b.owner['id'])
+    result = b.app.collaboration.receipt('old-target-wait')
+    assert result['terminalOutcome']['status'] == 'observed'
+    assert result['subscription']['status'] == 'backpressured'
+    assert not b.app.db.execute('SELECT 1 FROM commands WHERE id=?',
+        (watched['subscription']['continuationId'],)).fetchone()
+    assert b.owner['messages'] == before and b.owner['status'] == 'idle'
+    assert operation(b)['attempts'][0] == saved['attempts'][0]
+
+
+@pytest.mark.parametrize('process_boundary', ['full'], indirect=True)
+@pytest.mark.parametrize('fault', [None, 'wrong-operation', 'missing-generation', 'revoked-original'])
+async def test_own_settings_return_keeps_exact_original_lineage(process_boundary, fault):
+    """Real shared settings-return producer; controlled native task boundary."""
+    b = process_boundary
+    source = await manager(b)
+    original = {'origin': 'agent', 'callerSessionId': source['id'],
+        'generation': deepcopy(source['collaborationGeneration']),
+        'target': b.app.management.configuration_target_binding(source),
+        'continuation': {'generationId': source['collaborationGeneration']['id'],
+            'taskId': 'settings-task', 'taskRevision': 1, 'taskContinuationEpoch': 1,
+            'lastInputId': None, 'assignmentId': None}}
+    authority = {'sessionId': source['id'], 'workspace': source['workspace'],
+        'accessRevision': b.app.access_mode.snapshot(source)['revision'],
+        'interruptionRevision': 0, 'effect': 'runtime_configuration', 'scope': 'session'}
+    record = b.app.management.create_configuration_operation(source, plan(2), 'own-settings', authority, original)
+    b.app.management.configuration_transition(source, record['id'], phase='ready', effect='mounted',
+        boundary={'ready': True, 'yieldedGoal': {'cap': None, 'turns_used': 1}})
+    source['task'] = {'id': 'settings-task', 'status': 'active', 'revision': 1, 'continuationEpoch': 1}
+    source['status'] = 'working'
+    # The settings-return owner validates the current task/last input in its
+    # ordinary path; no manual notification or peer-authored lineage is used.
+    from amplifier_web import configuration_continuation
+    from unittest.mock import patch
+    with (patch.object(configuration_continuation, 'intent_reason', return_value=None),
+          patch.object(b.app.collaboration, 'drain', new=AsyncMock())):
+        configuration_continuation.publish_outcome(b.app.management, source, record['id'])
+    wait_id = 'configuration-wait:' + record['id']
+    wait = b.app.collaboration.receipt(wait_id)
+    returned = b.app.collaboration.receipt(wait['subscription']['continuationId'])
+    source['collaborationGeneration'] = {'id': 'own-settings-return',
+        'inputIds': [returned['requestId']], 'terminal': False}
+    if fault == 'wrong-operation':
+        wait['configurationOperationId'] = '00000000-0000-0000-0000-000000000001'
+        b.app.collaboration.save(wait_id, wait)
+    elif fault == 'missing-generation':
+        path = b.app.management.configuration_record_path(source['id'], record['id'])
+        current = b.app.management.configuration_record(source['id'], record['id'])
+        current['request']['source']['generation'] = {}
+        from amplifier_web.configuration_authority import fingerprint
+        current['requestHash'] = fingerprint(current['request'])
+        path.write_text(json.dumps(current))
+        source['pendingConfiguration']['requestHash'] = current['requestHash']
+    elif fault == 'revoked-original':
+        await mode_for(b, source, 'ask')
+        await mode_for(b, source, 'full')
+    saved = await operator_failure(b)
+    if fault:
+        with pytest.raises((AppError, ValueError)):
+            await invoke(b, source, 'reconcile')
+        assert operation(b) == saved
+    else:
+        await invoke(b, source, 'reconcile')
+        await b.runtime._request(b.owner['id'], 'fixture.busy', count=0)
+        await invoke(b, source, 'resume')
+        task = b.app.management.pending_config_tasks.get(b.owner['id'])
+        if task:
+            await asyncio.wait_for(task, 12)
+        assert operation(b)['state']['effect'] == 'mounted'
+        assert operation(b)['resumptions'][0]['chain'][1] == authority

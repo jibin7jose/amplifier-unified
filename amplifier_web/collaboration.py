@@ -1045,7 +1045,8 @@ class Collaboration:
                     if active else "")
         cutoff = ()
         if accepted_after is not None:
-            eligible += " AND coalesce(json_extract(receipt,'$.acceptedAt'),0)>?"
+            eligible += (" AND coalesce(json_extract(receipt,'$.acceptedAt'),0)>?"
+                         " AND json_extract(receipt,'$.dependencyRequestId') IS NULL")
             cutoff = (accepted_after,)
         index = 'coordination_automatic_sender' if active else 'coordination_queued_sender'
         sender = self.service.db.execute(f"""WITH pending AS (
@@ -1207,10 +1208,14 @@ class Collaboration:
             # The newest outcome may have been backpressured by the old queued
             # return. Reuse the released slot now; no unrelated event is needed.
             async with self.service.lock:
-                self.resume_outcomes(sid)
+                if not suppress_input(self.service._session(sid)):
+                    self.resume_outcomes(sid)
 
     def admission(self, sid, args):
         receipt = self.receipt(args["inputId"])
+        from .configuration_recovery import suppress_input
+        if suppress_input(self.service._session(sid), receipt):
+            return {'admitted': False, 'reason': 'Operator configuration recovery did not authorize conversation input.'}
         binding = intake_task_binding(receipt)
         if (receipt.get("commandAction") != "coordination.send" or receipt.get("delivery") != "submitting"
                 or receipt.get("protocol") != PROTOCOL or receipt["target"]["sessionId"] != sid
@@ -1623,6 +1628,13 @@ class Collaboration:
         if self.service.db.execute('SELECT 1 FROM commands WHERE id=?', (identity,)).fetchone():
             return
         sender = self.service._session(request['senderSessionId'])
+        from .configuration_recovery import suppress_input
+        if suppress_input(sender):
+            # The result remains retained, including backpressured settings
+            # waits. A newly materialized return is not fresh explicit work.
+            self.save(request['requestId'], request)
+            self.service.db.commit()
+            return
         if (self.service.assignments.blocked(sender, request.get('assignmentId'))
                 or self.service.assignments.request_membership_reason(request)
                 or wait.get('interruptionRevision') != sender.get('interruptionRevision', 0)):

@@ -435,7 +435,12 @@ class ConfigurationAuthority:
                 if receipt.get('origin') == 'system' and receipt.get('dependencyRequestId'):
                     original = self.service.collaboration.receipt(receipt['dependencyRequestId'])
                     if original.get('senderSessionId') == owner['id']:
-                        visit(owner, self.continuation_inputs(original), depth+1)
+                        if original.get('commandAction') == 'configuration.apply':
+                            ancestry, retained = self.configuration_continuation_inputs(owner, original)
+                            authorities.extend(retained)
+                        else:
+                            ancestry = self.continuation_inputs(original)
+                        visit(owner, ancestry, depth+1)
                         continue
                 sender = self.service._session(receipt['senderSessionId'], hydrate=False)
                 if (not participant_matches(receipt, owner) or not participant_matches(receipt, sender)
@@ -451,6 +456,34 @@ class ConfigurationAuthority:
                 visit(sender, self.continuation_inputs(receipt), depth+1)
         visit(source, inputs)
         return authorities
+
+    def configuration_continuation_inputs(self, owner, original):
+        """Resolve a known own-settings return from its immutable operation."""
+        management = self.service.management
+        operation = original.get('configurationOperationId')
+        if (not operation or original.get('requestId') != 'configuration-wait:' + operation
+                or original.get('origin') != 'system'
+                or original.get('target', {}).get('sessionId') != owner['id']
+                or original.get('workspace') != owner['workspace']):
+            self.error('The settings continuation has no verified original input lineage.')
+        record = management.configuration_record(owner['id'], operation)
+        request = record['request']
+        source, intent = request['source'], request['source'].get('continuation') or {}
+        generation = source.get('generation') or {}
+        inputs = generation.get('inputIds')
+        if (source.get('origin') != 'agent' or source.get('callerSessionId') != owner['id']
+                or not generation.get('id') or intent.get('generationId') != generation['id']
+                or source.get('target') != management.configuration_target_binding(owner)
+                or not isinstance(inputs, list) or not inputs or len(inputs) > 128
+                or any(not isinstance(item, str) or not item for item in inputs)
+                or request.get('authorization') != 'grant' or not request.get('authority')
+                or record['state']['phase'] not in {'ready', 'error'}
+                or record['state']['effect'] not in {'mounted', 'none'}):
+            self.error('The settings continuation has no verified original input lineage.')
+        retained = [request['authority'], *record.get('resumptions', [])]
+        for authority in retained:
+            self.check(authority)
+        return inputs, retained
 
     def _capture(self, action, args, origin, caller, needed=None):
         if origin in {'ui', 'user'}:

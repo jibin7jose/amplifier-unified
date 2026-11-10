@@ -131,7 +131,8 @@ def suppress_input(session, receipt=None):
     marker = session.get('pendingConfiguration', {}).get('recoveryNoInput')
     return (isinstance(marker, dict)
         and marker.get('generationId') == (session.get('collaborationGeneration') or {}).get('id')
-        and (receipt is None or receipt.get('acceptedAt', 0) <= marker.get('acceptedAt', 0)))
+        and (receipt is None or receipt.get('dependencyRequestId')
+             or receipt.get('acceptedAt', 0) <= marker.get('acceptedAt', 0)))
 
 
 def recovery_child(service, session, request=None):
@@ -515,10 +516,14 @@ def recovery_status(management, session, record, attempt, observed, origin, oper
     return status
 
 
-def command(management, action, args, origin, caller):
+def command(management, action, args, origin, caller, *, operator=None):
     """Run under service.lock; use the existing shared command ledger for dedup."""
     service = management.service
-    operator = caller_authority(management, args, origin, caller, active=not action.endswith(".read"))
+    if operator is None:
+        operator = caller_authority(management, args, origin, caller, active=not action.endswith(".read"))
+    else:
+        service.configuration_authority.source({'sessionId': caller}, origin, caller, active=True)
+        service.configuration_authority.check(operator)
     if args.get('commandId') and not args.get('operationId'):
         raise ValueError('An exact command read requires an explicit operation.')
     session = service._session(args["sessionId"])

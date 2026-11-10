@@ -2009,6 +2009,16 @@ class AppService:
             raise AppError(str(exc)) from None
         from .workspace_work_effects import guard as work_effect_guard
         work_effect_guard(self, action, args, origin, caller_session_id)
+        recovery_operator = None
+        if (action in {'configuration.operation.read', 'configuration.operation.reconcile', 'configuration.operation.resume'}
+                and origin not in {'ui', 'user'} and args.get('sessionId') != caller_session_id):
+            from .configuration_recovery import caller_authority
+            # Capture the actual caller before routing/lock waits. A later Full
+            # off/on or placement/task change cannot renew this invocation.
+            try:
+                recovery_operator = caller_authority(self.management, args, origin, caller_session_id, active=True)
+            except (ValueError, OSError, KeyError, TypeError):
+                raise AppError('Targeted recovery requires a current authenticated Full root, exact operation and same workspace. Nothing was retried.', 403) from None
         if action == 'canvas.openGif' and (origin != 'ui' or client_id is None
                 or args.get('clientId', client_id) != client_id
                 or self.clients.record().get('kind') != 'web'):
@@ -2062,7 +2072,8 @@ class AppService:
             from .configuration_recovery import command as recovery_command
             async with self.lock:
                 try:
-                    result = recovery_command(self.management, action, args, origin, caller_session_id)
+                    result = recovery_command(self.management, action, args, origin, caller_session_id,
+                        operator=recovery_operator)
                 except (ValueError, OSError, KeyError, TypeError):
                     raise AppError('The retained configuration operation cannot be verified. Nothing was retried.', 409) from None
             return {'accepted': True, 'result': result}
@@ -3704,7 +3715,8 @@ class AppService:
                 # claimed target or command ID alone grants no receipt access.
                 caller_authority(self.management, args, origin, caller_session_id, active=True)
                 try:
-                    diagnostic_result = recovery_command(self.management, action, args, origin, caller_session_id)
+                    diagnostic_result = recovery_command(self.management, action, args, origin, caller_session_id,
+                        operator=recovery_operator)
                 except (ValueError, OSError, KeyError, TypeError, AppError) as exc:
                     message = ('Configuration recovery refused: ' + str(exc) if isinstance(exc, (ValueError, AppError))
                         else 'Configuration recovery could not verify authority or retained evidence. Nothing was retried.')
