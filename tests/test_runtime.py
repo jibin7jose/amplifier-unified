@@ -3722,7 +3722,8 @@ def test_metadata_primary_audit_is_exact_closed_and_outcome_neutral(tmp_path, mo
         if fault:
             raise RuntimeError('PRIVATE observer failure')
         return {'status': 'observed', 'directory': path == tmp_path, 'reparse': False,
-                'readonly': False, 'ownerMatch': True, 'privatePolicyMatch': True}
+                'readonly': False, 'ownerMatch': True, 'privatePolicyMatch': True,
+                'defaultTokenOwnerMatch': True, 'daclPolicyMatch': True}
     monkeypatch.setattr(fixture, 'metadata_object_facts', snapshot)
     observation = fixture.MetadataRenameObservation(target)
     previous = sys.getprofile()
@@ -3745,6 +3746,20 @@ def test_metadata_primary_audit_is_exact_closed_and_outcome_neutral(tmp_path, mo
         bad['primary']['destination']['path'] = str(target)
         with pytest.raises(AssertionError):
             fixture.validate_metadata_observation(bad)
+        # Owner and DACL results remain separate closed observations. In
+        # particular, a legacy TokenOwner match cannot become a private-policy
+        # match or permit raw identities, prose, or unknown schema fields.
+        legacy = copy.deepcopy(observation.facts)
+        legacy['primary']['destination'].update(
+            ownerMatch=False, privatePolicyMatch=False, defaultTokenOwnerMatch=True,
+            daclPolicyMatch=True)
+        fixture.validate_metadata_observation(legacy)
+        for key, value in (('defaultTokenOwnerMatch', 'PRIVATE SID'),
+                           ('daclPolicyMatch', 1), ('sddl', 'PRIVATE DACL')):
+            bad = copy.deepcopy(legacy)
+            bad['primary']['destination'][key] = value
+            with pytest.raises(AssertionError):
+                fixture.validate_metadata_observation(bad)
     public = json.dumps(observation.facts)
     assert 'private metadata' not in public and str(tmp_path) not in public
     # Installing a fixture hook must never change an unrelated writer or accept

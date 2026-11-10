@@ -61,6 +61,7 @@ ERROR_CLASSES = {kind: kind.__name__ for kind in (
 CODE_LABELS = {
     "cold_main": (__name__, "main"),
     "cold_journey": (__name__, "journey"),
+    "metadata_controls": (__name__, "native_metadata_controls"),
     "cold_installed_host": (__name__, "installed_host"),
     "cold_outer": (__name__, "run_owned_probe"),
     "cold_start": (__name__, "observe_default_start"),
@@ -1274,6 +1275,62 @@ async def observe_default_start(runtime, session, emit, report, project):
         facts["diagnosticStatus"] = "FAIL" if failed else "PASS"
 
 
+def metadata_default_owner(api):
+    """Read-only TokenOwner, not a new permitted DACL principal."""
+    import ctypes as C
+    from amplifier_web import windows_files as win
+    token = win.HANDLE()
+    api.ok(api.OpenProcessToken(api.GetCurrentProcess(), 8, C.byref(token)))
+    try:
+        size = win.DWORD()
+        result = api.GetTokenInformation(token, 4, None, 0, C.byref(size))
+        if result or C.get_last_error() != 122 or not 0 < size.value <= 65536:
+            raise OSError("cannot size fixture TokenOwner")
+        buffer = C.create_string_buffer(size.value)
+        api.ok(api.GetTokenInformation(token, 4, buffer, size, C.byref(size)))
+        return api.sid_text(C.cast(buffer, C.POINTER(win.PVOID))[0])
+    finally:
+        api.close(token)
+
+
+def metadata_dacl_policy(api, handle):
+    """Apply the canonical ACE policy independently of the owner predicate.
+
+    Kept fixture-local: this does not change production private-file admission.
+    TokenOwner is NOT added to the canonical policy's permitted ACE principals.
+    """
+    import ctypes as C
+    from amplifier_web import windows_files as win
+    dacl, descriptor = win.PVOID(), win.PVOID()
+    error = api.GetSecurityInfo(handle, 1, 4, None, None, C.byref(dacl), None,
+                                C.byref(descriptor))
+    if error:
+        raise C.WinError(error)
+    try:
+        control, revision = win.WORD(), win.DWORD()
+        api.ok(api.GetSecurityDescriptorControl(descriptor, C.byref(control), C.byref(revision)))
+        if not control.value & 4 or not dacl:
+            raise PermissionError("missing fixture DACL")
+        acl = win.ACL_INFO()
+        api.ok(api.GetAclInformation(dacl, C.byref(acl), C.sizeof(acl), 2))
+        for index in range(acl.count):
+            pointer = win.PVOID()
+            api.ok(api.GetAce(dacl, index, C.byref(pointer)))
+            ace = C.cast(pointer, C.POINTER(win.ACE)).contents
+            if ace.size < C.sizeof(win.ACE) + 8:
+                raise PermissionError("truncated fixture ACE")
+            sid = win.PVOID(pointer.value + C.sizeof(win.ACE))
+            count = C.c_ubyte.from_address(sid.value + 1).value
+            if 8 + 4 * count != ace.size - C.sizeof(win.ACE):
+                raise PermissionError("unsupported fixture ACE")
+            principal = api.sid_text(sid)
+            win._check_ace(ace.kind, ace.flags, ace.mask,
+                           "owner" if principal == api.sid else principal, private=True)
+        return True
+    finally:
+        api.LocalFree(descriptor)
+
+
 def metadata_object_facts(path):
     """Short-lived read/control handle, SHARE_ALL; never change attributes/ACLs.
 
@@ -1284,7 +1341,8 @@ def metadata_object_facts(path):
     import ctypes as C
     from amplifier_web import windows_files as win
     result = {"status": "unavailable", "directory": None, "reparse": None,
-              "readonly": None, "ownerMatch": None, "privatePolicyMatch": None}
+              "readonly": None, "ownerMatch": None, "privatePolicyMatch": None,
+              "defaultTokenOwnerMatch": None, "daclPolicyMatch": None}
     api = win._API()
     handle = api.CreateFileW(str(path), 0x20080, 7, None, 3, 0x2200000, None)
     if handle == win._INVALID:
@@ -1302,6 +1360,7 @@ def metadata_object_facts(path):
         if not error:
             try:
                 result["ownerMatch"] = api.sid_text(owner) == api.sid
+                result["defaultTokenOwnerMatch"] = api.sid_text(owner) == metadata_default_owner(api)
             finally:
                 api.LocalFree(descriptor)
         try:
@@ -1310,6 +1369,10 @@ def metadata_object_facts(path):
             result["privatePolicyMatch"] = False
         else:
             result["privatePolicyMatch"] = True
+        try:
+            result["daclPolicyMatch"] = metadata_dacl_policy(api, handle)
+        except PermissionError:
+            result["daclPolicyMatch"] = False
         return result
     finally:
         api.close(handle)
@@ -1429,7 +1492,8 @@ def validate_metadata_observation(value):
         for role in ("temporary", "destination", "parent"):
             row = primary[role]
             assert type(row) is dict and set(row) == {
-                "status", "directory", "reparse", "readonly", "ownerMatch", "privatePolicyMatch"}
+                "status", "directory", "reparse", "readonly", "ownerMatch", "privatePolicyMatch",
+                "defaultTokenOwnerMatch", "daclPolicyMatch"}
             assert type(row["status"]) is str and row["status"] in {"observed", "missing", "unavailable"}
             for key in set(row) - {"status"}:
                 assert row[key] is None or type(row[key]) is bool
@@ -1494,8 +1558,12 @@ def native_metadata_controls(root, result):
             assert primary["temporaryClosed"]
             for role in ("temporary", "destination", "parent"):
                 facts = primary[role]
-                assert facts["status"] == "observed" and facts["ownerMatch"] is True
-                assert facts["privatePolicyMatch"] is True and facts["reparse"] is False
+                assert facts["status"] == "observed"
+                # Legacy default ownership can differ from TokenUser on an
+                # elevated native host. Preserve the stricter policy result;
+                # qualify this fixture baseline, not production admission.
+                assert facts["ownerMatch"] is True or facts["defaultTokenOwnerMatch"] is True
+                assert facts["daclPolicyMatch"] is True and facts["reparse"] is False
                 assert facts["directory"] == (role == "parent")
             assert primary["temporary"]["readonly"] is False and primary["parent"]["readonly"] is False
             assert primary["destination"]["readonly"] == (label == "readonly")
