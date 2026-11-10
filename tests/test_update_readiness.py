@@ -45,6 +45,12 @@ def fake_distribution(monkeypatch,*,located=None,payload=None):
     return distribution
 
 
+@pytest.mark.parametrize('scope', [[], {}, 1, None, 'other'])
+def test_invalid_saved_update_intent_refuses_without_throwing(scope):
+    assert not update_readiness.valid_update_intent({'id': 'request', 'scope': scope})
+    assert not update_readiness.valid_target({**TARGET, 'updateIntent': {'id': 'request', 'scope': scope}})
+
+
 def test_running_identity_attests_only_own_installed_revision(monkeypatch):
     fake_distribution(monkeypatch)
     first=update_readiness.running_identity()
@@ -97,6 +103,28 @@ async def test_constructor_waits_for_real_listener_readiness(tmp_path,monkeypatc
         assert receipt['observedRevision']==REVISION
         assert not await manager.confirm_readiness(health(manager))
         assert sum(event['phase']=='restart-ack' for event in manager.diagnostics.state['events'])==1
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize('scope', ['app', 'whole'])
+async def test_exact_restart_intent_controls_component_continuation(tmp_path, monkeypatch, scope):
+    intent = {'id': 'explicit-request', 'scope': scope}
+    target = {**TARGET, 'updateIntent': intent}
+    service, manager = make_manager(tmp_path, monkeypatch, state={
+        'phase': 'activating', 'pendingRestart': target,
+        'applicationIntent': intent, 'sequence': {'stage': 'application', 'install': True, 'nextStage': 'other'}})
+    try:
+        assert await manager.confirm_readiness(health(manager))
+        sequence = service.state['updates']['sequence']
+        if scope == 'app':
+            assert sequence['stage'] == 'complete' and sequence['install'] is False
+            assert 'nextStage' not in sequence
+            assert service.state['updates']['applicationIntent'] == intent
+        else:
+            assert sequence['stage'] == 'included' and sequence['nextStage'] == 'included'
+            assert sequence['install'] is True
+        assert not await manager.confirm_readiness(health(manager))
     finally:
         await service.close()
 

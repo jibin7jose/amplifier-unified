@@ -716,7 +716,7 @@ class Management:
                     from .configuration_continuation import publish_outcome
                     publish_outcome(self, session, operation)
                     self.service._publish_changes(sessions={identity})
-                    if not session.get('configurationBusy'):
+                    if not session.get('configurationBusy') and not self.configuration_record(identity, operation).get('recoveryNoInput'):
                         self.background(self.service.collaboration.drain(identity))
 
     async def ensure_runtime(self,session,*,selection_override=None,bundle_replacement=None,restart_guard=None,preserve_configuration=False,saved_configuration_operation=None):
@@ -1132,7 +1132,7 @@ class Management:
                         record = self.configuration_error(current, configuration_operation, message)
                         self.settle_configuration_fence(current, configuration_operation)
                         self.service._publish_changes(sessions={session['id']})
-                        if not current['configurationBusy']:
+                        if not current['configurationBusy'] and record and not record.get('recoveryNoInput'):
                             self.background(self.service.collaboration.drain(session['id']))
                     if action == 'configuration.patchPlacement.bind':
                         raise ValueError(message) from None
@@ -1156,7 +1156,8 @@ class Management:
                     self.queued_path(session['id']).unlink(missing_ok=True)
                     self.settle_configuration_fence(current, configuration_operation)
                     self.service._publish_changes(sessions={session['id']})
-                self.background(self.service.collaboration.drain(session['id']))
+                if not self.configuration_record(session['id'], configuration_operation).get('recoveryNoInput'):
+                    self.background(self.service.collaboration.drain(session['id']))
         elif action=='runtime.control':
             placement = args['operation'] == 'configuration.patchPlacement.bind'
             if args['operation'].startswith('configuration.patchPlacement.') and configuration_operation is None:

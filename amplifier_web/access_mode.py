@@ -206,7 +206,8 @@ def walk_tools(bundle):
         for row in rows:
             if isinstance(row, dict) and row.get('module') in {'tool-filesystem', 'tool-apply-patch', 'tool-image', 'tool-search'}:
                 yield row
-        for child in children.values():
+        from .host.components import agent_roster
+        for child in agent_roster(children).values():
             if isinstance(child, dict):
                 yield from walk(child.get('tools', []), child.get('agents', {}))
     return walk(bundle.tools, bundle.agents)

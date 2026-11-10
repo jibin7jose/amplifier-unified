@@ -122,12 +122,19 @@ def artifact_context(manager):
         return None
 
 
+def valid_update_intent(value):
+    return (value is None or isinstance(value, dict) and set(value) == {'id', 'scope'}
+            and isinstance(value['id'], str) and 0 < len(value['id']) <= 200
+            and isinstance(value['scope'], str) and value['scope'] in {'app', 'whole'})
+
+
 def valid_target(value):
     from .app_features import valid_restart_selection
     return (isinstance(value, dict)
             and isinstance(value.get('version'), str) and re.fullmatch(r'\d+\.\d+\.\d+', value['version'])
             and isinstance(value.get('revision'), str) and re.fullmatch('[a-f0-9]{40}', value['revision'])
             and isinstance(value.get('attemptId'), str) and re.fullmatch('[a-f0-9]{32}', value['attemptId'])
+            and valid_update_intent(value.get('updateIntent'))
             and valid_restart_selection(value))
 
 
@@ -191,7 +198,7 @@ def recovery_candidate(manager):
 
 def same_target(first, second):
     return bool(first and second and all(first.get(key) == second.get(key)
-                for key in ('attemptId', 'version', 'revision', 'sourceInstanceId', 'legacy', 'featureSelection', 'dependencyDigest', 'qualification')))
+                for key in ('attemptId', 'version', 'revision', 'sourceInstanceId', 'legacy', 'featureSelection', 'dependencyDigest', 'qualification', 'updateIntent')))
 
 
 async def qualify_successor(manager, target):
@@ -383,7 +390,14 @@ async def confirm_readiness(manager, health, expected=None, command_id=None, *, 
             state['applicationResult'] = {'attemptId': target['attemptId'], 'phase': phase,
                 'version': identity['version'], 'revision': identity['revision'],
                 'verifiedAt': time.time(), **archive_result}
-            if not selected:
+            if not selected and (target.get('updateIntent') or {}).get('scope') == 'app':
+                sequence = {**state.get('sequence', {}), 'stage': 'complete', 'install': False}
+                sequence.pop('nextStage', None)
+                state['sequence'] = sequence
+                state['applicationIntent'] = target['updateIntent']
+                state['lastCheck'] = time.time()
+                state['detail'] += ' App-only request complete; no component installation was requested.'
+            elif not selected:
                 # Resume only after this exact restarted installation is healthy.
                 # A manual Install request covers the remaining component phases.
                 sequence = state.get('sequence') or {'install': manager.service.state['settings'].get('updates', {}).get('autoInstall', True)}

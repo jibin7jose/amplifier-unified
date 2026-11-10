@@ -55,7 +55,8 @@ def live_plan(plan, background_delegate=True):
             loop.setdefault("config", {}).update(configured_bundle=True)
             loop["config"].setdefault("background_delegate", background_delegate)
             changed.append({"path": prefix + "session.orchestrator", "from": original, "to": "loop-live"})
-        for name, agent in node.get("agents", {}).items():
+        from .components import agent_roster
+        for name, agent in agent_roster(node.get("agents", {})).items():
             if isinstance(agent, dict):
                 visit(agent, prefix + "agents." + name + ".")
     visit(result)
@@ -485,6 +486,86 @@ def is_snapshot(bundle):
     return getattr(bundle, "version", None) == SNAPSHOT_VERSION
 
 
+def _load_agent_definitions(bundle):
+    """Resolve ordinary composed references, never a saved executable plan.
+
+    Foundation's public loader fills false-y fields and logs parse failures.
+    Load into empty records so explicit values (including []/""/False) remain
+    authoritative, and a failed read cannot masquerade as an executable agent.
+    """
+    from .components import agent_roster
+    metadata_cache = {}
+
+    def resolve(values, ancestors=(), inherited_root=None):
+        if not isinstance(values, dict):
+            agent_roster(values)  # Validate a selector without consuming it.
+            return copy.deepcopy(values)
+        if len(ancestors) >= 64:
+            raise ValueError("File-backed agent definition nesting exceeds 64 levels.")
+        definitions = {}
+        for name, explicit in values.items():
+            if not isinstance(explicit, dict):
+                raise ValueError(f"Invalid agent definition: {name!r}; expected an object.")
+            path = bundle.resolve_agent_path(name)
+            metadata = {}
+            if path is None:
+                if set(explicit) == {"name"}:
+                    raise ValueError(f"Missing file-backed agent definition: {name!r}.")
+            else:
+                if name not in metadata_cache:
+                    candidate = copy.copy(bundle)
+                    candidate.agents = {name: {}}
+                    candidate.load_agent_metadata()
+                    metadata_cache[name] = candidate.agents[name]
+                metadata = copy.deepcopy(metadata_cache[name])
+                if "name" not in metadata or not any(value for key, value in metadata.items() if key != "name"):
+                    raise ValueError(f"Could not load file-backed agent definition: {name!r}.")
+            effective = {**metadata, **copy.deepcopy(explicit)}
+            try:
+                from amplifier_foundation import Bundle
+                Bundle.from_dict(effective, base_path=path.parent if path else bundle.base_path)
+                if not isinstance(effective.get("session", {}), dict):
+                    raise ValueError("session must be an object")
+                agent_roster(effective.get("agents", {}))
+            except Exception as exc:
+                raise ValueError(f"Malformed file-backed agent definition: {name!r}: {exc}") from exc
+            namespace = name.split(":", 1)[0] if ":" in name else None
+            root = bundle.source_base_paths.get(namespace, bundle.base_path)
+            # Rebase this file's sections only. Nested definitions have their
+            # own resource roots; inline replacement sources retain their base.
+            own = {key: value for key, value in effective.items() if key not in explicit and key != "agents"}
+            for row in declarations(own):
+                source = row.get("source")
+                if isinstance(source, str) and source.startswith(("./", "../")) and root:
+                    row["source"] = str((root / source).resolve())
+            # Inline sections carried by an enclosing agent file still belong
+            # to that file, even when this nested name has no separate file.
+            if inherited_root:
+                for row in declarations({key: value for key, value in effective.items()
+                                         if key in explicit and key != "agents"}):
+                    source = row.get("source")
+                    if isinstance(source, str) and source.startswith(("./", "../")):
+                        row["source"] = str((inherited_root / source).resolve())
+            if isinstance(effective.get("agents"), dict):
+                identity = str(path.resolve()) if path else name
+                if effective["agents"] and "agents" not in explicit and identity in ancestors:
+                    raise ValueError(f"Cyclic file-backed agent definition: {name!r}.")
+                # Use Foundation's roster include semantics as well as its file
+                # reader. Its agent-file layer deliberately drops top-level
+                # dictionary rosters; metadata/inline rosters remain supported.
+                roster = effective["agents"]
+                if any((not isinstance(value, list) or not all(isinstance(item, str) for item in value))
+                       if key == "include" else not isinstance(value, dict) for key, value in roster.items()):
+                    raise ValueError(f"Malformed nested agent roster: {name!r}.")
+                nested = Bundle.from_dict({"agents": roster}).agents
+                effective["agents"] = resolve(nested, (*ancestors, identity),
+                    inherited_root if "agents" in explicit else root)
+            definitions[name] = effective
+        return definitions
+
+    bundle.agents = resolve(bundle.agents)
+
+
 def _expand_module_configuration(node, in_provider=False):
     """Resolve declared configuration, leaving provider config for schema materialization."""
     if isinstance(node, list):
@@ -538,7 +619,8 @@ def _apply_host_policy(bundle, config, *, execution_workspace=None):
         for row in rows:
             if isinstance(row, dict) and row.get('module') == 'tool-filesystem':
                 policies.setdefault(row.get('id') or row.get('instance_id') or 'tool-filesystem', {})
-        for child in children.values():
+        from .components import agent_roster
+        for child in agent_roster(children).values():
             if isinstance(child, dict):
                 discover(child.get('tools', []), child.get('agents', {}))
     discover(bundle.tools, bundle.agents)
@@ -620,7 +702,8 @@ def _apply_host_policy(bundle, config, *, execution_workspace=None):
             for key in policy_keys & row['config'].keys():
                 row['config'][key] = list(dict.fromkeys(str(path) for path in paths(row['config'][key])))
     def agents(values):
-        for agent in values.values():
+        from .components import agent_roster
+        for agent in agent_roster(values).values():
             if isinstance(agent, dict):
                 apply(agent.get("tools", []))
                 agents(agent.get("agents", {}))
@@ -637,7 +720,8 @@ def _apply_host_policy(bundle, config, *, execution_workspace=None):
             if isinstance(row, dict) and row.get('module') in {'tool-image', 'tool-apply-patch'}:
                 for policy in effective:
                     row['config'] = restrict(row.get('config', {}), policy)
-        for child in children.values():
+        from .components import agent_roster
+        for child in agent_roster(children).values():
             if isinstance(child, dict):
                 writer_policies(child.get('tools', []), child.get('agents', {}), effective)
     writer_policies(bundle.tools, bundle.agents, [])
@@ -656,7 +740,8 @@ def _apply_host_policy(bundle, config, *, execution_workspace=None):
             row['config'] = restrict_search(row.get('config', {}), files=files,
                 searches=[*inherited_searches, shared], paths=paths)
         inherited = [*inherited_searches, *(row['config'] for row in declarations)]
-        for child in children.values():
+        from .components import agent_roster
+        for child in agent_roster(children).values():
             if isinstance(child, dict):
                 search_policies(child.get('tools', []), child.get('agents', {}), files, inherited)
     search_policies(bundle.tools, bundle.agents, [], [])
@@ -744,6 +829,16 @@ async def compose_configured_bundle(registry, loaded, config, *, execution_works
         # Routing is now an ordinary opt-out-capable default. A retained matrix
         # setting must not silently restore a behavior the user disabled.
         explicit_context_forwarding(loaded, config.settings, context_defaults)
+        # Host source selection also chooses resource namespaces. Hydrate only
+        # after those roots win, but before settings, policy and preparation see
+        # the declarations. Snapshots/retained child overlays never enter here.
+        components.apply(loaded)
+        _load_agent_definitions(loaded)
+        # Newly visible agent-only modules must honor explicit source choices
+        # too, including local paths beneath a host-selected namespace root.
+        for row in declarations({"agents": loaded.agents}):
+            if row["module"] in config.module_sources:
+                components.select(row["module"], config.module_sources[row["module"]])
         from ..write_policy_refresh import WritePolicySource
         write_policy_source = WritePolicySource(loaded, config, execution_workspace=execution_workspace)
         loaded = _apply_settings(loaded, config)
@@ -950,7 +1045,8 @@ async def prepare_dependencies(workspace, *, bundle=None, install_overrides=None
     components.apply(loaded)
     from .config import configure_skill_cache
     configure_skill_cache(loaded, config.registry_home)
-    return await loaded.prepare(strict=True, refresh_dependencies=True,
+    from .components import prepare_bundle
+    return await prepare_bundle(loaded, strict=True, refresh_dependencies=True,
         **({"dependency_batch": dependency_batch} if dependency_batch is not None else {}),
         **({'install_overrides': Path(install_overrides)} if install_overrides is not None else {}),
         cache_dir=config.registry_home / 'cache',
@@ -1110,7 +1206,8 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
     # Activate modules from the same generation as the bundle registry. The
     # shared AMPLIFIER_HOME still owns history/settings, not app module caches.
     with startup_timing.phase('manager.bundle.prepare'):
-        prepared = await loaded.prepare(strict=True, install_deps=not (qualification_readonly or os.environ.get("AMPLIFIER_RUNTIME_IMMUTABLE") == "1"), **preparation_policy,
+        from .components import prepare_bundle
+        prepared = await prepare_bundle(loaded, strict=True, install_deps=not (qualification_readonly or os.environ.get("AMPLIFIER_RUNTIME_IMMUTABLE") == "1"), **preparation_policy,
             cache_dir=config.registry_home / "cache",
             source_resolver=lambda module, source: module_source(config, snapshot, module, source, components),
             progress_callback=progress)

@@ -248,6 +248,7 @@ test('sidebar New chat stays with modes while Search scrolls with modules on Hom
    assert.equal(scroll.findAllByProps({'aria-label':'New chat'}).length,0);
    assert.equal(scroll.findAllByProps({className:'a-nav-search-launch'}).length,1);
    assert.equal(root.root.findByProps({className:'a-nav-head a-sidebar-modes'}).findAllByProps({'aria-label':'New chat'}).length,1);
+   assert.equal(root.root.findAllByProps({'aria-label':'Home'}).length,0,'Header owns Home; the sidebar has no duplicate');
    await renderAct(async()=>root.root.findByProps({className:'a-nav-search-launch'}).props.onClick());
    assert.deepEqual(calls.at(-1),['browse','chats']);
    await renderAct(async()=>root.root.findByProps({'aria-label':'New chat'}).props.onClick());

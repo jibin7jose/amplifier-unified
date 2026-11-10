@@ -112,6 +112,15 @@ async def cancel(owner, source, args, origin, command_id):
                     owner.save(pending['requestId'], pending)
                     retired_returns.append(pending['requestId'])
                 owner.save(request['requestId'], request)
+            # Handling or finishing the peer message does not consume its narrow
+            # resume scope. Retain revocation even on the finished/not-running
+            # branches above, and let final member admission recheck it.
+            if request.get('resumeHandoff') and not request.get('cancellation'):
+                request['cancellation'] = {'status': 'requested', 'operationId': identity,
+                    'requestedAt': time.time(), 'reason': args.get('reason', ''),
+                    'detail': 'Resume handoff revoked for any member input not yet admitted. Completed effects remain.'}
+                owner.save(request['requestId'], request)
+                result = {**result, 'resumeHandoffRevoked': True}
             answer = {'accepted': True, 'commandAction': 'coordination.cancel',
                 'senderSessionId': source['id'], 'target': request['target'],
                 'result': {'requestId': request['requestId'], **result, 'interruptsOtherWork': False}}

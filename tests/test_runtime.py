@@ -3058,7 +3058,8 @@ def test_default_runtime_probe_uninstrumented_entry_has_no_worker_hook_path():
     assert next(keyword.value.value for keyword in runs[0].keywords if keyword.arg == 'timeout') == 1200
 
 
-@pytest.mark.parametrize('failure', [None, 'start', 'cancel', 'not-ready', 'identity', 'provenance', 'cleanup'])
+@pytest.mark.parametrize('failure', [None, 'start', 'cancel', 'not-ready', 'identity', 'provenance',
+                                     'cleanup', 'send', 'send-control'])
 async def test_default_runtime_probe_uninstrumented_journey_keeps_real_acceptance(
         tmp_path, monkeypatch, failure):
     """Actual maintained journey with inert app/kernel, never a Windows pass."""
@@ -3131,6 +3132,8 @@ async def test_default_runtime_probe_uninstrumented_journey_keeps_real_acceptanc
         async def dispatch(self, action, args, **kwargs):
             events.append(action)
             if action == 'conversation.send':
+                if failure in {'send', 'send-control'}:
+                    raise error
                 proof = {'pid': 11, 'imports': {key: dict(value) for key, value in imports.items()},
                          'appHashes': hashes}
                 if failure == 'provenance':
@@ -3159,6 +3162,7 @@ async def test_default_runtime_probe_uninstrumented_journey_keeps_real_acceptanc
         'amplifier_web.runtime_profiles': SimpleNamespace(ensure=ensure),
         'amplifier_web.service': SimpleNamespace(AppService=Service),
         'amplifier_web.session_files': SimpleNamespace(sessions_dir=lambda _: root / 'history'),
+        'amplifier_web.naming': SimpleNamespace(directory_for=lambda *_: root / 'history'),
         'amplifier_web.windows_files': SimpleNamespace(directory=lambda *args, **kwargs: nullcontext()),
         'amplifier_foundation.session.history': SimpleNamespace(SessionHistoryStore=lambda _: SimpleNamespace(
             load_messages=lambda: [{'role': 'assistant', 'content': 'Default command café verified'}])),
@@ -3168,8 +3172,27 @@ async def test_default_runtime_probe_uninstrumented_journey_keeps_real_acceptanc
         return modules[name]  # No app imports, service/database or native launch.
     def inert_home(selected):
         assert selected == root and not project.exists()
+    class InertMetadataObservation:
+        def __init__(self, _):
+            self.facts = {'status': 'unobserved', 'hostFoundation': {
+                'version': '1.0', 'commit': None, 'codeSha256': 'c' * 64},
+                'handleCoverage': 'unknown', 'primary': None, 'outcome': 'unknown'}
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            return False
+    def inert_metadata_controls(_, result):
+        if failure == 'send-control':
+            raise ValueError('PRIVATE control failure')
+        result.update({label: {'observation': InertMetadataObservation(None).facts,
+                        'failure': {'checkpoint': 'input_admission', 'errors': []},
+                        'holderClosed': True, 'holderAtPrimary': label == 'ordinary-held',
+                        'holderShareDelete': None if label == 'readonly' else False}
+                for label in ('ordinary-held', 'released', 'readonly')})
     globals_ = {**fixture.__dict__, 'prepare_fixture_home': inert_home,
                 'installed_host': lambda *args: (app, hashes),
+                'MetadataRenameObservation': InertMetadataObservation,
+                'native_metadata_controls': inert_metadata_controls,
                 '__builtins__': {**vars(builtins), '__import__': imports_only}}
     for name in ('worker_startup_observer', 'read_worker_startup',
                  'install_worker_start_observer', 'observe_shared_subprocess'):
@@ -3182,12 +3205,17 @@ async def test_default_runtime_probe_uninstrumented_journey_keeps_real_acceptanc
         fixture.validate_inner_report(report)
         job.verify_member.assert_called_once_with(11, 123)
     else:
-        expected = asyncio.CancelledError if failure == 'cancel' else RuntimeError if failure == 'start' else AssertionError
+        expected = (asyncio.CancelledError if failure == 'cancel' else RuntimeError
+                    if failure in {'start', 'send', 'send-control'} else AssertionError)
         with pytest.raises(expected) as caught:
             await actual(root, wheel, report)
-        if failure in {'start', 'cancel'}:
+        if failure in {'start', 'cancel', 'send', 'send-control'}:
             assert caught.value is error
         assert report['status'] == 'FAIL'
+        if failure in {'send', 'send-control'}:
+            fixture.validate_metadata_observation(report['metadataObservation'])
+            assert ('controlsFailure' in report['metadataObservation']) == (failure == 'send-control')
+            assert len(report['metadataObservation']['controls']) == (0 if failure == 'send-control' else 3)
     assert len(calls) == 1 and calls[0].command is None and not calls[0].workers
     assert 'workerStartup' not in report
     assert dict(os.environ) == environment and sys.getprofile() is None
@@ -3198,7 +3226,7 @@ async def test_default_runtime_probe_uninstrumented_journey_keeps_real_acceptanc
                  'install_worker_start_observer', 'observe_shared_subprocess'):
         globals_[name].assert_not_called()
     assert events == (['session.create', 'conversation.send']
-                      if failure in {None, 'provenance', 'cleanup'} else ['session.create'])
+                      if failure in {None, 'provenance', 'cleanup', 'send', 'send-control'} else ['session.create'])
 
 
 def test_default_runtime_probe_uninstrumented_pass_rejects_historical_injected_acceptance():
@@ -3679,6 +3707,100 @@ async def test_default_runtime_probe_names_metadata_failure_without_private_payl
         record_property('diagnostic', public)
     finally:
         await app.close()
+
+
+@pytest.mark.parametrize('fault', [False, True])
+def test_metadata_primary_audit_is_exact_closed_and_outcome_neutral(tmp_path, monkeypatch, fault):
+    """Real Foundation and rename, modeled snapshot only; not native causality."""
+    import copy
+    import inspect
+    from amplifier_foundation.io import files
+    fixture = _default_runtime_probe_module()
+    target = tmp_path / 'metadata.json'
+    target.write_text('old private metadata')
+    def snapshot(path):
+        if fault:
+            raise RuntimeError('PRIVATE observer failure')
+        return {'status': 'observed', 'directory': path == tmp_path, 'reparse': False,
+                'readonly': False, 'ownerMatch': True, 'privatePolicyMatch': True,
+                'defaultTokenOwnerMatch': True, 'daclPolicyMatch': True}
+    monkeypatch.setattr(fixture, 'metadata_object_facts', snapshot)
+    observation = fixture.MetadataRenameObservation(target)
+    previous = sys.getprofile()
+    with observation:
+        files._write_atomic(target, 'new private metadata')
+    assert target.read_text() == 'new private metadata'
+    assert observation.target is observation.code is None and not observation.active
+    assert sys.getprofile() is previous
+    fixture.validate_metadata_observation(observation.facts)
+    if fault:
+        assert observation.facts['status'] == 'invalid' and observation.facts['outcome'] == 'unknown'
+    else:
+        assert observation.facts['status'] == 'observed'
+        assert observation.facts['outcome'] == 'returned'
+        primary = observation.facts['primary']
+        assert primary['temporaryClosed']
+        assert primary['offset'] == next(i for i, line in enumerate(
+            inspect.getsourcelines(files._write_atomic)[0]) if 'temp_path.replace(path)' in line)
+        bad = copy.deepcopy(observation.facts)
+        bad['primary']['destination']['path'] = str(target)
+        with pytest.raises(AssertionError):
+            fixture.validate_metadata_observation(bad)
+        # Owner and DACL results remain separate closed observations. In
+        # particular, a legacy TokenOwner match cannot become a private-policy
+        # match or permit raw identities, prose, or unknown schema fields.
+        legacy = copy.deepcopy(observation.facts)
+        legacy['primary']['destination'].update(
+            ownerMatch=False, privatePolicyMatch=False, defaultTokenOwnerMatch=True,
+            daclPolicyMatch=True)
+        fixture.validate_metadata_observation(legacy)
+        for key, value in (('defaultTokenOwnerMatch', 'PRIVATE SID'),
+                           ('daclPolicyMatch', 1), ('sddl', 'PRIVATE DACL')):
+            bad = copy.deepcopy(legacy)
+            bad['primary']['destination'][key] = value
+            with pytest.raises(AssertionError):
+                fixture.validate_metadata_observation(bad)
+    public = json.dumps(observation.facts)
+    assert 'private metadata' not in public and str(tmp_path) not in public
+    # Installing a fixture hook must never change an unrelated writer or accept
+    # structurally equal code under an exact-identity diagnostic label.
+    from types import FunctionType
+    clone = FunctionType(files._write_atomic.__code__.replace(), files._write_atomic.__globals__)
+    with fixture.MetadataRenameObservation(target) as cloned:
+        clone(target, 'private clone content', mode='w', encoding='utf-8')
+    assert cloned.facts['status'] == 'unobserved'
+
+
+def test_metadata_primary_audit_preserves_real_replace_error_and_cleanup(tmp_path, monkeypatch):
+    from amplifier_foundation.io import files
+    fixture = _default_runtime_probe_module()
+    target = tmp_path / 'destination-directory'
+    target.mkdir()
+    # The genuine rename fails on every supported test host; no exception/OS
+    # primitive is injected. Observation failure must not replace that error.
+    monkeypatch.setattr(fixture, 'metadata_object_facts',
+                        Mock(side_effect=RuntimeError('PRIVATE observer fault')))
+    with pytest.raises(OSError) as caught:
+        with fixture.MetadataRenameObservation(target) as observation:
+            files._write_atomic(target, 'PRIVATE content')
+    assert caught.value.__cause__ is not None and isinstance(caught.value.__cause__, OSError)
+    assert observation.facts['status'] == 'invalid' and observation.facts['outcome'] == 'unknown'
+    assert list(tmp_path.iterdir()) == [target] and list(target.iterdir()) == []
+    fixture.validate_metadata_observation(observation.facts)
+
+
+def test_metadata_primary_audit_setup_fault_preserves_original_operation(tmp_path, monkeypatch):
+    from amplifier_foundation.io import files
+    fixture = _default_runtime_probe_module()
+    target = tmp_path / 'metadata.json'
+    monkeypatch.setattr(fixture.metadata, 'distribution', Mock(side_effect=ValueError('PRIVATE setup failure')))
+    with fixture.MetadataRenameObservation(target) as observation:
+        files._write_atomic(target, 'private content')
+    assert target.read_text() == 'private content'
+    assert observation.facts['status'] == 'invalid'
+    assert observation.facts['hostFoundation'] is None
+    assert observation.target is observation.code is None and not observation.active
+    fixture.validate_metadata_observation(observation.facts)
 
 
 def test_default_runtime_probe_diagnostic_privacy_bounds_and_schema(monkeypatch):

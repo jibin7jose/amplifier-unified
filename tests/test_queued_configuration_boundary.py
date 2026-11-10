@@ -1892,7 +1892,8 @@ def require_no_child_cleanup_fallback(report):
         report["cleanupFallbackSignals"])
 
 
-@pytest.mark.parametrize("variant", ["original", "skip-save-regression", "settings-continuation"])
+@pytest.mark.parametrize("variant", ["original", "skip-save-regression", "settings-continuation",
+                                   "targeted-saved", "targeted-preparation-revoked", "update-held"])
 async def test_real_native_recovery_and_deliberately_regressed_save_witness(tmp_path, variant):
     """No importorskip: the admitted fixed workflow owns native prerequisites."""
     import os
@@ -1907,6 +1908,13 @@ async def test_real_native_recovery_and_deliberately_regressed_save_witness(tmp_
         command.append("--skip-save")
     if variant == "settings-continuation":
         command.append("--settings-continuation")
+    targeted = variant in {"targeted-saved", "targeted-preparation-revoked"}
+    if targeted:
+        command.append("--targeted-saved")
+    if variant == "update-held":
+        command.append("--update-held")
+    if variant == "targeted-preparation-revoked":
+        command.append("--revoke-nested-preparation")
     # Retain finite structured proof and logs in the existing workflow artifact.
     # No homes, provider scenario, grants, native transcript or receipt keys.
     output = (Path(os.environ["GITHUB_WORKSPACE"]) / "output/python-checks"
@@ -1969,14 +1977,37 @@ async def test_real_native_recovery_and_deliberately_regressed_save_witness(tmp_
     report = json.loads(evidence_path.read_text())
     (output / "evidence.json").write_text(json.dumps(report, indent=2) + "\n")
     require_no_child_cleanup_fallback(report)  # Applies to both original and save-skipping variant.
-    assert len(report["processes"]) == 2
+    expected_workers = 1 if variant == 'update-held' else 3 if targeted else 2
+    assert len(report["processes"]) == expected_workers
     assert all(row["returncode"] is not None for row in report["processes"])
     assert not report["cleanupErrors"] and report["runtimeRowsAfterClose"] == 0
     assert report["heldWriterControl"] and report["writerAvailableAfterClose"] is True
-    assert len(report["workerSources"]) == 2
+    assert len(report["workerSources"]) == expected_workers
     assert all(row["mutant"] is mutant for row in report["workerSources"])
     assert all((row["originalFunction"] != row["executedFunction"]) is mutant
         for row in report["workerSources"])
+    if variant == 'update-held':
+        assert process.returncode == 0, stderr.decode(errors='replace')[-6000:]
+        assert report['updateTerminalHeld'] and report['noTargetProviderCalls']
+        assert report['oneSettingsSave'] and report['originalFailurePreserved']
+        assert report['originalAuthorityPreserved'] and report['attempts'] == 1
+        return
+    if targeted:
+        assert process.returncode == 0, stderr.decode(errors='replace')[-6000:]
+        assert report['targetedSaved'] and report['noTargetProviderCalls']
+        assert report['oneSettingsSave'] and report['actualManagerTool']
+        assert report['originalAuthorityPreserved'] and report['attempts'] == 1
+        if variant == "targeted-preparation-revoked":
+            assert all(row["returncode"] == 0 for row in report["processes"])
+            assert report['retainedNestedReadback'] and report['nestedDependencyPrepared']
+            assert report['managerRevisionChangedDuringNestedAwait']
+            assert report['nestedPreparationRevoked'] and report['heldNotPublishedMounted']
+            assert report['noTargetInputOrContinuation'] and not report['mountedPlanVerified']
+            assert report['state']['phase'] == 'error'
+            assert report['state']['effect'] == 'saved_not_mounted'
+        else:
+            assert report['mountedPlanVerified']
+        return
     if variant == "settings-continuation":
         assert process.returncode == 0, stderr.decode(errors="replace")[-6000:]
         assert report["automaticContinuation"] and report["taskAndBudgetPreserved"]

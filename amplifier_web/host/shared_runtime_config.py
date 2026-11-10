@@ -113,7 +113,8 @@ async def prepare_bundle(config, bundle, *, is_child=False):
     # this host. Domain resources still resolve from their configured sources.
     registry_home = foundation_home(app_home())
     configure_skill_cache(bundle, registry_home)
-    prepared = await bundle.prepare(cache_dir=registry_home / "cache", strict=True,
+    from .components import prepare_bundle as prepare_declarations
+    prepared = await prepare_declarations(bundle, cache_dir=registry_home / "cache", strict=True,
                                     source_resolver=lambda module, source: sources.get(module, source))
     await materialize_bundle_providers(bundle, prepared)
     return prepared

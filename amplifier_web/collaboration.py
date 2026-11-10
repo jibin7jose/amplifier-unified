@@ -104,9 +104,22 @@ def definitions(schema, string):
                    "description": "Auto or queue: atomically register a guarded return before the recipient can run. Omitted/false keeps one-way send behavior; exact retries never rearm a saved wait."},
                "replyToRequestId": string(200), "references": references,
                "expiresInSeconds": {"type": "integer", "minimum": 1, "maximum": 86400},
-               "resume": schema({"sourceMessageId": string(200),
+               "resume": {**schema({"sourceMessageId": string(200),
+                   "sourceRequestId": {**string(200), "description":
+                       "Alternative to direct sourceMessageId: exact host-issued resumeHandoff inputId positively "
+                       "admitted in the commissioning owner's current authenticated native generation. One fresh "
+                       "member input only; preserve humanInput:null, budgets, Stop and unknown outcomes."},
                    "expectedInterruptionRevision": {"type": "integer", "minimum": 0}},
-                   ["sourceMessageId", "expectedInterruptionRevision"]),
+                   ["expectedInterruptionRevision"]),
+                   "oneOf": [{"required": ["sourceMessageId"]}, {"required": ["sourceRequestId"]}]},
+               "resumeHandoff": {**schema({"sourceMessageId": string(200), "memberSessionId": string(200),
+                   "expectedInterruptionRevision": {"type": "integer", "minimum": 0}},
+                   ["sourceMessageId", "memberSessionId", "expectedInterruptionRevision"]),
+                   "description": "Direct-human origin only, auto/queue to the actual commissioning owner for one "
+                       "exact existing member. Host captures original human text/digest, native generation, all "
+                       "three human/Stop/task/access/placement boundaries and deadline. Owner assesses canonical "
+                       "humanInstruction, then deliberately uses resume.sourceRequestId. Not recursive peer, "
+                       "Full/configuration/question/schedule authority; cancellation revokes unadmitted scope."},
                "scheduleRepair": schema({"sourceMessageId": string(200),
                    "schedules": {"type": "array", "minItems": 1, "maxItems": 16,
                        "items": schema({"id": string(200), "expectedRevision": {"type": "integer", "minimum": 0}}, ["id", "expectedRevision"])}},
@@ -950,6 +963,10 @@ class Collaboration:
             if target.get("interruptionRevision", 0) != receipt["interruptionRevision"]:
                 return "The user interrupted the recipient after this request."
             from . import peer_resume
+            if (receipt.get('resumeHandoff') and receipt.get('delivery') in {'queued', 'submitting'}):
+                from .resume_handoff import guard as handoff_guard
+                if reason := handoff_guard(self.service, receipt):
+                    return reason
             resuming = peer_resume.pending(receipt)
             if resuming and (reason := peer_resume.guard(self.service, receipt, source, target)):
                 return reason
@@ -1036,13 +1053,18 @@ class Collaboration:
             return revision <= wait.get('lastClaimedRevision', 0) and identity == receipt.get('requestId')
         return wait.get('status') == 'claimed' and wait.get('continuationId') == receipt.get('requestId')
 
-    def fair_rows(self, sid, *, active=False):
+    def fair_rows(self, sid, *, active=False, accepted_after=None):
         # Pick the least recently served sender across the complete pending set,
         # using indexed scalar metadata. A long FIFO from one sender must not
         # hide another sender beyond the first receipt page. NULL senders (host
         # notifications) form their own group and receive the same fair turn.
         eligible = (" AND (json_extract(receipt,'$.mode')='auto' OR json_extract(receipt,'$.automaticDelivery')=1)"
                     if active else "")
+        cutoff = ()
+        if accepted_after is not None:
+            eligible += (" AND coalesce(json_extract(receipt,'$.acceptedAt'),0)>?"
+                         " AND json_extract(receipt,'$.dependencyRequestId') IS NULL")
+            cutoff = (accepted_after,)
         index = 'coordination_automatic_sender' if active else 'coordination_queued_sender'
         sender = self.service.db.execute(f"""WITH pending AS (
             SELECT json_extract(receipt,'$.senderSessionId') AS sender, min(rowid) AS first_row
@@ -1058,7 +1080,7 @@ class Collaboration:
                 AND json_extract(receipt,'$.target.sessionId')=?
                 AND json_extract(receipt,'$.senderSessionId') IS pending.sender
                 AND json_extract(receipt,'$.admissionOrder') IS NOT NULL),0), first_row LIMIT 1""",
-            (sid, sid)).fetchone()
+            (sid, *cutoff, sid)).fetchone()
         if sender is None:
             return []
         return self.service.db.execute(f"""SELECT id,receipt FROM commands INDEXED BY {index}
@@ -1066,7 +1088,7 @@ class Collaboration:
             AND json_extract(receipt,'$.target.sessionId')=?
             AND json_extract(receipt,'$.senderSessionId') IS ?
             AND json_extract(receipt,'$.delivery')='queued' {eligible} ORDER BY rowid LIMIT 64""",
-            (sid, sender[0])).fetchall()
+            (sid, sender[0], *cutoff)).fetchall()
 
     def refresh_inboxes(self):
         """Reconsider saved work after a relaxed inbox policy, never replay it."""
@@ -1095,8 +1117,13 @@ class Collaboration:
         freed_return = False
         try:
             async with self.service.lock:
-                self.resume_outcomes(sid)
-                rows = self.fair_rows(sid, active=self.service._session(sid).get('status') in BUSY)
+                from .configuration_recovery import suppress_input
+                current = self.service._session(sid)
+                holding = suppress_input(current)
+                if not holding:
+                    self.resume_outcomes(sid)
+                rows = self.fair_rows(sid, active=current.get('status') in BUSY,
+                    accepted_after=current['pendingConfiguration']['recoveryNoInput']['acceptedAt'] if holding else None)
             for identity, encoded in rows:
                 async with self.service.lock:
                     receipt = self.receipt(identity)
@@ -1104,6 +1131,8 @@ class Collaboration:
                         self.cancel_expiry(identity)
                         continue
                     target = self.service._session(sid)
+                    if suppress_input(target, receipt):
+                        continue  # Retain older input; fresh explicit work may run.
                     from .update_drain import held, owner_waiting
                     if held(self.service) or owner_waiting(self.service, sid):
                         break
@@ -1196,10 +1225,14 @@ class Collaboration:
             # The newest outcome may have been backpressured by the old queued
             # return. Reuse the released slot now; no unrelated event is needed.
             async with self.service.lock:
-                self.resume_outcomes(sid)
+                if not suppress_input(self.service._session(sid)):
+                    self.resume_outcomes(sid)
 
     def admission(self, sid, args):
         receipt = self.receipt(args["inputId"])
+        from .configuration_recovery import suppress_input
+        if suppress_input(self.service._session(sid), receipt):
+            return {'admitted': False, 'reason': 'Operator configuration recovery did not authorize conversation input.'}
         binding = intake_task_binding(receipt)
         if (receipt.get("commandAction") != "coordination.send" or receipt.get("delivery") != "submitting"
                 or receipt.get("protocol") != PROTOCOL or receipt["target"]["sessionId"] != sid
@@ -1612,6 +1645,13 @@ class Collaboration:
         if self.service.db.execute('SELECT 1 FROM commands WHERE id=?', (identity,)).fetchone():
             return
         sender = self.service._session(request['senderSessionId'])
+        from .configuration_recovery import suppress_input
+        if suppress_input(sender):
+            # The result remains retained, including backpressured settings
+            # waits. A newly materialized return is not fresh explicit work.
+            self.save(request['requestId'], request)
+            self.service.db.commit()
+            return
         if (self.service.assignments.blocked(sender, request.get('assignmentId'))
                 or self.service.assignments.request_membership_reason(request)
                 or wait.get('interruptionRevision') != sender.get('interruptionRevision', 0)):
@@ -2059,12 +2099,18 @@ class Collaboration:
                 if reason:
                     self.error(reason, 409)
                 mode = args.get("mode", "auto")
+                if sum(bool(args.get(key)) for key in ('resume', 'resumeHandoff', 'scheduleRepair')) > 1:
+                    self.error('Choose exactly one scoped handoff or resume operation.', 400)
                 notify_return = args.get('returnNotification', False)
                 creation_owned = bool(creation and identity == creation[4]['requestId'] + ':brief')
                 if notify_return:
                     self.require_continuation()
                 if args.get('resume') and (origin != 'agent' or mode not in {'queue', 'auto'}):
                     self.error('Resume requires a current human-rooted agent request using auto or queue.')
+                if args.get('resumeHandoff') and (
+                        origin != 'agent' or mode not in {'queue', 'auto'}
+                        or args.get('resume') or args.get('scheduleRepair')):
+                    self.error('Issue a resume handoff only from a direct human-rooted agent send using auto or queue.')
                 self.service.assignments.require_request(source, target, mode)
                 if mode == "steer":
                     active = target.get("collaborationGeneration") or {}
@@ -2136,7 +2182,7 @@ class Collaboration:
                         ("creatorSessionId", "requestId", "outputNamespace", "configurationHash")}
                 wait = None
                 if not creation_owned:
-                    if mode == 'notify' or notify_return:
+                    if mode == 'notify' or notify_return or args.get('resume') or args.get('resumeHandoff'):
                         recovery_boundary.enter_context(self.return_send_transaction(
                             identity, source, target, notify=mode == 'notify'))
                     if notify_return:
@@ -2153,12 +2199,26 @@ class Collaboration:
                             'to the saved Stop/task, capacity and outcome-revision guards.')
                 repair = None
                 resume = None
+                handoff = None
+                if args.get('resumeHandoff'):
+                    from .resume_handoff import prepare, view
+                    handoff = prepare(self.service, source, target, args['resumeHandoff'], lineage)
+                    envelope['resumeHandoff'] = {**view(self.service, handoff),
+                        'instruction': 'The host captured an exact one-hop human resume scope. Read the original '
+                            'human instruction and assess its intent, not sender prose. Only you, the commissioning '
+                            'owner, may deliberately send one fresh member input with resume.sourceRequestId '
+                            'equal to this inputId. This is not humanInput, forwarding authority, task/Stop '
+                            'clearance, permission, a question answer or schedule/configuration authority.'}
                 if args.get('resume'):
                     from .peer_resume import prepare
                     resume = prepare(self.service, source, target, args['resume'], lineage, recovery_boundary)
+                    if resume.get('handoffRequestId'):
+                        from .resume_handoff import reserve
+                        reserve(self.service, resume['handoffRequestId'], identity)
                     envelope['humanResume'] = {
                         'sourceMessageId': resume['sourceMessageId'],
-                        'instruction': 'The host verified a fresh human resume request in the commissioning owner. '
+                        **({'handoffRequestId': resume['handoffRequestId']} if resume.get('handoffRequestId') else {}),
+                        'instruction': 'The host verified a fresh human resume scope through the commissioning owner. '
                             'Reconcile completed effects first. You may resume your own paused task if its blocker '
                             'is resolved. Keep completed objectives completed; only establish follow-on work '
                             'within the human request. This does not answer questions, grant permissions or reset budgets.'}
@@ -2196,6 +2256,11 @@ class Collaboration:
                     receipt['scheduleRepair'] = repair
                 if resume:
                     receipt['humanResume'] = resume
+                    if resume.get('handoffRequestId'):
+                        receipt['expiresAt'] = min(receipt['expiresAt'],
+                            self.receipt(resume['handoffRequestId'])['expiresAt'])
+                if handoff:
+                    receipt['resumeHandoff'] = handoff
                 if mode == "steer":
                     receipt.update(delivery="pending_steer", targetGenerationId=active["id"])
                 if creation and identity == creation[4]['requestId'] + ':brief':

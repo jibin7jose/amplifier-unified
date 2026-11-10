@@ -24,6 +24,19 @@ try{
  await page.getByRole('button',{name:'Keep settings open',exact:true}).click();
  await expect(page.locator('#provider-key')).toHaveValue(secret);
  await page.waitForFunction(()=>window.amplifier.getState().view.panel==='settings');
+ const selection=await page.evaluate(async()=>{const response=await fetch('/fixture/agent-selection',{method:'POST',
+  headers:{'Content-Type':'application/json'},body:JSON.stringify({clientId:window.amplifier.getState().client.id})});
+  return {ok:response.ok,body:await response.json()}});
+ assert.equal(selection.ok,true,JSON.stringify(selection.body));
+ assert.equal(selection.body.result.rendering,'unverified');
+ await page.waitForFunction(id=>window.amplifier.getState().selectedSessionId===id,selection.body.result.selectedSessionId);
+ // Settings may remain mounted across chat selection instead of requesting
+ // discard. In either case the only private editor must survive.
+ if(await page.getByRole('alertdialog').isVisible())
+  await page.getByRole('button',{name:'Keep settings open',exact:true}).click();
+ await expect(page.locator('#provider-key')).toHaveValue(secret);
+ assert.equal(JSON.stringify(selection).includes(secret),false);
+ if(!process.argv.includes('--agent-navigation-only')){
  await openSettingsPage(page,'voice');
  await page.getByRole('button',{name:'Close panel',exact:true}).click();
  await page.getByRole('button',{name:'Review and save',exact:true}).click();
@@ -50,7 +63,8 @@ try{
  await expect(page.getByRole('button',{name:'Add connection',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Manage connections',exact:true}).click();
  await expect(page.locator('[data-part=ai-connections]')).toBeVisible();
- assert.deepEqual(errors,[]);console.log('PASS: dirty close, agent dismissal guard, review, save, private state, mobile Back/cancel/discard, and picker management');
+ }
+ assert.deepEqual(errors,[]);console.log(process.argv.includes('--agent-navigation-only')?'PASS: dirty close and agent dismissal guards, private Settings editor retained across explicit agent chat navigation, no secret in receipt.':'PASS: dirty close, agent dismissal guard, review, save, private state, mobile Back/cancel/discard, and picker management');
 }catch(error){
  failure=error;
  console.error(error);

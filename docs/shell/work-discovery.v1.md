@@ -17,7 +17,7 @@ familiar work or inspect its status while keeping their current context.
 
 ```text
 Home: Focus / Brief / Studio + current search and scope
-Sidebar: Home icon + Browse / Status + New chat icon in one row
+Sidebar: Browse / Status + New chat icon in one row
 Scrollable sidebar: Search chats / Last activity / navigation lists
 Footer: connection status + App options (Automation / Activity / Settings and existing entries)
 Browse: Pinned / Workspaces / Recent
@@ -40,11 +40,12 @@ Return Home -> remembered view, search, scope, reading position and Focus pass
    scope and pages; its reading position and Focus pass survive visits in the same tab.
    Sidebar mode, expansion and pages remain independent under client-state ownership.
    Broken: returning or switching sidebar mode resets the person's other surface.
-4. **Keep navigation consistently available.** Home, Browse/Status and an
+4. **Keep navigation consistently available.** Browse/Status and an
    accessible icon-only New chat share one row;
    the header owns its toggle; sidebar Search and New chat remain available on Home.
    Both sidebar views reuse chat controls and honor the same display preferences.
-   Home is a recognizable header destination elsewhere and an icon in the sidebar’s first row. The current Home header has no redundant Home text or stale chat highlight.
+   Home is a recognizable app-header destination; the sidebar does not duplicate it.
+   The current Home header has no redundant Home text or stale chat highlight.
    Broken: a view ignores workspace-label settings or loses common actions.
 5. **Browse a pass without dismissal.** Focus offers previous/next, position,
    and restart across bounded pages of its group. Its cursor follows chat identity.
@@ -93,8 +94,10 @@ Appearance detail levels; screen width may change its arrangement.
 The **All chats** catalog offers **Recent / date**, **Workspace** and
 **Status** grouping, independently of Focus / Brief / Studio layout. One visible,
 keyboard-operable **Last activity** slider in the sidebar selects **24h, 7d, 14d,
-30d, 90d or All** for the attached client; All is the default. Its two lines show
-the label/current value and a native range with unlabeled, noninteractive ticks.
+30d, 90d or All** for the attached client; All is the default. Its compact,
+secondary two-line control shows a readable label/current value and a native
+range with unlabeled, noninteractive ticks, retaining touch and keyboard access
+and regular spacing between later sections.
 Search and age scroll with navigation lists, below the fixed mode row and above
 the fixed footer. Footer App options retains Automation, Activity and Settings
 with their notification badges, alongside its other entries, opening above it.

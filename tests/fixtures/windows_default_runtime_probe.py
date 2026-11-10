@@ -5,9 +5,10 @@ project, lock, venv, uv process or prepare_project double is supplied. Network
 resolution/builds from declared sources are allowed in this GitHub setup check;
 only the conversation provider is scripted. Private logs stay under --root.
 
-The cold journey is uninstrumented. Retained measurement helpers and closed
-schemas support historical failure evidence/tests only; the entry no longer
-creates a worker import hook or calls those helpers.
+The worker journey has no import hook or substituted writer. A host-only audit
+observation records the selected metadata primary rename using closed facts;
+unknown handle coverage remains unknown. Retained worker measurement helpers
+support historical failure evidence/tests only.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ import re
 import struct
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 import types
@@ -47,7 +49,7 @@ CHECKPOINTS = frozenset({
     "installed_import", "installed_distribution", "installed_direct_url", "installed_origin",
     "installed_members", "installed_manifest", "journey", "complete",
     "outer_run", "outer_close", "parent_output_json", "parent_output_schema",
-    "inner_report_schema", "runtime_start", "input_admission",
+    "inner_report_schema", "runtime_start", "input_admission", "metadata_control",
 })
 ERROR_CLASSES = {kind: kind.__name__ for kind in (
     AssertionError, OSError, PermissionError, FileNotFoundError, NotADirectoryError,
@@ -59,6 +61,7 @@ ERROR_CLASSES = {kind: kind.__name__ for kind in (
 CODE_LABELS = {
     "cold_main": (__name__, "main"),
     "cold_journey": (__name__, "journey"),
+    "metadata_controls": (__name__, "native_metadata_controls"),
     "cold_installed_host": (__name__, "installed_host"),
     "cold_outer": (__name__, "run_owned_probe"),
     "cold_start": (__name__, "observe_default_start"),
@@ -989,7 +992,9 @@ def read_startup_failure(home, error):
 def validate_inner_report(report):
     """Only bounded fixed fields may leave the private test directory."""
     assert type(report) is dict
-    assert set(report) - {"diagnostic", "startup", "workerStartup", "lockObservation", "startupFailureFacts"} == set(empty_inner_report())
+    assert set(report) - {"diagnostic", "startup", "workerStartup", "lockObservation", "startupFailureFacts", "metadataObservation"} == set(empty_inner_report())
+    if "metadataObservation" in report:
+        validate_metadata_observation(report["metadataObservation"])
     if "startupFailureFacts" in report:
         assert report["status"] == "FAIL"
         observed = report["startupFailureFacts"]
@@ -1051,7 +1056,7 @@ def validate_inner_report(report):
 
 def validate_report(report):
     """The public result requires parent-observed cleanup, not child testimony."""
-    assert set(report) - {"diagnostic", "startup", "workerStartup", "lockObservation", "startupFailureFacts"} == set(empty_inner_report()) | {"outerJob"}
+    assert set(report) - {"diagnostic", "startup", "workerStartup", "lockObservation", "startupFailureFacts", "metadataObservation"} == set(empty_inner_report()) | {"outerJob"}
     assert report["schema"] == 2
     validate_inner_report({key: (1 if key == "schema" else report[key])
                            for key in report if key != "outerJob"})
@@ -1270,6 +1275,329 @@ async def observe_default_start(runtime, session, emit, report, project):
         facts["diagnosticStatus"] = "FAIL" if failed else "PASS"
 
 
+def metadata_default_owner(api):
+    """Read-only TokenOwner, not a new permitted DACL principal."""
+    import ctypes as C
+    from amplifier_web import windows_files as win
+    token = win.HANDLE()
+    api.ok(api.OpenProcessToken(api.GetCurrentProcess(), 8, C.byref(token)))
+    try:
+        size = win.DWORD()
+        result = api.GetTokenInformation(token, 4, None, 0, C.byref(size))
+        if result or C.get_last_error() != 122 or not 0 < size.value <= 65536:
+            raise OSError("cannot size fixture TokenOwner")
+        buffer = C.create_string_buffer(size.value)
+        api.ok(api.GetTokenInformation(token, 4, buffer, size, C.byref(size)))
+        return api.sid_text(C.cast(buffer, C.POINTER(win.PVOID))[0])
+    finally:
+        api.close(token)
+
+
+def metadata_dacl_policy(api, handle):
+    """Apply the canonical ACE policy independently of the owner predicate.
+
+    Kept fixture-local: this does not change production private-file admission.
+    TokenOwner is NOT added to the canonical policy's permitted ACE principals.
+    """
+    import ctypes as C
+    from amplifier_web import windows_files as win
+    dacl, descriptor = win.PVOID(), win.PVOID()
+    error = api.GetSecurityInfo(handle, 1, 4, None, None, C.byref(dacl), None,
+                                C.byref(descriptor))
+    if error:
+        raise C.WinError(error)
+    try:
+        control, revision = win.WORD(), win.DWORD()
+        api.ok(api.GetSecurityDescriptorControl(descriptor, C.byref(control), C.byref(revision)))
+        if not control.value & 4 or not dacl:
+            raise PermissionError("missing fixture DACL")
+        acl = win.ACL_INFO()
+        api.ok(api.GetAclInformation(dacl, C.byref(acl), C.sizeof(acl), 2))
+        for index in range(acl.count):
+            pointer = win.PVOID()
+            api.ok(api.GetAce(dacl, index, C.byref(pointer)))
+            ace = C.cast(pointer, C.POINTER(win.ACE)).contents
+            if ace.size < C.sizeof(win.ACE) + 8:
+                raise PermissionError("truncated fixture ACE")
+            sid = win.PVOID(pointer.value + C.sizeof(win.ACE))
+            count = C.c_ubyte.from_address(sid.value + 1).value
+            if 8 + 4 * count != ace.size - C.sizeof(win.ACE):
+                raise PermissionError("unsupported fixture ACE")
+            principal = api.sid_text(sid)
+            win._check_ace(ace.kind, ace.flags, ace.mask,
+                           "owner" if principal == api.sid else principal, private=True)
+        return True
+    finally:
+        api.LocalFree(descriptor)
+
+
+def metadata_object_facts(path):
+    """Short-lived read/control handle, SHARE_ALL; never change attributes/ACLs.
+
+    This describes policy matches, NOT effective rename permission. No pathname,
+    identity, SID or descriptor bytes escape. Every observation handle closes
+    before returning to the original rename.
+    """
+    import ctypes as C
+    from amplifier_web import windows_files as win
+    result = {"status": "unavailable", "directory": None, "reparse": None,
+              "readonly": None, "ownerMatch": None, "privatePolicyMatch": None,
+              "defaultTokenOwnerMatch": None, "daclPolicyMatch": None}
+    api = win._API()
+    handle = api.CreateFileW(str(path), 0x20080, 7, None, 3, 0x2200000, None)
+    if handle == win._INVALID:
+        if C.get_last_error() in {2, 3}:
+            result["status"] = "missing"
+        return result
+    try:
+        info = win.FILE_INFO()
+        api.ok(api.GetFileInformationByHandle(handle, C.byref(info)))
+        result.update(status="observed", directory=bool(info.attributes & 0x10),
+                      reparse=bool(info.attributes & 0x400), readonly=bool(info.attributes & 1))
+        owner, descriptor = win.PVOID(), win.PVOID()
+        error = api.GetSecurityInfo(handle, 1, 1, C.byref(owner), None, None, None,
+                                    C.byref(descriptor))
+        if not error:
+            try:
+                result["ownerMatch"] = api.sid_text(owner) == api.sid
+                result["defaultTokenOwnerMatch"] = api.sid_text(owner) == metadata_default_owner(api)
+            finally:
+                api.LocalFree(descriptor)
+        try:
+            api.validate_acl(handle, private=True)
+        except PermissionError:
+            result["privatePolicyMatch"] = False
+        else:
+            result["privatePolicyMatch"] = True
+        try:
+            result["daclPolicyMatch"] = metadata_dacl_policy(api, handle)
+        except PermissionError:
+            result["daclPolicyMatch"] = False
+        return result
+    finally:
+        api.close(handle)
+
+
+class MetadataRenameObservation:
+    """Fixture-only host audit observation; never substitute a writer/OS call.
+
+    Audit hooks cannot be removed. An inactive hook retains no target/frame and
+    does nothing. Selected fixture handles are known; all other handle coverage
+    is explicitly UNKNOWN, including the real worker and external processes.
+    """
+    def __init__(self, target):
+        self.facts = {"status": "invalid", "hostFoundation": None,
+            "handleCoverage": "unknown", "primary": None, "outcome": "unknown"}
+        self.target, self.code = target, None
+        self.thread, self.active = threading.get_ident(), False
+        try:
+            from amplifier_foundation.io import files
+            dist = metadata.distribution("amplifier-foundation")
+            direct = json.loads(dist.read_text("direct_url.json") or "{}")
+            self.facts["hostFoundation"] = {
+                "version": dist.version, "commit": direct.get("vcs_info", {}).get("commit_id"),
+                "codeSha256": code_fingerprint(files._write_atomic.__code__)}
+            validate_metadata_observation(self.facts)
+            self.code = files._write_atomic.__code__
+            self.facts["status"] = "unobserved"
+        except BaseException:
+            self.facts["hostFoundation"] = None
+
+    def __enter__(self):
+        self.active = self.code is not None
+        try:
+            if self.active:
+                sys.addaudithook(self.audit)
+        except BaseException:
+            self.active = False
+            self.facts["status"] = "invalid"
+        return self
+
+    def audit(self, event, args):
+        if not self.active or event != "os.rename" or threading.get_ident() != self.thread:
+            return
+        try:
+            if len(args) != 4 or args[1] != str(self.target):
+                return
+            frame = sys._getframe(1)
+            for _ in range(8):
+                if frame is None or frame.f_code is self.code:
+                    break
+                frame = frame.f_back
+            if frame is None or frame.f_code is not self.code:
+                return  # Equal/cloned or unrelated code must not claim this label.
+            if self.facts["primary"] is not None:
+                self.facts["status"] = "invalid"
+                return
+            local = frame.f_locals
+            assert local["path"] == self.target and str(local["temp_path"]) == args[0]
+            # Successful flush is implied by reaching this exact original code
+            # position, NOT observed fsync (the legacy writer does not fsync).
+            self.facts["primary"] = {
+                "offset": frame.f_lineno - self.code.co_firstlineno,
+                "temporaryClosed": local["tmp_file"].closed is True,
+                "temporary": metadata_object_facts(local["temp_path"]),
+                "destination": metadata_object_facts(self.target),
+                "parent": metadata_object_facts(self.target.parent)}
+            self.facts["status"] = "observed"
+        except BaseException:
+            self.facts["status"] = "invalid"  # Observation cannot replace the IO outcome.
+
+    def __exit__(self, kind, error, traceback):
+        self.active = False
+        try:
+            if self.facts["status"] == "observed":
+                if error is None:
+                    self.facts["outcome"] = "returned"
+                else:
+                    # Bind the primary error to the exact observed rename offset;
+                    # a later unrelated error is not a failed primary replacement.
+                    cursor, seen = error, set()
+                    while cursor is not None and id(cursor) not in seen and len(seen) < 4:
+                        seen.add(id(cursor))
+                        tb = cursor.__traceback__
+                        while tb is not None:
+                            if (tb.tb_frame.f_code is self.code and tb.tb_lineno
+                                    - self.code.co_firstlineno == self.facts["primary"]["offset"]):
+                                self.facts["outcome"] = "raised"
+                            tb = tb.tb_next
+                        cursor = cursor.__cause__
+        except BaseException:
+            self.facts.update(status="invalid", outcome="unknown")
+        finally:
+            self.target = self.code = None
+        return False
+
+
+def validate_metadata_observation(value):
+    assert type(value) is dict and set(value) - {"controls", "controlsFailure"} == {
+        "status", "hostFoundation", "handleCoverage", "primary", "outcome"}
+    assert type(value["status"]) is str and value["status"] in {"unobserved", "observed", "invalid"}
+    assert value["handleCoverage"] == "unknown" and type(value["handleCoverage"]) is str
+    assert type(value["outcome"]) is str and value["outcome"] in {"unknown", "returned", "raised"}
+    identity = value["hostFoundation"]
+    if identity is None:
+        assert value["status"] == "invalid"
+    else:
+        assert type(identity) is dict and set(identity) == {"version", "commit", "codeSha256"}
+        assert type(identity["version"]) is str and re.fullmatch(r"[A-Za-z0-9_.+!-]{1,100}", identity["version"])
+        assert identity["commit"] is None or type(identity["commit"]) is str and re.fullmatch(r"[0-9a-f]{40,64}", identity["commit"])
+        assert type(identity["codeSha256"]) is str and re.fullmatch(r"[0-9a-f]{64}", identity["codeSha256"])
+    primary = value["primary"]
+    if primary is not None:
+        assert type(primary) is dict and set(primary) == {
+            "offset", "temporaryClosed", "temporary", "destination", "parent"}
+        assert type(primary["offset"]) is int and 0 <= primary["offset"] <= 10**6
+        assert type(primary["temporaryClosed"]) is bool
+        for role in ("temporary", "destination", "parent"):
+            row = primary[role]
+            assert type(row) is dict and set(row) == {
+                "status", "directory", "reparse", "readonly", "ownerMatch", "privatePolicyMatch",
+                "defaultTokenOwnerMatch", "daclPolicyMatch"}
+            assert type(row["status"]) is str and row["status"] in {"observed", "missing", "unavailable"}
+            for key in set(row) - {"status"}:
+                assert row[key] is None or type(row[key]) is bool
+            if row["status"] != "observed":
+                assert all(row[key] is None for key in set(row) - {"status"})
+    if value["status"] == "observed":
+        assert primary is not None
+    else:
+        assert value["outcome"] == "unknown"
+    if "controlsFailure" in value:
+        validate_diagnostic(value["controlsFailure"])
+        assert value["controlsFailure"]["checkpoint"] == "metadata_control"
+    if "controls" in value:
+        controls = value["controls"]
+        assert type(controls) is dict and set(controls) <= {"ordinary-held", "released", "readonly"}
+        for label, row in controls.items():
+            assert type(row) is dict and set(row) == {
+                "observation", "failure", "holderClosed", "holderAtPrimary", "holderShareDelete"}
+            assert type(row["holderClosed"]) is bool and row["holderClosed"]
+            assert row["holderAtPrimary"] is None or type(row["holderAtPrimary"]) is bool
+            assert row["holderShareDelete"] is None or row["holderShareDelete"] is False
+            if row["holderAtPrimary"] is not None:
+                assert row["holderAtPrimary"] == (label == "ordinary-held")
+            assert not {"controls", "controlsFailure"} & set(row["observation"])
+            validate_metadata_observation(row["observation"])
+            validate_diagnostic(row["failure"])
+
+
+def native_metadata_controls(root, result):
+    """Real legacy metadata writers, independent targets; no error injection.
+
+    Ordinary CRT readers deny delete sharing on Windows. Readonly targets can
+    ALSO produce Win5. These controls distinguish mechanisms, not the unknown
+    historical holder. No production file or ACL is changed.
+    """
+    from amplifier_foundation.session.metadata import SessionMetadataStore
+    from amplifier_web.windows_files import directory
+    for label in ("ordinary-held", "released", "readonly"):
+        target_dir = root / label
+        with directory(target_dir, owned_root=root, create=True):
+            pass
+        store = SessionMetadataStore(target_dir, create=True)
+        store.set_name("CONTROL original", source="manual")
+        target = target_dir / "metadata.json"
+        before = target.read_bytes()
+        observation = MetadataRenameObservation(target)
+        failure = {"checkpoint": "metadata_control", "errors": []}
+        holder = None
+        try:
+            holder = target.open("rb") if label != "readonly" else None
+            if label == "released":
+                holder.close()
+            if label == "readonly":
+                target.chmod(0o400)
+            try:
+                with observation:
+                    store.set_name("CONTROL replacement", source="manual")
+            except OSError as error:
+                failure = failure_facts(error, "metadata_control")
+            assert observation.facts["status"] == "observed"
+            primary = observation.facts["primary"]
+            assert primary["temporaryClosed"]
+            for role in ("temporary", "destination", "parent"):
+                facts = primary[role]
+                assert facts["status"] == "observed"
+                # Legacy default ownership can differ from TokenUser on an
+                # elevated native host. Preserve the stricter policy result;
+                # qualify this fixture baseline, not production admission.
+                assert facts["ownerMatch"] is True or facts["defaultTokenOwnerMatch"] is True
+                assert facts["daclPolicyMatch"] is True and facts["reparse"] is False
+                assert facts["directory"] == (role == "parent")
+            assert primary["temporary"]["readonly"] is False and primary["parent"]["readonly"] is False
+            assert primary["destination"]["readonly"] == (label == "readonly")
+            if label == "released":
+                assert failure["errors"] == [] and observation.facts["outcome"] == "returned"
+                assert target.read_bytes() != before
+            else:
+                assert observation.facts["outcome"] == "raised"
+                assert len(failure["errors"]) == 2
+                assert (failure["errors"][1]["class"], failure["errors"][1].get("errno"),
+                        failure["errors"][1].get("winerror")) == ("PermissionError", 13, 5)
+                assert target.read_bytes() == before
+            if label == "ordinary-held":
+                assert holder is not None and not holder.closed
+                assert holder.read() == before
+            # Cleanup occurs after the original primary failure; no source
+            # temporary or held fixture handle is allowed to survive the cell.
+            assert not list(target_dir.glob(".metadata_*.tmp"))
+        finally:
+            if holder is not None:
+                holder.close()
+            if label == "readonly":
+                target.chmod(0o600)
+                backup = target.with_suffix(".json.backup")
+                if backup.exists():
+                    backup.chmod(0o600)
+            result[label] = {"observation": observation.facts, "failure": failure,
+                             "holderClosed": holder is None or holder.closed,
+                             "holderAtPrimary": (label == "ordinary-held"
+                                 if observation.facts["primary"] is not None else None),
+                             "holderShareDelete": None if holder is None else False}
+    return result
+
+
 async def journey(root, wheel, report):
     checkpoint(report, "fixture_home")
     prepare_fixture_home(root)
@@ -1352,8 +1680,16 @@ async def journey(root, wheel, report):
         report["checks"]["workerIdentity"] = True
         report["stage"] = "turn"
         checkpoint(report, "input_admission")
-        await service.dispatch("conversation.send", {"sessionId": sid, "text": "DEFAULT_COMMAND_TURN"},
-                               command_id="default-command-input")
+        # Host-only observation. No worker hook, altered writer, retry or new
+        # permission; the target and observation frames never enter the report.
+        from amplifier_web.naming import directory_for
+        observation = MetadataRenameObservation(directory_for(home, session) / "metadata.json")
+        try:
+            with observation:
+                await service.dispatch("conversation.send", {"sessionId": sid, "text": "DEFAULT_COMMAND_TURN"},
+                                       command_id="default-command-input")
+        finally:
+            report["metadataObservation"] = observation.facts
         checkpoint(report, "journey")
         history_store = SessionHistoryStore(sessions_dir(workspace) / sid)
         async with asyncio.timeout(90):
@@ -1382,6 +1718,7 @@ async def journey(root, wheel, report):
         assert digest((project / "uv.lock").read_bytes()) == report["lockSha256"]
         report["checks"]["ownedJobCleanup"] = True
     finally:
+        primary_error = sys.exception()
         for row in runtime.workers.values():
             if row.get("windows_owner") and row["windows_owner"] not in owners:
                 owners.append(row["windows_owner"])
@@ -1390,6 +1727,17 @@ async def journey(root, wheel, report):
         assert not runtime.workers and not runtime._preparations
         assert all(o.result is not None and o.result.active_processes == 0
                    and o.job.tree_empty and o.job.io_finalized for o in owners)
+        if "metadataObservation" in report:
+            # Independent controls run only after confirmed owned cleanup, also
+            # when the original dispatch failed. They cannot replace that cause.
+            report["metadataObservation"]["controls"] = {}
+            try:
+                native_metadata_controls(root / "metadata-controls", report["metadataObservation"]["controls"])
+            except Exception as error:
+                report["metadataObservation"]["controlsFailure"] = failure_facts(error, "metadata_control")
+                if primary_error is None:
+                    checkpoint(report, "metadata_control")
+                    raise
     report.update(status="PASS", stage="complete")
     checkpoint(report, "complete")
 

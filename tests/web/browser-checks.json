@@ -2,6 +2,16 @@
   "schemaVersion": 1,
   "scenarios": [
     {
+      "id": "agent-chat-navigation",
+      "command": ["node", "tests/web/chat-library-browser.mjs", "--agent-navigation-only"],
+      "env": {"AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"}
+    },
+    {
+      "id": "agent-chat-navigation-settings",
+      "command": ["node", "tests/web/settings-drafts-browser.mjs", "--agent-navigation-only"],
+      "env": {"AMPLIFIER_TEST_PYTHON": "{root}/.venv/bin/python"}
+    },
+    {
       "id": "navigation-waiting",
       "command": [
         "node",
@@ -1177,6 +1187,8 @@
     }
   ],
   "scenarioOrder": [
+    "agent-chat-navigation",
+    "agent-chat-navigation-settings",
     "navigation-waiting",
     "context-inspector",
     "context-inspector-layout",
@@ -1220,6 +1232,7 @@
     "provider-native",
     "immediate-direction",
     "draft-discovery-recovery",
+    "sidebar-controls",
     "new-chat-recovery",
     "feedback",
     "feedback-followup",

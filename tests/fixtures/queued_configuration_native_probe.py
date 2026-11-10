@@ -47,6 +47,34 @@ class RecoveryProvider:
         with Path(scenario["calls"]).open("a") as out:
             out.write(json.dumps({"pid":os.getpid(), "tools":tools,
                 "evaluation":evaluation})+"\n")
+        users = [str(m.content) for m in request.messages
+                 if m.role == "user" and not (m.metadata or {}).get("ephemeral")]
+        if users and "RECOVERY_MANAGER" in users[-1]:
+            def output(identity):
+                message = next((m for m in request.messages
+                    if m.role == "tool" and m.tool_call_id == identity), None)
+                if message is None: return None
+                value = json.loads(text(message))
+                while isinstance(value, dict) and "operationId" not in value:
+                    value = value.get("output", value.get("result"))
+                assert isinstance(value, dict) and value.get("operationId") == scenario["operation"], value
+                return value
+            def call(verb, revision=None):
+                args = {"sessionId":scenario["sid"], "operationId":scenario["operation"]}
+                if revision is not None: args["expectedRevision"] = revision
+                else: args["includeRecovery"] = True
+                return ChatResponse(content=[], tool_calls=[ToolCall(
+                    id="manager-"+verb, name="app_control", arguments={"operation":"dispatch",
+                    "args":{"action":"configuration.operation."+verb,
+                        "id":"native-manager-"+verb, "args":args}})])
+            if output("manager-resume") is not None:
+                return ChatResponse(content=[TextBlock(text="targeted-recovery-finished")])
+            reconciled = output("manager-reconcile")
+            if reconciled is not None: return call("resume", reconciled["revision"])
+            read = output("manager-read")
+            if read is None: return call("read")
+            assert read["nativeEffect"] == "saved_not_mounted" and read["recovery"]["canResume"], read
+            return call("reconcile", read["revision"])
         if scenario.get("continuation"):
             resumed = Path(scenario["calls"]).with_name("continued.json")
             if evaluation:
@@ -89,6 +117,17 @@ class RecoveryProvider:
                 "args":{"id":scenario["sid"],"config":scenario["desired"],"whenIdle":True}}})])
 async def mount(coordinator, config=None):
     await coordinator.mount("providers", RecoveryProvider(coordinator, config), name="recovery")
+'''
+
+SPECIALIST_TOOL = '''__amplifier_module_type__ = "tool"
+class Specialist:
+    name = "recovery_specialist"
+    description = "Offline nested preparation sentinel; never executed"
+    input_schema = {"type": "object", "properties": {}}
+    async def execute(self, arguments):
+        raise AssertionError("Recovery must not execute the specialist")
+async def mount(coordinator, config):
+    await coordinator.mount("tools", Specialist(), name="recovery_specialist")
 '''
 
 
@@ -169,11 +208,38 @@ def finish_cleanup_evidence(root, report, primary_failure):
             raise AssertionError(detail)
 
 
-async def worker(root, mutant, continuation=False):
+async def worker(root, mutant, continuation=False, targeted=False, nested_revocation=False):
     from amplifier_web import configuration_recovery
     from amplifier_web.runtime_controls import RuntimeControls, override_path
     from amplifier_web.runtime_worker import Worker, configure_protocol
     original = RuntimeControls.prepare_configuration
+
+    if nested_revocation:
+        from amplifier_foundation.modules.activator import ModuleActivator
+        activate = ModuleActivator.activate
+        async def held_activation(self, module_name, source_uri, progress_callback=None):
+            held = (module_name == "tool-recovery-specialist"
+                and Path(source_uri).resolve() == (root / "specialist").resolve()
+                and (root / "arm-preparation").exists())
+            if held:
+                entered = {"pid": os.getpid(), "module": module_name, "source": source_uri}
+                # Exclusive creation makes accidental duplicate activation fail,
+                # rather than silently satisfying the parent's sentinel.
+                pending = root / "entered-preparation.tmp"
+                with pending.open("x") as out:
+                    json.dump(entered, out)
+                pending.replace(root / "entered-preparation.json")
+                async with asyncio.timeout(30):
+                    while not (root / "release-preparation").exists():
+                        await asyncio.sleep(.02)
+            # Keep real Foundation module/source resolution. Immutable startup
+            # disables installation, not asynchronous declaration preparation.
+            result = await activate(self, module_name, source_uri, progress_callback=progress_callback)
+            if held:
+                assert Path(result).resolve() == (root / "specialist").resolve()
+                (root / "completed-preparation.json").write_text(json.dumps(entered))
+            return result
+        ModuleActivator.activate = held_activation
 
     def refuse_once(self, config):
         plan = original(self, config)
@@ -187,7 +253,7 @@ async def worker(root, mutant, continuation=False):
             raise ValueError("Synthetic one-shot pre-write refusal")
         return plan
 
-    if not continuation:
+    if not continuation and not targeted:
         RuntimeControls.prepare_configuration = refuse_once
     source = inspect.getsource(configuration_recovery.native_apply)
     needle = "    controls.save_configuration(plan)\n"
@@ -215,7 +281,7 @@ async def until(predicate, *, seconds=30):
             await asyncio.sleep(.02)
 
 
-async def probe(root, mutant, continuation=False):
+async def probe(root, mutant, continuation=False, targeted=False, update_held=False, nested_revocation=False):
     root.mkdir(parents=True, exist_ok=False)
     workspace, shared, home = (root / name for name in ("workspace", "shared", "app"))
     workspace.mkdir()
@@ -258,12 +324,21 @@ async def probe(root, mutant, continuation=False):
     declaration = {"module": "provider-recovery", "source": str(provider.parent),
                    "config": {"scenario": str(scenario), "default_model": "offline-recovery"}}
     bundle = root / "bundle.yaml"
-    bundle.write_text(yaml.safe_dump({
+    bundle_plan = {
         "bundle": {"name": "native-recovery-fixture", "version": SNAPSHOT_VERSION},
         "session": {"orchestrator": {"module": "loop-live", "config": {"use_streaming": False}},
                     "context": {"module": "context-simple", "source": paths["context-simple"]}},
         "providers": [declaration],
-        "tools": [{"module": "tool-filesystem", "source": paths["tool-filesystem"]}]}))
+        "tools": [{"module": "tool-filesystem", "source": paths["tool-filesystem"]}]}
+    if nested_revocation:
+        specialist = root / "specialist"
+        specialist.mkdir()
+        (specialist / "__init__.py").write_text(SPECIALIST_TOOL)
+        bundle_plan["agents"] = {"outer": {"instruction": "Retained outer specialist.",
+            "agents": {"deep": {"instruction": "Retained nested specialist.",
+                "agents": "none", "tools": [
+                    {"module": "tool-recovery-specialist", "source": str(specialist)}]}}}}
+    bundle.write_text(yaml.safe_dump(bundle_plan))
     (shared / "settings.yaml").write_text(yaml.safe_dump({
         "bundle": {"active": str(bundle), "app": []},
         "web_bundles": {"excluded": list(APPENDED_DEFAULTS)},
@@ -273,6 +348,10 @@ async def probe(root, mutant, continuation=False):
         command.append("--skip-save")
     if continuation:
         command.append("--settings-continuation")
+    if targeted:
+        command.append("--targeted-saved")
+    if nested_revocation:
+        command.append("--revoke-nested-preparation")
     runtime = RuntimeManager(command=command, startup_timeout=45,
         retention={"prewarm_on_select": False})
     web_app = await create_app(home, workspace=workspace, runtime=runtime,
@@ -301,8 +380,19 @@ async def probe(root, mutant, continuation=False):
         await action("session.naming", {"id": sid, "automatic": False}, "native-disable-naming")
         await runtime.start(owner, app.on_runtime_event)
         processes.append(runtime.workers[sid]["process"])
+        if targeted:
+            original_stop = runtime.stop
+            async def saved_stop(identity, *, reason="stopped"):
+                await original_stop(identity, reason=reason)
+                if identity == sid and reason == "configuration" and not (root / "saved-stop-fault").exists():
+                    (root / "saved-stop-fault").touch()
+                    raise RuntimeError("Synthetic acknowledgement loss after native save and confirmed worker exit")
+            runtime.stop = saved_stop
         assert not calls.exists(), "Mounting must not invoke the provider."
         initial = await runtime.control(sid, "configuration.inspect", {})
+        if nested_revocation:
+            assert initial["plan"]["agents"] == bundle_plan["agents"]
+            report["retainedNestedReadback"] = True
         desired = copy.deepcopy(initial["plan"])
         declared = next(row for row in desired["tools"] if row["module"] == "tool-filesystem")
         assert declared.get("enabled", True)
@@ -318,6 +408,10 @@ async def probe(root, mutant, continuation=False):
             await settings_continuation(app, runtime, owner, action, root, workspace,
                 processes, desired, release, calls, report)
             return
+        if targeted:
+            await action('task.create', {'sessionId': sid, 'expectedRevision': 0,
+                'objective': 'Preserve the unfinished target objective.', 'maxTurns': 8},
+                'target-held-task')
         await action("conversation.send", {"sessionId": sid, "text": "RECOVERY_ORIGINAL"},
             "native-original-input")
         await until(lambda: owner.get("pendingConfiguration", {}).get("phase") == "queued")
@@ -330,6 +424,14 @@ async def probe(root, mutant, continuation=False):
         await until(lambda: owner.get("pendingConfiguration", {}).get("phase") == "error"
             and sid not in app.management.pending_config_tasks)
         record = app.management.configuration_record(sid, owner["pendingConfiguration"]["operationId"])
+        if update_held:
+            await update_terminal_held(app, runtime, owner, root, calls, record, report)
+            return
+        if targeted:
+            await targeted_saved(app, runtime, owner, action, root, bundle, scenario, calls,
+                record, processes, report, nested_revocation=nested_revocation)
+            assert app.configuration_authority.record(grant["id"]) == grant_before
+            return
         assert record["request"]["authorization"] == "grant"
         assert record["state"]["effect"] == "none"
         assert record["state"]["stage"] == "reconciled"
@@ -400,6 +502,7 @@ async def probe(root, mutant, continuation=False):
     finally:
         # Always unblock the provider if a prior assertion failed.
         (root / "release-final").touch()
+        (root / "release-preparation").touch()
         if sid in runtime.workers and runtime.workers[sid]["process"] not in processes:
             processes.append(runtime.workers[sid]["process"])
         cleanup_errors, fallback_signals = [], []
@@ -513,7 +616,196 @@ async def settings_continuation(app, runtime, owner, action, root, workspace,
         originalInputCount=1, originalToolResultCount=1, logicalContinuationCount=1)
 
 
-async def bounded_probe(root, mutant, continuation=False):
+async def targeted_saved(app, runtime, owner, action, root, bundle, scenario, calls,
+                         record, processes, report, *, nested_revocation=False):
+    """A real native Full manager invokes the mounted app-control recovery tool."""
+    from amplifier_web.configuration_recovery import evidence, receipt_path
+    from amplifier_web.runtime_controls import override_path
+    sid = owner['id']
+    assert record['state']['effect'] == 'saved_not_mounted' and len(record['attempts']) == 1
+    assert sid not in runtime.workers and owner['configurationBusy']
+    original_messages = copy.deepcopy(owner['messages'])
+    original_task = copy.deepcopy(owner['task'])
+    original_generation = copy.deepcopy(owner['collaborationGeneration'])
+    original_configuration = copy.deepcopy(owner.get('configuration'))
+    original_stop = owner.get('interruptionRevision', 0)
+    original_calls = calls.read_bytes()
+    settings = override_path(record['attempts'][0]['nativeSessionId']).read_bytes()
+    sealed = receipt_path(record['attempts'][0], home=app.data_dir).read_bytes()
+    target_inputs = []
+    if nested_revocation:
+        assert record['request']['config']['agents'] == json.loads(settings)['agents']
+        write = runtime._write
+        async def observed_write(row, data):
+            if row.get('runtime_id') == record['attempts'][0]['nativeSessionId']:
+                if data['op'] in {'send', 'retry', 'resume', 'worker.message', 'worker.steer'}:
+                    target_inputs.append(data['op'])
+            return await write(row, data)
+        runtime._write = observed_write
+    await action('session.create', {'title': 'Native Full recovery operator',
+        'bundle': str(bundle), 'select': False}, 'native-manager-create')
+    manager = next(row for row in app.state['sessions'] if row['id'] != sid)
+    snapshot = (await action('access.get', {'sessionId': manager['id']}, 'native-manager-access'))['result']
+    await action('access.set', {'sessionId': manager['id'], 'scope': 'session',
+        'mode': 'full', 'expectedRevision': snapshot['revision']}, 'native-manager-full')
+    if nested_revocation:
+        # Only the absent target's replacement will see this arm. Initial target
+        # and manager preparation must complete through the same real resolver.
+        await runtime.start(manager, app.on_runtime_event)
+        manager_row = runtime.workers[manager['id']]
+        manager_native_id = manager_row['runtime_id']
+        manager_process = manager_row['process']
+        processes.append(manager_process)
+        (root / 'arm-preparation').touch()
+    data = json.loads(scenario.read_text())
+    data['operation'] = record['id']
+    scenario.write_text(json.dumps(data))
+    await action('conversation.send', {'sessionId': manager['id'], 'text': 'RECOVERY_MANAGER'},
+        'native-manager-input')
+    if nested_revocation:
+        try:
+            await until(lambda: (root / 'entered-preparation.json').exists())
+            entered = json.loads((root / 'entered-preparation.json').read_text())
+            row = runtime.workers[sid]
+            processes.append(row['process'])
+            assert entered['pid'] == row['process'].pid
+            assert entered['module'] == 'tool-recovery-specialist'
+            assert not row['ready'].done() and sid in app.management.pending_config_tasks
+            preparing = app.management.configuration_record(sid, record['id'])
+            assert preparing['state']['phase'] == 'applying'
+            assert preparing['state']['stage'] == 'reading'
+            assert preparing['state']['effect'] == 'saved_not_mounted'
+            # Finish the operator's already accepted tool turn before changing
+            # access. Its ordinary idle refresh may then retire this manager;
+            # provenance uses the captured native identity, never a new mount.
+            await until(lambda: any(m.get('text') == 'targeted-recovery-finished'
+                for m in manager['messages']) and manager.get('collaborationGeneration', {}).get('terminal'))
+            captured = preparing['resumptions'][0]['chain'][0]['accessRevision']
+            full = (await action('access.get', {'sessionId': manager['id']}, 'manager-before-revoke'))['result']
+            assert full['mode'] == 'full' and full['revision'] == captured
+            await action('access.set', {'sessionId': manager['id'], 'scope': 'session',
+                'mode': 'ask', 'expectedRevision': full['revision']}, 'manager-revoke')
+            ask = (await action('access.get', {'sessionId': manager['id']}, 'manager-revoked'))['result']
+            await action('access.set', {'sessionId': manager['id'], 'scope': 'session',
+                'mode': 'full', 'expectedRevision': ask['revision']}, 'manager-restore')
+            restored = (await action('access.get', {'sessionId': manager['id']}, 'manager-restored'))['result']
+            assert restored['mode'] == 'full' and restored['revision'] != captured
+            assert not row['ready'].done()
+            report['managerRevisionChangedDuringNestedAwait'] = True
+        finally:
+            (root / 'release-preparation').touch()
+    await until(lambda: any(m.get('text') == 'targeted-recovery-finished' for m in manager['messages'])
+        and manager.get('collaborationGeneration', {}).get('terminal'), seconds=60)
+    await until(lambda: owner['pendingConfiguration']['phase'] in {'ready', 'error'}
+        and sid not in app.management.pending_config_tasks, seconds=60)
+    current = app.management.configuration_record(sid, record['id'])
+    for row in runtime.workers.values():
+        if row['process'] not in processes:
+            processes.append(row['process'])
+    if not nested_revocation:
+        manager_native_id = runtime.workers[manager['id']]['runtime_id']
+        manager_process = runtime.workers[manager['id']]['process']
+    if nested_revocation:
+        assert current['state']['phase'] == 'error', current['state']
+        assert current['state']['effect'] == 'saved_not_mounted', current['state']
+        assert 'Full access' in current['state']['error'], current['state']
+        assert owner['configurationBusy'] and owner['configurationOperationFence'] == record['id']
+        assert owner.get('configuration') == original_configuration
+        assert not any(h['effect'] == 'mounted' for h in current['history'][len(record['history']):])
+        completed = json.loads((root / 'completed-preparation.json').read_text())
+        assert completed == entered
+        assert Path(completed['source']).resolve() == (root / 'specialist').resolve()
+        assert runtime.workers[sid]['process'].pid == entered['pid']
+        report.update(nestedPreparationRevoked=True, nestedDependencyPrepared=True,
+            heldNotPublishedMounted=True, state=current['state'])
+    else:
+        assert current['state']['effect'] == 'mounted', current['state']
+    assert current['request'] == record['request'] and current['requestHash'] == record['requestHash']
+    assert current['attempts'] == record['attempts']
+    assert current['resumptions'][0]['chain'][0]['sessionId'] == manager['id']
+    assert current['resumptions'][0]['chain'][0]['runtimeSessionId'] == manager_native_id
+    assert current['history'][len(record['history'])]['recoverySource']['sessionId'] == manager['id']
+    assert override_path(record['attempts'][0]['nativeSessionId']).read_bytes() == settings
+    assert receipt_path(record['attempts'][0], home=app.data_dir).read_bytes() == sealed
+    assert owner['messages'] == original_messages
+    if nested_revocation:
+        # Native startup may report ready before the post-preparation authority
+        # guard rejects recovery. Worker readiness is not input admission or
+        # verified configuration success.
+        assert owner['status'] in {'ready', 'idle'}, owner['status']
+    else:
+        assert owner['status'] == 'idle'
+    assert record['request']['source'].get('continuation'), 'Targeted fixture must exercise an enrolled settings continuation'
+    assert current.get('boundary', {}).get('ready')
+    if nested_revocation:
+        assert owner['task'] == original_task
+        assert owner['collaborationGeneration'] == original_generation
+        assert owner.get('interruptionRevision', 0) == original_stop
+        assert not target_inputs
+        assert current['recoveryNoInput']
+        assert not app.db.execute('SELECT 1 FROM commands WHERE id=?',
+            ('configuration-wait:' + record['id'],)).fetchone()
+    later = calls.read_bytes()[len(original_calls):].splitlines()
+    assert later and all(json.loads(line)['pid'] == manager_process.pid for line in later)
+    assert evidence(current['attempts'][0], home=app.data_dir)['effect'] == 'saved_not_mounted'
+    report.update(targetedSaved=True, noTargetProviderCalls=True, oneSettingsSave=True,
+        actualManagerTool=True, attempts=1, originalAuthorityPreserved=True,
+        nativeId=record['attempts'][0]['nativeSessionId'],
+        noTargetInputOrContinuation=True, mountedPlanVerified=not nested_revocation)
+
+
+async def update_terminal_held(app, runtime, owner, root, calls, record, report):
+    """Real saved native boundary + synthetic app replacement, never recover it."""
+    from unittest.mock import AsyncMock, patch
+    from amplifier_web import app_updates
+    from amplifier_web.updates import UpdateManager
+    from amplifier_web.configuration_recovery import receipt_path
+    from amplifier_web.update_drain import finish
+    sid = owner['id']
+    assert record['state']['effect'] == 'saved_not_mounted' and len(record['attempts']) == 1
+    assert sid not in runtime.workers
+    files = [app.management.configuration_record_path(sid, record['id']),
+             app.management.queued_path(sid),
+             app.data_dir / 'sessions' / record['attempts'][0]['nativeSessionId'] / 'configuration.json',
+             receipt_path(record['attempts'][0], home=app.data_dir)]
+    before = {str(path): path.read_bytes() for path in files}
+    messages, pending, provider_calls = copy.deepcopy(owner['messages']), copy.deepcopy(owner['pendingConfiguration']), calls.read_bytes()
+    manager = UpdateManager(app)
+    app.update_manager = manager
+    revision = 'a' * 40
+    intent = {'id': 'native-held-app-only', 'scope': 'app'}
+    folder = manager.directory / 'applications' / revision
+    folder.mkdir(parents=True)
+    (folder / 'validated.json').write_text(json.dumps({'revision': revision, 'version': '99.0.0'}))
+    helper = folder / 'tools/amplifier-unified/bin/python'
+    helper.parent.mkdir(parents=True)
+    helper.touch()
+    app.state['updates'].update(phase='app-staged', pendingApp={
+        'revision': revision, 'latest': 'v99.0.0', 'attemptId': 'd'*32, 'updateIntent': intent},
+        applicationIntent=intent, sequence={'stage': 'application', 'install': False})
+    async def target():
+        return '/synthetic/uv', '/synthetic/launcher', Path('/synthetic/python'), {'version': 'old', 'source': None}
+    restart = AsyncMock()
+    with patch.object(app_updates, 'installed_extras', lambda: []), \
+         patch.object(app_updates, 'installed_target', target), \
+         patch.object(app_updates, 'process', AsyncMock(return_value='99.0.0')), \
+         patch.object(app_updates, 'request_managed_restart', restart), \
+         patch('amplifier_web.deployment_service.current_process_is_unit_managed', lambda _: True):
+        assert not manager.app_busy(), owner
+        await app_updates.activate(manager)
+    assert app.state['updates']['pendingRestart']['updateIntent'] == intent
+    restart.assert_awaited_once()
+    assert owner['configurationBusy'] and owner['configurationOperationFence'] == record['id']
+    assert owner['pendingConfiguration'] == pending and owner['messages'] == messages
+    assert {str(path): path.read_bytes() for path in files} == before
+    assert calls.read_bytes() == provider_calls and not runtime.workers
+    report.update(updateTerminalHeld=True, attempts=1, oneSettingsSave=True,
+                  noTargetProviderCalls=True, originalAuthorityPreserved=True,
+                  originalFailurePreserved=True, syntheticAppReplacement=True,
+                  nativeId=record['attempts'][0]['nativeSessionId'])
+
+
+async def bounded_probe(root, mutant, continuation=False, targeted=False, update_held=False, nested_revocation=False):
     # Parent timeout asks for ordinary cancellation so the probe's finally can
     # close real workers and release their writer before the process exits.
     loop, task = asyncio.get_running_loop(), asyncio.current_task()
@@ -525,7 +817,7 @@ async def bounded_probe(root, mutant, continuation=False):
         loop.add_signal_handler(signum, cancel_once)
     try:
         async with asyncio.timeout(150):
-            await probe(root, mutant, continuation)
+            await probe(root, mutant, continuation, targeted, update_held, nested_revocation)
     finally:
         for signum in signals:
             loop.remove_signal_handler(signum)
@@ -533,6 +825,9 @@ async def bounded_probe(root, mutant, continuation=False):
 
 if __name__ == "__main__":
     if sys.argv[1] == "--worker":
-        asyncio.run(worker(Path(sys.argv[2]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv))
+        asyncio.run(worker(Path(sys.argv[2]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv,
+            "--targeted-saved" in sys.argv, "--revoke-nested-preparation" in sys.argv))
     else:
-        asyncio.run(bounded_probe(Path(sys.argv[1]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv))
+        asyncio.run(bounded_probe(Path(sys.argv[1]), "--skip-save" in sys.argv, "--settings-continuation" in sys.argv,
+            "--targeted-saved" in sys.argv or "--update-held" in sys.argv,
+            "--update-held" in sys.argv, "--revoke-nested-preparation" in sys.argv))

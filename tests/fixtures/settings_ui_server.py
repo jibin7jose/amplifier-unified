@@ -167,6 +167,17 @@ async def main(home):
   result=await service.app_bridge('dispatch',{'action':'view.update','args':{'clientId':payload['clientId'],'patch':payload['patch']}},service._session()['id'])
   return web.json_response(result)
  app.router.add_post('/fixture/agent-view',agent_view)
+ async def agent_selection(request):
+  payload=await request.json()
+  source=service._session()['id']
+  target=next((row for row in service.state['sessions'] if row.get('title')=='Navigation destination'),None)
+  if target is None:
+   await service.dispatch('session.create',{'title':'Navigation destination','select':False})
+   target=service.state['sessions'][-1]
+  result=await service.app_bridge('dispatch',{'action':'session.select','id':'settings-dirty-navigation',
+   'args':{'clientId':payload['clientId'],'id':target['id']}},source)
+  return web.json_response(result)
+ app.router.add_post('/fixture/agent-selection',agent_selection)
  async def tool_observations(request):
   # Read-only synthetic evidence: compact frames deliberately omit retained
   # tool operation collections and connection definitions.

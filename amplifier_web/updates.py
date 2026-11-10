@@ -562,7 +562,8 @@ class UpdateManager:
             state = self.service.state['updates']
             from .update_health import publish as publish_health
             publish_health(self)
-            state['blockers'] = self.blockers() if self.requires_idle(state) else []
+            state['blockers'] = (self.app_blockers() if state.get('pendingApp')
+                                 else self.blockers()) if self.requires_idle(state) else []
             from .update_restart import target
             state['forceRestartTarget'] = target(self)
             self.service._publish_changes(globals={'updates','settings'})
@@ -591,7 +592,7 @@ class UpdateManager:
             # unready observation. Retain it even during an activation attempt;
             # the next owner tick must still obtain positive boundary proof.
             self.wakeup.set()
-        elif not self.lock.locked() and not self.busy():
+        elif not self.lock.locked() and not (self.app_busy() if state.get('pendingApp') else self.busy()):
             # Ordinary publications retain the idle-only signal. In particular,
             # the updater's own observations never poll an unready boundary.
             self.wakeup.set()
@@ -607,6 +608,13 @@ class UpdateManager:
 
     def busy(self):
         return bool(self.blockers())
+
+    def app_busy(self):
+        return bool(self.app_blockers())
+
+    def app_blockers(self):
+        from .update_blockers import blockers
+        return blockers(self.service, application=True)
 
     async def inventory_sources(self, *, indexed=False):
         """Checks use the app index; an explicit audit also inspects saved scopes."""
@@ -708,6 +716,19 @@ class UpdateManager:
                 await self.featureInstall(args['feature'], args['hostInstanceId'], command_id)
             elif action in {'smartToolRollback', 'smartToolRetry', 'smartToolSkip'}:
                 await getattr(self, action)(args['id'])
+            elif action == 'app':
+                if self.check_task and not self.check_task.done():
+                    await asyncio.shield(self.check_task)
+                async with self.lock:
+                    if self.closed or self.awaiting_restart():return
+                    sequence = {**self.service.state['updates'].get('sequence', {}),
+                                'stage': 'application', 'install': False}
+                    sequence.pop('nextStage', None)
+                    intent = {'id': command_id or uuid.uuid4().hex, 'scope': 'app'}
+                    pending = self.service.state['updates'].get('pendingApp')
+                    await self.publish(applicationIntent=intent, sequence=sequence,
+                        **({'pendingApp': {**pending, 'updateIntent': intent}} if pending else {}))
+                await self.app()
             elif action == 'install':
                 # A click during a check must not disappear at install()'s
                 # busy guard. Join that check, then re-evaluate its inventory.
@@ -716,7 +737,11 @@ class UpdateManager:
                     if self.service.state['updates'].get('phase') in {'error', 'interrupted'}:
                         return
                 async with self.lock:
-                    pass
+                    if self.closed or self.awaiting_restart():return
+                    intent = {'id': command_id or uuid.uuid4().hex, 'scope': 'whole'}
+                    pending = self.service.state['updates'].get('pendingApp')
+                    await self.publish(applicationIntent=intent,
+                        **({'pendingApp': {**pending, 'updateIntent': intent}} if pending else {}))
                 if not self.closed and not self.awaiting_restart():
                     await self.install()
             else:
@@ -813,7 +838,8 @@ class UpdateManager:
                          'included': summary([], checked=False), 'other': summary([], checked=False)}
                         if tier == 'application' else {**state.get('sequence', {}), 'stage': tier, 'install': install})
             sequence.pop('nextStage', None)
-            await self.publish(phase='checking', sequence=sequence, lastAttempt=time.time(),
+            await self.publish(phase='checking', sequence=sequence, applicationIntent=None,
+                               lastAttempt=time.time(),
                                detail='Checking the application release…' if tier == 'application' else 'Checking included components…' if tier == 'included' else 'Checking other components…', error=None)
             try:
                 application = state.get('application', {})
@@ -1006,7 +1032,7 @@ class UpdateManager:
         from .app_updates import stage,activate,supersedes_staged
         state = self.service.state['updates']
         pending = state.get('pendingApp')
-        if (pending and not pending.get('featureSelection') and not self.busy()
+        if (pending and not pending.get('featureSelection') and not self.app_busy()
                 and time.time() - (state.get('pendingAppCheckAt') or 0) >= 60):
             # The idle window may arrive between scheduled checks. Refresh once
             # before activation; a recent check also avoids duplicate requests.
@@ -1619,9 +1645,30 @@ class UpdateManager:
                 if not self.cleanup_task or self.cleanup_task.done():
                     self.cleanup_task = asyncio.create_task(self.retire_storage())
             await self.publish(adoption=adoption)
-        blockers = self.blockers() if self.requires_idle(state) else []
+        blockers = (self.app_blockers() if state.get('pendingApp')
+                    else self.blockers()) if self.requires_idle(state) else []
         if state.get('blockers', []) != blockers:
             await self.publish(blockers=blockers)
+        if (state.get('applicationIntent') or {}).get('scope') == 'app':
+            # This explicit request replaced any older whole-install intent.
+            # Preserve other prepared/uncertain work, but do not activate it.
+            if state.get('phase') in {'error', 'interrupted'}:
+                return  # Retained scope never authorizes retry of failed effects.
+            if state.get('pendingApp'):
+                if (settings.get('autoCheck', True)
+                        and time.time()-max(state.get('lastCheck') or 0, state.get('lastAttempt') or 0)
+                        >= settings.get('intervalHours', DEFAULT_CHECK_INTERVAL_HOURS)*3600):
+                    await self.check(fresh=True, automatic=True)
+                await self.app()
+            elif state.get('appAvailable'):
+                await self.app()
+            elif (settings.get('autoCheck', True)
+                    and time.time() - max(state.get('lastCheck') or 0, state.get('lastAttempt') or 0)
+                    >= settings.get('intervalHours', DEFAULT_CHECK_INTERVAL_HOURS) * 3600):
+                # A future ordinary check is a new policy cycle, not continuation
+                # of the superseded whole-install command or its stale inventory.
+                await self.check(fresh=False, automatic=True)
+            return
         if state.get('pendingSmartTools') and not self.independent_tool_results(state):
             if (state.get('phase') not in {'error', 'interrupted'} or any(
                     row.get('runnerUpdate') and not row.get('failure') for row in state['pendingSmartTools'])):

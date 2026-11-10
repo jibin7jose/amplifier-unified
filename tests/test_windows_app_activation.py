@@ -23,13 +23,21 @@ class NativeActivationAdmissionTests(unittest.IsolatedAsyncioTestCase):
         source = Path(__file__).resolve().parents[1] / "amplifier_web/app_updates.py"
         node = next(n for n in ast.parse(source.read_text()).body
                     if isinstance(n, ast.AsyncFunctionDef) and n.name == "_activate")
+        readiness = source.with_name("update_readiness.py")
+        intent = next(n for n in ast.parse(readiness.read_text()).body
+                      if isinstance(n, ast.FunctionDef) and n.name == "valid_update_intent")
+        intent_namespace = {}
+        exec(compile(ast.Module(body=[intent], type_ignores=[]), str(readiness), "exec"),
+             intent_namespace)
         def imports(name, *args, **kwargs):
+            if name == "update_readiness":
+                return SimpleNamespace(valid_update_intent=intent_namespace["valid_update_intent"])
             if name == "update_restart":
                 return SimpleNamespace(RestartRejected=_RestartRejected)
             raise AssertionError("Activation escaped its platform admission: " + name)
         namespace = {
             "__builtins__": {**vars(builtins), "__import__": imports},
-            "sys": SimpleNamespace(platform=platform), "re": re,
+            "sys": SimpleNamespace(platform=platform), "re": re, "copy": copy,
         }
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), "exec"), namespace)
         return namespace["_activate"]
@@ -93,6 +101,17 @@ class NativeActivationAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["phase"], "app-staged")
         manager.diagnostics.begin.assert_not_called()
         manager.diagnostics.record.assert_not_called()
+
+    async def test_invalid_intent_refuses_before_platform_or_replacement_effects(self):
+        for platform in ("win32", "linux", "darwin"):
+            for scope in ([], {}, "other"):
+                with self.subTest(platform=platform, scope=scope):
+                    manager, state = self.manager(applicationIntent={"id": "request", "scope": scope})
+                    before = copy.deepcopy(state)
+                    await self.owner(platform)(manager)
+                    self.assertEqual(state, before)
+                    manager.diagnostics.begin.assert_not_called()
+                    manager.diagnostics.record.assert_not_called()
 
     async def test_posix_retains_its_existing_activation_path(self):
         for platform in ("linux", "darwin"):

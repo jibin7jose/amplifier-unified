@@ -78,6 +78,29 @@ async def test_worker_origin_controls_state_navigation_and_screen_status(origin)
     assert app.clients.current.get() is None
 
 
+async def test_worker_chat_navigation_uses_current_input_not_runtime_birth_client(origin):
+    app, sid, worker = origin
+    await app.dispatch('session.create', {'title': 'Existing destination', 'select': False})
+    destination = next(row['id'] for row in app._state['sessions'] if row['title'] == 'Existing destination')
+    bridge = main_bridge(worker)
+    before = deepcopy(app.clients.records['old-browser'])
+    result = await bridge('dispatch', {'action': 'session.select', 'id': 'worker-navigation',
+        'args': {'id': destination}})
+    assert result['accepted'] and result['result']['clientId'] == 'input-browser'
+    assert result['result']['sourceSessionId'] == sid
+    assert result['result']['selectedSessionId'] == destination
+    assert result['result']['rendering'] == 'unverified'
+    assert app.clients.records['old-browser'] == before
+    assert app.clients.records['input-browser']['selectedSessionId'] == destination
+    request, = result['state']['_stateAccess']['readback']
+    readback = await bridge(request['operation'], request['args'])
+    assert readback['result']['status'] == 'selected'
+    duplicate = await bridge('dispatch', {'action': 'session.select', 'id': 'worker-navigation',
+        'args': {'id': destination}})
+    assert duplicate['duplicate'] and duplicate['result'] == result['result']
+    assert (await bridge('get_state', {}))['selectedSessionId'] == sid
+
+
 async def test_explicit_navigation_and_canvas_remain_valid_but_cannot_move_consent(origin):
     app, sid, worker = origin
     bridge = main_bridge(worker)

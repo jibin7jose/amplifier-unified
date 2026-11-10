@@ -135,7 +135,8 @@ def bind_sources(plan, sources):
             if (row.get("module") in definitions and _applies(row, definitions[row["module"]])
                     and sources.get(row["module"])):
                 row["source"] = sources[row["module"]]
-        for child in node.get("agents", {}).values():
+        from .host.components import agent_roster
+        for child in agent_roster(node.get("agents", {})).values():
             if isinstance(child, dict):
                 visit(child)
     visit(plan)

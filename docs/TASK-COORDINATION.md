@@ -106,6 +106,49 @@ cap on a single peer request. The refusal is explicit. Informational `notify`
 remains available without waking the recipient. Communication never removes a
 cap or enrolls the recipient to make a refused request pass.
 
+## One-hop human resume handoff
+
+When a direct human asks one root to resume unfinished work owned by another
+manager, that root may send `coordination.send` to the existing commissioning
+owner with `resumeHandoff: {sourceMessageId, memberSessionId,
+expectedInterruptionRevision}` in auto/queue mode. This is an explicit extension
+of member-resume provenance, not authority acquired by ordinary peer messages.
+The host captures the current transport-bound direct human input, original
+generation and digest, exact owner/member and locations, assignment revision,
+all three task/access/configuration/placement/human/Stop boundaries and the
+send's original deadline. Question, scheduled, generated and peer inputs cannot
+mint or recursively forward this scope. All three roots must share the same
+workspace at issuance and final admission; the owner and its existing member
+must retain their active assignment.
+
+The receiving owner sees peer input, **not** `humanInput`. It assesses the actual
+canonical human instruction supplied in full in the bounded envelope, rather than
+inferring intent from sender prose. Instructions longer than 4,000 characters
+refuse issuance rather than losing qualifications or tail restrictions. Only
+after positive admission of this exact handoff in the owner's current
+authenticated native generation may it deliberately send one fresh member input
+using `resume: {sourceRequestId, expectedInterruptionRevision}`. Specify exactly
+one of `sourceRequestId` and the existing direct `sourceMessageId` alternative.
+Reading a receipt, historical input or an unknown acknowledgement is not admission.
+
+The member send atomically reserves consumption in the existing command journal
+and retains the original human/member/Stop single-use key across different handoff
+and command IDs. Lost acknowledgements, unknown admission and restart never release
+that reservation or replay older requests. Normal completion of the original human
+turn may retain its committed witness; later generations never replace that witness.
+New human input or Stop for any participant invalidates the scope. The original
+deadline and source cancellation remain binding through queued/submitting member
+preparation, even after the owner has handled or reported completion of its peer
+message. Cancellation revokes unadmitted authority, not completed effects.
+
+Existing stopped-boundary, failed-generation, safety-halt, native ownership,
+task/usage/budget and final admission checks still apply. No enrollment, reparenting,
+Full access, settings, schedule, question-answer or general Stop-clearance authority
+transfers. Direct owner-human resume is unchanged. Old unscoped requests do not
+gain authority on upgrade. Maintained service and scripted-native checks are in
+`tests/test_resume_handoff.py` and `tests/test_peer_resume_native.py`; source
+implementation alone is not live adoption or real-model efficacy evidence.
+
 ## Compact orientation and delegated recovery
 
 Fresh direct queue messages can be handled by an independently dependency-blocked

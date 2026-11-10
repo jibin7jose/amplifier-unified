@@ -178,7 +178,7 @@ class UpdateWait:
             self.runtime.native[sid].parked = False
             self.app._session(sid).update(
                 status='working', collaborationGeneration={
-                    'id': 'original-generation:' + sid, 'terminal': False})
+                    'id': 'original-generation:' + sid, 'inputIds': ['original:' + sid], 'terminal': False})
             self.app._message(self.app._session(sid), 'user', 'Original accepted work',
                               inputId='original:' + sid, inputOrigin='ui',
                               delivery={'status': 'accepted'})
@@ -196,13 +196,16 @@ class UpdateWait:
         assert self.wait_args['target'] is not None
         self.app._publish_changes(globals={'updates'})
 
-    async def wait(self, *, args=None, command='owner-wait', caller=None):
+    async def wait(self, *, args=None, command='owner-wait', caller=None, **transport):
         from amplifier_web.collaboration import BINDING, PRINCIPAL
         session = self.app._session(self.sid)
         principal = PRINCIPAL.set(self.sid)
         binding = BINDING.set({
             '_generationId': session.get('collaborationGeneration', {}).get('id'),
-            '_runtimeOwnerId': (self.runtime.workers.get(self.sid) or {}).get('runtimeOwnerId')})
+            '_inputBindings': [{'inputId': value} for value in
+                               session.get('collaborationGeneration', {}).get('inputIds', [])],
+            '_runtimeOwnerId': (self.runtime.workers.get(self.sid) or {}).get('runtimeOwnerId'),
+            **transport})
         try:
             return await self.app.dispatch('task.waitForUpdate', copy.deepcopy(args or self.wait_args),
                 origin='agent', caller_session_id=caller or self.sid,
@@ -603,6 +606,17 @@ async def test_duplicate_wait_is_one_native_enrollment_and_different_payload_can
         await h.wait(command='different-command-for-same-owner')
     assert h.row == saved
     assert len(h.runtime.boundary_calls) == 1
+
+
+@pytest.mark.parametrize('inputs', [None, [], [{'inputId': 'unadmitted'}], [None],
+                                  [{'inputId': 'original'}] * 129])
+async def test_wait_never_backfills_missing_transport_lineage(waiting, inputs):
+    h = waiting
+    await h.wait(_inputBindings=inputs)
+    wait = h.app.collaboration.receipt('owner-wait')
+    assert wait['status'] == 'waiting'
+    assert all(key not in wait for key in
+               ('sourceInputIds', 'sourceGenerationId', 'sourceInterruptionRevision'))
 
 
 async def test_unknown_native_enrollment_is_retained_and_never_replayed(waiting):

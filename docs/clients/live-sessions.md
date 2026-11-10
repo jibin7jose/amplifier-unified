@@ -81,6 +81,17 @@ only while open, retain the explicit selection when paging, and refresh on deman
 Concurrent catalog changes can alter later pages; accepted commands revalidate
 the selected chat's workspace and authority independently of the discovery row.
 
+Agent metadata discovery and explicitly requested navigation are described in
+[agent results](../AGENT-RESULTS.md#chat-discovery-and-client-navigation).
+`coordination.list` supports title/ID queries without transcript retrieval and
+returns a query-bound `directoryRevision` for stable continuation. An agent
+`session.select` requires the intended originating or explicit connected client
+displaying its calling chat; a saved global selection is not a visible target.
+Its receipt and passive `session.selection` readback bind that exact command to
+client/selection revision without exposing drafts. Host selection and observed
+browser rendering remain separate evidence, including when private Settings
+editors retain their prior view pending the user's choice.
+
 Example command body:
 ```json
 {

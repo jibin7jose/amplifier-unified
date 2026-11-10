@@ -130,11 +130,20 @@ async def wait_for_update(service, args, command_id, *, origin, guard=None):
         if not manager or target(manager) != args['target']:
             raise AppError('The staged update or host changed. Inspect its current target.', 409)
         session = service._session(args['sessionId'])
+        lineage = {}
         if origin not in {'ui', 'user'}:
-            transport, _ = service.collaboration.active_binding(session)
+            transport, active = service.collaboration.active_binding(session)
             worker_owner = (getattr(service.runtime, 'workers', {}).get(session['id']) or {}).get('runtimeOwnerId')
             if transport.get('_runtimeOwnerId') != worker_owner:
                 raise AppError('The requesting runtime owner changed.', 409)
+            inputs = transport.get('_inputBindings')
+            if (isinstance(inputs, list) and 0 < len(inputs) <= 128
+                    and all(isinstance(item, dict) and isinstance(item.get('inputId'), str)
+                            and item['inputId'] and item['inputId'] in active.get('inputIds', [])
+                            for item in inputs)):
+                # Capture only the admitted transport assignment, before yield.
+                # Missing proof can still wait, but cannot later supply authority.
+                lineage = service.collaboration.lineage(session, origin)
         task = session.get('task') or service.coordination.task(session['id'])
         worker = getattr(service.runtime, 'workers', {}).get(session['id'])
         if (not task or task.get('status') != 'active' or task.get('revision') != args['expectedRevision']
@@ -164,6 +173,7 @@ async def wait_for_update(service, args, command_id, *, origin, guard=None):
         current['workers'][session['id']] = row
         service.state['updates']['drain'] = current
         receipt = {'commandAction': 'task.waitForUpdate', 'requestId': command_id,
+                   'origin': origin, **copy.deepcopy(lineage),
                    'arguments': copy.deepcopy(args), 'status': 'waiting', 'admissionStatus': 'pending',
                    'boundaryId': row['boundaryId'],
                    'readRef': {'action': 'task.receipt', 'args': {'sessionId': session['id'], 'commandId': command_id}}}
@@ -349,7 +359,7 @@ async def prepare(manager, release):
         await observe_waiters(manager)
         if any(not row.get('ready') and not row.get('suppressed') for row in prior['workers'].values()):
             return False
-    return not held(service) and not manager.busy()
+    return not held(service) and not manager.app_busy()
 
 
 def begin_replacement(manager, release):

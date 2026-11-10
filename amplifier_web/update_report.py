@@ -159,7 +159,7 @@ async def collect(manager):
     # "busy" above is the updater lock, not the activation gate. Use the same
     # evaluator as busy()/blockers(), not cached labels or a second predicate.
     try:
-        gate = assess(manager.service)
+        gate = assess(manager.service, application=bool(state.get('pendingApp')))
         report['activationGate'] = {
             **gate['observation'],
             'blockerCounts': {kind: sum(row['kind'] == kind for row in gate['blockers'])

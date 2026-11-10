@@ -93,7 +93,10 @@ def test_packaging_probe_rejects_broken_login_dependency(tmp_path):
     source = str(Path(app_updates.__file__).resolve().parent.parent)
     env = {**os.environ, 'PYTHONPATH': os.pathsep.join(
         [str(tmp_path), source, os.environ.get('PYTHONPATH', '')])}
-    result = subprocess.run([sys.executable, '-c', app_updates.PROBE],
+    # This source-layout fixture models an installed prefix, so the package
+    # boundary must pass before the deliberately broken login import is tested.
+    probe = 'import sys; sys.prefix=' + repr(source) + '\n' + app_updates.PROBE
+    result = subprocess.run([sys.executable, '-c', probe],
                             cwd=tmp_path, env=env, capture_output=True, text=True)
     assert result.returncode != 0
     from amplifier_web.update_diagnostics import probe_record

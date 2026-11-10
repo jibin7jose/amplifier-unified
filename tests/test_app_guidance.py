@@ -69,6 +69,11 @@ def test_recurring_guidance_is_orientation_and_manual_stays_discoverable():
     assert len(CANVAS_GUIDANCE.encode('utf-8')) < 9000
     skill = resource_root() / 'skills/unified-app'
     assert (skill / 'SKILL.md').is_file()
+    chats = (skill / 'chats.md').read_text()
+    assert '[chats.md](chats.md)' in (skill / 'SKILL.md').read_text()
+    for marker in ('coordination.list', 'directoryRevision', 'session.selection',
+                   'rendering:"unverified"', 'Dirty viewers', 'not global browser selection'):
+        assert marker in chats
     for marker, reference in (
         ('window.BABYLON', 'canvas.md'),
         ('smartTools.open', 'smart-tools.md'),

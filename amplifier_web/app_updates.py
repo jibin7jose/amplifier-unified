@@ -1,5 +1,7 @@
 """Public GitHub release channel; candidate tool installation is isolated."""
 import asyncio
+import copy
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -439,7 +441,9 @@ async def _stage(manager, *, selected=None, extras):
     manager.diagnostics.sync('candidate-record',write_private,folder/'validated.json',json.dumps({'revision':revision,'version':installed,'hostVersion':__version__,'attemptId':manager.diagnostics.state['attemptId'],'extras':extras,'generation':generation,'componentGraph':graph,'componentDigest':components.digest(graph),'hostGraph':host_graph,'hostDigest':components.digest(host_graph),**artifact_proof,**({'managedBrowser':browser_receipt} if browser_receipt else {}),**({'featureSelection':selected} if selected else {})}))
     manager.diagnostics.clear_failure()
     manager.diagnostics.record('stage','succeeded',observedVersion=installed)
-    await manager.publish(phase='app-staged',pendingApp={**release,'attemptId':manager.diagnostics.state['attemptId'],'generation':generation,'extras':extras},detail='Application release validated. Waiting for work to finish before restarting.')
+    intent = manager.service.state['updates'].get('applicationIntent')
+    await manager.publish(phase='app-staged',pendingApp={**release,'attemptId':manager.diagnostics.state['attemptId'],'generation':generation,'extras':extras,
+        **({'updateIntent': copy.deepcopy(intent)} if intent is not None else {})},detail='Application release validated. Waiting for work to finish before restarting.')
     if selected:
         from .app_features import record
         await record(manager, selected['requestId'], 'qualified', selection=selected,
@@ -468,7 +472,9 @@ async def _activate_serialized(manager, *, force=None):
             manager.wakeup.set()
             return
         selected = pending.get('featureSelection')
-        try:await _activate(manager, force=force)
+        try:
+            with ExitStack() as holds:
+                await _activate(manager, force=force, holds=holds)
         except Exception as error:
             from .update_restart import RestartRejected
             if isinstance(error, RestartRejected):
@@ -533,9 +539,14 @@ async def installed_target():
         pass
     return uv,str(public_launcher),python,previous
 
-async def _activate(manager, *, force=None):
+async def _activate(manager, *, force=None, holds=None):
     release=manager.service.state['updates'].get('pendingApp')
     if not release:return
+    release = copy.deepcopy(release)
+    intent = copy.deepcopy(manager.service.state['updates'].get('applicationIntent'))
+    from .update_readiness import valid_update_intent
+    if not valid_update_intent(intent):
+        return  # Invalid saved intent is not permission for a broader sequence.
     revision=release.get('revision','')
     if not re.fullmatch('[0-9a-f]{40}',revision):raise ValueError('Invalid staged release revision')
     generation=release.get('generation')
@@ -623,6 +634,11 @@ async def _activate(manager, *, force=None):
     if force is None:
         from .update_drain import prepare
         if not await prepare(manager, release):return
+        from .update_blockers import operation_holds
+        try:
+            held_configuration = operation_holds(manager.service)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError):
+            return
     manager.diagnostics.begin('application',revision,validated.get('attemptId') or release.get('attemptId'),
                               application_extras=validated.get('extras'))
     uv,executable,installed_python,previous=await manager.diagnostics.run('target-discovery',installed_target)
@@ -664,7 +680,16 @@ async def _activate(manager, *, force=None):
         if force is not None:
             from .update_restart import require
             require(manager, force)
-        if force is None and manager.busy():return
+        if force is None and manager.app_busy():return
+        state = manager.service.state['updates']
+        if state.get('pendingApp') != release or state.get('applicationIntent') != intent:
+            return  # External validation did not qualify a replacement target/intent.
+        if force is None:
+            from .update_blockers import retain_operation_holds
+            try:
+                retain_operation_holds(manager.service, held_configuration, holds)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError):
+                return  # No recovery, interruption, candidate discard or effect.
         if selected:
             # Candidate and target probes await external processes. Recheck the
             # serving baseline after those waits, at final activation admission.
@@ -674,6 +699,8 @@ async def _activate(manager, *, force=None):
         replacement = {'version':validated['version'], 'revision':revision,
             'attemptId':manager.diagnostics.state['attemptId'],
             'sourceInstanceId':manager.running_identity['instanceId'], 'requestedAt':time.time()}
+        if intent is not None:
+            replacement['updateIntent'] = intent
         if graph is not None:
             replacement['qualification'] = {'app':next(row for row in graph if row['name']=='amplifier-unified'),
                 'extras':extras, 'dependencyDigest':components.digest([row for row in graph if row['name']!='amplifier-unified'])}
@@ -747,6 +774,7 @@ async def _activate(manager, *, force=None):
     await manager.publish(phase='activating',pendingApp=None,pendingReplacement=None,appAvailable=False,error=None,
         pendingRestart={'version':validated['version'],'revision':revision,'attemptId':manager.diagnostics.state['attemptId'],
                         'sourceInstanceId':manager.running_identity['instanceId'],'requestedAt':time.time(),
+                        **({'updateIntent': intent} if intent is not None else {}),
                         **({'forceRestart':replacement['forceRestart']} if 'forceRestart' in replacement else {}),
                         **({'qualification':replacement['qualification']} if 'qualification' in replacement else {}),
                         **({'featureSelection':selected,'dependencyDigest':components.digest([row for row in graph if row['name']!='amplifier-unified'])} if selected else {})},detail='Application installed. Restarting the local host…')

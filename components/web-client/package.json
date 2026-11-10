@@ -18,6 +18,7 @@
     "test:message-outbox-browser": "node tests/message-outbox-browser.mjs",
     "test:legacy-outbox-notice-browser": "node tests/legacy-outbox-notice-browser.mjs",
     "test:new-chat-recovery-browser": "node tests/new-chat-recovery-browser.mjs",
+    "test:sidebar-controls-browser": "node tests/sidebar-controls-browser.mjs",
     "prepare:inputs": "node scripts/prepare-inputs.mjs",
     "package:artifact": "node scripts/package-client.mjs",
     "test:portable": "npm test",
