@@ -184,6 +184,51 @@ async def test_freeze_cannot_apply_checked_policy_to_a_different_install(normali
     assert not (receipt / 'runtime-installed.json').exists()
 
 
+@pytest.mark.parametrize('checked_suffix,installed_suffix', [
+    ('.git', ''), ('', '.git'), ('.git/', ''), ('', '.git/'),
+])
+async def test_freeze_accepts_canonical_repository_spelling_without_rewriting_receipts(
+        normalized_runtime, checked_suffix, installed_suffix):
+    manager, generation, receipt, graph = normalized_runtime
+    prepared = await environments.stage(manager, generation, [ROW], finalize=False)
+    policies = json.loads((receipt / 'runtime-sources.json').read_text())
+    policies[ROW['package']]['url'] = ROW['url'] + checked_suffix
+    (receipt / 'runtime-sources.json').write_text(json.dumps(policies))
+    graph[0]['directUrl']['url'] = ROW['url'] + installed_suffix
+    original = json.loads(json.dumps(graph))
+    final = await qualification.freeze(manager, generation, prepared)
+    qualification.verify_recorded(final, receipt)
+    assert graph == original
+    saved = json.loads((receipt / 'runtime-sources.json').read_text())[ROW['package']]
+    assert saved['url'] == ROW['url'] + checked_suffix
+    assert saved['ref'] == 'main' and saved['revision'] == REVISION
+    assert not (manager.home / 'updates/active.json').exists()
+
+
+@pytest.mark.parametrize('changed', ['host', 'repository', 'revision', 'subdirectory', 'dirty'])
+async def test_freeze_shared_repository_alias_keeps_other_source_guards(normalized_runtime, changed):
+    manager, generation, receipt, graph = normalized_runtime
+    prepared = await environments.stage(manager, generation, [ROW], finalize=False)
+    graph[0]['cacheSource'] = {
+        'url': ROW['url'] + '.git', 'ref': 'main', 'revision': REVISION,
+        'subdirectory': 'module', 'dirty': False}
+    if changed == 'host':
+        graph[0]['cacheSource']['url'] = 'https://other.invalid/components.git'
+    elif changed == 'repository':
+        graph[0]['cacheSource']['url'] = ROW['url'] + '-other.git'
+    elif changed == 'revision':
+        graph[0]['cacheSource']['revision'] = 'd' * 40
+    elif changed == 'subdirectory':
+        graph[0]['cacheSource']['subdirectory'] = 'other'
+    else:
+        graph[0]['cacheSource']['dirty'] = True
+    with pytest.raises(ValueError, match='checked source policy'):
+        await qualification.freeze(manager, generation, prepared)
+    assert not (receipt / 'runtime.lock').exists()
+    assert not (receipt / 'runtime-installed.json').exists()
+    assert not (manager.home / 'updates/active.json').exists()
+
+
 async def test_stage_finalization_keeps_branch_policy_without_freeze(normalized_runtime):
     manager, generation, receipt, graph = normalized_runtime
     await environments.stage(manager, generation, [ROW])

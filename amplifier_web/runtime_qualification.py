@@ -373,6 +373,13 @@ async def freeze(manager, generation, project):
                 ('repository', source.get('url'), policy['url']),
                 ('revision', source.get('current'), policy['revision']),
                 ('subdirectory', source.get('subdirectory', ''), policy.get('subdirectory', ''))):
+            if field == 'repository':
+                from .updates import source_key
+                try:
+                    if source_key(actual, 'HEAD') == source_key(expected, 'HEAD'):
+                        continue  # Identity only; retain both original receipt spellings.
+                except (ValueError, TypeError, AttributeError):
+                    pass  # Invalid/missing origins remain mismatches below.
             if actual != expected:
                 mismatches.append(field)
         if mismatches:
