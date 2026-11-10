@@ -124,6 +124,18 @@ compare those exact links, not equal message text.
    permissions, change budgets, restart completed tasks or enroll independent
    chats. Inspect the receipt after a lost acknowledgement; even a different
    request ID cannot reuse the same human/member/Stop authorization.
+   If the latest direct human request is in another root, that origin can send
+   the actual commissioning owner an explicit `resumeHandoff` naming its
+   `sourceMessageId`, the exact `memberSessionId` and
+   `expectedInterruptionRevision` (auto/queue). The receiving owner keeps
+   `humanInput:null`: assess the host-supplied canonical `humanInstruction`, using
+   its exact-message read reference when truncated, not peer prose. Only in the
+   current native generation containing that positively admitted input may the
+   owner send `resume:{sourceRequestId:<handoff inputId>,
+   expectedInterruptionRevision}`. Do not also supply `sourceMessageId`, forward
+   the handoff, or use it for settings/questions/schedules. Deadline, cancellation
+   and all three participants' newer human/Stop/task/access/placement boundaries
+   still govern final admission. Unknown outcomes remain reserved, never replayed.
    Steer admits only to
    the recipient's exact current generation when its runtime supports request-boundary
    steering. Accepted is not applied; held/unknown never becomes a later turn.
