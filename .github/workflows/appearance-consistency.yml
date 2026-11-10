@@ -4,15 +4,18 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'frontend/src/appearance-*.js'
-      - 'frontend/src/appearance-*.jsx'
-      - 'frontend/src/appearance-*.css'
-      - 'frontend/src/message-text.jsx'
-      - 'frontend/src/message-actions.jsx'
-      - 'frontend/src/peer-message.*'
-      - 'frontend/src/execution-content.css'
-      - 'frontend/src/main.jsx'
-      - 'frontend/src/settings-action-queue.js'
+      - 'components/web-client.source.json'
+      - 'scripts/web_client_*.py'
+      - 'frontend/commands.json'
+      - 'components/web-client/src/appearance-*.js'
+      - 'components/web-client/src/appearance-*.jsx'
+      - 'components/web-client/src/appearance-*.css'
+      - 'components/web-client/src/message-text.jsx'
+      - 'components/web-client/src/message-actions.jsx'
+      - 'components/web-client/src/peer-message.*'
+      - 'components/web-client/src/execution-content.css'
+      - 'components/web-client/src/main.jsx'
+      - 'components/web-client/src/settings-action-queue.js'
       - 'frontend/tests/appearance-*.mjs'
       - 'frontend/tests/message-actions.test.mjs'
       - 'frontend/tests/settings-action-queue.test.mjs'
@@ -37,6 +40,9 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
+        run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Focused text, catalog and deterministic-document units
         working-directory: frontend

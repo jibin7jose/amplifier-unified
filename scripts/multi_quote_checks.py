@@ -141,7 +141,7 @@ def main():
             css_mutant = css_original.replace(before, before + b'visibility:hidden;')
             try:
                 css.write_bytes(css_mutant)
-                negative_build, _ = run('negative-quote-alignment-build', ['npm', 'run', 'build', '--prefix', 'frontend'])
+                negative_build, _ = run('negative-quote-alignment-build', ['npm', 'run', 'build:development', '--prefix', 'frontend'])
                 negative_proof = output / 'negative-quote-alignment'
                 if negative_build == 0:
                     code, _ = run('negative-quote-alignment', ['node', 'frontend/tests/multi-quote-browser.mjs'],
@@ -169,7 +169,7 @@ def main():
             assert model_original.decode().count(before) == 1
             try:
                 model.write_text(model_original.decode().replace(before, 'TextSelection.atStart(view.state.doc)'))
-                negative_build, _ = run('negative-interleaving-build', ['npm', 'run', 'build', '--prefix', 'frontend'])
+                negative_build, _ = run('negative-interleaving-build', ['npm', 'run', 'build:development', '--prefix', 'frontend'])
                 negative_env = {**ordinary_env, 'AMPLIFIER_PROOF_DIR': str(output / 'negative-interleaving')}
                 if negative_build == 0:
                     code, text = run('negative-interleaving', ['node', 'frontend/tests/multi-quote-browser.mjs'],

@@ -152,6 +152,37 @@ def test_prepare_optional_build_runs_only_the_existing_build_once(preparation, m
     assert release.version_at(root) == '1.2.4'
 
 
+@pytest.mark.parametrize('valid_component', [True, False])
+def test_prepare_verifies_selected_client_instead_of_matching_host_version(
+        preparation, monkeypatch, valid_component):
+    root, notes = preparation
+    (root / 'components').mkdir()
+    (root / 'components/web-client.source.json').write_text('{"fixture":true}')
+    calls = []
+
+    def build(command, cwd):
+        (root / 'amplifier_web/static/build.json').write_text(
+            '{"version":"0.2.0","id":"independent-client"}')
+        return subprocess.CompletedProcess(command, 0)
+
+    def verify(selected):
+        calls.append(selected)
+        if not valid_component:
+            raise ValueError('Installed client assets or provenance differ')
+
+    import types
+    monkeypatch.setitem(sys.modules, 'web_client_build', types.SimpleNamespace(verify=verify))
+    monkeypatch.setattr(release.subprocess, 'run', build)
+    if valid_component:
+        result = release.prepare(root, '1.2.4', notes, build=True)
+        assert result['version'] == '1.2.4'
+        assert result['build']['version'] == '0.2.0'
+    else:
+        with pytest.raises(ValueError, match='assets or provenance differ'):
+            release.prepare(root, '1.2.4', notes, build=True)
+    assert calls == [root]
+
+
 def test_prepare_cli_produces_metadata_without_installing_or_building(preparation):
     root, notes = preparation
     command = [sys.executable, str(Path(__file__).parents[1]/'scripts/release.py'), 'prepare']

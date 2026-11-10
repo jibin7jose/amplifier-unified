@@ -2,6 +2,7 @@
 import hashlib
 import io
 import json
+import subprocess
 import sys
 import tarfile
 import threading
@@ -182,6 +183,51 @@ def test_initializer_copies_writable_node_modules_and_rejects_conflicting_source
     (workspace / '.unified-prepared-dependencies.json').unlink()
     with pytest.raises(ValueError, match='already supplies'):
         initializer.initialize(prefix, workspace)
+
+
+@pytest.mark.parametrize('failure', [False, True])
+def test_initializer_prepares_selected_client_after_full_source_before_completion(tmp_path, failure):
+    prefix, workspace = tmp_path / 'prefix', tmp_path / 'workspace'
+    for folder in (prefix / 'node/frontend', prefix / 'venv/bin', prefix / 'node-runtime/bin',
+                   workspace / 'frontend', workspace / 'components', workspace / 'scripts'):
+        folder.mkdir(parents=True)
+    (prefix / 'venv/bin/python').symlink_to(sys.executable)
+    (prefix / 'node/frontend/dependency.js').write_text('dependency')
+    (prefix / 'plan.json').write_text(json.dumps({'profileId': 'browser-test', 'preparationId': 'exact',
+                                                'nodeDirectory': 'frontend', 'nodeKey': 'frontend'}))
+    (workspace / 'components/web-client.source.json').write_text('{}')
+    # A real subprocess verifies ordering and the prepared runtime environment,
+    # without importing or executing a project during dependency-only seeding.
+    (workspace / 'scripts/web_client_development.py').write_text(
+        'import os, sys\nfrom pathlib import Path\n'
+        'assert sys.argv[1:] == ["prepare-view"]\n'
+        'assert Path("components/web-client.source.json").is_file()\n'
+        'assert not Path("frontend/node_modules").exists()\n'
+        'assert not Path(".unified-prepared-dependencies.json").exists()\n'
+        f'assert os.environ["PATH"].split(os.pathsep)[0] == {str(prefix / "node-runtime/bin")!r}\n'
+        f'sys.exit(3) if {failure!r} else None\n'
+        'Path("frontend/src").mkdir()\n'
+        'Path("frontend/src/selected.js").write_text("selected component")\n')
+    if failure:
+        with pytest.raises(subprocess.CalledProcessError):
+            initializer.initialize(prefix, workspace)
+        assert not (workspace / '.unified-prepared-dependencies.json').exists()
+        assert not (workspace / 'frontend/node_modules').exists()
+    else:
+        initializer.initialize(prefix, workspace)
+        assert (workspace / 'frontend/src/selected.js').read_text() == 'selected component'
+        assert (workspace / 'frontend/node_modules/dependency.js').read_text() == 'dependency'
+        initializer.initialize(prefix, workspace)  # Completed initialization is idempotent.
+
+
+def test_python_project_does_not_run_client_preparation(tmp_path):
+    prefix, workspace = tmp_path / 'prefix', tmp_path / 'workspace'
+    prefix.mkdir()
+    (workspace / 'components').mkdir(parents=True)
+    (workspace / 'components/web-client.source.json').write_text('{}')
+    (prefix / 'plan.json').write_text(json.dumps({'profileId': 'python-project', 'preparationId': 'exact'}))
+    initializer.initialize(prefix, workspace)
+    assert (workspace / '.unified-prepared-dependencies.json').is_file()
 
 
 def test_docker_builder_has_bounded_resources_no_mounts_and_immutable_commit(tmp_path, monkeypatch):

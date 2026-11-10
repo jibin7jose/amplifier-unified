@@ -84,6 +84,15 @@ def display_identity(session, index, role, text):
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
+def _public_text(row, raw_text):
+    content = row.get('content')
+    def private(block):
+        return isinstance(block, dict) and block.get('visibility') in ('internal', 'developer')
+    if not isinstance(content, list) or not any(private(block) for block in content):
+        return raw_text
+    return text_content({'content': [block for block in content if not private(block)]})
+
+
 def display_message(row, index, session, *, include_internal=False):
     if not isinstance(row, dict) or row.get('role') not in {'user', 'assistant'}:
         return None
@@ -91,7 +100,8 @@ def display_message(row, index, session, *, include_internal=False):
     if not include_internal and any(metadata.get(key) for key in
             ('ephemeral', 'amplifier_visible_reference', 'amplifier_recovery_reference')):
         return None
-    text = text_content(row)
+    raw_text = text_content(row)
+    text = raw_text if include_internal else _public_text(row, raw_text)
     if not text:
         return None
     from .session_store import message_time
@@ -117,7 +127,8 @@ def display_message(row, index, session, *, include_internal=False):
         facts = recovery_facts(metadata, text, provenance)
         if facts:
             observation['observation']['recovery'] = facts
-    identity = display_identity(session, index, row['role'], text)
+    # Public block visibility changes the view, never its canonical raw anchor.
+    identity = display_identity(session, index, row['role'], raw_text)
     voice = None
     if row['role'] == 'user' and not include_internal:
         from .voice_input_projection import public_input
@@ -128,6 +139,7 @@ def display_message(row, index, session, *, include_internal=False):
     return {'id': identity, 'role': row['role'],
             'text': voice['text'] if voice else text, 'via': 'call' if voice else 'chat', 'source': 'native', 'nativeIndex': index,
             'createdAt': message_time(row) or session.get('createdAt', 0), 'timestampKnown': message_time(row) is not None,
+            **({'nativeMessageId': identity} if text != raw_text else {}),
             **input_identity, **observation, **voice_fields}
 
 
@@ -176,10 +188,10 @@ def read_transcript(session, *, before=None, limit=100, diagnostics=None, includ
         row = display_message(value, index, session)
         internal = row or display_message(value, index, session, include_internal=True)
         return (row['id'] if row else None, internal['id'] if internal else None,
-                value.get('role'), row.get('nativeInputId') if row else None)
+                value.get('role'), internal.get('nativeInputId') if internal else None)
 
     with measure(service, 'history.transcript.facts', synchronous=True, session_id=session['id']):
-        facts = (messages.project('unified-display-v4:' + str(native_id), project)
+        facts = (messages.project('unified-display-v5:' + str(native_id), project)
                  if isinstance(messages, TranscriptIndex)
                  else [project(value, index) for index, value in enumerate(messages)])
     input_counts = Counter(fact[3] for fact in facts if fact[3])
@@ -293,12 +305,13 @@ def align_expanded_inputs(current, incoming, *, peer_only=False):
     return [replacements.get(number, row) for number, row in enumerate(current) if number not in copies]
 
 
-def alias_peer_inputs(session, native):
-    """Reuse one retained web bubble at its exact unique native input identity.
+def alias_input_originals(session, native, *, peer_only=False):
+    """Reuse one retained original at its exact unique native input identity.
 
     This is display alignment, not attribution. The owning service still needs
     its retained receipt and exact envelope binding before deriving a caption.
-    No role/text multiplicity can transfer an input's identity.
+    No role/text multiplicity can transfer an input's identity. Export may keep
+    its existing peer-only policy; passive retrieval retains ordinary originals.
     """
     from amplifier_operations.coordination import peer_input
     from .peer_attribution import input_identity
@@ -317,8 +330,12 @@ def alias_peer_inputs(session, native):
             continue
         original, saved = web[identity][0], candidates[0]
         envelope = original.get('peerEnvelope')
-        if (not isinstance(envelope, dict) or saved.get('nativeInputAmbiguous')
-                or saved['text'] != peer_input(envelope, original.get('text', ''))
+        if peer_only and not isinstance(envelope, dict):
+            continue
+        if ('peerEnvelope' in original and (not isinstance(envelope, dict)
+                or saved['text'] != peer_input(envelope, original.get('text', '')))):
+            continue
+        if (saved.get('nativeInputAmbiguous')
                 or original.get('nativeMessageId') not in (None, saved['id'])
                 or original.get('nativeIndex') not in (None, saved['nativeIndex'])):
             continue

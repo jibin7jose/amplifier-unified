@@ -5,11 +5,10 @@ import {copyFileSync,existsSync,mkdirSync,mkdtempSync,readFileSync,rmSync,symlin
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {buildInputs} from '../scripts/build-identity.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const shared=[
- 'LICENSE','pyproject.toml',
+ 'LICENSE',
  'amplifier_web/ai_services.json','amplifier_web/provider_sources.json','amplifier_web/voice_options.json',
  'assets/UPSTREAM-LICENSE','assets/branding/favicons/apple-touch-icon.png',
  'assets/branding/favicons/favicon-32.png','assets/branding/favicons/favicon.ico',
@@ -21,16 +20,9 @@ const git=(directory,...args)=>execFileSync('git',args,{cwd:directory,encoding:'
 function fixture(t){
  const temporary=mkdtempSync(join(tmpdir(),'web-inputs-')),source=join(temporary,'source');
  t.after(()=>rmSync(temporary,{recursive:true,force:true}));
- for(const name of ['frontend/src','frontend/public']){
-  mkdirSync(join(source,name),{recursive:true});
-  writeFileSync(join(source,name,'fixture.txt'),'authored fixture input');
- }
- const extras=[helper,'frontend/tests/client-artifact-browser.mjs','frontend/tests/shell-http-fixture.mjs',
-  'frontend/tests/shell-host.mjs','frontend/tests/build-identity.test.mjs'];
- for(const name of new Set([...buildInputs(source),...shared,...extras])){
+ for(const name of [...shared,helper]){
   const target=join(source,name);mkdirSync(dirname(target),{recursive:true});
-  if(shared.includes(name)||name===helper||name==='frontend/scripts/build-identity.mjs')copyFileSync(join(root,name),target);
-  else writeFileSync(target,'fixture');
+  copyFileSync(join(root,name),target);
  }
  git(source,'init','--quiet');git(source,'add','.');
  git(source,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','Canonical fixture inputs');
@@ -49,11 +41,12 @@ test('finite shared inputs preserve canonical owner bytes without exporting clie
  for(const name of shared)assert.deepEqual(readFileSync(join(f.output,name)),readFileSync(join(f.source,name)));
  assert.equal(existsSync(join(f.output,'frontend')),false);
  assert.equal(existsSync(join(f.output,'.git')),false);
- const complete=join(f.temporary,'capsule');
- const exported=f.run('export',complete,f.revision);assert.equal(exported.status,0,exported.stderr);
- const component=JSON.parse(readFileSync(join(complete,'component.json')));
- assert.equal(component.pairedServer.revision,f.revision);
- for(const name of shared)assert.deepEqual(component.inputs[name],lock.inputs[name]);
+ assert.equal(existsSync(join(f.output,'pyproject.toml')),false,'Server release metadata is not a client build input');
+ for(const command of ['export','package']){
+  const output=join(f.temporary,command);
+  assert.notEqual(f.run(command,output,f.revision).status,0,'Retired pilot commands cannot create another source/artifact owner');
+  assert.equal(existsSync(output),false);
+ }
 });
 
 test('verification is offline and rejects wrong selection, missing, changed and extra inputs',t=>{
@@ -70,7 +63,8 @@ test('verification is offline and rejects wrong selection, missing, changed and 
 
 test('unrelated working edits do not block export but uncommitted selected inputs do',t=>{
  const f=fixture(t);
- writeFileSync(join(f.source,'frontend/index.html'),'unrelated client edit');
+ writeFileSync(join(f.source,'frontend/index.html'),'unrelated generated client edit');
+ writeFileSync(join(f.source,'pyproject.toml'),'[project]\nversion = "99.0.0"\n');
  assert.equal(f.run('inputs',join(f.temporary,'unrelated')).status,0);
  writeFileSync(join(f.source,'amplifier_web/ai_services.json'),'uncommitted shared edit');
  const output=join(f.temporary,'refused');

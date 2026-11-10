@@ -27,3 +27,19 @@ frontend/public/sw.js
 /output/conversation-details-proof/
 /output/shell-components-proof/
 /output/shell-sdk-proof/
+
+# Prepared independent client and generated compatibility test/development view.
+/frontend/.client/
+/frontend/.client-view.json
+/frontend/.build-inputs/
+/frontend/src/
+/frontend/public/
+/frontend/index.html
+/frontend/shell-validation.html
+/frontend/vite.config.js
+/frontend/scripts/build-identity.mjs
+/frontend/scripts/sync-branding.mjs
+
+/frontend/scripts/prepare-inputs.mjs
+/frontend/build-inputs.lock.json
+/frontend/.web-client-view-*/

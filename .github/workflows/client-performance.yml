@@ -4,6 +4,9 @@ name: Client performance smoke
 on:
   pull_request:
     paths:
+      - 'components/web-client.source.json'
+      - 'scripts/web_client_*.py'
+      - 'frontend/commands.json'
       - 'amplifier_web/browser_*.py'
       - 'amplifier_web/attention.py'
       - 'amplifier_web/directory_attention.py'
@@ -15,7 +18,7 @@ on:
       - 'amplifier_web/task_continuity.py'
       - 'amplifier_web/server_websocket.py'
       - 'amplifier_web/service.py'
-      - 'frontend/src/main.jsx'
+      - 'components/web-client/src/main.jsx'
       - 'frontend/package.json'
       - 'frontend/package-lock.json'
       - 'pyproject.toml'
@@ -28,8 +31,8 @@ on:
       - 'tests/fixtures/empty_host_ui_server.py'
       - 'tests/fixtures/configured_browser.py'
       - 'frontend/tests/browser-chat-pages.mjs'
-      - 'frontend/src/state-*.js'
-      - 'frontend/src/view-reporter.js'
+      - 'components/web-client/src/state-*.js'
+      - 'components/web-client/src/view-reporter.js'
       - 'frontend/tests/client-traffic-browser.mjs'
       - 'frontend/tests/state-revision-presentation.test.mjs'
       - 'tests/fixtures/client_traffic_server.py'
@@ -55,6 +58,9 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
+        run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Record source and synthetic qualification limits
         run: |

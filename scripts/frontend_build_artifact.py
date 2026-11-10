@@ -87,7 +87,7 @@ def source_identity(root):
         # contents or exporting source, credentials, or local environment files.
         entries.append([metadata.decode('ascii'), name.decode('utf-8')])
     env_files = {}
-    for folder in (root, root / 'frontend'):
+    for folder in (root, root / 'frontend', root / 'frontend/.client'):
         for path in sorted(folder.glob('.env*')):
             if path.is_symlink():
                 raise ValueError('Linked environment input is not supported')

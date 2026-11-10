@@ -247,7 +247,10 @@ def main():
         assert candidate['static'] and {('amplifier_web/static/' + p): value
             for p, value in manifest(ROOT / 'amplifier_web/static').items()} == candidate['static']
         build = json.loads((ROOT / 'amplifier_web/static/build.json').read_text())
-        assert build['version'] == project['project']['version'], 'Commit canonical versioned assets first'
+        component = json.loads((ROOT / 'amplifier_web/static/client-component.json').read_text())
+        selection = json.loads((ROOT / 'components/web-client.source.json').read_text())
+        assert component['build'] == build and component['source'] == selection['source'], \
+            'Commit the selected client artifact first'
         save(OUTPUT / 'candidate.json', candidate)
         # Do not inherit developer credentials, environment overrides or host packages.
         keep = ('PATH', 'LD_LIBRARY_PATH', 'LANG', 'LC_ALL', 'SYSTEMROOT', 'SSL_CERT_FILE',

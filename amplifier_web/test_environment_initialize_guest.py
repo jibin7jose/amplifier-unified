@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -26,6 +28,15 @@ def initialize(prefix=Path('/opt/unified-prepared'), workspace=Path('/workspace'
         target = directory / 'node_modules'
         if target.exists() or target.is_symlink():
             raise ValueError('The source snapshot already supplies project dependency files.')
+        # Dependency layers contain manifests only. Prepare the selected client
+        # from the final source here, using its local locked inputs and retained
+        # Node runtime; generic projects have no Unified component selection.
+        if (workspace / 'components/web-client.source.json').is_file():
+            env = dict(os.environ)
+            env['PATH'] = str(prefix / 'node-runtime/bin') + os.pathsep + env.get('PATH', '')
+            subprocess.run([str(prefix / 'venv/bin/python'),
+                            str(workspace / 'scripts/web_client_development.py'), 'prepare-view'],
+                           cwd=workspace, env=env, check=True, timeout=120)
         shutil.copytree(prefix / 'node' / plan['nodeKey'], target, symlinks=True)
     marker.write_text(json.dumps({'preparationId': plan['preparationId']}))
 

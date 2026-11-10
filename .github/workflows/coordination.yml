@@ -2,6 +2,9 @@ name: Task coordination contracts
 on:
   pull_request:
     paths:
+      - 'components/web-client.source.json'
+      - 'scripts/web_client_*.py'
+      - 'frontend/commands.json'
       - 'amplifier_operations/coordination.py'
       - 'amplifier_web/coordination.py'
       - 'amplifier_web/peer_scope.py'
@@ -25,7 +28,7 @@ on:
       - 'tests/test_pretransport_refit_native.py'
       - 'tests/test_full_refit_authority.py'
       - 'amplifier_web/coordination_guidance.py'
-      - 'frontend/src/workspace-awareness.jsx'
+      - 'components/web-client/src/workspace-awareness.jsx'
       - 'frontend/tests/workspace-awareness-browser.mjs'
       - 'tests/test_workspace_awareness.py'
       - 'tests/test_coordination_delivery.py'
@@ -41,8 +44,8 @@ on:
       - 'amplifier_web/host/children.py'
       - 'amplifier_web/host/session.py'
       - 'amplifier_web/host/storage.py'
-      - 'frontend/src/coordination*'
-      - 'frontend/src/main.jsx'
+      - 'components/web-client/src/coordination*'
+      - 'components/web-client/src/main.jsx'
       - 'tests/test_coordination.py'
       - 'tests/test_coordination_generation.py'
       - 'tests/test_coordination_revisions.py'
@@ -98,16 +101,16 @@ on:
       - 'tests/test_native_result_readers.py'
       - 'amplifier_web/test_reservation_maintenance.py'
       - 'tests/test_background_reservation_recovery.py'
-      - 'frontend/src/workspace-managed-resources.jsx'
-      - 'frontend/src/workspace-test-environments.jsx'
-      - 'frontend/src/work-shell.jsx'
+      - 'components/web-client/src/workspace-managed-resources.jsx'
+      - 'components/web-client/src/workspace-test-environments.jsx'
+      - 'components/web-client/src/work-shell.jsx'
       - 'tests/fixtures/test_environments_ui_server.py'
       - 'frontend/tests/test-environments-browser.mjs'
       - 'frontend/tests/standard-ux-inventory.json'
-      - 'frontend/src/workspace-resource-*.jsx'
+      - 'components/web-client/src/workspace-resource-*.jsx'
       - 'tests/test_resource_reservations.py'
       - 'tests/test_multi_repository_worktrees.py'
-      - 'frontend/src/worktrees.jsx'
+      - 'components/web-client/src/worktrees.jsx'
       - 'tests/fixtures/worktrees_ui_server.py'
       - 'frontend/tests/multi-repository-worktrees-browser.mjs'
       - 'frontend/tests/resource-reservations-browser.mjs'
@@ -131,6 +134,9 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
+        run: python scripts/web_client_development.py prepare-view
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - run: uv sync --locked --group dev
       - name: Resolve the declared live-runtime source

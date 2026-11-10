@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,renameSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
-import {buildIdentity} from '../scripts/build-identity.mjs';
+import {fileURLToPath} from 'node:url';
+import {buildIdentity,buildInputs} from '../scripts/build-identity.mjs';
 
 // Independent fixture inputs include every current producer/import boundary.
 const inputs=[
@@ -62,4 +63,13 @@ test('relative names and explicit boundaries distinguish renames and content rep
 
 test('same authored source is stable across separate checkout paths without Git metadata',t=>{
  assert.deepEqual(buildIdentity(fixture(t)),buildIdentity(fixture(t)));
+});
+
+// Check the committed selection against the real build boundary, not a mock lock.
+test('shared lock supplies the actual client inputs without server release metadata',()=>{
+ const root=fileURLToPath(new URL('../',import.meta.url));
+ const lock=JSON.parse(readFileSync(join(root,'build-inputs.lock.json')));
+ const consumed=buildInputs(root).filter(name=>name.startsWith('.build-inputs/')).map(name=>name.slice('.build-inputs/'.length));
+ assert.deepEqual(Object.keys(lock.inputs).sort(),[...consumed,'LICENSE','packages/shell-sdk/LICENSE'].sort());
+ assert.equal(Object.hasOwn(lock.inputs,'pyproject.toml'),false);
 });

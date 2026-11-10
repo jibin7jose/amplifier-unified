@@ -335,10 +335,14 @@ try{
  await expect(automatic).toBeChecked();await expect(frequency).toHaveValue('24');
  // Explicit checks carry their own outcome; a successful lookup cannot clear
  // a retained component failure without matching recovery.
- await check.click();await assertCurrentHealth('protected','Component source needs review','sources');
- await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().updates.error)).toBe('Synthetic update lookup failed. Check again.');
+ await check.click();
+ await expect.poll(()=>page.evaluate(()=>{const {phase,error}=window.amplifier.getState().updates;return {phase,error}}))
+  .toEqual({phase:'error',error:'Synthetic update lookup failed. Check again.'});
+ await assertCurrentHealth('protected','Component source needs review','sources');
  await expect(overview.locator('#update-action-status')).toHaveText(constraintGuidance);assert.equal((await observations()).calls.check,1);
- await check.click();await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().updates.error)).toBe(null);
+ await check.click();
+ await expect.poll(()=>page.evaluate(()=>{const {phase,error}=window.amplifier.getState().updates;return {phase,error}}))
+  .toEqual({phase:'installed',error:null});
  await assertCurrentHealth('protected','Component source needs review','sources');await expect(overview.locator('#update-action-status')).toHaveText(constraintGuidance);await expect(overview).not.toContainText('You’re up to date');await expect(updates.getByText('Synthetic update lookup failed. Check again.',{exact:true})).toHaveCount(0);assert.deepEqual((await observations()).calls,{check:2,install:0,rollback:0});
  // One status projection governs headline, details and retry state, including
  // reload. This fixture records completion but never installs or verifies an
