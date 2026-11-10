@@ -727,7 +727,14 @@ async def targeted_saved(app, runtime, owner, action, root, bundle, scenario, ca
     assert current['history'][len(record['history'])]['recoverySource']['sessionId'] == manager['id']
     assert override_path(record['attempts'][0]['nativeSessionId']).read_bytes() == settings
     assert receipt_path(record['attempts'][0], home=app.data_dir).read_bytes() == sealed
-    assert owner['messages'] == original_messages and owner['status'] == 'idle'
+    assert owner['messages'] == original_messages
+    if nested_revocation:
+        # Native startup may report ready before the post-preparation authority
+        # guard rejects recovery. Worker readiness is not input admission or
+        # verified configuration success.
+        assert owner['status'] in {'ready', 'idle'}, owner['status']
+    else:
+        assert owner['status'] == 'idle'
     assert record['request']['source'].get('continuation'), 'Targeted fixture must exercise an enrolled settings continuation'
     assert current.get('boundary', {}).get('ready')
     if nested_revocation:
