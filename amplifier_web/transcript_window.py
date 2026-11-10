@@ -5,6 +5,7 @@ uniqueness are deliberately unknown. Callers retain canonical resume authority.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -106,6 +107,135 @@ class TranscriptWindowReader:
             return value
         except (ValueError, TypeError):
             raise _Invalid() from None
+
+    async def stream_forward(self, directory, owner, *, limit=100):
+        """Pull raw transcript batches in order, without projecting visibility.
+
+        Awaiting the consumer supplies backpressure; there is no prefetch. A
+        cancelled reader joins its one bounded physical read before returning.
+        Only successful exhaustion establishes an unchanged complete source;
+        closing early or failing after a prefix does not establish completeness.
+        """
+        after = None
+        while True:
+            task = asyncio.create_task(asyncio.to_thread(
+                self.read_forward, directory, owner, after=after, limit=limit))
+            try:
+                page = await asyncio.shield(task)
+            except asyncio.CancelledError:
+                # Cancelling the waiter cannot cancel filesystem I/O. Retain
+                # ownership until the finite read has closed its descriptor.
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                if not task.cancelled():
+                    task.exception()
+                raise
+            if page['status'] != 'ready':
+                raise ValueError('Native transcript stream unavailable: ' + page['reason'])
+            after, revision = page['after'], page['revision']
+            yield page
+            if self.source_revision(directory, owner) != revision:
+                raise ValueError('Native transcript changed during streaming.')
+            if after is None:
+                return
+
+    def read_forward(self, directory, owner, *, after=None, limit=100):
+        """One bounded raw batch after an authenticated validated prefix.
+
+        This is not a public-conversation projection. Records retain their
+        original roles/content/metadata for the existing visibility owner.
+        Unlike a recent display window, a complete traversal cannot skip gaps.
+        """
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError('Message batch limit must be between 1 and 100.')
+        if (not isinstance(owner, dict) or set(owner) != {'project', 'nativeId'}
+                or any(not isinstance(v, str) or not 0 < len(v) <= 512 for v in owner.values())):
+            raise ValueError('A canonical transcript owner is required.')
+        root = Path(directory).resolve()
+        paths = [root / name for name in
+                 ('transcript.jsonl', 'transcript.jsonl.backup', 'transcript.jsonl.append-pending')]
+        try:
+            if any(path.resolve().parent != root for path in paths):
+                return {'status': 'unavailable', 'reason': 'source_unreadable'}
+            stamps = [_stamp(path) for path in paths]
+            revision = hashlib.sha256(_encode([owner, stamps])).hexdigest()
+            cursor = self._parse(after) if after is not None else None
+            if cursor and cursor.get('kind') != 'forward':
+                raise _Invalid()
+            if cursor and (cursor.get('owner') != owner or cursor.get('source') != revision):
+                return {'status': 'retry', 'reason': 'source_changed'}
+            # Preserve the existing committed-source rule. Once any prefix was
+            # delivered, never switch to a backup and mix two source histories.
+            candidates = [1] if stamps[2] is not None else [0, 1]
+            if cursor:
+                if cursor.get('file') not in candidates:
+                    raise _Invalid()
+                candidates = [cursor['file']]
+            budget = {'read': 0}
+            for selected in candidates:
+                if stamps[selected] is None:
+                    continue
+                start = cursor.get('start') if cursor else 0
+                index = cursor.get('index') if cursor else 0
+                if (type(start) is not int or not 0 <= start <= stamps[selected][2]
+                        or type(index) is not int or index < 0):
+                    raise _Invalid()
+                try:
+                    rows, position, index = self._read_forward(
+                        paths[selected], stamps[selected], start, index, limit, budget)
+                except (OSError, ValueError, UnicodeError, RecursionError, _Invalid):
+                    continue
+                if [_stamp(path) for path in paths] != stamps:
+                    raise _Changed()
+                token = self._token({'kind': 'forward', 'owner': owner, 'source': revision,
+                                     'file': selected, 'start': position, 'index': index}) if position < stamps[selected][2] else None
+                return {'status': 'ready', 'rows': rows, 'after': token, 'revision': revision,
+                        'source': 'backup' if selected else 'primary',
+                        'coverage': {'scannedBytes': budget['read'], 'rangeStart': start,
+                                     'rangeEnd': position, 'validation': 'prefix'}}
+            if [_stamp(path) for path in paths] != stamps:
+                raise _Changed()
+            return {'status': 'unavailable', 'reason': 'source_unreadable'}
+        except _Invalid:
+            return {'status': 'retry', 'reason': 'invalid_cursor'}
+        except _Changed:
+            return {'status': 'retry', 'reason': 'source_changed'}
+        except OSError:
+            return {'status': 'unavailable', 'reason': 'source_unreadable'}
+
+    def _read_forward(self, path, expected, start, index, limit, budget):
+        rows, position = [], start
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_NOFOLLOW', 0))
+        with os.fdopen(descriptor, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise _Invalid()
+            if [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns] != expected:
+                raise _Changed()
+            stream.seek(start)
+            while position < expected[2] and len(rows) < limit and budget['read'] < READ_LIMIT:
+                raw = stream.readline(min(RECORD_LIMIT + 1, READ_LIMIT - budget['read']))
+                budget['read'] += len(raw)
+                if not raw:
+                    raise _Changed()
+                if len(raw) > RECORD_LIMIT:
+                    raise _Invalid()
+                if not raw.endswith(b'\n') and stream.tell() < expected[2]:
+                    break  # Retry the intact record with the next batch's budget.
+                if raw.strip():
+                    value = _bounded_json(raw)
+                    if (value is _OBJECT_LIMIT or not isinstance(value, dict)
+                            or not isinstance(value.get('role'), str) or not value['role']):
+                        raise _Invalid()
+                    rows.append({'value': value, 'byteOffset': position, 'nativeIndex': index})
+                    index += 1
+                position = stream.tell()
+            if position == start and position < expected[2]:
+                raise _Invalid()
+        return rows, position, index
 
     def read_window(self, directory, owner, *, before=None, limit=100, visible=None):
         """Read newest visible rows; ``visible`` is a bounded, read-only predicate.
