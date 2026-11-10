@@ -359,7 +359,10 @@ def persist(home, state, cache, *, session_ids=None, by_id=None, references=None
                 # part of this rollback list.
                 undo.append((path, path.read_text() if path.exists() else None))
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            SessionStore._atomic(path, text)
+            # This replaceable compatibility view is not a history authority.
+            # Its mutable readers may retain the old object during publication.
+            from .presentation_files import atomic_write
+            atomic_write(path, text)
             cache[str(path)] = text
         # Passive owner checks need present scalar facts without loading the view
         # body. Do not invent defaults or backfill older sparse references.

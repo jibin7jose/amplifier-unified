@@ -1579,10 +1579,12 @@ def failure(report, exc):
 
 class NativeResults:
     """Retain only fixed labels/counts, never pytest error prose or locations."""
+    controls = NATIVE_CONTROLS
+
     def __init__(self, guard=None):
-        self.node_labels = {"tests/" + node: label for label, node in NATIVE_CONTROLS.items()}
-        self.collected = {label: 0 for label in NATIVE_CONTROLS}
-        self.phases = {label: [] for label in NATIVE_CONTROLS}
+        self.node_labels = {"tests/" + node: label for label, node in self.controls.items()}
+        self.collected = {label: 0 for label in self.controls}
+        self.phases = {label: [] for label in self.controls}
         self.unexpected = self.collection_errors = 0
         self.guard = guard
         self.codes = {}
@@ -1678,10 +1680,14 @@ def stage_controls(root, source):
     The runtime native test inserts its copied parent into a child interpreter.
     That directory contains tests ONLY; the actual app still comes from the wheel.
     """
+    return _stage_control_files(root, source, NATIVE_FILES)
+
+
+def _stage_control_files(root, source, files):
     target = root / "native-controls"
     private_directory(target / "tests", root)
     hashes = {}
-    for name in NATIVE_FILES:
+    for name in files:
         raw = (source / name).read_bytes()
         (target / "tests" / name).write_bytes(raw)
         assert (target / "tests" / name).read_bytes() == raw
@@ -2361,6 +2367,377 @@ def cli_run(wheel, receipt, candidate_receipt):
     return 0 if report["status"] == "PASS" else 1
 
 
+STORAGE_CONTROLS = {
+    "held_view": "test_windows_read_files.py::test_service_publication_with_real_mutable_reader[held-view]",
+    "held_naming": "test_windows_read_files.py::test_service_publication_with_real_mutable_reader[held-naming]",
+    "released_view": "test_windows_read_files.py::test_service_publication_with_real_mutable_reader[released-view]",
+    "released_naming": "test_windows_read_files.py::test_service_publication_with_real_mutable_reader[released-naming]",
+    "held_resource": "test_windows_read_files.py::test_service_publication_during_held_immutable_resource",
+    "ordinary_view": "test_windows_read_files.py::test_service_publication_with_real_mutable_reader[ordinary-view]",
+    "ordinary_naming": "test_windows_read_files.py::test_service_publication_with_real_mutable_reader[ordinary-naming]",
+    "rollback_restore": "test_windows_read_files.py::test_service_view_rollback_with_real_presentation_reader[restore-held]",
+    "rollback_remove": "test_windows_read_files.py::test_service_view_rollback_with_real_presentation_reader[remove-held]",
+    "restore_refused": "test_windows_read_files.py::test_service_view_rollback_with_real_presentation_reader[restore-refused]",
+    "remove_refused": "test_windows_read_files.py::test_service_view_rollback_with_real_presentation_reader[remove-refused]",
+}
+STORAGE_ROLLBACK_SCOPES = {"rollback_restore": "restore-held", "rollback_remove": "remove-held",
+                           "restore_refused": "restore-refused", "remove_refused": "remove-refused"}
+STORAGE_READERS = {"held_view": ("naming.initial_name", "held"), "held_naming": ("naming.legacy", "held"),
+                   "released_view": ("naming.initial_name", "released"),
+                   "released_naming": ("naming.legacy", "released"), "held_resource": ("resource.project", "held"),
+                   "ordinary_view": ("naming.initial_name", "ordinary"),
+                   "ordinary_naming": ("naming.legacy", "ordinary"),
+                   **{label: ("naming.presentation", scope) for label, scope in STORAGE_ROLLBACK_SCOPES.items()}}
+STORAGE_FILES = ("conftest.py", "test_windows_read_files.py")
+STORAGE_STAGES = frozenset({"binding", "fixture", "installed", "selection", "verify", "complete"})
+
+
+def validate_publication_sharing(value, label):
+    """Deep-copy fixed mechanism facts; never infer the historical CI reader."""
+    from amplifier_web.worker_diagnostics import validate_command_failure_facts
+    try:
+        if (type(value) is not dict or len(value) != 6
+                or any(type(key) is not str for key in value)
+                or set(value) != {"schema", "reader", "scope", "platform", "result", "facts"}):
+            return None
+        if type(value["schema"]) is not int or value["schema"] != 1:
+            return None
+        for key, choices in (("reader", ("naming.initial_name", "naming.legacy", "resource.project", "naming.presentation")),
+                             ("scope", ("held", "released", "ordinary", *STORAGE_ROLLBACK_SCOPES.values())),
+                             ("platform", ("windows", "posix")),
+                             ("result", ("raised", "returned"))):
+            if type(value[key]) is not str or len(value[key]) > 32 or value[key] not in choices:
+                return None
+        if (value["reader"], value["scope"]) != STORAGE_READERS[label]:
+            return None
+        facts = validate_command_failure_facts(value["facts"])
+        if facts is None or (value["result"] == "returned") != (facts == {"errors": [], "truncated": False}):
+            return None
+        return {"schema": 1, "reader": value["reader"], "scope": value["scope"],
+                "platform": value["platform"], "result": value["result"], "facts": facts}
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def publication_properties(properties, label, *, require_verified=True):
+    """Copy closed observation; by default require the exact final verification.
+
+    The failure recorder may retain the lone observation from before a later
+    assertion failed. A supplied verification must still be exactly True.
+    """
+    try:
+        if type(properties) is not list or len(properties) not in (1, 2):
+            return None
+        selected = {}
+        for pair in properties:
+            if type(pair) not in (tuple, list) or len(pair) != 2:
+                return None
+            key, value = pair
+            if (type(key) is not str or key not in ("publication_sharing", "publication_sharing_verified")
+                    or key in selected):
+                return None
+            selected[key] = value
+        raw = selected["publication_sharing"]
+        if ((require_verified or "publication_sharing_verified" in selected)
+                and selected.get("publication_sharing_verified") is not True):
+            return None
+        if type(raw) is not str or len(raw) > 16384:
+            return None
+        if len(raw.encode("utf-8")) > 16384:
+            return None
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("Duplicate diagnostic key")
+                result[key] = value
+            return result
+        return validate_publication_sharing(json.loads(raw, object_pairs_hook=unique), label)
+    except (KeyError, TypeError, ValueError, RecursionError):
+        return None
+
+
+def publication_sharing_passed(value, label):
+    if value is None or value["platform"] != "windows":
+        return False
+    if label in STORAGE_ROLLBACK_SCOPES:
+        # The fixture proves exact injected sqlite3.OperationalError identity,
+        # restored/removed presentation (or GC refusal), held bytes and unchanged
+        # authority before setting verified. Canonical facts call that class other.
+        facts = value["facts"]
+        return (value["result"] == "raised" and facts["truncated"] is False
+                and len(facts["errors"]) == 1 and facts["errors"][0]["class"] == "other"
+                and set(facts["errors"][0]) == {"class", "frames"})
+    if label in {"ordinary_view", "ordinary_naming"}:
+        facts = value["facts"]
+        return (value["result"] == "raised" and facts["truncated"] is False
+                and len(facts["errors"]) == 1
+                and (facts["errors"][0]["class"], facts["errors"][0].get("errno"),
+                     facts["errors"][0].get("winerror")) == ("PermissionError", 13, 5))
+    return value["result"] == "returned" and value["facts"] == {"errors": [], "truncated": False}
+
+
+class StorageResults(NativeResults):
+    """Same exact-cell accounting; only canonical bounded failure facts differ."""
+    controls = STORAGE_CONTROLS
+
+    def __init__(self, guard=None):
+        super().__init__(guard)
+        self.publication = {}
+        self.publication_verified = {}
+
+    def pytest_runtest_logreport(self, report):
+        super().pytest_runtest_logreport(report)
+        label = self.node_labels.get(report.nodeid)
+        if label is not None and report.when == "call":
+            properties = getattr(report, "user_properties", None)
+            observation = publication_properties(properties, label, require_verified=False)
+            self.publication[label] = observation
+            # A valid two-property record necessarily contains the exact True
+            # flag; a valid one-property record is observation, not verification.
+            self.publication_verified[label] = observation is not None and len(properties) == 2
+
+    def finish(self, exit_code):
+        result = super().finish(exit_code)
+        for label, case in result["cases"].items():
+            observation = validate_publication_sharing(self.publication.get(label), label)
+            verified = observation is not None and self.publication_verified.get(label) is True
+            case.update(publicationSharing=observation, publicationSharingVerified=verified)
+            if not verified or not publication_sharing_passed(observation, label):
+                case["status"] = "FAIL"
+        if not all(case["status"] == "PASS" for case in result["cases"].values()):
+            result["status"] = "FAIL"
+        return result
+
+    def pytest_runtest_makereport(self, item, call):
+        label = self.node_labels.get(item.nodeid)
+        if label is not None and call.when in PHASES - {"outside"} and call.excinfo is not None:
+            from amplifier_web.worker_diagnostics import command_failure_facts
+            if len(self.failure_facts) < 33:
+                self.failure_facts.append({"case": label, "phase": call.when,
+                                          "facts": command_failure_facts(call.excinfo.value)})
+        return None  # Never replace the pytest outcome.
+
+
+class StorageGuard(NetworkGuard):
+    """Storage cells have no reason to launch a process or an app listener."""
+    def __init__(self, log):
+        super().__init__(log)
+        self.process_attempts = 0
+
+    def process_audit(self, event, args):
+        # A separate hook preserves NetworkGuard.audit's exact urllib3 caller
+        # attestation; an overriding wrapper would obscure that caller.
+        if event in {"subprocess.Popen", "os.system", "os.posix_spawn", "os.spawn", "os.exec"}:
+            self.process_attempts += 1
+            raise PermissionError("Storage control process boundary")
+
+
+def storage_imports():
+    """Verify every loaded app module against the audited installed distribution."""
+    dist = metadata.distribution("amplifier-unified")
+    expected = {Path(dist.locate_file(path)).resolve() for path in dist.files or ()}
+    count = 0
+    for name, module in tuple(sys.modules.items()):
+        if name == "amplifier_web" or name.startswith("amplifier_web."):
+            assert type(module) is types.ModuleType
+            path = Path(vars(module)["__file__"]).resolve()
+            assert path in expected and path.is_relative_to(Path(sys.prefix).resolve())
+            count += 1
+    assert count > 0
+    return count
+
+
+def storage_selection(root, target, guard):
+    import pytest
+    pytest.hookimpl(tryfirst=True)(StorageResults.pytest_runtest_makereport)
+    for phase in ("setup", "call", "teardown"):
+        pytest.hookimpl(hookwrapper=True, tryfirst=True)(
+            getattr(StorageResults, "pytest_runtest_" + phase))
+    results = StorageResults(guard)
+    with control_socketpairs(guard):
+        code = pytest.main([
+            "-q", "-p", "no:cacheprovider", "-p", "pytest_asyncio.plugin",
+            "-o", "asyncio_mode=auto", "--rootdir", str(target), "--confcutdir", str(target),
+            "--basetemp", str(root / "storage-test-tmp"),
+            *[str(target / "tests" / node) for node in STORAGE_CONTROLS.values()]],
+            plugins=[results])
+    return results.finish(code)
+
+
+def validate_storage_public(report):
+    """Closed storage-only receipt, not public-entry or cold-runtime acceptance."""
+    def keys(value, fields):
+        assert type(value) is dict and set(value) == set(fields)
+    def number(value):
+        assert type(value) is int and 0 <= value <= 10**9
+    def sha(value, lengths=(64,)):
+        assert type(value) is str and len(value) in lengths and re.fullmatch("[0-9a-f]+", value)
+    keys(report, ("schema", "qualification", "publicAcceptance", "candidate", "status", "stage",
+                  "sourceBound", "probeSha256", "testSources", "installation", "installedStable",
+                  "productionModules", "selection", "network", "processAttempts", "scratchRemoved"))
+    assert type(report["schema"]) is int and report["schema"] == 1
+    assert report["qualification"] == "installed-storage-sharing-not-runtime-or-device"
+    assert report["publicAcceptance"] is False
+    assert report["status"] in {"PASS", "FAIL"} and report["stage"] in STORAGE_STAGES
+    for key in ("sourceBound", "installedStable", "scratchRemoved"):
+        assert type(report[key]) is bool
+    if report["candidate"] is not None:
+        keys(report["candidate"], ("head", "tree"))
+        for value in report["candidate"].values():
+            sha(value, (40, 64))
+    if report["probeSha256"] is not None:
+        sha(report["probeSha256"])
+    assert type(report["testSources"]) is dict and set(report["testSources"]) <= set(STORAGE_FILES)
+    for value in report["testSources"].values():
+        sha(value)
+    if report["installation"] is not None:
+        keys(report["installation"], ("wheelSha256", "verifiedMembers"))
+        sha(report["installation"]["wheelSha256"])
+        number(report["installation"]["verifiedMembers"])
+        assert report["installation"]["verifiedMembers"] > 0
+    keys(report["network"], ("blockedOptionalIpv6Probes", "unknownAttempts", "infrastructureSocketpairBinds"))
+    for value in (*report["network"].values(), report["productionModules"], report["processAttempts"]):
+        number(value)
+    selection = report["selection"]
+    if selection is not None:
+        assert type(selection) is dict and {"status", "exitCode", "collectionExact", "cases"} <= set(selection) <= {
+            "status", "exitCode", "collectionExact", "cases", "failureFacts"}
+        assert selection["status"] in {"PASS", "FAIL"} and type(selection["collectionExact"]) is bool
+        assert type(selection["exitCode"]) is int and 0 <= selection["exitCode"] <= 5
+        keys(selection["cases"], STORAGE_CONTROLS)
+        for label, case in selection["cases"].items():
+            keys(case, ("status", "collected", "callsPassed", "skips", "failures",
+                        "publicationSharing", "publicationSharingVerified"))
+            assert case["status"] in {"PASS", "FAIL"}
+            assert type(case["publicationSharingVerified"]) is bool
+            observation = validate_publication_sharing(case["publicationSharing"], label)
+            if case["publicationSharing"] is not None:
+                assert observation is not None
+                assert case["publicationSharingVerified"] is True or case["status"] == "FAIL"
+            else:
+                assert case["publicationSharingVerified"] is False
+            for key in ("collected", "callsPassed", "skips", "failures"):
+                number(case[key])
+            if case["status"] == "PASS":
+                assert (case["collected"], case["callsPassed"], case["skips"], case["failures"]) == (1, 1, 0, 0)
+                assert case["publicationSharingVerified"] is True
+                assert publication_sharing_passed(observation, label)
+        facts = selection.get("failureFacts", [])
+        assert type(facts) is list and len(facts) <= 33
+        if facts:
+            from amplifier_web.worker_diagnostics import validate_command_failure_facts
+            for fact in facts:
+                keys(fact, ("case", "phase", "facts"))
+                assert fact["case"] in STORAGE_CONTROLS and fact["phase"] in PHASES - {"outside"}
+                assert validate_command_failure_facts(fact["facts"]) is not None
+        if selection["status"] == "PASS":
+            assert selection["exitCode"] == 0 and selection["collectionExact"] and not facts
+            assert all(case["status"] == "PASS" for case in selection["cases"].values())
+    if report["status"] == "PASS":
+        assert report["stage"] == "complete" and report["sourceBound"] and report["installedStable"]
+        assert report["scratchRemoved"] and report["candidate"] is not None and report["probeSha256"] is not None
+        assert set(report["testSources"]) == set(STORAGE_FILES)
+        assert report["installation"] is not None and report["productionModules"] > 0
+        assert selection is not None and selection["status"] == "PASS"
+        assert report["network"]["unknownAttempts"] == report["processAttempts"] == 0
+    assert len(json.dumps(report).encode("utf-8")) <= 65536
+    return report
+
+
+def storage_run(wheel, receipt, candidate_receipt):
+    """Eleven installed storage cells in this isolated interpreter; no cold journey."""
+    if receipt.resolve() in {wheel.resolve(), candidate_receipt.resolve()}:
+        return 1  # Never overwrite an input, including on an invalid invocation.
+    report = {"schema": 1, "qualification": "installed-storage-sharing-not-runtime-or-device",
+              "publicAcceptance": False, "candidate": None, "status": "FAIL", "stage": "binding",
+              "sourceBound": False, "probeSha256": None, "testSources": {}, "installation": None,
+              "installedStable": False, "productionModules": 0, "selection": None,
+              "network": {"blockedOptionalIpv6Probes": 0, "unknownAttempts": 0,
+                          "infrastructureSocketpairBinds": 0},
+              "processAttempts": 0, "scratchRemoved": False}
+    root = guard = None
+    created = False
+    original_cwd = Path.cwd()
+    try:
+        require_ci()
+        assert sys.flags.isolated and sys.flags.dont_write_bytecode and not sys.flags.optimize
+        script = Path(__file__).resolve()
+        source = script.parents[2]
+        with candidate_receipt.open("rb") as stream:
+            raw = stream.read(1_000_001)
+        assert len(raw) <= 1_000_000
+        retained = json.loads(raw)["candidate"]
+        fingerprint = digest(script.read_bytes())
+        source_hashes = {name: digest((source / "tests" / name).read_bytes()) for name in STORAGE_FILES}
+        actual = candidate(source)
+        assert retained == actual
+        report["candidate"] = actual
+        assert all(not Path(path).resolve().is_relative_to(source) for path in sys.path)
+        report["probeSha256"] = fingerprint
+        report["sourceBound"] = True
+        report["stage"] = "fixture"
+        root = canonical_temp(os.environ["TEMP"]) / ("us-" + uuid.uuid4().hex[:12])
+        assert not root.exists()
+        private_directory(root, root)
+        created = True
+        sanitize(root)
+        for folder in ("home", "home/roaming", "home/local", "app", "shared", "ownership"):
+            private_directory(root / folder, root)
+        os.chdir(root)
+        with (root / "diagnostics-storage.log").open("w", encoding="utf-8") as log:
+            with redirect_stdout(log), redirect_stderr(log):
+                guard = StorageGuard(root / "network-storage.jsonl")
+                sys.addaudithook(guard.audit)
+                sys.addaudithook(guard.process_audit)
+                report["stage"] = "installed"
+                before = installed(wheel)
+                report["installation"] = {key: before[key] for key in ("wheelSha256", "verifiedMembers")}
+                report["productionModules"] = storage_imports()
+                target, report["testSources"] = _stage_control_files(root, source / "tests", STORAGE_FILES)
+                assert report["testSources"] == source_hashes
+                report["stage"] = "selection"
+                report["selection"] = storage_selection(root, target, guard)
+                report["stage"] = "verify"
+                assert installed(wheel) == before
+                report["productionModules"] = storage_imports()
+                report["installedStable"] = True
+                assert report["probeSha256"] == digest(script.read_bytes())
+                assert set(report["testSources"]) == set(source_hashes) == set(STORAGE_FILES)
+                assert {path.name for path in (target / "tests").iterdir()} == set(STORAGE_FILES)
+                for name, fingerprint in report["testSources"].items():
+                    assert fingerprint == digest((source / "tests" / name).read_bytes())
+                    assert fingerprint == digest((target / "tests" / name).read_bytes())
+                guard.verify()
+                assert guard.process_attempts == 0 and report["selection"]["status"] == "PASS"
+                report.update(status="PASS", stage="complete")
+    except BaseException:
+        report["status"] = "FAIL"  # Raw diagnostics stay in private scratch only.
+    finally:
+        os.chdir(original_cwd)
+        if guard is not None:
+            report["network"] = {"blockedOptionalIpv6Probes": guard.probes,
+                                 "unknownAttempts": guard.blocked,
+                                 "infrastructureSocketpairBinds": guard.pair_binds}
+            report["processAttempts"] = guard.process_attempts
+            if guard.blocked or guard.process_attempts:
+                report["status"] = "FAIL"
+        if created:
+            try:
+                shutil.rmtree(root)
+                report["scratchRemoved"] = True
+            except OSError:
+                report["status"] = "FAIL"
+        try:
+            validate_storage_public(report)
+        except (AssertionError, KeyError, TypeError, ValueError):
+            # Invalid/private facts may not be uploaded or turned into a pass.
+            report.update(status="FAIL", selection=None)
+            validate_storage_public(report)
+        write_json(receipt, report)
+    return 0 if report["status"] == "PASS" else 1
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--candidate", type=Path)
@@ -2370,12 +2747,17 @@ def main():
     parser.add_argument("--host", type=Path)
     parser.add_argument("--controls", type=Path)
     parser.add_argument("--cli-run", type=Path)
+    parser.add_argument("--storage-run", type=Path)
     parser.add_argument("--cli-child", type=Path)
     parser.add_argument("--cli-mode", choices=CLI_MODES)
     parser.add_argument("--candidate-receipt", type=Path)
     parser.add_argument("--phase", choices=("first", "resume"))
     parser.add_argument("--receipt", type=Path)
     args = parser.parse_args()
+    if args.storage_run and (not args.receipt or not args.candidate_receipt or any((
+            args.candidate, args.requirements, args.run, args.worker, args.host,
+            args.controls, args.cli_run, args.cli_child, args.cli_mode, args.phase))):
+        parser.error("storage-run requires receipt and candidate-receipt, with no other route")
     if args.candidate:
         write_json(args.receipt, {"candidate": candidate(args.candidate), "status": "NOT_RUN",
                                  "publicAcceptance": False})
@@ -2395,6 +2777,8 @@ def main():
     elif args.cli_child:
         assert args.cli_mode is not None
         return cli_child(args.cli_child.resolve(), args.cli_mode)
+    elif args.storage_run:
+        return storage_run(args.storage_run.resolve(), args.receipt.resolve(), args.candidate_receipt.resolve())
     else:
         parser.error("Choose candidate, requirements, worker or run")
     return 0

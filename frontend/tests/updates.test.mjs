@@ -189,6 +189,134 @@ test('app version is visible before checking, and failed checks retain a clear r
  assert.doesNotMatch(failed,/Latest release installed/);
 });
 
+const failedApplicationCheck={...application,status:'check_failed',latest:null,checkStage:'release_metadata',checkReason:'unavailable',
+ detail:'Could not read published-release metadata. No update was installed by this check.'};
+const independentComponentUpdate={phase:'available',application:failedApplicationCheck,items:[failedApplicationCheck,component],
+ sequence:{stage:'included',included:{available:1,issues:0},other:{status:'waiting'}}};
+test('app-check summary warning survives collapsed details during available and progressing component work',async()=>{
+ for(const patch of [
+  {},
+  {phase:'validating'},
+  {phase:'staged',pendingRelease:'candidate',plan:{activation:'per-worker'}},
+ ]){
+  const updates={...independentComponentUpdate,...patch},before=JSON.stringify(updates),calls=[];
+  let root;
+  try{
+   await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state(updates),act:(...args)=>calls.push(args)}))});
+   const details=root.root.findByProps({'data-part':'ecosystem-update-details'});
+   await renderAct(async()=>details.props.onToggle({currentTarget:{open:false}}));
+   assert.equal(details.props.open,false);
+   const overall=root.root.findByProps({'data-part':'application-update'});
+   const warnings=overall.findAllByProps({'data-part':'application-check-attention'});
+   assert.equal(warnings.length,1);
+   assert.equal(warnings[0].children.join(''),'Application check needs attention. '+failedApplicationCheck.detail+' Component results are separate.');
+   assert.equal(details.findAllByProps({'data-part':'application-check-attention'}).length,0);
+   assert.deepEqual(calls,[]);assert.equal(JSON.stringify(updates),before);
+  }finally{await renderAct(async()=>root?.unmount())}
+ }
+});
+test('app-check summary warning is absent for current application and terminal app attention',()=>{
+ for(const phase of ['available','validating']){
+  const html=render({...independentComponentUpdate,phase,application,items:[application,component]});
+  assert.doesNotMatch(html,/data-part="application-check-attention"/);
+ }
+ const html=render({phase:'installed',application:failedApplicationCheck,sequence:{stage:'complete'},
+  currentStatus:{status:'action-required',title:'Application check needs attention',detail:failedApplicationCheck.detail,
+   actionRequired:true,action:'check',component:failedApplicationCheck.label}});
+ assert.doesNotMatch(html,/data-part="application-check-attention"/);
+ assert.match(html,/<h4>Application check needs attention<\/h4>/);
+ assert.match(html,/Could not read published-release metadata/);
+});
+test('component validation stays visibly in progress beside the failed app check',()=>{
+ const html=render({...independentComponentUpdate,phase:'validating',
+  diagnostics:{attemptId:'components',batch:{attemptId:'components',kind:'ecosystem',tier:'included',components:['foundation'],startedAt:1}},
+  probeProgress:{attemptId:'components',phase:'prepare',completed:2,total:3},
+  currentStatus:{status:'working',title:'Updating Amplifier',detail:'Preparing components.',actionRequired:false}});
+ assert.match(html,/Finishing your update/);assert.match(html,/2 of 3 completed/);
+ assert.match(html,/Current batch: foundation/);
+ assert.match(html,/data-part="ecosystem-update-details" open=""/);
+ assert.match(html,/a-app-update-status failed/);assert.match(html,/Could not read published-release metadata/);
+ assert.doesNotMatch(html,/Latest release installed|Application updated successfully|Current application verified|data-action="updates.install"/);
+});
+test('failed app check permits eligible installation but pending and unknown effects keep duplicate actions locked',async()=>{
+ const calls=[];let root;
+ const act=(name,args)=>calls.push({name,args});
+ try{
+  await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state(independentComponentUpdate),act}))});
+  const install=root.root.findByProps({'data-action':'updates.install'});
+  assert.equal(install.props.disabled,false);
+  await renderAct(async()=>install.props.onClick());
+  assert.deepEqual(calls,[{name:'updates.install',args:undefined}]);
+  for(const patch of [
+   {phase:'validating'},
+   {phase:'staged',pendingRelease:'candidate',plan:{activation:'per-worker'}},
+   {phase:'staged',pendingRelease:'candidate'},
+   {pendingReplacement:{}},
+   {pendingRestart:{requestStatus:'uncertain'}},
+   {pendingRestart:{requestStatus:'rejected'},phase:'error',error:'Restart failed'},
+  ]){
+   await renderAct(async()=>root.update(React.createElement(UpdateSettings,{state:state({...independentComponentUpdate,...patch}),act})));
+   const installs=root.root.findAllByProps({'data-action':'updates.install'});
+   assert.ok(installs.length===0||installs.every(button=>button.props.disabled));
+   assert.equal(root.root.findByProps({'data-action':'updates.check'}).props.disabled,true);
+  }
+  assert.equal(calls.length,1);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+test('component adoption wait and completion retain an explicit failed application row',()=>{
+ for(const activation of ['per-worker',undefined]){
+  const html=render({...independentComponentUpdate,phase:'staged',pendingRelease:'candidate',plan:{activation},
+   componentResults:[{id:component.id,status:'awaiting-adoption'}]});
+  assert.match(html,activation==='per-worker'?/Finishing your update/:/Waiting for your work to finish/);
+  assert.match(html,/Community bundle<\/strong> · Awaiting adoption/);
+  assert.match(html,/a-app-update-status failed/);assert.match(html,/Could not read published-release metadata/);
+  assert.doesNotMatch(html,/You’re up to date|Latest release installed|data-action="updates.install"/);
+ }
+ const complete={phase:'installed',application:failedApplicationCheck,
+  items:[failedApplicationCheck,{...component,status:'current'}],componentResults:[{id:component.id,status:'updated'}],
+  sequence:{stage:'complete',included:{status:'current'},other:{status:'current'}},
+  currentStatus:{status:'action-required',title:'Application check needs attention',detail:failedApplicationCheck.detail,
+   actionRequired:true,action:'check',component:failedApplicationCheck.label}};
+ const html=render(complete);
+ assert.match(html,/Community bundle<\/strong> · Updated/);
+ assert.match(html,/Application check needs attention/);assert.match(html,/a-app-update-status failed/);
+ assert.match(html,/Could not read published-release metadata/);
+ assert.doesNotMatch(html,/You’re up to date|Latest release installed|Application updated successfully|Current application verified|Check current components/);
+ const unconfigured=render({...complete,application:{...failedApplicationCheck,status:'release_channel_needed'},items:[],currentStatus:undefined});
+ assert.match(unconfigured,/Automatic app updates aren’t configured/);assert.match(unconfigured,/Release channel not configured/);
+ assert.doesNotMatch(unconfigured,/You’re up to date|Latest release installed/);
+});
+test('application-check recovery uses the shared check action with an accurate label',async()=>{
+ const currentStatus={status:'action-required',title:'Application check needs attention',detail:failedApplicationCheck.detail,
+  actionRequired:true,action:'check',component:failedApplicationCheck.label};
+ const calls=[];let root;
+ try{
+  await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state({
+   application:failedApplicationCheck,phase:'checked',sequence:{stage:'complete'},currentStatus}),act:(name,args)=>calls.push({name,args})}))});
+  const button=root.root.findAllByProps({'data-action':'updates.check'}).find(button=>button.children[0]==='Check for updates');
+  assert.ok(button);
+  await renderAct(async()=>button.props.onClick());
+  assert.deepEqual(calls,[{name:'updates.check',args:undefined}]);
+ }finally{await renderAct(async()=>root?.unmount())}
+ const components=render({currentStatus:{...currentStatus,title:'Component verification is incomplete',component:null}});
+ assert.match(components,/Check current components/);
+});
+test('canonical component failure stays primary and preserves its receipt beside app-check attention',()=>{
+ const failure={id:'failed-source',attemptId:'components',kind:'ecosystem',phase:'ecosystem-validation',
+  status:'failed',reason:'runtime-source-changed',at:12};
+ const updates={...independentComponentUpdate,phase:'error',error:'Component qualification failed',
+  diagnostics:{attemptId:'components',batch:{attemptId:'components',kind:'ecosystem'},lastFailure:failure,events:[failure]},
+  currentStatus:{status:'protected',title:'Component source needs review',detail:'Component sources changed after checking.',
+   actionRequired:true,action:'sources',component:'foundation'}};
+ const before=JSON.stringify(updates),html=render(updates);
+ const banner=html.slice(html.indexOf('data-part="application-update"'),html.indexOf('data-part="update-controls"'));
+ assert.match(banner,/Component source needs review/);assert.match(banner,/Review source details/);
+ assert.doesNotMatch(banner,/Application check needs attention/);
+ assert.match(html,/a-app-update-status failed/);assert.match(html,/Could not read published-release metadata/);
+ assert.equal(JSON.parse(diagnosticReceipt(updates.diagnostics)).lastFailure.reason,failure.reason);
+ assert.equal(JSON.stringify(updates),before);
+});
+
 test('application and component updates have separate effects and no duplicate app row',()=>{
  const app={...application,status:'update',latest:'v0.6.4'};
  const html=render({application:app,items:[app,component],appAvailable:true});

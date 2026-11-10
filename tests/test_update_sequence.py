@@ -31,7 +31,7 @@ def source(manager, tier, current='a'*40):
             'appSelection':update_sequence.app_selection(manager.home)['witness']}
 
 
-@pytest.mark.parametrize('status', ['update','check_failed'])
+@pytest.mark.parametrize('status', ['update','unrecognized'])
 async def test_app_is_checked_before_any_component_inventory(manager, monkeypatch, status):
     events=[]
     async def application():events.append('app');return {'id':'application','status':status}

@@ -8,6 +8,7 @@ from pathlib import Path, PureWindowsPath
 import sqlite3
 import subprocess
 import sys
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -833,3 +834,460 @@ async def test_output_attach_and_reopen_real_resource_boundary(tmp_path):
     # 3.13 supports fchmod on Windows; its presence is not private-DACL proof.
     # Never stub resource writes to hide a native persistence failure.
     await _output_roundtrip(tmp_path.resolve() / "app", tmp_path.resolve())
+
+
+class _PublicationRuntime:
+    """Forbid execution; the service, reducers, SQLite and file writers are real."""
+    def __init__(self):
+        self.attempts = []
+        self.workers = {}
+
+    async def start(self, *args, **kwargs):
+        self.attempts.append("start")
+        raise AssertionError("Publication discriminator must not start a runtime")
+
+    async def send(self, *args, **kwargs):
+        self.attempts.append("send")
+        raise AssertionError("Publication discriminator must not send input")
+
+    async def control(self, *args, **kwargs):
+        self.attempts.append("control")
+        raise AssertionError("Publication discriminator must not execute controls")
+
+    async def close(self):
+        pass
+
+
+@pytest.fixture
+async def publication_app(tmp_path):
+    from amplifier_web.service import AppService
+
+    workspace = tmp_path.resolve() / "publication-workspace"
+    workspace.mkdir()
+    runtime = _PublicationRuntime()
+    app = AppService(tmp_path.resolve() / "publication-app", runtime, workspace=workspace)
+    try:
+        await app.dispatch("session.create", {})
+        # Settle startup's existing maintenance, not a second writer racing the
+        # discriminator. No server, history polling or provider is started here.
+        maintenance = getattr(app, "_storage_maintenance_task", None)
+        if maintenance is not None:
+            await asyncio.wait_for(asyncio.shield(maintenance), 10)
+        assert app.history.task is None and not app.queues
+        yield app
+    finally:
+        # Evidence is taken before shutdown, which may flush retained dirty
+        # state. Shutdown is NOT the independently staged released-handle control.
+        await app.close()
+        assert not runtime.attempts
+
+
+class _PublicationRead:
+    """One owned reader; barriers extend a genuine open, never manufacture IO."""
+    def __init__(self):
+        self.opened = threading.Event()
+        self.release = threading.Event()
+        self.thread = None
+        self.stream = None
+        self.retained = None
+        self.result = None
+        self.failed = False
+        self.opens = 0
+
+    def hold(self, stream):
+        self.opens += 1
+        assert self.opens == 1
+        self.stream = stream
+        assert not stream.closed
+        self.opened.set()
+        assert self.release.wait(30), "Publication reader release timed out"
+        # Read from the SAME descriptor after the competing publication. These
+        # fixture bodies are small; do not turn the barrier into an unbounded read.
+        self.retained = stream.read(64 * 1024)
+        assert len(self.retained) < 64 * 1024
+        stream.seek(0)
+        return self.retained
+
+    def start(self, read):
+        def run():
+            try:
+                self.result = read()
+            except BaseException:
+                self.failed = True
+            finally:
+                self.opened.set()  # Fail promptly if the real reader never opened.
+        self.thread = threading.Thread(target=run, name="publication-reader", daemon=True)
+        self.thread.start()
+
+    async def wait_open(self):
+        assert await asyncio.to_thread(self.opened.wait, 10), "Publication reader did not open"
+        assert not self.failed and self.opens == 1
+        self.assert_held()
+
+    def assert_held(self):
+        assert self.thread.is_alive() and not self.release.is_set()
+        assert self.stream is not None and not self.stream.closed
+
+    async def finish(self):
+        self.release.set()
+        await asyncio.to_thread(self.thread.join, 10)
+        assert not self.thread.is_alive(), "Publication reader did not join"
+        assert not self.failed, "Production reader failed"
+        assert self.stream is not None and self.stream.closed
+
+
+def _publication_snapshot(app):
+    """A separate connection observes committed authority, not pending live state."""
+    from amplifier_web.state_records import load
+
+    db = sqlite3.connect(app.data_dir / "app.sqlite3")
+    try:
+        return load(db), db.execute("SELECT id,value FROM state_resources ORDER BY id").fetchall()
+    finally:
+        db.close()
+
+
+async def _observed_publication(app, event, reader, scope, record_property):
+    from amplifier_web.worker_diagnostics import command_failure_facts, validate_command_failure_facts
+
+    facts = {"errors": [], "truncated": False}
+    try:
+        await app.on_runtime_event(*event)
+    except Exception as error:
+        facts = command_failure_facts(error)
+    assert validate_command_failure_facts(facts) is not None
+    # Only call-site labels and the existing closed error schema enter CI
+    # properties. No paths, session IDs, exception prose or arbitrary payloads.
+    record_property("publication_sharing", json.dumps({
+        "schema": 1, "reader": reader, "scope": scope,
+        "platform": "windows" if os.name == "nt" else "posix",
+        "result": "raised" if facts["errors"] or facts["truncated"] else "returned",
+        "facts": facts,
+    }, sort_keys=True))
+    return facts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope,reader_kind", [
+    pytest.param("held", "view", id="held-view"),
+    pytest.param("held", "naming", id="held-naming"),
+    pytest.param("released", "view", id="released-view"),
+    pytest.param("released", "naming", id="released-naming"),
+    pytest.param("ordinary", "view", id="ordinary-view"),
+    pytest.param("ordinary", "naming", id="ordinary-naming"),
+])
+async def test_service_publication_with_real_mutable_reader(
+        publication_app, monkeypatch, record_property, reader_kind, scope):
+    """Characterize sharing, NOT the identity of the historical CI reader.
+
+    Each released case has its own app/SQLite/target, not a retry of failed
+    publication. The ordinary control selects the original Path.open reader
+    and must still demonstrate WinError 5 at replacement on native Windows.
+    View initialization is conditional on missing native naming;
+    naming progress here deliberately replaces an EXISTING leaf, not first create.
+    """
+    from amplifier_web import naming
+    from amplifier_web.session_projection import view_path
+
+    app = publication_app
+    session = app._session()
+    sid = session["id"]
+    view = view_path(app.data_dir, session)
+    directory = view.parent.parent
+    if reader_kind == "view":
+        target = view
+        read = lambda: naming.initial_name(directory)
+        # No activityOnly/preparationProgress: this status takes the immediate
+        # _publish_changes -> _save path, never the delayed progress publisher.
+        event = ("runtime.status", {
+            "sessionId": sid, "status": "working", "detail": "Sharing discriminator",
+        })
+        label = "naming.initial_name"
+    else:
+        await app.on_runtime_event("session.naming.progress", {
+            "sessionId": sid, "completedInputs": [],
+        })
+        target = directory / "naming.json"
+        read = lambda: naming.legacy(directory)
+        event = ("session.naming.progress", {
+            "sessionId": sid, "completedInputs": ["sharing-input"],
+        })
+        label = "naming.legacy"
+    before = _publication_snapshot(app)
+    original_bytes, original_text = target.read_bytes(), target.read_text()
+    original_view = view.read_bytes()
+    prior = next(row for row in before[0]["sessions"] if row["id"] == sid)
+    reader = _PublicationRead()
+    real_open = (lambda path: path.open("r")) if scope == "ordinary" else naming._open_presentation
+
+    from contextlib import contextmanager
+    @contextmanager
+    def gated_open(path):
+        with real_open(path) as stream:  # genuine reader, no OS flag injection
+            if threading.current_thread() is reader.thread and path == target:
+                reader.hold(stream)
+            yield stream
+
+    with monkeypatch.context() as patch:
+        # Only this exact path in this owned reader thread pauses. The host's
+        # rollback read and all atomic/native primitives are untouched.
+        patch.setattr(naming, "_open_presentation", gated_open)
+        if scope == "ordinary":
+            # Preserve the demonstrated original reader/writer pair as the
+            # baseline. The production cells use both new owners, not this path.
+            from amplifier_web import presentation_files
+            from amplifier_web.host.storage import SessionStore
+            patch.setattr(presentation_files, "atomic_write", SessionStore._atomic)
+        reader.start(read)
+        try:
+            await reader.wait_open()
+            if scope == "released":
+                await reader.finish()
+            facts = await _observed_publication(app, event, label, scope, record_property)
+            if scope != "released":
+                reader.assert_held()
+            after = _publication_snapshot(app)
+            if os.name == "nt" and scope == "ordinary":
+                assert not facts["truncated"] and len(facts["errors"]) == 1
+                error = facts["errors"][0]
+                assert (error["class"], error.get("errno"), error.get("winerror")) == (
+                    "PermissionError", 13, 5)
+                expected_sources = (["service.event", "storage.projection", "storage.atomic"]
+                                    if reader_kind == "view" else ["service.event", "storage.atomic"])
+                assert [frame["source"] for frame in error["frames"]] == expected_sources
+                assert after == before
+                assert target.read_bytes() == original_bytes and view.read_bytes() == original_view
+                assert app._session_projection_refs[sid] == prior
+                assert app.state["revision"] == before[0]["revision"]
+                if reader_kind == "view":
+                    assert app._progress_dirty and app._progress_session_ids == {sid}
+                    # Rollback cannot replace this held leaf either; keep that
+                    # uncertainty instead of treating the live mutation as saved.
+                    assert app._state.get("_viewRecoveryPending") is True
+            else:
+                # The production reader permits replacement without losing its
+                # original object. POSIX ordinary opens also permit replacement.
+                assert facts == {"errors": [], "truncated": False}
+                assert after[0]["revision"] == before[0]["revision"] + 1
+                assert not app._progress_dirty
+                assert target.read_bytes() != original_bytes
+                if reader_kind == "view":
+                    saved = next(row for row in after[0]["sessions"] if row["id"] == sid)
+                    assert saved["$viewPayload"] != prior["$viewPayload"]
+                    value = app.state_resource(saved["$viewPayload"]["$resource"])
+                    assert value["status"] == "working"
+                    assert value["progress"]["detail"] == "Sharing discriminator"
+                else:
+                    assert json.loads(target.read_text())["naming_completed_inputs"] == ["sharing-input"]
+        finally:
+            await reader.finish()
+    assert reader.retained == original_text
+    if reader_kind == "view":
+        assert reader.result[3] == json.loads(original_text)
+    else:
+        assert reader.result == {"naming_completed_inputs": []}
+    record_property("publication_sharing_verified", True)
+
+
+@pytest.mark.asyncio
+async def test_service_publication_during_held_immutable_resource(publication_app, record_property):
+    """An old committed resource stays readable while the real service saves anew.
+
+    project_detached's callback runs after traversal validation/pin release.
+    This control does not characterize the shorter pre-yield traversal window.
+    """
+    from amplifier_web.session_projection import view_path
+
+    app = publication_app
+    session = app._session()
+    sid = session["id"]
+    before = _publication_snapshot(app)
+    prior = next(row for row in before[0]["sessions"] if row["id"] == sid)
+    source = resources.detach(app.db, prior["$viewPayload"]["$resource"])
+    original = resources.read_detached(source)
+    original_bytes = (source.directory / (source.identity + ".json")).read_bytes()
+    reader = _PublicationRead()
+    reader.start(lambda: resources.project_detached(source, reader.hold))
+    try:
+        await reader.wait_open()
+        facts = await _observed_publication(app, ("runtime.status", {
+            "sessionId": sid, "status": "working", "detail": "Sharing discriminator",
+        }), "resource.project", "held", record_property)
+        reader.assert_held()
+        assert facts == {"errors": [], "truncated": False}
+        after = _publication_snapshot(app)
+        assert after[0]["revision"] == before[0]["revision"] + 1
+        assert not app._progress_dirty
+        saved = next(row for row in after[0]["sessions"] if row["id"] == sid)
+        assert saved["$viewPayload"] != prior["$viewPayload"]
+        value = app.state_resource(saved["$viewPayload"]["$resource"])
+        assert value["status"] == "working"
+        assert value["progress"]["detail"] == "Sharing discriminator"
+        assert json.loads(view_path(app.data_dir, session).read_text()) == value
+    finally:
+        await reader.finish()
+    projection, signature = reader.result
+    assert projection == reader.retained == original_bytes
+    assert signature == resources.detached_signature(source)
+    assert resources.read_detached(source) == original
+    record_property("publication_sharing_verified", True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario", [
+    "restore-held", "remove-held", "restore-refused", "remove-refused",
+])
+async def test_service_view_rollback_with_real_presentation_reader(
+        publication_app, monkeypatch, record_property, scenario):
+    """Fail after canonical SQLite writes, not by faking the OS sharing result.
+
+    The two refused cells separately inject a rollback-helper OSError to qualify
+    uncertainty/GC handling. They do not claim a native restoration failure.
+    Each case has its own app; no failed event is replayed to demonstrate success.
+    """
+    from amplifier_web import naming, presentation_files, state_records
+    from amplifier_web.session_projection import view_path
+    from amplifier_web.worker_diagnostics import command_failure_facts, validate_command_failure_facts
+
+    app = publication_app
+    session = app._session()
+    sid = session["id"]
+    session["interruptionRevision"] = 7
+    app._save_changes(sessions={sid})
+    view = view_path(app.data_dir, session)
+    original_bytes, original_text = view.read_bytes(), view.read_text()
+    original_messages = json.dumps(session["messages"], sort_keys=True)
+    absent = scenario.startswith("remove")
+    refused = scenario.endswith("refused")
+    if absent:
+        # Missing compatible presentation does not remove its committed SQLite
+        # pointer. This attempt will create a new leaf, then must undo it.
+        view.unlink()
+    if refused:
+        # An actual unreferenced resource makes a no-delete GC assertion useful.
+        orphan = resources.put(app.db, {"rollback-control": "unreferenced resource"})
+        app.db.commit()
+        orphan_path = resources.root(app.db) / (orphan["$resource"] + ".json")
+        assert orphan_path.is_file()
+    before = _publication_snapshot(app)
+    prior = next(row for row in before[0]["sessions"] if row["id"] == sid)
+    assert prior["interruptionRevision"] == 7
+    assert not app._progress_dirty and not app._state.get("_viewRecoveryPending")
+    history = view.parent.parent
+    assert not (history / "transcript.jsonl").exists() and not (history / "events.jsonl").exists()
+    reader = _PublicationRead()
+    writes, removals, commits, rollback_failures = [], [], [], []
+    failure = sqlite3.OperationalError("Injected SQLite failure after state_records.save")
+    rollback_error = OSError(5, "Injected rollback helper refusal")
+    real_write, real_remove, real_save = presentation_files.atomic_write, presentation_files.remove, state_records.save
+
+    def hold_presentation():
+        with naming._open_presentation(view) as stream:
+            return reader.hold(stream)  # genuine production open; retain its exact object
+
+    def observed_write(path, text):
+        if path == view and writes:
+            reader.assert_held()
+            assert not absent and text == original_text
+            if refused:
+                rollback_failures.append("restore")
+                raise rollback_error
+        result = real_write(path, text)
+        if path == view:
+            writes.append(text)
+            if len(writes) == 1:
+                assert text != original_text
+                if absent:
+                    # Called from synchronous publication after the genuine
+                    # write, before state_records.save can fail. No loop work is
+                    # needed by this thread to acknowledge the retained handle.
+                    reader.start(hold_presentation)
+                    assert reader.opened.wait(10) and not reader.failed
+                    assert reader.opens == 1
+                reader.assert_held()
+        return result
+
+    def observed_remove(path, *, missing_ok=True):
+        assert path == view and absent and missing_ok is True
+        reader.assert_held()
+        removals.append("remove")
+        if refused:
+            rollback_failures.append("remove")
+            raise rollback_error
+        return real_remove(path, missing_ok=missing_ok)
+
+    def fail_after_write(db, state, references, session_ids, *args, **kwargs):
+        result = real_save(db, state, references, session_ids, *args, **kwargs)
+        assert db is app.db and set(session_ids) == {sid}
+        assert db.in_transaction and len(writes) == 1 and view.read_text() == writes[0]
+        assert references[sid]["$viewPayload"] != prior["$viewPayload"]
+        assert state_records.load(db)["revision"] == before[0]["revision"] + 1
+        assert _publication_snapshot(app) == before  # Independent connection still sees committed authority.
+        reader.assert_held()
+        commits.append(result)
+        raise failure
+
+    with monkeypatch.context() as patch:
+        patch.setattr(presentation_files, "atomic_write", observed_write)
+        patch.setattr(presentation_files, "remove", observed_remove)
+        patch.setattr(state_records, "save", fail_after_write)
+        try:
+            if not absent:
+                reader.start(hold_presentation)
+                await reader.wait_open()
+            with pytest.raises(sqlite3.OperationalError) as caught:
+                await app.on_runtime_event("runtime.status", {
+                    "sessionId": sid, "status": "working", "detail": "Rollback discriminator",
+                })
+            facts = command_failure_facts(caught.value)
+            assert validate_command_failure_facts(facts) is not None
+            # The original injected SQL failure, not a rollback OSError, is
+            # retained. This is synthetic failure-origin evidence, not a native
+            # SQLite defect or the historical Windows failure's cause.
+            record_property("publication_sharing", json.dumps({
+                "schema": 1, "reader": "naming.presentation", "scope": scenario,
+                "platform": "windows" if os.name == "nt" else "posix",
+                "result": "raised", "facts": facts,
+            }, sort_keys=True))
+            assert caught.value is failure and len(commits) == 1
+            assert failure.args == ("Injected SQLite failure after state_records.save",)
+            assert not facts["truncated"] and len(facts["errors"]) == 1
+            assert facts["errors"][0]["class"] == "other"  # sqlite3.OperationalError is not a public label.
+            assert not app.db.in_transaction and _publication_snapshot(app) == before
+            assert app._session_projection_refs[sid] == prior
+            assert app.state["revision"] == app._saved_revision == before[0]["revision"]
+            assert session["interruptionRevision"] == 7
+            assert app._progress_dirty and app._progress_scope_known
+            assert app._progress_session_ids == {sid}
+            assert json.dumps(session["messages"], sort_keys=True) == original_messages
+            assert not app.runtime.attempts and not app.runtime.workers
+            reader.assert_held()
+            if refused:
+                assert rollback_failures == ["remove" if absent else "restore"]
+                assert app._state.get("_viewRecoveryPending") is True
+                assert str(view) not in app._view_cache
+                assert view.read_text() == writes[0]
+                files = {path.name: path.read_bytes() for path in resources.root(app.db).glob("*.json")}
+                assert resources.marked_references(app.db, app._state) is None
+                assert resources.collect(app.db, app._state) == []
+                app.db.execute("BEGIN IMMEDIATE")
+                try:
+                    assert await resources.marked_references_async(app.db, app._state) is None
+                finally:
+                    app.db.rollback()
+                assert _publication_snapshot(app) == before
+                assert {path.name: path.read_bytes() for path in resources.root(app.db).glob("*.json")} == files
+                assert orphan_path.is_file()
+            else:
+                assert not rollback_failures and not app._state.get("_viewRecoveryPending")
+                if absent:
+                    assert not view.exists() and removals == ["remove"] and len(writes) == 1
+                else:
+                    assert view.read_bytes() == original_bytes and writes == [writes[0], original_text]
+                    assert not removals
+            assert not (history / "transcript.jsonl").exists() and not (history / "events.jsonl").exists()
+        finally:
+            if reader.thread is not None:
+                await reader.finish()
+    assert reader.retained == reader.result == (writes[0] if absent else original_text)
+    record_property("publication_sharing_verified", True)

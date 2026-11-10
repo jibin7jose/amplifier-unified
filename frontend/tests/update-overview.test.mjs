@@ -60,6 +60,94 @@ test('protected edits and failed required components never claim completion',()=
  assert.equal(updateOverview({pendingReplacement:{},sequence:{stage:'complete'}}).tone,'error');
  assert.equal(updateOverview({application:{status:'check_failed'},sequence:{stage:'complete'}}).tone,'error');
 });
+
+const unavailableApp={id:'application',kind:'app',label:'Amplifier Unified',current:'0.60.1',status:'check_failed',
+ checkStage:'release_metadata',checkReason:'unavailable',detail:'Could not read published-release metadata. No update was installed by this check.'};
+const independentComponents={phase:'available',application:unavailableApp,
+ items:[unavailableApp,{id:'foundation',kind:'bundle / module',status:'update',updateTier:'included'}],
+ sequence:{stage:'included',included:{available:1,issues:0},other:{status:'waiting'}}};
+test('application availability attention does not stop available component controls',()=>{
+ for(const status of ['check_failed','release_channel_needed']){
+  const application={...unavailableApp,status};
+  for(const currentStatus of [undefined,{status:'available',title:'Updates available',
+   detail:'Eligible component updates can proceed independently.',actionRequired:false}]){
+   const updates={...independentComponents,application,items:[application,independentComponents.items[1]],currentStatus};
+   const before=JSON.stringify(updates),result=updateOverview(updates,{autoInstall:false});
+   assert.equal(result.installable,true);assert.equal(result.blocked,false);
+   assert.equal(result.busy,false);assert.equal(result.failed,false);assert.equal(result.tone,'available');
+   assert.match(result.detail,/independently/);
+   assert.equal(result.application.state,status==='check_failed'?'failed':status);
+   assert.equal(result.applicationResult,null);
+   assert.equal(JSON.stringify(updates),before);
+  }
+ }
+});
+test('failed application check leaves component validation progress active and separate',()=>{
+ const updates={...independentComponents,phase:'validating',
+  diagnostics:{attemptId:'components',batch:{attemptId:'components',kind:'ecosystem',tier:'included',components:['foundation']}},
+  probeProgress:{attemptId:'components',phase:'prepare',completed:2,total:3},
+  currentStatus:{status:'working',title:'Updating Amplifier',detail:'Preparing components.',actionRequired:false}};
+ const result=updateOverview(updates);
+ assert.equal(result.title,'Finishing your update');assert.equal(result.tone,'working');
+ assert.equal(result.active,true);assert.equal(result.processing,true);assert.equal(result.busy,true);
+ assert.equal(result.failed,false);assert.equal(result.currentProgress.completed,2);
+ assert.deepEqual(result.currentBatch.components,['foundation']);
+ assert.equal(result.application.state,'failed');assert.equal(result.application.detail,unavailableApp.detail);
+ assert.equal(result.applicationResult,null);
+});
+test('failed application check keeps waiting and per-worker adoption busy',()=>{
+ for(const activation of ['per-worker',undefined]){
+  const result=updateOverview({...independentComponents,phase:'staged',pendingRelease:'candidate',
+   plan:{activation},blockers:[{kind:'conversation',sessionId:'one'}],
+   currentStatus:{status:'waiting',title:'Update ready; waiting for work',detail:'Waiting for activation.',actionRequired:false}});
+  assert.equal(result.pending,true);assert.equal(result.busy,true);assert.equal(result.failed,false);
+  assert.equal(result.waiting,activation!=='per-worker');
+  assert.equal(result.processing,activation==='per-worker');
+  assert.equal(result.title,activation==='per-worker'?'Finishing your update':'Waiting for 1 chat to finish');
+  assert.equal(result.application.state,'failed');assert.equal(result.application.detail,unavailableApp.detail);
+ }
+});
+test('component completion never turns a failed or unconfigured app check into current',()=>{
+ const complete={phase:'installed',sequence:{stage:'complete'},componentResults:[{id:'foundation',status:'updated'}]};
+ for(const pendingWorkers of [0,2]){
+  for(const currentStatus of [undefined,{status:'action-required',title:'Application check needs attention',
+   detail:unavailableApp.detail,actionRequired:true,action:'check',component:unavailableApp.label}]){
+   const result=updateOverview({...complete,application:unavailableApp,items:[unavailableApp],adoption:{pendingWorkers},currentStatus});
+   assert.equal(result.title,'Application check needs attention');assert.equal(result.tone,'error');
+   assert.equal(result.failed,true);assert.equal(result.busy,false);assert.equal(result.processing,false);
+   assert.equal(result.application.state,'failed');assert.equal(result.applicationResult,null);
+  }
+  const unconfigured=updateOverview({...complete,application:{...unavailableApp,status:'release_channel_needed'},adoption:{pendingWorkers}});
+  assert.equal(unconfigured.title,'Automatic app updates aren’t configured');assert.notEqual(unconfigured.tone,'ready');
+  assert.equal(unconfigured.application.state,'release_channel_needed');
+ }
+});
+test('real component operation failure wins over application availability attention without changing receipts',()=>{
+ const updates={...independentComponents,phase:'error',error:'Component qualification failed',
+  diagnostics:componentFailure.diagnostics};
+ const before=JSON.stringify(updates),fallback=updateOverview(updates);
+ assert.equal(fallback.title,'Updates need attention');assert.equal(fallback.failed,true);
+ assert.equal(fallback.application.state,'failed');assert.equal(fallback.application.detail,unavailableApp.detail);
+ const currentStatus={status:'protected',title:'Component source needs review',detail:'The checked component source changed.',
+  actionRequired:true,action:'sources',component:'foundation'};
+ const canonical=updateOverview({...updates,currentStatus});
+ assert.equal(canonical.title,currentStatus.title);assert.equal(canonical.detail,currentStatus.detail);
+ assert.equal(canonical.current.action,'sources');assert.equal(canonical.application.state,'failed');
+ assert.equal(JSON.stringify(updates),before);
+});
+test('application check independence does not unlock replacement or restart boundaries',()=>{
+ for(const marker of [{pendingReplacement:{}},{pendingRestart:{requestStatus:'uncertain'}},
+  {pendingRestart:{requestStatus:'rejected'},phase:'error',error:'Restart failed'}]){
+  const result=updateOverview({...independentComponents,...marker});
+  assert.equal(result.blocked,true);assert.notEqual(result.tone,'available');assert.notEqual(result.tone,'ready');
+  assert.equal(result.applicationResult,null);
+  if(!marker.error)assert.equal(result.busy,true);
+ }
+ const interrupted=updateOverview({...independentComponents,phase:'interrupted',error:'Component operation outcome is unknown'});
+ assert.equal(interrupted.failed,true);assert.equal(interrupted.processing,false);
+ assert.notEqual(interrupted.title,'Application check needs attention');
+});
+
 test('included source issues allow independent updates only with the host proceed decision',()=>{
  const updates={phase:'available',sequence:{stage:'included',included:{issues:1,available:1}},
   items:[{id:'a',status:'check_failed'},{id:'b',status:'update'}]};

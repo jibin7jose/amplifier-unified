@@ -1,5 +1,12 @@
 import asyncio
+import ctypes as C
 from copy import deepcopy
+import io
+import json
+import os
+from pathlib import PureWindowsPath
+import sys
+from types import SimpleNamespace
 
 import pytest
 from amplifier_foundation.session.metadata import SessionMetadataStore
@@ -303,3 +310,339 @@ async def test_first_naming_initialization_is_not_a_concurrent_edit(named):
     assert session['naming']['status'] == 'ready'
     assert session['title'] == 'A regenerated title'
     assert session['autoName'] is True
+
+
+@pytest.fixture
+def presentation_windows_model(tmp_path, monkeypatch):
+    """Portable ABI/ownership model, not native sharing or ACL evidence."""
+    from amplifier_web import naming
+
+    payload = tmp_path / 'presentation.txt'
+    payload.write_bytes(b'first\r\nsecond\rlast\n\x1a')
+    model = SimpleNamespace(stage=None, error=PermissionError(13, 'fixture'),
+                            calls=[], descriptors=[], closed=[], handles=[],
+                            pending=set(), streams=[], wrapper_cleanup=[],
+                            after_consume=None, handle=0x100000007)
+
+    class Function:
+        def __init__(self, call):
+            self.call = call
+
+        def __call__(self, *args):
+            return self.call(*args)
+
+    def create(*args):
+        model.calls.append(('create', args))
+        return C.c_void_p(-1).value if model.stage == 'open' else model.handle
+
+    def close_handle(handle):
+        model.handles.append(handle)
+        return 1
+
+    kernel = SimpleNamespace(CreateFileW=Function(create), CloseHandle=Function(close_handle))
+    model.kernel = kernel
+
+    def load(name, *, use_last_error):
+        model.calls.append(('load', (name, use_last_error)))
+        return kernel
+
+    def win_error(code):
+        model.calls.append(('error', code))
+        return model.error
+
+    def transfer(handle, flags):
+        model.calls.append(('transfer', (handle, flags)))
+        if model.stage == 'transfer':
+            raise model.error
+        fd = os.open(payload, os.O_RDONLY | getattr(os, 'O_BINARY', 0))
+        model.descriptors.append(fd)
+        model.pending.add(fd)
+        return fd
+
+    def file_io(fd, *args, **kwargs):
+        model.calls.append(('raw', (fd, args, kwargs)))
+        if model.stage == 'raw':
+            raise model.error
+        stream = io.FileIO(fd, *args, **kwargs)
+        model.streams.append(stream)
+        if model.stage == 'raw_consumed':
+            stream.close()
+            raise model.error
+        return stream
+
+    def buffered_reader(raw):
+        model.calls.append(('buffered', ()))
+        stream = io.BufferedReader(raw)
+        model.streams.append(stream)
+        if model.stage == 'buffered':
+            stream.close()  # A failed constructor can consume/close its input.
+            raise model.error
+        return stream
+
+    def text_wrapper(buffered):
+        model.calls.append(('text', ()))
+        stream = io.TextIOWrapper(buffered)
+        model.streams.append(stream)
+        if model.stage == 'text':
+            stream.close()  # Real wrapper close, not a synthetic fdopen failure.
+            if model.after_consume is not None:
+                model.after_consume()
+            raise model.error
+        return stream
+
+    def close_fd(fd):
+        model.closed.append(fd)
+        model.wrapper_cleanup.append(all(stream.closed for stream in model.streams))
+        os.close(fd)
+        model.pending.remove(fd)
+
+    monkeypatch.setattr(C, 'WinDLL', load, raising=False)
+    monkeypatch.setattr(C, 'get_last_error', lambda: 32, raising=False)
+    monkeypatch.setattr(C, 'WinError', win_error, raising=False)
+    monkeypatch.setitem(sys.modules, 'msvcrt', SimpleNamespace(open_osfhandle=transfer))
+    # Do not change os.name globally or let pathlib select the wrong platform.
+    monkeypatch.setattr(naming, 'os', SimpleNamespace(
+        name='nt', O_RDONLY=0, O_BINARY=0x8000, O_NOINHERIT=0x80,
+        close=close_fd))
+    monkeypatch.setattr(naming, 'io', SimpleNamespace(
+        FileIO=file_io, BufferedReader=buffered_reader, TextIOWrapper=text_wrapper))
+    yield model
+    # Clean only still-owned resources, never a closed/reused descriptor number.
+    for stream in model.streams:
+        if not stream.closed:
+            stream.close()
+    for fd in model.pending:
+        os.close(fd)
+
+
+@pytest.mark.parametrize('path', [
+    PureWindowsPath(r'..\ordinary folder\view.json'),
+    PureWindowsPath(r'C:\ordinary\symlink\naming.json'),
+    PureWindowsPath(r'C:relative\view.json'),
+])
+def test_presentation_windows_binding_and_stream_ownership(presentation_windows_model, path):
+    from amplifier_web import naming
+
+    model = presentation_windows_model
+    with naming._open_presentation(path) as stream:
+        fd = stream.fileno()
+        assert stream.read() == 'first\nsecond\nlast\n\x1a'
+        assert stream.readable() and not stream.writable()
+        assert not os.get_inheritable(fd)
+    assert stream.closed and not model.handles and model.closed == [fd]
+    assert model.wrapper_cleanup == [True] and not model.pending
+    with pytest.raises(OSError):
+        os.fstat(fd)
+    assert model.calls == [
+        ('load', ('kernel32', True)),
+        ('create', (str(path), 0x80000000, 7, None, 3, 0x80, None)),
+        ('transfer', (model.handle, 0x8080)),
+        ('raw', (fd, ('r',), {'closefd': False})),
+        ('buffered', ()),
+        ('text', ()),
+    ]
+    # NULL security attributes and O_NOINHERIT cover native and CRT ownership.
+    # No OPEN_REPARSE_POINT, normalization, ACL repair or private-reader fallback.
+    assert model.kernel.CreateFileW.restype is C.c_void_p
+    assert model.kernel.CreateFileW.argtypes == [
+        C.c_wchar_p, C.c_uint32, C.c_uint32, C.c_void_p,
+        C.c_uint32, C.c_uint32, C.c_void_p,
+    ]
+    assert C.sizeof(C.c_uint32) == C.sizeof(C.c_int32) == 4
+    assert model.kernel.CloseHandle.restype is C.c_int32
+    assert model.kernel.CloseHandle.argtypes == [C.c_void_p]
+
+
+@pytest.mark.parametrize('stage', ['open', 'transfer', 'raw', 'raw_consumed', 'buffered', 'text', 'body'])
+@pytest.mark.parametrize('error_type', [PermissionError, FileNotFoundError, OSError])
+def test_presentation_windows_errors_preserve_owner_and_exception(
+        presentation_windows_model, stage, error_type):
+    from amplifier_web import naming
+
+    model = presentation_windows_model
+    model.stage, model.error = stage, error_type(13, 'fixture')
+    model.error.winerror = 32
+    with pytest.raises(error_type) as caught:
+        with naming._open_presentation(PureWindowsPath('view.json')):
+            assert stage == 'body'
+            raise model.error
+    assert caught.value is model.error
+    assert (caught.value.errno, caught.value.winerror) == (13, 32)
+    assert model.handles == ([model.handle] if stage == 'transfer' else [])
+    assert model.closed == model.descriptors
+    assert len(model.descriptors) == (0 if stage in {'open', 'transfer'} else 1)
+    assert model.wrapper_cleanup == [True] * len(model.descriptors)
+    assert all(stream.closed for stream in model.streams) and not model.pending
+    assert sum(name == 'create' for name, _ in model.calls) == 1  # no retry
+    for fd in model.descriptors:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+def test_presentation_consumed_wrapper_failure_cannot_close_reused_descriptor(
+        presentation_windows_model, tmp_path):
+    """A real closed wrapper never owns fd; later fd reuse cannot be closed by it."""
+    from amplifier_web import naming
+
+    model = presentation_windows_model
+    unrelated = tmp_path / 'unrelated.txt'
+    unrelated.write_bytes(b'unrelated retained file')
+    other = reused = None
+    live_after_consume = []
+
+    def after_consume():
+        nonlocal other
+        original = model.descriptors[0]
+        try:
+            os.fstat(original)
+        except OSError:
+            live_after_consume.append(False)
+        else:
+            live_after_consume.append(True)
+        # If a wrapper consumed the descriptor, this open could reuse its number
+        # and the helper's cleanup would close an unrelated file. Do not mock IO.
+        other = os.open(unrelated, os.O_RDONLY | getattr(os, 'O_BINARY', 0))
+
+    model.stage, model.after_consume = 'text', after_consume
+    try:
+        with pytest.raises(PermissionError) as caught:
+            with naming._open_presentation(PureWindowsPath('view.json')):
+                pytest.fail('Failed text constructor yielded a stream')
+        assert caught.value is model.error
+        original = model.descriptors[0]
+        assert live_after_consume == [True]
+        assert other is not None and other != original
+        assert model.closed == [original] and model.wrapper_cleanup == [True]
+        with pytest.raises(OSError):
+            os.fstat(original)
+        assert os.read(other, 64) == b'unrelated retained file'
+        # Deterministic reuse AFTER the context's single close. Retained partial
+        # wrappers (including in exception tracebacks) cannot close the new owner.
+        os.lseek(other, 0, os.SEEK_SET)
+        os.dup2(other, original)
+        reused = original
+        for stream in reversed(model.streams):
+            stream.close()
+        assert os.read(reused, 64) == b'unrelated retained file'
+        os.fstat(other)
+        assert model.closed == [original] and not model.pending
+    finally:
+        if reused is not None:
+            os.close(reused)
+        if other is not None:
+            os.close(other)
+
+
+def test_presentation_early_stream_close_keeps_descriptor_until_context_exit(presentation_windows_model):
+    from amplifier_web import naming
+
+    model = presentation_windows_model
+    with naming._open_presentation(PureWindowsPath('view.json')) as stream:
+        fd = stream.fileno()
+        stream.close()
+        assert all(wrapper.closed for wrapper in model.streams)
+        os.fstat(fd)
+        assert not model.closed
+    assert model.closed == [fd] and model.wrapper_cleanup == [True]
+    with pytest.raises(OSError):
+        os.fstat(fd)
+
+
+def test_presentation_windows_embedded_null_refuses_before_native_open(presentation_windows_model):
+    from amplifier_web import naming
+
+    with pytest.raises(ValueError, match='embedded null'):
+        with naming._open_presentation(PureWindowsPath('view\0.json')):
+            pytest.fail('Invalid path yielded a stream')
+    assert not presentation_windows_model.calls
+
+
+def test_presentation_posix_keeps_ordinary_path_and_text_semantics(tmp_path, monkeypatch):
+    from amplifier_web import naming
+
+    path = tmp_path / 'presentation.txt'
+    path.write_bytes(b'first\r\nsecond\rlast\n\x1a')
+    expected = path.read_text()
+    monkeypatch.setattr(naming, 'os', SimpleNamespace(name='posix'))
+    monkeypatch.setattr(C, 'WinDLL', lambda *a, **k: pytest.fail('native call'), raising=False)
+    with naming._open_presentation(path) as stream:
+        assert stream.read() == expected
+        assert not os.get_inheritable(stream.fileno())
+    assert stream.closed
+    if os.name != 'nt':
+        link = tmp_path / 'presentation-link'
+        link.symlink_to(path)
+        with naming._open_presentation(link) as stream:
+            assert stream.read() == link.read_text() == expected
+    with pytest.raises(FileNotFoundError):
+        with naming._open_presentation(tmp_path / 'absent'):
+            pytest.fail('Missing path yielded a stream')
+    assert not (tmp_path / 'absent').exists()
+
+
+@pytest.mark.parametrize('legacy_text,view_text', [
+    ('{"name":"Legacy","name_source":"manual","ignored":true}', '{"title":"View"}'),
+    ('{}', '{"title":"View","titleSource":"generated","autoName":true}'),
+    ('[]', '{"title":"Fallback","titleSource":"unknown"}'),
+    ('{broken', 'null'),
+    ('null', '{broken'),
+])
+def test_naming_presentation_sources_preserve_fields_and_fallback(
+        tmp_path, monkeypatch, legacy_text, view_text):
+    from amplifier_web import naming
+
+    paths, streams = [], []
+    def open_presentation(path):
+        paths.append(path)
+        stream = io.StringIO(legacy_text if path.name == 'naming.json' else view_text)
+        streams.append(stream)
+        return stream
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('Presentation reads must not access native metadata or execution')
+
+    monkeypatch.setattr(naming, '_open_presentation', open_presentation)
+    monkeypatch.setattr(naming, 'SessionMetadataStore', forbidden)
+    def decoded(text):
+        try:
+            value = json.loads(text)
+            return value if isinstance(value, dict) else {}
+        except ValueError:
+            return {}
+    legacy = {key: value for key, value in decoded(legacy_text).items() if key in naming.FIELDS}
+    view = decoded(view_text)
+    source = legacy.get('name_source') or view.get('titleSource')
+    assert naming.initial_name(tmp_path) == (
+        legacy.get('name') or view.get('title'),
+        source if source in {'manual', 'generated'} else 'fallback', legacy, view)
+    assert paths == [tmp_path / 'naming.json', tmp_path / 'unified' / 'view.json']
+    assert all(stream.closed for stream in streams)
+    paths.clear()
+    supplied = {'title': 'Already loaded'}
+    assert naming.initial_name(tmp_path, supplied)[3] is supplied
+    assert paths == [tmp_path / 'naming.json']  # no second view read
+    assert all(stream.closed for stream in streams)
+
+
+@pytest.mark.parametrize('stage', ['open', 'read'])
+@pytest.mark.parametrize('error', [
+    PermissionError(13, 'fixture'), FileNotFoundError(2, 'fixture'),
+    ValueError('fixture'), UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'fixture'),
+])
+def test_naming_presentation_io_fallback_closes_streams(tmp_path, monkeypatch, stage, error):
+    from amplifier_web import naming
+
+    streams = []
+    class BrokenRead(io.StringIO):
+        def read(self, *args):
+            raise error
+    def open_presentation(path):
+        if stage == 'open':
+            raise error
+        stream = BrokenRead()
+        streams.append(stream)
+        return stream
+    monkeypatch.setattr(naming, '_open_presentation', open_presentation)
+    assert naming.legacy(tmp_path) == {}
+    assert naming.initial_name(tmp_path) == (None, 'fallback', {}, {})
+    assert all(stream.closed for stream in streams)

@@ -231,6 +231,10 @@ def failure_facts(error, name):
 
 def _failure_facts(error, name):
     assert name in CHECKPOINTS
+    witness = None
+    if name == "input_admission" and type(error) is RuntimeError:
+        from amplifier_web.worker_diagnostics import runtime_failure_witness
+        witness = runtime_failure_witness(error)
     codes = {}
     for label, (module_name, qualname) in CODE_LABELS.items():
         value = sys.modules.get(module_name)
@@ -273,12 +277,17 @@ def _failure_facts(error, name):
         error = cause if cause is not None else (
             None if BaseException.__getattribute__(error, "__suppress_context__")
             else BaseException.__getattribute__(error, "__context__"))
-    return {"checkpoint": name, "errors": rows}
+    return {"checkpoint": name, "errors": rows,
+            **({"runtimeFailure": witness} if witness is not None else {})}
 
 
 def validate_diagnostic(value):
-    assert type(value) is dict and set(value) == {"checkpoint", "errors"}
+    assert type(value) is dict and {"checkpoint", "errors"} <= set(value) <= {"checkpoint", "errors", "runtimeFailure"}
     assert type(value["checkpoint"]) is str and value["checkpoint"] in CHECKPOINTS
+    if "runtimeFailure" in value:
+        from amplifier_web.worker_diagnostics import validate_runtime_failure_witness
+        assert value["checkpoint"] == "input_admission"
+        assert validate_runtime_failure_witness(value["runtimeFailure"]) is not None
     assert type(value["errors"]) is list and len(value["errors"]) <= 4
     for row in value["errors"]:
         assert type(row) is dict and {"class", "frames"} <= set(row) <= {"class", "frames", "errno", "winerror", "returncode", "reason"}
@@ -1033,6 +1042,7 @@ def validate_inner_report(report):
         assert "workerStartup" not in report
         assert "startup" not in report or report["startup"]["diagnosticStatus"] == "PASS"
         assert "diagnostic" not in report or not report["diagnostic"]["errors"]
+        assert "runtimeFailure" not in report.get("diagnostic", {})
         assert all(report["checks"].values()) and report["stage"] == "complete"
         assert all(report[name] is not None for name in ("wheelSha256", "manifestSha256", "lockSha256"))
         assert set(report["appHashes"]) == set(APP_FILES)

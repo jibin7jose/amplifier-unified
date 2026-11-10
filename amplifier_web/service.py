@@ -1133,13 +1133,13 @@ class AppService:
             self.db.rollback()
             for record, key, value in reversed(normalization_undo):
                 record[key] = value
-            from .host.storage import SessionStore
+            from .presentation_files import atomic_write, remove
             for path, text in reversed(view_undo):
                 try:
                     if text is None:
-                        path.unlink(missing_ok=True)
+                        remove(path, missing_ok=True)
                     else:
-                        SessionStore._atomic(path, text)
+                        atomic_write(path, text)
                 except OSError:
                     # This presentation may already contain new blob roots.
                     # Mark storage uncertain until a successful save repairs it;
@@ -4788,7 +4788,8 @@ class AppService:
                 directory=SessionStore.for_app(self.data_dir,session['workspace']).directory(session.get('runtimeSessionId') or session['id'])
                 directory.mkdir(parents=True,exist_ok=True,mode=0o700)
                 data=legacy(directory);data['naming_completed_inputs']=payload.get('completedInputs',[])
-                SessionStore._atomic(directory/'naming.json',json.dumps(data))
+                from .presentation_files import atomic_write
+                atomic_write(directory/'naming.json',json.dumps(data))
             elif kind == "execution.event":
                 self._ingest_runtime_execution(session, payload)
             elif kind == 'runtime.delivery' and 'peerAdmission' not in payload:

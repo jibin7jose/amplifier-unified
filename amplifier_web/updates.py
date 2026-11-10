@@ -821,15 +821,16 @@ class UpdateManager:
                         application['releaseNotesWarning']='Release notes could not be refreshed. Showing saved release history.'
                     application['runningRevision'] = self.running_identity['revision']
                     app_available = application.get('status') == 'update'
-                    # Do not inventory or resolve dependencies against an app
-                    # version that is about to be replaced.
+                    # A selected app replacement still owns the next activation.
+                    # An unavailable release check does not select a replacement:
+                    # independently check the running app's component declarations.
                     self.inventory = []
                     write_private(self.directory/'inventory.json', '[]')
                     await self.publish(application=application, appAvailable=app_available,
                                        items=[application], available=int(app_available))
-                    if app_available or application.get('status') != 'current':
+                    if app_available or application.get('status') not in {'current', 'check_failed', 'release_channel_needed'}:
                         await self.publish(phase='available' if app_available else 'error', lastCheck=time.time(),
-                            error=None if app_available else application.get('detail') or 'The application release could not be checked. Try again before checking components.',
+                            error=None if app_available else application.get('detail') or 'The application check returned an unrecognized outcome. Check again before continuing.',
                             detail='App update available. Included components will be checked after the new app restarts.' if app_available else 'Component checks are waiting for the application check.')
                         return
                     tier = 'included'

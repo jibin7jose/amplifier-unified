@@ -77,9 +77,9 @@ export function UpdateSettings({state,act}){
  const expanded=!!state.view?.maintenanceDraft?.updatesExpanded;
   const advancedRef=React.useRef(null),advancedId=React.useId();
   const diagnosticsExpanded=!!state.view?.maintenanceDraft?.updateDiagnosticsExpanded;
-  const [detailsOpen,setDetailsOpen]=React.useState(()=>overview.tone==='error'||expanded||diagnosticsExpanded);
+  const [detailsOpen,setDetailsOpen]=React.useState(()=>overview.tone==='error'||appStatus.state==='failed'||expanded||diagnosticsExpanded);
   const [detailsNotice,setDetailsNotice]=React.useState('');
-  React.useEffect(()=>{if(overview.tone==='error')setDetailsOpen(true)},[overview.tone]);
+  React.useEffect(()=>{if(overview.tone==='error'||appStatus.state==='failed')setDetailsOpen(true)},[overview.tone,appStatus.state]);
   React.useEffect(()=>{if(expanded||diagnosticsExpanded)setDetailsOpen(true)},[expanded,diagnosticsExpanded]);
   function revealDetails(action){
    const sources=action==='sources';
@@ -105,12 +105,13 @@ export function UpdateSettings({state,act}){
    <div className="a-update-overall">{overview.tone==='error'?<AlertCircle/>:overview.tone==='ready'?<Check/>:overview.tone==='available'?<ArrowUpCircle/>:overview.processing?<LoaderCircle className="a-progress-spinner" aria-hidden="true"/>:<Clock3/>}<div><h4>{overview.title}</h4><p id="update-action-status">{overview.detail}</p></div></div>
    <p className="a-update-version-line">Amplifier {application.current||'version not reported'}{application.latest&&application.latest.replace(/^v/,'')!==application.current?.replace(/^v/,'')?' · Latest '+application.latest:''}{updates.lastCheck?' · Checked '+new Date(updates.lastCheck*1000).toLocaleString():''}</p>
    {overview.applicationResult&&<p className="a-caption" data-part="confirmed-application-result">{overview.applicationResult.phase==='restart-ack'?'Application updated successfully':'Current application verified'} · {overview.applicationResult.version} · Confirmed {new Date(overview.applicationResult.verifiedAt*1000).toLocaleString()}</p>}
+   {application.status==='check_failed'&&['working','available'].includes(overview.tone)&&<p className="a-caption a-wrap" data-part="application-check-attention">Application check needs attention. {application.detail||'The published application release could not be checked.'} Component results are separate.</p>}
   </div>
   <UpdateReleaseSummary updates={updates} application={application} overview={overview}/>
    {overview.waiting&&!overview.runnerOnlyPending&&!!updates.blockers?.length&&<details className="a-update-work" data-part="update-blockers"><summary>View active work ({updates.blockers.length})</summary><ul>{updates.blockers.map((item,index)=><li key={index}>{item.label}{item.sessionId&&<> — <button type="button" className="a-link" data-action="session.select" onClick={async()=>{const result=await act('session.select',{id:item.sessionId});if(result&&result.accepted!==false)await act('view.update',{patch:{panel:null,workSurface:'chat'}})}}>{item.title||'Open conversation'}</button></>}</li>)}</ul><p className="a-caption">Idle chats alone don’t hold up the update. Background workers, calls, and tools may still need to finish.</p><UpdateRestart updates={updates} act={act}/></details>}
   {overview.current?.actionRequired&&<div className="a-update-current-action">
    {overview.current.component&&<p className="a-caption">Component: {overview.current.component}</p>}
-   <button className="a-soft" data-action={overview.current.action==='check'?'updates.check':'view.update'} aria-controls={overview.current.action==='check'?undefined:advancedId} aria-expanded={overview.current.action==='check'?undefined:detailsOpen} onClick={()=>overview.current.action==='check'?act('updates.check'):revealDetails(overview.current.action)}>{overview.current.action==='check'?'Check current components':overview.current.action==='sources'?'Review source details':'View update diagnostics'}</button>
+   <button className="a-soft" data-action={overview.current.action==='check'?'updates.check':'view.update'} aria-controls={overview.current.action==='check'?undefined:advancedId} aria-expanded={overview.current.action==='check'?undefined:detailsOpen} onClick={()=>overview.current.action==='check'?act('updates.check'):revealDetails(overview.current.action)}>{overview.current.action==='check'?(overview.current.component===(application.label||'Amplifier Unified')?'Check for updates':'Check current components'):overview.current.action==='sources'?'Review source details':'View update diagnostics'}</button>
    {detailsNotice&&<p className="a-caption" role="status">{detailsNotice}</p>}
    <p className="a-caption">The current installation is kept. Review the supported next step before retrying.</p>
   </div>}

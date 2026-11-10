@@ -948,8 +948,16 @@ class RuntimeManager:
                     row.setdefault('backgroundCalls', set()).add(payload['id'])
 
         reported_error = None
+        reader_reason, reader_phase, reader_frame = 'eof', 'read', 'none'
+        reader_facts = {'errors': [], 'truncated': False}
+        reader_exit, reader_cleanup = None, 'not_requested'
         try:
-            while line := await lines.next():
+            while True:
+                reader_phase = 'read'
+                line = await lines.next()
+                if not line:
+                    break
+                reader_phase = 'dispatch'
                 dequeued_ns = time.monotonic_ns() if performance_diagnostics.TIMING_ENABLED else None
                 try:
                     data = decoded[1] if decoded is not None and line is decoded[0] else json.loads(line)
@@ -963,6 +971,13 @@ class RuntimeManager:
                     turns.reset()
                     await asyncio.sleep(0)
                     continue
+                # Fixed labels only; never retain worker-supplied strings.
+                reader_frame = ('reply' if data.get('op') == 'reply' else
+                                'bridge' if data.get('op') == 'bridge' else
+                                {'runtime.ready': 'ready', 'runtime.progress': 'progress',
+                                 'runtime.status': 'status', 'runtime.error': 'error',
+                                 'execution.event': 'execution'}.get(data.get('type'), 'other')
+                                if type(data.get('type')) is str else 'other')
                 sink = row['emit']
                 event = terminal_event(data) if isinstance(sink, EventSink) and len(line) <= MAX_BYTES else None
                 if event is not None:
@@ -997,6 +1012,16 @@ class RuntimeManager:
                     input_id = None if peer_input else tracked_input
                     future = row["pending"].get(data.get("id"))
                     error = _worker_error(data) if data.get('error') else None
+                    if error is not None:
+                        from .worker_diagnostics import validate_command_failure_facts
+                        facts = validate_command_failure_facts(data.get('failureFacts'))
+                        # Origin is established by this reader branch, never by
+                        # worker-supplied prose. This is diagnostic evidence only:
+                        # a reply error does not establish non-admission.
+                        error._runtime_failure_witness = {
+                            'schema': 1, 'origin': 'worker_reply',
+                            'factsStatus': 'valid' if facts is not None else 'invalid',
+                            **(facts if facts is not None else {'errors': [], 'truncated': False})}
                     if isinstance(error, RuntimeStartupError):
                         row['preparation_error'] = error
                         reported_error = str(error)
@@ -1163,7 +1188,10 @@ class RuntimeManager:
                             # chats cannot acquire that execution ownership.
                             normalized[1]['runtimeOwnerId'] = row['runtimeOwnerId']
                         await row["emit"](*normalized)
+            reader_phase = 'wait_exit'
             code = await _wait_worker(row)
+            reader_exit = row['process'].returncode
+            reader_phase = 'report_exit'
             if not row["closing"] and not reported_error:
                 diagnostic = None
                 error = f"Amplifier worker exited (code {code}). Work was not replayed."
@@ -1185,17 +1213,29 @@ class RuntimeManager:
                     if diagnostic:
                         failure.diagnostic_path = diagnostic
                     row["ready"].set_exception(failure)
+            reader_phase = 'settle_execution'
             await self._execution_ended(sid, row, "stopped" if row["closing"] else "interrupted")
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
+            from .worker_diagnostics import command_failure_facts
+            reader_reason, reader_facts = 'cancelled', command_failure_facts(exc)
+            reader_exit = row['process'].returncode
             raise
         except Exception as exc:
+            from .worker_diagnostics import command_failure_facts
+            reader_reason, reader_facts = 'exception', command_failure_facts(exc)
+            # Snapshot BEFORE containment cleanup. Its kill/exit must not be
+            # presented as the original cause of the lost acknowledgement.
+            reader_exit = row['process'].returncode
             cleanup_error = None
             if row.get('windows_owner'):
                 # A malformed/oversized protocol cannot strand a live job after
                 # its sole stdout reader has stopped. Failure retains the owner.
+                reader_cleanup = 'unconfirmed'
                 try:
                     await row['windows_owner'].close()
+                    reader_cleanup = 'confirmed'
                 except Exception as cleanup:
+                    reader_cleanup = 'failed'
                     cleanup_error = cleanup
             error = f'Amplifier worker communication failed ({type(exc).__name__}). Work was not replayed.'
             if cleanup_error is not None:
@@ -1223,8 +1263,22 @@ class RuntimeManager:
                 row.get('sendInputs', {}).clear()
                 for future in row["pending"].values():
                     if not future.done():
-                        future.set_exception(RuntimeHostClosingError() if row.get('stop_reason') == 'shutdown'
-                                             else RuntimeError("Amplifier worker disconnected"))
+                        error = (RuntimeHostClosingError() if row.get('stop_reason') == 'shutdown'
+                                 else RuntimeError("Amplifier worker disconnected"))
+                        error._runtime_failure_witness = {
+                            'schema': 1, 'origin': 'reader_disconnect',
+                            'factsStatus': 'not_applicable' if reader_reason == 'eof' else 'valid',
+                            **reader_facts,
+                            'reader': {'reason': reader_reason, 'phase': reader_phase,
+                                'frame': reader_frame, 'exitObserved': reader_exit is not None,
+                                'exitCode': reader_exit if type(reader_exit) is int and
+                                    -(2**31) <= reader_exit < 2**32 else None,
+                                'closing': row.get('closing') is True,
+                                'stopReason': (row['stop_reason'] if type(row.get('stop_reason')) is str
+                                    and row['stop_reason'] in {'stopped', 'configuration', 'shutdown', 'retention'}
+                                    else 'none' if row.get('stop_reason') is None else 'other'),
+                                'cleanup': reader_cleanup}}
+                        future.set_exception(error)
 
     async def _execution_ended(self, sid, row, status):
         """Only confirmed process exit settles its native children/background calls."""

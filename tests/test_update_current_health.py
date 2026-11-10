@@ -110,6 +110,43 @@ def test_retry_witness_preserves_manual_and_unknown_boundaries():
     assert health.retry_decision(batch,'A',now=10**12) is None
 
 
+@pytest.mark.parametrize('phase,pending,status', [
+    ('validating', {}, 'working'),
+    ('staged', {'pendingRelease': 'b'*32}, 'waiting'),
+    ('available', {'available': 1}, 'available'),
+    ('installed', {}, 'action-required'),
+])
+def test_failed_application_check_does_not_replace_component_progress(phase, pending, status):
+    app = {'id': 'application', 'kind': 'app', 'status': 'check_failed',
+           'detail': 'Could not read published-release metadata.',
+           'checkStage': 'release_metadata', 'checkReason': 'unavailable'}
+    state = {'phase': phase, 'application': app, 'items': [app], 'available': 0,
+             'sequence': {'stage': 'complete'}, **pending}
+    before = copy.deepcopy(state)
+    result = health.current(state, {'packages': ['component'], 'startedAt': 100})
+    assert result['status'] == status
+    assert state == before
+    if status == 'action-required':
+        assert result['title'] == 'Application check needs attention'
+        assert result['action'] == 'check'
+        assert result['component'] == 'Amplifier Unified'
+    if status == 'available':
+        assert 'independently' in result['detail']
+
+
+def test_failed_application_check_cannot_mask_component_failure_or_replace_its_retry():
+    app = {'id': 'application', 'kind': 'app', 'status': 'check_failed'}
+    failure = {'kind': 'ecosystem', 'status': 'failed', 'at': 200,
+               'reason': 'runtime-source-constraint', 'package': 'protected-provider'}
+    state = {'application': app, 'items': [app], 'phase': 'error',
+             'diagnostics': {'lastFailure': failure, 'batch': {'retry': {'mode': 'changed-inputs'}}}}
+    before = copy.deepcopy(state)
+    result = health.current(state, {'packages': ['protected-provider'], 'startedAt': 100})
+    assert result['status'] == 'protected'
+    assert result['component'] == 'protected-provider'
+    assert state == before
+
+
 async def test_automatic_unchanged_conflict_does_zero_duplicate_stage_work(tmp_path,monkeypatch):
     from amplifier_web.updates import UpdateManager
     from amplifier_web.runtime_environment import ProtectedRuntimeSource

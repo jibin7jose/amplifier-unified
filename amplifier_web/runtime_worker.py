@@ -1486,8 +1486,10 @@ class Worker:
                 raise
             publish({'op':'reply', 'id':data.get('id'), 'result':{'interrupted':True}})
         except Exception as exc:
+            from amplifier_web.worker_diagnostics import command_failure_facts
+            facts = command_failure_facts(exc)
             reply = {"op": "reply", "id": data.get("id"),
-                     "error": f"{type(exc).__name__}: {exc}"}
+                     "error": f"{type(exc).__name__}: {exc}", "failureFacts": facts}
             from amplifier_web.runtime import RuntimeStartupError
             preparation_failed = isinstance(exc, RuntimeStartupError)
             if preparation_failed:
@@ -1825,7 +1827,10 @@ class Worker:
             if identity:
                 publish({"op": "reply", "id": identity, "result": result})
         except Exception as exc:
-            publish({"op": "reply", "id": identity, "error": f"{type(exc).__name__}: {exc}"})
+            from amplifier_web.worker_diagnostics import command_failure_facts
+            facts = command_failure_facts(exc)
+            publish({"op": "reply", "id": identity, "error": f"{type(exc).__name__}: {exc}",
+                     "failureFacts": facts})
 
     async def read(self):
         transport = None

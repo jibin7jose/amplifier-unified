@@ -376,7 +376,8 @@ def current(state, evidence=None, *, manual_verified=None):
                       'New work uses the qualified combination. Check manually to retry; prior failures remain in history.',
                       action='sources')
     local_changes = [r for r in state.get('items', []) if r.get('status') == 'local_changes']
-    issues = [r for r in state.get('items', []) if r.get('status') == 'check_failed']
+    issues = [r for r in state.get('items', []) if r.get('status') == 'check_failed'
+              and r.get('id') != 'application' and r.get('kind') != 'app']
     if issues:
         row = issues[0]
         return result('action-required', 'A source could not be checked',
@@ -456,7 +457,14 @@ def current(state, evidence=None, *, manual_verified=None):
                       action='tools')
     if state.get('available') or seq.get('nextStage') or any(
             (seq.get(tier) or {}).get('available') for tier in ('included', 'other')):
-        return result('available', 'Updates available', 'The app and eligible components can update while preserving configured pins and local sources.', action='install')
+        return result('available', 'Updates available',
+                      'Eligible component updates can continue independently. The application release check still needs attention.'
+                      if app.get('status') in {'check_failed', 'release_channel_needed'} else
+                      'The app and eligible components can update while preserving configured pins and local sources.', action='install')
+    if app.get('status') in {'check_failed', 'release_channel_needed'}:
+        return result('action-required', 'Application check needs attention',
+                      app.get('detail') or 'The application release could not be checked. Component results remain separate; check for updates again.',
+                      action='check', component='Amplifier Unified')
     if local_changes or seq.get('stage') == 'complete' and app.get('status') == 'current':
         if evidence.get('activationUnknown'):
             return result('unchecked', 'Current components kept',

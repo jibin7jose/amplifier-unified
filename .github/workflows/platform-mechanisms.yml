@@ -11,6 +11,10 @@ on:
         description: Run only installed foreground CLI diagnosis; reuses accepted public/cold evidence, does not requalify it
         type: boolean
         default: false
+      storage_only:
+        description: Run only deterministic native event-publication sharing controls; no cold worker or full trial
+        type: boolean
+        default: false
   pull_request:
     paths:
       - .github/workflows/platform-mechanisms.yml
@@ -94,7 +98,7 @@ permissions:
   contents: read
 jobs:
   passive-process-check:
-    if: ${{ !inputs.bootstrap_only && !inputs.foreground_only }}
+    if: ${{ !inputs.bootstrap_only && !inputs.foreground_only && !inputs.storage_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -132,7 +136,7 @@ jobs:
           result = unittest.TextTestRunner(verbosity=2).run(suite);
           sys.exit(not result.wasSuccessful())"
   windows-private-config-tls:
-    if: ${{ !inputs.bootstrap_only && !inputs.foreground_only }}
+    if: ${{ !inputs.bootstrap_only && !inputs.foreground_only && !inputs.storage_only }}
     runs-on: windows-latest
     timeout-minutes: 5
     env:
@@ -174,7 +178,7 @@ jobs:
           .\.native-test-venv\Scripts\python.exe -B -m pytest -q -ra -p no:cacheprovider tests/test_cli_deployment.py::test_service_cli_binds_every_operation_to_selected_data_root tests/test_cli_deployment.py::test_background_launcher_uses_platform_neutral_owned_service_check tests/test_cli_deployment.py::test_windows_service_cli_real_chain_root_boundary tests/test_cli_deployment.py::test_windows_default_launcher_refuses_before_setup_or_browser
           if ($LASTEXITCODE -ne 0) { throw 'CLI service root binding checks failed.' }
   windows-user-trial:
-    if: ${{ !inputs.bootstrap_only && !inputs.foreground_only }}
+    if: ${{ inputs.storage_only || (!inputs.bootstrap_only && !inputs.foreground_only) }}
     # Candidate-only combined boundary, not a universal suite/release gate.
     # The existing 5-minute stdlib/PowerShell and private-config lanes are unchanged.
     runs-on: windows-latest
@@ -186,6 +190,10 @@ jobs:
       UV_PYTHON_DOWNLOADS: never
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
     steps:
+      - name: Reject conflicting storage diagnostic selections
+        if: ${{ inputs.storage_only && (inputs.bootstrap_only || inputs.foreground_only) }}
+        shell: pwsh
+        run: throw 'storage_only cannot be combined with bootstrap_only or foreground_only.'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -220,6 +228,7 @@ jobs:
           uv pip install --python "$env:TRIAL_BASE/env/Scripts/python.exe" --only-binary amplifier-core $wheel[0].FullName "pytest>=8,<10" "pytest-asyncio>=1.4,<2" "pytest-aiohttp>=1.1,<2" @modules
           if ($LASTEXITCODE -ne 0) { throw 'Installed candidate graph preparation failed.' }
       - name: Require native prerequisite cells then probe private auth, tool, Stop and host resume
+        if: ${{ !inputs.storage_only }}
         timeout-minutes: 8
         shell: pwsh
         run: |
@@ -231,7 +240,19 @@ jobs:
           # fixtures' owned numeric endpoints are admitted; no blanket loopback.
           & "$env:TRIAL_BASE/env/Scripts/python.exe" -I -B $probe --run $wheel[0].FullName --receipt "$env:TRIAL_BASE/evidence/result.json"
           if ($LASTEXITCODE -ne 0) { throw 'Windows candidate journey failed; inspect the safe JSON stage/check facts.' }
+      - name: Require deterministic native event-publication sharing controls
+        if: ${{ inputs.storage_only }}
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $wheel = @(Get-ChildItem "$env:TRIAL_BASE/wheels/*.whl")
+          if ($wheel.Count -ne 1) { throw 'Expected exactly one storage-control candidate wheel.' }
+          $probe = Join-Path $env:GITHUB_WORKSPACE 'tests/fixtures/windows_user_trial_probe.py'
+          & "$env:TRIAL_BASE/env/Scripts/python.exe" -I -B $probe --storage-run $wheel[0].FullName --candidate-receipt "$env:TRIAL_BASE/evidence/result.json" --receipt "$env:TRIAL_BASE/evidence/storage.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native event-publication sharing controls failed; inspect bounded storage.json.' }
       - name: Check update recovery caller preserves declared private paths
+        if: ${{ !inputs.storage_only }}
         shell: pwsh
         run: |
           & "$env:TRIAL_BASE/env/Scripts/python.exe" -B -m pytest -q -ra -p no:cacheprovider tests/test_host_config.py::NativeHomeBoundaryTests::test_update_recovery_private_read_rejects_declared_shared_home_junction
@@ -244,11 +265,19 @@ jobs:
           path: ${{ runner.temp }}/ut/evidence/result.json
           if-no-files-found: warn
           retention-days: 7
+      - name: Upload bounded event-publication sharing result
+        if: ${{ always() && inputs.storage_only }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-storage-sharing
+          path: ${{ runner.temp }}/ut/evidence/storage.json
+          if-no-files-found: error
+          retention-days: 7
   windows-default-runtime:
     # Public dependency setup is intentional ONLY here. Do not relax the
     # separate offline qualifier or supply a preinstalled replacement command.
     needs: windows-user-trial
-    if: ${{ !inputs.bootstrap_only && !cancelled() && (inputs.foreground_only || needs.windows-user-trial.result == 'success') }}
+    if: ${{ !inputs.bootstrap_only && !inputs.storage_only && !cancelled() && (inputs.foreground_only || needs.windows-user-trial.result == 'success') }}
     runs-on: windows-latest
     # 8-minute setup + unchanged 21-minute cold check + 4-minute CLI cell + overhead.
     timeout-minutes: 34
