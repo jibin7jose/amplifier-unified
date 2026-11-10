@@ -6,6 +6,11 @@ ownership, publish a component, or change bundled client/server behavior.
 [CB](../../contracts/component-boundaries.v1.md) and
 [CD](../../contracts/client-development.v1.md) govern the eventual extraction.
 
+The capsule below is the original boundary proof. The independently rooted client
+now has a [temporary source delivery](../../components/README.md) with a pinned
+selection and a directory-to-repository switch. Its build/package instructions
+are with that source; the current shipped `frontend/` is not replaced by this pilot.
+
 The existing build identity inventory selects authored frontend files, three
 service catalogs, the shell SDK entrypoint, and official branding. The capsule
 also carries their licenses, version metadata, the export tool, and a focused

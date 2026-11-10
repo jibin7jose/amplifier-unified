@@ -1,0 +1,22 @@
+#amp-one .a-composer-format{position:fixed;z-index:1000;width:330px;max-width:calc(100vw - 16px);padding:4px;border:1px solid var(--a-line,#777);border-radius:14px;background:var(--a-surface,#303030);color:var(--a-ink,#fff);box-shadow:0 6px 24px #0003;font:inherit}
+#amp-one .a-composer-format-row{display:flex;align-items:center;gap:2px}
+#amp-one .a-composer-format button,#amp-one .a-composer-format select{font:inherit;color:inherit;border:0;border-radius:8px;background:transparent;min-height:36px;padding:7px;cursor:pointer}
+#amp-one .a-composer-format-row button{display:grid;place-items:center;flex:none;width:36px}
+#amp-one .a-composer-format-row select{min-width:0;flex:1;box-sizing:border-box;border:1px solid var(--a-line,#777);background:var(--a-soft,#555);padding:6px}
+#amp-one .a-composer-format select option{color:var(--a-ink,#fff);background:var(--a-surface,#303030)}
+#amp-one .a-composer-format button:hover,#amp-one .a-composer-format button[aria-pressed=true]{background:var(--a-soft,#555)}
+#amp-one .a-composer-format :focus-visible{outline:2px solid var(--a-accent,#d9a58a);outline-offset:1px}
+#amp-one .a-composer-link{padding:8px;display:grid;gap:8px}
+#amp-one .a-composer-link label{display:grid;gap:4px}
+#amp-one .a-composer-link input{width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid var(--a-line,#777);border-radius:6px;color:inherit;background:var(--a-soft,#444)}
+#amp-one .a-composer-link p{font-size:13px;margin:0}
+#amp-one .a-composer-format button:disabled{opacity:.4;cursor:default}
+#amp-one .a-composer-format{max-height:calc(100dvh - 16px);overflow:auto}
+#amp-one .a-markdown-composer .a-composer-table{border-collapse:collapse;width:100%;table-layout:fixed;margin:8px 0}
+#amp-one .a-composer-table th,#amp-one .a-composer-table td{border:1px solid var(--a-line);padding:6px;overflow-wrap:anywhere;white-space:pre-wrap}
+#amp-one .a-markdown-composer li[data-task]{list-style:none}
+#amp-one .a-markdown-composer li[data-task]::marker{content:''}
+#amp-one .a-markdown-composer li[data-task]::before{content:'☐';float:left;margin-left:-1.3em}
+#amp-one .a-markdown-composer li[data-task=true]::before{content:'☑'}
+#amp-one .a-markdown-composer .a-composer-markdown-source{border:1px dashed var(--a-line);white-space:pre-wrap;overflow-wrap:anywhere}
+#amp-one .a-markdown-composer .a-composer-markdown-source::before{content:'Markdown source · preserved literally';display:block;font:12px system-ui;color:var(--a-muted);margin-bottom:6px;user-select:none}

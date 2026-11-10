@@ -1,0 +1,4 @@
+/* Preserve source soft line breaks in incoming user/peer Markdown without
+   rewriting text, interpreting literal backslash-n, or changing copy bytes. */
+#amp-one .a-markdown.a-markdown-user-content p,
+#amp-one .a-markdown.a-markdown-user-content li{white-space:pre-wrap}

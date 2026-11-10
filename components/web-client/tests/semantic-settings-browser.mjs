@@ -1,0 +1,172 @@
+import {showFixtureConversation} from './browser-chat-pages.mjs';
+import assert from 'node:assert/strict';
+import {fileURLToPath} from 'node:url';
+import {chromium,expect} from '@playwright/test';
+import {startFixture} from './fixture-readiness.mjs';
+import {finishFixture} from './fixture-lifecycle.mjs';
+const root=fileURLToPath(new URL('../../',import.meta.url));
+const {base,stop}=await startFixture({command:process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',
+ args:['-u',root+'tests/fixtures/semantic_settings_ui_server.py'],env:process.env,tag:'settings-ui',name:'Semantic Settings'});
+let browser,failure;
+try{
+ browser=await chromium.launch({headless:true});
+ const context=await browser.newContext({viewport:{width:1280,height:1000},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}}),page=await context.newPage(),errors=[],requests=[];
+ page.on('pageerror',error=>errors.push(error.message));
+ page.on('request',request=>{if(request.method()==='POST')requests.push({path:new URL(request.url()).pathname,body:request.postData()})});
+ await page.goto(base);await showFixtureConversation(page);await page.getByRole('textbox',{name:'Message Amplifier'}).waitFor();
+ const action=(action,args={})=>page.evaluate(([action,args])=>window.amplifier.dispatch(action,args),[action,args]);
+ const agent=(action,args={},id)=>page.evaluate(async data=>{data.clientId=window.amplifier.getState().client.id;const response=await fetch('/fixture/semantic-settings-agent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});if(!response.ok)throw Error(await response.text());return response.json()},{action,args,id});
+ const inspect=()=>page.evaluate(async()=>await(await fetch('/fixture/semantic-settings')).json());
+ await action('canvas.show',{kind:'text',title:'Retained review note',content:'Keep this artifact.'});
+ const artifact=await page.evaluate(()=>window.amplifier.getState().canvas.id);
+ await agent('settings.open',{page:'ai-connections',surface:'canvas'},'open-global');
+ const settings=page.locator('.a-settings-canvas');await expect(settings).toBeVisible();
+ await agent('settings.connection.start',{},'agent-start');
+ await expect(settings.getByText('Which service would you like to use?',{exact:true})).toBeVisible();
+ const receipt=await agent('settings.connection.select',{module:'provider-openai'},'agent-openai');
+ assert.equal(receipt.result.editor.module,'provider-openai');
+ assert.deepEqual(receipt.result.configurationTarget,{kind:'global'});
+ await expect(settings.getByText('Use the key already on this host',{exact:true})).toBeVisible();
+ await expect(settings.getByText(/Found OPENAI_API_KEY/)).toBeVisible();
+ const scans=async()=>(await inspect()).calls.filter(row=>row.action==='providers.credentials'&&row.module==='provider-openai');
+ assert.equal((await scans()).length,1);assert.deepEqual((await scans())[0].configurationTarget,{kind:'global'});
+ const replay=await agent('settings.connection.select',{module:'provider-openai'},'agent-openai');
+ assert.equal(replay.duplicate,true);assert.equal(replay.result.editor.id,receipt.result.editor.id);assert.equal((await scans()).length,1);
+ await agent('settings.close',{},'close-global');await expect(settings).toBeHidden();
+ assert.equal(await page.evaluate(id=>window.amplifier.getState().canvasArtifacts.some(row=>row.id===id&&row.title==='Retained review note'),artifact),true);
+ await agent('settings.open',{page:'ai-connections',surface:'canvas'},'open-again');
+ // Human controls use the same semantic service-selection path.
+ await settings.getByRole('button',{name:'Back',exact:true}).click();
+ await expect(settings.getByText('Which service would you like to use?',{exact:true})).toBeVisible();
+ await settings.getByRole('button',{name:'Back',exact:true}).click();
+ await settings.getByRole('button',{name:'Connect another service',exact:true}).click();
+ await settings.getByRole('button',{name:/OpenAI API Use an API key/}).click();
+ await expect(settings.getByText('Use the key already on this host',{exact:true})).toBeVisible();
+ const actions=requests.filter(row=>row.path==='/api/actions').map(row=>JSON.parse(row.body));
+ assert.ok(actions.some(row=>row.action==='settings.connection.start'));
+ assert.ok(actions.some(row=>row.action==='settings.connection.select'&&row.args.module==='provider-openai'&&row.args.configurationTarget?.kind==='global'));
+ await settings.getByRole('radio',{name:/Use a different key/}).check();
+ const password=settings.getByLabel('API key',{exact:true});await password.fill('private-browser-only-draft');
+ const before=await page.evaluate(()=>window.amplifier.getState().view.aiConnectionEditor.id);
+ await agent('settings.connection.select',{module:'provider-anthropic'},'agent-anthropic-keep');
+ const dialog=page.getByRole('alertdialog',{name:'Unsaved settings changes'});await expect(dialog).toBeVisible();
+ await expect(password).toHaveValue('private-browser-only-draft');
+ await dialog.getByRole('button',{name:'Keep settings open',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().view.aiConnectionEditor.id)).toBe(before);
+ await expect(password).toHaveValue('private-browser-only-draft');
+ await agent('settings.connection.select',{module:'provider-anthropic'},'agent-anthropic-discard');
+ await expect(dialog).toBeVisible();await dialog.getByRole('button',{name:'Discard changes',exact:true}).click();
+ await expect(settings.getByRole('heading',{name:'Anthropic API',exact:true})).toBeVisible();
+ await expect(password).toHaveValue('');
+ // Workspace setup owns its private draft across page/surface navigation.
+ await agent('settings.close',{},'before-workspace');
+ const workspaceId=await page.evaluate(()=>window.amplifier.getState().selectedWorkspaceId);
+ await agent('settings.connection.start',{configurationTarget:{kind:'workspace',workspaceId}},'workspace-start');
+ const workspace=page.getByRole('region',{name:'Workspace configuration'});
+ await expect(workspace.getByText('Which service would you like to use?',{exact:true})).toBeVisible();
+ await agent('settings.connection.select',{module:'provider-openai',configurationTarget:{kind:'workspace',workspaceId}},'workspace-openai');
+ await expect(workspace.getByText('Use the key already on this host',{exact:true})).toBeVisible();
+ assert.deepEqual((await scans()).at(-1).configurationTarget,{kind:'workspace',workspaceId});
+ await workspace.getByRole('radio',{name:/Use a different key/}).check();
+ const workspaceKey=workspace.getByLabel('API key',{exact:true});await workspaceKey.fill('private-workspace-only-draft');
+ await agent('view.update',{patch:{workWorkspaceSettings:'routing'}},'workspace-page-change');
+ await expect(dialog).toBeVisible();await expect(workspaceKey).toHaveValue('private-workspace-only-draft');
+ await dialog.getByRole('button',{name:'Keep settings open',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().view.workWorkspaceSettings)).toBe('ai-connections');
+ await agent('view.update',{patch:{workSurface:'home'}},'workspace-to-home');
+ await expect(dialog).toBeVisible();await expect(workspaceKey).toHaveValue('private-workspace-only-draft');
+ await dialog.getByRole('button',{name:'Keep settings open',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().view.workSurface)).toBe('workspace');
+ await expect(workspaceKey).toHaveValue('private-workspace-only-draft');
+ await agent('settings.open',{page:'ai-connections',surface:'canvas'},'workspace-to-global');
+ await expect(dialog).toBeVisible();await expect(workspaceKey).toHaveValue('private-workspace-only-draft');
+ await dialog.getByRole('button',{name:'Discard changes',exact:true}).click();
+ await expect(settings).toBeVisible();await expect(workspace).toBeHidden();
+ await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().view.workSurface)).toBe('chat');
+ // The real selection/management path must distinguish waiting, read failure,
+ // completed absence and completed availability without asking for a client ID.
+ const credentialMode=mode=>page.evaluate(async mode=>{
+  const response=await fetch('/fixture/semantic-credentials',{method:'POST',
+   headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
+  if(!response.ok)throw Error('Synthetic credential control failed');return response.json();
+ },mode);
+ await credentialMode('hold');
+ await agent('settings.connection.select',{module:'provider-openai'},'held-openai');
+ await expect(settings.getByText('Checking this host for an existing key…',{exact:true})).toBeVisible();
+ await expect(settings.getByLabel('API key',{exact:true})).toHaveCount(0);
+ await credentialMode('available');
+ await expect(settings.getByText('Use the key already on this host',{exact:true})).toBeVisible();
+ await credentialMode('error');
+ await agent('settings.connection.select',{module:'provider-openai'},'failed-openai');
+ await expect(settings.locator('[data-part=ai-connections]').getByText('Synthetic credential store could not be read.',{exact:true})).toBeVisible();
+ await expect(settings.getByText('Use the key already on this host',{exact:true})).toHaveCount(0);
+ await expect(settings.getByLabel('API key',{exact:true})).toHaveCount(0);
+ await credentialMode('available');
+ await settings.getByRole('button',{name:'Check host key again',exact:true}).click();
+ await expect(settings.getByText('Use the key already on this host',{exact:true})).toBeVisible();
+ await credentialMode('missing');
+ await agent('settings.connection.select',{module:'provider-openai'},'missing-openai');
+ await expect(settings.getByLabel('API key',{exact:true})).toBeVisible();
+ await expect(settings.getByText('Use the key already on this host',{exact:true})).toHaveCount(0);
+ const check=await page.evaluate(()=>{
+  const setup=window.amplifier.getState().setup,op=setup.operations['global\nproviders.credentials:provider-openai'];
+  return {target:setup.configurationTarget,phase:op.phase,commandId:op.commandId,check:setup.credentialCheck};
+ });
+ assert.deepEqual(check.target,{kind:'global'});assert.equal(check.phase,'ready');
+ assert.equal(check.check.available,false);assert.ok(check.check.checkedAt>0);
+ assert.equal(check.check.commandId,check.commandId);
+ // Read-only R can be superseded by normal agent read S without permanently
+ // keeping this browser busy, or displaying R as the current credential result.
+ await credentialMode('error');
+ await agent('settings.connection.select',{module:'provider-openai'},'before-supersession');
+ const connection=settings.locator('[data-part=ai-connections]');
+ await expect(connection.getByRole('button',{name:'Check host key again',exact:true})).toBeVisible();
+ await credentialMode('hold');
+ await connection.getByRole('button',{name:'Check host key again',exact:true}).click();
+ const readKey='global\nproviders.credentials:provider-openai';
+ await expect.poll(()=>page.evaluate(key=>window.amplifier.getState().setup.operations[key]?.phase,readKey)).toBe('working');
+ const R=await page.evaluate(key=>window.amplifier.getState().setup.operations[key].commandId,readKey);
+ const S=await agent('providers.credentials',{module:'provider-openai',
+  configurationTarget:{kind:'global'},envVar:'SYNTHETIC_SUPERSEDING_KEY'},'superseding-read');
+ await expect.poll(()=>page.evaluate(key=>window.amplifier.getState().setup.operations[key]?.phase,readKey)).toBe('ready');
+ await expect(connection.getByRole('button',{name:'Back',exact:true})).toBeDisabled();
+ await expect(connection.getByLabel('API key',{exact:true})).toBeVisible();
+ assert.notEqual(R,S.operationId);
+ await credentialMode('available');
+ await expect(connection.getByRole('button',{name:'Back',exact:true})).toBeEnabled();
+ assert.equal(await page.evaluate(key=>window.amplifier.getState().setup.credentialCheck.commandId,readKey),S.operationId);
+ await expect(connection.getByText('Use the key already on this host',{exact:true})).toHaveCount(0);
+ await expect(connection.getByRole('button',{name:'Back',exact:true})).toBeEnabled();
+ // The normal Copilot negative-auto path must preserve typed private intent
+ // across pending/error/positive rechecks, without exporting the private token.
+ await credentialMode('missing');
+ await agent('settings.connection.select',{module:'provider-github-copilot'},'private-copilot');
+ const token=connection.getByLabel('GitHub token',{exact:true});
+ await expect(token).toBeVisible();
+ await token.fill('synthetic-private-review-token');
+ await credentialMode('hold');
+ await connection.getByText('Help connecting GitHub Copilot',{exact:true}).click();
+ await connection.getByRole('button',{name:'Check host sign-in again',exact:true}).click();
+ await expect(connection.getByText('Checking this host for an existing key…',{exact:true})).toBeVisible();
+ await expect(token).toBeVisible();await expect(token).toBeEnabled();
+ await expect(token).toHaveValue('synthetic-private-review-token');
+ await token.fill('synthetic-private-review-token-edited');
+ await credentialMode('error');
+ await expect(connection.getByText('Synthetic credential store could not be read.',{exact:true})).toBeVisible();
+ await expect(token).toHaveValue('synthetic-private-review-token-edited');
+ await expect(token).toBeEnabled();
+ await expect(settings.getByRole('button',{name:'Save and check connection',exact:true})).toBeEnabled();
+ await credentialMode('available');
+ await connection.getByRole('button',{name:'Check host key again',exact:true}).click();
+ await expect(connection.getByText('Use the key already on this host',{exact:true})).toBeVisible();
+ await expect(connection.getByRole('radio',{name:/Use a different key/})).toBeChecked();
+ await expect(token).toHaveValue('synthetic-private-review-token-edited');
+ assert.equal(requests.some(row=>row.body?.includes('synthetic-private-review-token')),false);
+ assert.equal(requests.some(row=>row.body?.includes('private-browser-only-draft')),false,'private input never leaves the browser');
+ assert.equal(requests.some(row=>row.body?.includes('private-workspace-only-draft')),false);
+ const final=await inspect();assert.equal(final.savedSettingsUnchanged,true);
+ assert.equal(final.calls.filter(row=>['providers.save','providers.login','providers.test','providers.testMessage'].includes(row.action)).length,0);
+ assert.deepEqual(errors,[]);
+ console.log('PASS: semantic Settings, typed private choice retained across pending/error/positive checks, same-owner retry supersession and late completion, exact command/owner credentials, private drafts, unchanged configuration and no model/auth calls.');
+}catch(error){failure=error;throw error}
+finally{await finishFixture({label:'Semantic Settings',close:[['Browser',()=>browser?.close()]],stop,originalError:failure})}

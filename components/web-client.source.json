@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "kind": "amplifier-web-client-source",
+  "source": {
+    "repository": "https://github.com/microsoft/amplifier-client-web",
+    "revision": "fcbe8ffd73049868a62b8bf0404f15d48982fe5f"
+  },
+  "inputsSha256": "bf19a7c907e9d1530470ae1aa2c28176dfad036cf3541186dfb25e87800a71bf",
+  "delivery": {
+    "type": "directory",
+    "path": "components/web-client"
+  }
+}

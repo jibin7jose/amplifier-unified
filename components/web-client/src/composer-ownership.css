@@ -1,0 +1,11 @@
+#amp-one .a-composer-access{display:grid;isolation:isolate;min-width:0}
+#amp-one .a-composer-fields{grid-area:1 / 1;min-width:0;width:100%;box-sizing:border-box;border:0;padding:0;margin:0}
+#amp-one .a-composer-access.is-blocked .a-composer-fields{opacity:.16;pointer-events:none;user-select:none}
+#amp-one .a-composer-lock{grid-area:1 / 1;z-index:1;align-self:stretch;display:flex;flex-wrap:wrap;align-items:center;gap:12px 18px;padding:14px 8px;min-width:0;background:var(--a-soft);border-radius:12px}
+#amp-one .a-composer-lock-copy{display:flex;align-items:flex-start;gap:12px;flex:1 1 250px;min-width:0}
+#amp-one .a-composer-lock-copy>svg{width:20px;height:20px;flex-shrink:0;margin-top:2px;color:var(--a-accent)}
+#amp-one .a-composer-lock strong{display:block;font-size:var(--a-text-lg,16px);line-height:1.5;color:var(--a-ink);overflow-wrap:anywhere}
+#amp-one .a-composer-lock p{margin:4px 0 0;font-size:var(--a-text-base,14px);line-height:1.5;color:var(--a-muted);overflow-wrap:anywhere}
+#amp-one .a-composer-lock>button{flex:0 0 auto;min-height:42px}
+#amp-one .a-composer-lock .a-composer-lock-error{flex-basis:100%;color:var(--a-danger)}
+@media(max-width:480px){#amp-one .a-composer-lock{padding:10px 4px}#amp-one .a-composer-lock>button{margin-left:32px}}

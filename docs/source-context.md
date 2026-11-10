@@ -48,6 +48,10 @@ nonzero exit status before filtering; it is an optional maintenance check, not
 a new release gate. Classify a new root deliberately instead of hiding it.
 
 Generated output still ships and must pass existing build/package checks.
+The temporary [independent client delivery](../components/README.md) is classified
+as generated context because it is mechanically copied from its owning repo.
+Its selection and maintenance guide stay visible; use `--all --under components/web-client`
+to inspect the copy. It is not another authored client owner or shipped build.
 Source bootstrap files in `frontend/public` and shipped documentation in
 `docs/shell` remain authored inputs. Frozen UX inventory/control JSON is retained
 evidence; its maintained delta and completion-policy ledgers remain test inputs.

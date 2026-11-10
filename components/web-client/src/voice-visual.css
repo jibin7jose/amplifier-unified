@@ -1,0 +1,5 @@
+.a-sharing-strip{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 20px;padding:10px 14px;border:1px solid var(--a-accent);border-radius:12px;background:var(--a-surface);color:var(--a-ink);flex-shrink:0}
+.a-sharing-strip>span{display:flex;align-items:baseline;gap:10px;min-width:0;flex-wrap:wrap}
+.a-sharing-strip small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(50vw,40rem)}
+.a-sharing-strip button{flex-shrink:0}
+@media(max-width:600px){.a-sharing-strip{margin:6px 10px;padding:8px 10px}.a-sharing-strip>span{gap:2px;flex-direction:column}.a-sharing-strip small{max-width:48vw}}

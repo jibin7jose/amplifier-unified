@@ -1,0 +1,12 @@
+#amp-one .a-handoffs{min-width:0;max-width:820px;width:100%;display:grid;gap:12px}
+#amp-one .a-handoff{min-width:0;padding:16px;border:1px solid var(--a-line);border-radius:12px;background:var(--a-surface);overflow-wrap:anywhere}
+#amp-one .a-handoff h3{font-size:16px;margin:0 0 12px}
+#amp-one .a-handoff dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 16px;margin:0}
+#amp-one .a-handoff dt{color:var(--a-muted)}
+#amp-one .a-handoff dd{margin:0;min-width:0}
+#amp-one .a-handoff pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:8px 0;max-height:240px;overflow:auto}
+#amp-one .a-handoff-brief{margin:12px 0}
+#amp-one .a-handoff .a-dialog-actions{flex-wrap:wrap;gap:10px}
+#amp-one .a-handoff summary{cursor:pointer;font-weight:600}
+#amp-one .a-handoff details[open] .a-handoff-review{margin-top:12px}
+@media(max-width:480px){#amp-one .a-handoff{padding:12px}#amp-one .a-handoff dl{grid-template-columns:1fr;gap:2px}#amp-one .a-handoff dd{margin-bottom:6px}}

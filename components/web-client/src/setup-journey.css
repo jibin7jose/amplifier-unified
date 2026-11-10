@@ -1,0 +1,10 @@
+#amp-one .a-setup-journey{padding:16px;margin-bottom:20px;border:1px solid var(--a-line);border-radius:var(--a-radius,12px);background:var(--a-soft)}
+#amp-one .a-setup-journey h3{margin-top:0}
+#amp-one .a-setup-journey [role=status]{display:flex;align-items:center;gap:8px}
+#amp-one .a-setup-journey svg{flex:none;width:18px;height:18px}
+#amp-one .a-settings-canvas{height:100%;min-height:0;overflow:hidden}
+#amp-one .a-settings-canvas .a-settings-experience{height:100%;min-height:0}
+#amp-one .a-settings-header-assistance{margin-left:auto;position:relative}
+#amp-one .a-settings-header-assistance button{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+#amp-one .a-settings-header-actions{display:flex;align-items:center;position:relative}
+#amp-one .a-settings-header-assistance [role=alert],#amp-one .a-settings-header-actions [role=alert]{position:absolute;right:0;top:100%;width:min(320px,80vw);padding:12px;background:var(--a-surface);border:1px solid var(--a-line);border-radius:8px;z-index:6}

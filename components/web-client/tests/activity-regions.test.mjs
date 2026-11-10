@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import React,{act} from 'react';
+import {create} from 'react-test-renderer';
+import {createServer} from 'vite';
+const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
+const {SmartToolsSettings}=await server.ssrLoadModule('/src/smart-tools.jsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+test.after(()=>server.close());
+test('source refresh retains the previous inspection only for the same source',async()=>{
+ const source={repository:'https://example.test/one',ref:'',path:''};
+ let state={view:{smartToolsEditor:{page:'source',...source}},smartTools:{operations:[{id:'inspection',action:'smartTools.inspect',target:source,status:'completed',result:{name:'Existing source result',commit:'aabbcc'}}]}},root;
+ const render=()=>React.createElement(SmartToolsSettings,{state,act:async()=>({accepted:true})});
+ await act(async()=>{root=create(render())});
+ const result=()=>root.root.findAllByType('strong').some(node=>node.children.includes('Existing source result'));
+ assert.equal(result(),true);
+ state={...state,smartTools:{operations:[...state.smartTools.operations,{id:'refresh',action:'smartTools.inspect',target:source,status:'running'}]}};
+ await act(async()=>root.update(render()));assert.equal(result(),true);
+ state={...state,smartTools:{operations:state.smartTools.operations.map(row=>row.id==='refresh'?{...row,status:'failed',error:'Offline'}:row)}};
+ await act(async()=>root.update(render()));assert.equal(result(),true);
+ state={...state,view:{smartToolsEditor:{page:'source',...source,repository:'https://example.test/two'}}};
+ await act(async()=>root.update(render()));assert.equal(result(),false);
+ await act(async()=>root.unmount());
+});

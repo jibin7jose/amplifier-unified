@@ -1,0 +1,33 @@
+import {fixturePython} from './fixture-python.mjs';
+import {spawn} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import assert from 'node:assert/strict';
+import {chromium,expect} from '@playwright/test';
+const root=fileURLToPath(new URL('../../',import.meta.url));
+const fixture=spawn(fixturePython(root+'.venv/bin/python'),['-u',root+'tests/fixtures/browser_detail_server.py',root],{stdio:['ignore','pipe','inherit']});
+let browser;
+try{
+ const port=await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>reject(Error('Fixture timeout')),20000);fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exit '+code))});fixture.stdout.on('data',chunk=>{output+=chunk;for(const line of output.split('\n'))try{const row=JSON.parse(line);if(row.port){clearTimeout(timer);resolve(row.port)}}catch{}})});
+ const url=`http://127.0.0.1:${port}`,headers={Authorization:'Bearer fixture-detail-token','content-type':'application/json'};
+ const control=async body=>{const response=await fetch(url+'/api/fixture/control',{method:'POST',headers,body:JSON.stringify(body)});assert.equal(response.status,200);return response.json()};
+ const {alpha,beta}=await control({op:'heavy',active:false,messages:4,otherMessages:4,chars:100,nodes:0});
+ browser=await chromium.launch({headless:true,args:process.env.DTU_CHROMIUM_SINGLE_PROCESS==='1'?['--no-zygote','--single-process','--disable-gpu']:[]});
+ const context=await browser.newContext({viewport:{width:1280,height:900},extraHTTPHeaders:headers,colorScheme:'dark'});
+ const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(url);await page.getByRole('textbox',{name:'Message Amplifier'}).waitFor();await page.getByRole('button',{name:'App options',exact:true}).click();await page.getByRole('button',{name:/^Settings/}).click();await page.locator('[data-settings-section="appearance"]').click();
+ await page.getByLabel('Color mode',{exact:true}).selectOption('light');
+ await expect(page.getByLabel('Color mode',{exact:true})).toBeEnabled();
+ await expect(page.locator('#amp-one')).toHaveAttribute('data-theme-scheme','light');
+ await page.reload();await expect(page.locator('#amp-one')).toHaveAttribute('data-theme-scheme','light');
+ const fresh=await context.newPage();await fresh.goto(url);await fresh.getByRole('textbox',{name:'Message Amplifier'}).waitFor();
+ await expect(fresh.locator('#amp-one')).toHaveAttribute('data-theme-scheme','light');await fresh.close();
+ await control({op:'patch',updates:{phase:'staged',pendingSmartTools:[{previous:'old',target:'new'}],blockers:[{kind:'worker',label:'A persistent background worker is still open',sessionId:beta,title:'Beta conversation'},{kind:'feedback',label:'Feedback delivery is in progress'}]}});
+ await page.locator('[data-settings-section="updates"]').click();
+ await expect(page.getByText('Waiting for your work to finish',{exact:true})).toBeVisible();
+ const blockers=page.locator('[data-part="update-blockers"]');await expect(blockers.getByText('Feedback delivery is in progress')).toBeVisible();
+ await page.screenshot({path:'/tmp/amplifier-update-blockers.png'});
+ await blockers.getByRole('button',{name:'Beta conversation',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().selectedSessionId)).toBe(beta);
+ await expect(page.locator('[data-part="update-blockers"]')).toHaveCount(0);
+ assert.deepEqual(errors,[]);console.log('Repair polish passed: Light survives reload and a fresh window with dark device preference; update blockers link to the correct chat.');
+}finally{await browser?.close();fixture.kill()}

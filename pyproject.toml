@@ -55,7 +55,7 @@ artifacts = ["/amplifier_web/release-source.json"]
 packages = ["amplifier_web", "amplifier_operations", "amplifier_kernels", "amplifier_scheduling", "amplifier_recall", "amplifier_outputs", "amplifier_worktrees", "amplifier_publishing", "amplifier_portability"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/.ci/**"]
+exclude = ["/.ci/**", "/components/web-client/**"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "bundle.yaml" = "amplifier_web/bundle_data/bundle.yaml"

@@ -1,0 +1,2954 @@
+{
+  "schemaVersion": 1,
+  "frozenInventoryCommit": "9fdd6aeea",
+  "changes": [
+    {
+      "id": "delta.635",
+      "sourceCommit": "dab2a993e905e3d8cd6da761d282f7b9190abdb0",
+      "reason": "Integration adds standard per-tool update recovery after v1 freeze; original baseline remains unchanged.",
+      "workflowsAdded": [
+        {
+          "id": "updates.tool-recovery",
+          "family": "updates",
+          "title": "Recover an individual failed Smart Tool update",
+          "scope": "standard-path",
+          "entryPath": [
+            "Settings",
+            "Updates"
+          ],
+          "prerequisites": [
+            "Synthetic installers; completed healthy update and one failed tool",
+            "No production installation or restart"
+          ],
+          "steps": [
+            "Open Settings and Updates through visible controls",
+            "Inspect healthy and failed tool names",
+            "Reload and confirm failure remains",
+            "Activate Retry this tool",
+            "Show another failed tool and switch to390px",
+            "Activate Skip this version"
+          ],
+          "expectedResults": [
+            "Successful tools remain completed while a failed tool is named in standard Updates.",
+            "The failed-tool result survives a browser reload.",
+            "Retry this tool invokes only the failed tool and removes its resolved result.",
+            "Skip this version clears its pending result without an installer call.",
+            "No secret fixture value or browser error appears.",
+            "Named failure and Skip remain visible and usable at390px."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-touch",
+            "desktop-keyboard",
+            "narrow-keyboard"
+          ],
+          "sourceRefs": [
+            {
+              "path": "frontend/src/smart-tool-update-results.jsx",
+              "line": 1
+            },
+            {
+              "path": "frontend/src/updates.jsx",
+              "line": 1
+            }
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "relation": "exact-assertions-below"
+            }
+          ],
+          "performance": {
+            "current": null,
+            "desiredProfile": "standard-interaction",
+            "measurementStatus": "not_measured"
+          }
+        }
+      ],
+      "sourceHashes": {
+        "frontend/src/smart-tool-update-results.jsx": "cd4a7a1308b01c0a0e17154a7528aed6348e87cc12bab9fe578ffbfd23e0952c",
+        "frontend/src/updates.jsx": "0f2f6016226e78572031055d39f06fa28971c817c3707cc3fd265bafa4431a65",
+        "frontend/tests/smart-tool-updates-browser.mjs": "ffe65df2c7b1710bc7aad9b98ab7204fab0f3c627414688d863fd7545a1ffbe1",
+        "tests/fixtures/smart_tool_update_server.py": "524fad882825fa8ea57fb032f4e555c6c616718f178b6840e04b1d3b91e74c76"
+      },
+      "evidenceContext": "synthetic-capability; actualHTTP/SSE; fake installers; no external effects",
+      "claims": [
+        {
+          "workflow": "updates.tool-recovery",
+          "expectedIndices": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "status": "passed",
+          "variantsByExpectedIndex": {
+            "0": [
+              "desktop-pointer"
+            ],
+            "1": [
+              "desktop-pointer"
+            ],
+            "2": [
+              "desktop-pointer"
+            ],
+            "3": [
+              "narrow-pointer"
+            ],
+            "4": [
+              "desktop-pointer",
+              "narrow-pointer"
+            ],
+            "5": [
+              "narrow-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 21,
+              "expectedIndices": [
+                0
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 22,
+              "expectedIndices": [
+                0
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 25,
+              "expectedIndices": [
+                0
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 27,
+              "expectedIndices": [
+                1
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 29,
+              "expectedIndices": [
+                1,
+                2
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 30,
+              "expectedIndices": [
+                2
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 31,
+              "expectedIndices": [
+                2
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 34,
+              "expectedIndices": [
+                5
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 37,
+              "expectedIndices": [
+                3,
+                5
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 38,
+              "expectedIndices": [
+                3
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 39,
+              "expectedIndices": [
+                3
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 23,
+              "expectedIndices": [
+                4
+              ]
+            },
+            {
+              "path": "frontend/tests/smart-tool-updates-browser.mjs",
+              "line": 40,
+              "expectedIndices": [
+                4
+              ]
+            }
+          ],
+          "evidence": [
+            "output/readiness-day-20261015/update-repairs/browser2.json"
+          ],
+          "limits": [
+            "Touch events and keyboard activation were not exercised by this script; narrow viewport used pointer clicks.",
+            "Initial partial-update operation is fixture setup; browser asserts rendered result and explicit Retry/Skip.",
+            "No timing or physical-install acceptance claim."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "delta.composer-local-acceptance",
+      "reason": "Root approved clarification after actual pending-send browser proof. Acceptance means durable local intent/outbox admission; it is not the later host acknowledgement. No production change.",
+      "sourceCommit": "1d993e0bb32bc90b75fc66f56f1b9014c2d63f87",
+      "expectedResultChanges": [
+        {
+          "workflow": "composer.send",
+          "expectedIndex": 2,
+          "previous": "Draft clears only on acceptance",
+          "current": "Submitted draft clears after durable local outbox acceptance; its exact intent remains recoverable while host acknowledgement is pending, and a newer draft is never overwritten.",
+          "supportingAssertions": [
+            {
+              "path": "frontend/tests/empty-host-browser.mjs",
+              "lines": [
+                84,
+                86,
+                91,
+                93,
+                97,
+                121,
+                127,
+                130
+              ]
+            },
+            {
+              "path": "frontend/tests/message-outbox-browser.mjs",
+              "lines": [
+                58,
+                69,
+                190,
+                192,
+                197
+              ]
+            }
+          ]
+        }
+      ],
+      "claims": []
+    },
+    {
+      "id": "delta.770",
+      "sourceCommit": "e3b79361fe91994c91536eef259b1140107fd681",
+      "productHead": "257262658",
+      "reason": "Reviewed archive interaction integrated after frozen inventory; raw-action behavior remains separate. Original nav.archive scope note is preserved.",
+      "evidenceContext": "synthetic-standard",
+      "workflowsAdded": [
+        {
+          "id": "nav.archive-progress",
+          "family": "nav",
+          "title": "Archive with truthful progress, guarded navigation, and Undo",
+          "scope": "standard-path",
+          "entryPath": [
+            "Chat \u2192 Archive",
+            "Row Details \u2192 Archive"
+          ],
+          "prerequisites": [
+            "Synthetic isolated archive fixture; no real user files or runtime execution"
+          ],
+          "steps": [
+            "Archive current chat while acknowledgement is held",
+            "Observe confirmation and Undo",
+            "Exercise rejected/unknown acknowledgement",
+            "Hold following navigation and Undo before release",
+            "Change selection or browse intent while archive is pending",
+            "Archive another row and invoke raw action independently",
+            "Return to private Canvas edit",
+            "Open Settings while archive is pending and keep unsaved field",
+            "Repeat current archive at390px"
+          ],
+          "expectedResults": [
+            "Confirmed archive of the current chat opens its existing workspace or full chat list without changing another client or selecting a replacement chat.",
+            "Pending, rejected, and unknown archive outcomes are distinct and never imply an unconfirmed navigation or replay.",
+            "Undo is available after archive confirmation even while the following navigation is stalled.",
+            "A newer navigation intention, including A\u2192B\u2192A, prevents the old archive from redirecting.",
+            "Archiving a different row or invoking the raw public action does not navigate the current view.",
+            "Returning to the archived chat preserves private Canvas edit identity, composer draft, and attachment.",
+            "A confirmation arriving after Settings opens preserves its private unsaved field and current view.",
+            "The archive notice and resulting destination remain usable without horizontal overflow at390px."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-touch",
+            "narrow-keyboard"
+          ],
+          "sourceRefs": [
+            {
+              "path": "frontend/src/archive-action.js",
+              "line": 1
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 51
+            }
+          ]
+        }
+      ],
+      "claims": [
+        {
+          "workflow": "nav.archive-progress",
+          "expectedIndices": [
+            0
+          ],
+          "variantsByExpectedIndex": {
+            "0": [
+              "desktop-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 55
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 60
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 61
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 62
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 64
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 65
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 66
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 67
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 154
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 155
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 156
+            }
+          ],
+          "sourceSha256": "b2c9169e350e94cdb73078e0945103b730068c0a1a6a52632df55da2cb490b6a",
+          "evidence": [
+            "output/readiness-day-20261015/pr770-review/browser-settings-race.json"
+          ],
+          "limits": [
+            "Synthetic fixture; no real archive data or runtime shutdown.",
+            "Settings guard proof uses a private advanced JSON editor; standard entry and general guard are exercised, not every standard Settings field."
+          ]
+        },
+        {
+          "workflow": "nav.archive-progress",
+          "expectedIndices": [
+            1
+          ],
+          "variantsByExpectedIndex": {
+            "1": [
+              "desktop-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 55
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 56
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 57
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 100
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 101
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 102
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 104
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 105
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 106
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 107
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 108
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 109
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 110
+            }
+          ],
+          "sourceSha256": "b2c9169e350e94cdb73078e0945103b730068c0a1a6a52632df55da2cb490b6a",
+          "evidence": [
+            "output/readiness-day-20261015/pr770-review/browser-settings-race.json"
+          ],
+          "limits": [
+            "Synthetic fixture; no real archive data or runtime shutdown.",
+            "Settings guard proof uses a private advanced JSON editor; standard entry and general guard are exercised, not every standard Settings field."
+          ]
+        },
+        {
+          "workflow": "nav.archive-progress",
+          "expectedIndices": [
+            2
+          ],
+          "variantsByExpectedIndex": {
+            "2": [
+              "desktop-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 119
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 123
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 124
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 127
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 128
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 129
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 130
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 134
+            }
+          ],
+          "sourceSha256": "b2c9169e350e94cdb73078e0945103b730068c0a1a6a52632df55da2cb490b6a",
+          "evidence": [
+            "output/readiness-day-20261015/pr770-review/browser-settings-race.json"
+          ],
+          "limits": [
+            "Synthetic fixture; no real archive data or runtime shutdown.",
+            "Settings guard proof uses a private advanced JSON editor; standard entry and general guard are exercised, not every standard Settings field."
+          ]
+        },
+        {
+          "workflow": "nav.archive-progress",
+          "expectedIndices": [
+            3
+          ],
+          "variantsByExpectedIndex": {
+            "3": [
+              "desktop-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 112
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 113
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 114
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 115
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 116
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 131
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 133
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 134
+            }
+          ],
+          "sourceSha256": "b2c9169e350e94cdb73078e0945103b730068c0a1a6a52632df55da2cb490b6a",
+          "evidence": [
+            "output/readiness-day-20261015/pr770-review/browser-settings-race.json"
+          ],
+          "limits": [
+            "Synthetic fixture; no real archive data or runtime shutdown.",
+            "Settings guard proof uses a private advanced JSON editor; standard entry and general guard are exercised, not every standard Settings field."
+          ]
+        },
+        {
+          "workflow": "nav.archive-progress",
+          "expectedIndices": [
+            4
+          ],
+          "variantsByExpectedIndex": {
+            "4": [
+              "desktop-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 139
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 140
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 141
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 142
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 143
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 145
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 146
+            }
+          ],
+          "sourceSha256": "b2c9169e350e94cdb73078e0945103b730068c0a1a6a52632df55da2cb490b6a",
+          "evidence": [
+            "output/readiness-day-20261015/pr770-review/browser-settings-race.json"
+          ],
+          "limits": [
+            "Synthetic fixture; no real archive data or runtime shutdown.",
+            "Settings guard proof uses a private advanced JSON editor; standard entry and general guard are exercised, not every standard Settings field."
+          ]
+        },
+        {
+          "workflow": "nav.archive-progress",
+          "expectedIndices": [
+            5
+          ],
+          "variantsByExpectedIndex": {
+            "5": [
+              "desktop-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 73
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 74
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 84
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 86
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 88
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 89
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 90
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 91
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 92
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 93
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 94
+            }
+          ],
+          "sourceSha256": "b2c9169e350e94cdb73078e0945103b730068c0a1a6a52632df55da2cb490b6a",
+          "evidence": [
+            "output/readiness-day-20261015/pr770-review/browser-settings-race.json"
+          ],
+          "limits": [
+            "Synthetic fixture; no real archive data or runtime shutdown.",
+            "Settings guard proof uses a private advanced JSON editor; standard entry and general guard are exercised, not every standard Settings field."
+          ]
+        },
+        {
+          "workflow": "nav.archive-progress",
+          "expectedIndices": [
+            6
+          ],
+          "variantsByExpectedIndex": {
+            "6": [
+              "desktop-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 163
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 164
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 166
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 167
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 169
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 170
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 171
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 172
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 173
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 174
+            }
+          ],
+          "sourceSha256": "b2c9169e350e94cdb73078e0945103b730068c0a1a6a52632df55da2cb490b6a",
+          "evidence": [
+            "output/readiness-day-20261015/pr770-review/browser-settings-race.json"
+          ],
+          "limits": [
+            "Synthetic fixture; no real archive data or runtime shutdown.",
+            "Settings guard proof uses a private advanced JSON editor; standard entry and general guard are exercised, not every standard Settings field."
+          ]
+        },
+        {
+          "workflow": "nav.archive-progress",
+          "expectedIndices": [
+            7
+          ],
+          "variantsByExpectedIndex": {
+            "7": [
+              "narrow-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 147
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 148
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 149
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 150
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 151
+            }
+          ],
+          "sourceSha256": "b2c9169e350e94cdb73078e0945103b730068c0a1a6a52632df55da2cb490b6a",
+          "evidence": [
+            "output/readiness-day-20261015/pr770-review/browser-settings-race.json"
+          ],
+          "limits": [
+            "Synthetic fixture; no real archive data or runtime shutdown.",
+            "Settings guard proof uses a private advanced JSON editor; standard entry and general guard are exercised, not every standard Settings field."
+          ]
+        },
+        {
+          "workflow": "nav.archive",
+          "expectedIndices": [
+            2
+          ],
+          "variantsByExpectedIndex": {
+            "2": [
+              "desktop-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 64
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 65
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 66
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 67
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 143
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 145
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 146
+            }
+          ],
+          "sourceSha256": "b2c9169e350e94cdb73078e0945103b730068c0a1a6a52632df55da2cb490b6a",
+          "evidence": [
+            "output/readiness-day-20261015/pr770-review/browser-settings-race.json"
+          ],
+          "limits": [
+            "The frozen baseline wording is retained as previous; this qualified candidate includes reviewed PR770.",
+            "Synthetic current/native workspace setup; no real user data or runtime shutdown."
+          ]
+        },
+        {
+          "workflow": "nav.archive",
+          "expectedIndices": [
+            3
+          ],
+          "variantsByExpectedIndex": {
+            "3": [
+              "desktop-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 89
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 91
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 92
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 93
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 112
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 113
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 114
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 115
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 116
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 130
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 131
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 132
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 133
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 134
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 163
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 169
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 170
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 171
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 172
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 173
+            },
+            {
+              "path": "frontend/tests/archive-feedback-browser.mjs",
+              "line": 174
+            }
+          ],
+          "sourceSha256": "b2c9169e350e94cdb73078e0945103b730068c0a1a6a52632df55da2cb490b6a",
+          "evidence": [
+            "output/readiness-day-20261015/pr770-review/browser-settings-race.json"
+          ],
+          "limits": [
+            "The frozen baseline wording is retained as previous; this qualified candidate includes reviewed PR770.",
+            "Synthetic current/native workspace setup; no real user data or runtime shutdown."
+          ]
+        }
+      ],
+      "expectedResultChanges": [
+        {
+          "workflow": "nav.archive",
+          "expectedIndex": 2,
+          "previous": "Frozen baseline raw archive keeps current selection",
+          "current": "Raw archive keeps the current view; confirmed interactive archive leaves only the current chat surface without selecting another chat."
+        },
+        {
+          "workflow": "nav.archive",
+          "expectedIndex": 3,
+          "previous": "Draft770 navigation is not assumed delivered",
+          "current": "Delivered archive navigation respects newer navigation intent and preserves unsaved Canvas and Settings edits."
+        }
+      ]
+    },
+    {
+      "id": "delta.781",
+      "sourceCommit": "45a9b5e8d",
+      "reason": "Merged main adds durable queued-check controls after frozen inventory; explicit new ordinary path is accounted without relabeling the original baseline.",
+      "workflowsAdded": [
+        {
+          "id": "workspace.queued-check",
+          "family": "workspace",
+          "title": "Queue an isolated check and inspect its retained result",
+          "priority": "P1",
+          "scope": "standard-path",
+          "entryPath": [
+            "Current workspace breadcrumb",
+            "Details",
+            "Managed resources",
+            "Test environments"
+          ],
+          "prerequisites": [
+            "Synthetic owned workspace and local controlled environment adapter",
+            "A retained chat and private composer draft",
+            "Explicit capacity-full and admitted adapter states",
+            "No host/shared environment or external provider"
+          ],
+          "steps": [
+            "Open ordinary workspace Details and Managed resources",
+            "Enter check command and Queue while capacity is full",
+            "Reload, inspect waiting status, then Cancel check",
+            "Submit again and allow the exact owned check to complete and retain cleanup evidence",
+            "Open Check details and Read check result; use Next output page",
+            "Inspect recorded failed and unknown outcomes, reload and Refresh without execution replay"
+          ],
+          "expectedResults": [
+            "Queueing at full capacity saves the exact intent without starting an environment; unrelated work remains available.",
+            "Waiting intent survives browser reload; cancelling before admission starts no backend command.",
+            "An admitted check executes once, preserves its result and retires only its owned environment.",
+            "Check details and explicit bounded output paging expose the recorded owner/result without new execution.",
+            "Failed and unknown outcomes remain truthful after reopening and Refresh, without an automatic repeat command.",
+            "Named controls remain usable at desktop and narrow widths while selected chat, private draft, workspace bytes and model-runtime effects remain unchanged."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-pointer"
+          ],
+          "stateMatrix": [
+            "initial",
+            "queued",
+            "admitted",
+            "passed",
+            "cancelled-before-admission",
+            "failed",
+            "unknown",
+            "return-or-reopen"
+          ],
+          "sourceRefs": [
+            {
+              "path": "frontend/src/workspace-test-environments.jsx",
+              "line": 52,
+              "symbol": "TaskEnvironments"
+            },
+            {
+              "path": "amplifier_web/test_queue.py",
+              "line": 163,
+              "symbol": "TestQueue"
+            }
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/test-environments-browser.mjs",
+              "relation": "existing queue success/cancel and environment mutation assertions; pending combined-source qualification"
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "relation": "new exact public path/paging/failure/reload assertions; pending qualification"
+            },
+            {
+              "path": "tests/test_test_queue.py",
+              "relation": "backend authority/restart controls, not browser evidence"
+            }
+          ],
+          "performance": {
+            "current": null,
+            "desiredProfile": "standard-interaction",
+            "measurementStatus": "not_measured"
+          },
+          "browserStatus": "passed-in-named-context",
+          "evidence": [
+            "output/readiness-day-20261015/final-queue-qualification/evidence/queue-last/results.json"
+          ],
+          "limits": [
+            "Controlled backend does not establish physical Docker/Incus acceptance.",
+            "Browser reload is not host restart; admitted cancellation, interruption, revocation and host-restart no-replay require separate canonical Python evidence.",
+            "Keyboard activation is a named witness, not exhaustive sequential Tab coverage."
+          ]
+        }
+      ],
+      "evidenceContext": "synthetic controlled local backend; actual service actions/journal/HTTP/browser; no provider or physical container",
+      "qualificationStatus": "passed-in-named-context",
+      "claims": [
+        {
+          "workflow": "workspace.queued-check",
+          "expectedIndices": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "variantsByExpectedIndex": {
+            "0": [
+              "desktop-keyboard"
+            ],
+            "1": [
+              "desktop-pointer"
+            ],
+            "2": [
+              "desktop-pointer"
+            ],
+            "3": [
+              "desktop-pointer",
+              "narrow-keyboard"
+            ],
+            "4": [
+              "narrow-pointer"
+            ],
+            "5": [
+              "desktop-pointer",
+              "narrow-pointer"
+            ]
+          },
+          "assertions": [
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 22
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 23
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 26
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 29
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 30
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 31
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 34
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 35
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 37
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 39
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 40
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 41
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 44
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 45
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 46
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 47
+            },
+            {
+              "path": "frontend/tests/standard-ux-queued-checks-browser.mjs",
+              "line": 50
+            }
+          ],
+          "sourceSha256": "3216406530c60eef67622701cc0a7f7ef92d339cfbbfb605fe120b22e1defab4",
+          "evidence": [
+            "output/readiness-day-20261015/final-queue-qualification/evidence/queue-last/results.json",
+            "output/readiness-day-20261015/final-queue-qualification/evidence/queue-last/artifacts/observations.json"
+          ],
+          "limits": [
+            "Controlled backend does not establish physical Docker/Incus acceptance.",
+            "Browser reload is not host restart; admitted cancellation, interruption, revocation and host-restart no-replay require separate canonical Python evidence.",
+            "Keyboard activation is a named witness, not exhaustive sequential Tab coverage."
+          ]
+        }
+      ],
+      "introducedBy": "174c3f06c1f898e413c4fb2bf5645496239d0046",
+      "build": {
+        "version": "0.20.165",
+        "id": "5f136e8e69c99e41"
+      },
+      "qualification": "docs/validation/queued-check-qualification-20261015.json",
+      "sourceHashes": {
+        "frontend/tests/standard-ux-queued-checks-browser.mjs": "3216406530c60eef67622701cc0a7f7ef92d339cfbbfb605fe120b22e1defab4",
+        "tests/fixtures/test_environments_ui_server.py": "f9f87421437eba772e1a2b7ba1c20b304ce6e5604071b8a63f1bdfb505125ae5"
+      }
+    },
+    {
+      "id": "delta.294-review",
+      "sourceCommit": "9a32727ae86a60867cedb5d23f35a3f6b3cd09c8",
+      "reason": "Add explicit owner-bound feedback change comparison; original replacement remains unresolved. Earlier later-file attachment delivery is retained, not counted as new.",
+      "workflowsAdded": [
+        {
+          "id": "support.review-changes",
+          "family": "support",
+          "title": "Review proposed feedback changes before explicit correction or GitHub handoff",
+          "scope": "standard-path",
+          "entryPath": [
+            "App options",
+            "Send feedback",
+            "Submitted report",
+            "Refresh report",
+            "Draft a correction"
+          ],
+          "prerequisites": [
+            "Synthetic owner-verified submitted report; intercepted GitHub API",
+            "Independent attached clients and a simulated maintainer edit"
+          ],
+          "steps": [
+            "Save a proposed title/description and reload",
+            "Review changes against original, earlier read, latest report and proposal",
+            "Inspect changed-report notice and canonical Open on GitHub destination",
+            "Confirm correction explicitly, publish once and retry same request",
+            "Verify original maintainer text and unrelated draft remain unchanged",
+            "Use separate existing file review for any later attachments"
+          ],
+          "expectedResults": [
+            "No write during draft or review; review is private to its canonical client.",
+            "Changed proposed text requires fresh review and confirmation.",
+            "A correction is a comment, never original title/body replacement.",
+            "Failed/unknown receipt survives restart; same request never repeats a write.",
+            "New files retain separate manifest and visibility consent."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout"
+          ],
+          "sourceRefs": [
+            {
+              "path": "frontend/src/feedback-edits.jsx",
+              "line": 1
+            },
+            {
+              "path": "amplifier_web/feedback_edits.py",
+              "line": 1
+            }
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/feedback-followup-browser.mjs",
+              "relation": "real HTTP/SSE comparison and correction, intercepted GitHub"
+            },
+            {
+              "path": "tests/test_feedback_edits.py",
+              "relation": "scope, exact intent, conflict, restart and no-replay"
+            },
+            {
+              "path": "frontend/tests/feedback-edits.test.mjs",
+              "relation": "confirmation and durable-intent acknowledgement fences"
+            }
+          ],
+          "limits": [
+            "Does not complete issue294 protected original replacement.",
+            "No live GitHub write or native device claim.",
+            "Separate attachment review remains covered by existing attachment tests."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/feedback-review294-20261016.json"
+    },
+    {
+      "id": "delta.172-peer-reactions-metrics",
+      "reason": "User-approved peer exchanges, assistant reactions and independent metrics add ordinary controls after the frozen inventory.",
+      "workflowsAdded": [
+        {
+          "id": "chat.peer-exchange",
+          "family": "chat",
+          "title": "Expand and copy a compact incoming peer message",
+          "scope": "standard-path",
+          "entryPath": [
+            "Conversation"
+          ],
+          "prerequisites": [
+            "Synthetic canonical host events in the owned DTU; real browser client"
+          ],
+          "steps": [
+            "Open a chat with incoming peer messages",
+            "Expand with keyboard or pointer",
+            "Read full long text only on request",
+            "Copy exact Markdown",
+            "Follow a saved message reference",
+            "Reload at narrow width and 200% zoom"
+          ],
+          "expectedResults": [
+            "Collapsed messages mount no body or full-text request.",
+            "Trusted attribution remains visible; unverified peer text stays neutral.",
+            "Exact Unicode/Markdown copy, focused reveal and preserved unrelated drafts."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "keyboard",
+            "narrow-layout"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/peer-attribution-browser.mjs",
+              "relation": "registered extended browser owner; real HTTP and built client"
+            }
+          ],
+          "limits": [
+            "No paid provider or physical native clipboard/device acceptance.",
+            "Synthetic timing is a regression baseline, not a populated production performance claim."
+          ]
+        },
+        {
+          "id": "chat.assistant-reaction",
+          "family": "chat",
+          "title": "Distinguish assistant acknowledgement from personal reactions",
+          "scope": "standard-path",
+          "entryPath": [
+            "Conversation"
+          ],
+          "prerequisites": [
+            "Synthetic canonical host events in the owned DTU; real browser client"
+          ],
+          "steps": [
+            "Assistant reacts to a human message",
+            "User adds the same emoji",
+            "Remove only the user reaction",
+            "Reload and repeat an identical assistant request"
+          ],
+          "expectedResults": [
+            "Amplifier attribution is visible outside hover controls.",
+            "Independent channels persist; retries do not duplicate state or start runtime work.",
+            "Nonhuman targets and caller-supplied actor identities are rejected."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "keyboard",
+            "narrow-layout"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/peer-attribution-browser.mjs",
+              "relation": "registered extended browser owner; real HTTP and built client"
+            }
+          ],
+          "limits": [
+            "No paid provider or physical native clipboard/device acceptance.",
+            "Synthetic timing is a regression baseline, not a populated production performance claim."
+          ]
+        },
+        {
+          "id": "settings.execution-metrics",
+          "family": "settings",
+          "title": "Select independent execution scopes and export metrics",
+          "scope": "standard-path",
+          "entryPath": [
+            "Settings"
+          ],
+          "prerequisites": [
+            "Synthetic canonical host events in the owned DTU; real browser client"
+          ],
+          "steps": [
+            "Appearance: open Execution metrics",
+            "Choose step, Work and conversation visibility independently",
+            "Choose individual metrics and reload",
+            "Enable optional status and explicitly read usage",
+            "Copy and download selected values",
+            "Switch chat while a read is pending"
+          ],
+          "expectedResults": [
+            "Choices persist through canonical actions.",
+            "Hidden/optional status performs no eager usage read or polling.",
+            "Export contains selected canonical measurements, timestamp and coverage; unknown values stay unknown.",
+            "Old chat results do not appear in a newly selected chat."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "keyboard",
+            "narrow-layout"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/execution-observability-browser.mjs",
+              "relation": "registered extended browser owner; real HTTP and built client"
+            }
+          ],
+          "limits": [
+            "No paid provider or physical native clipboard/device acceptance.",
+            "Synthetic timing is a regression baseline, not a populated production performance claim."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/release172-qualification.md"
+    },
+    {
+      "id": "delta.860",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/860",
+      "reason": "Adaptive Home adds a standard arrival/browse surface; retain the frozen inventory and add one focused regression owner.",
+      "workflowsAdded": [
+        {
+          "id": "home.adaptive-work",
+          "family": "navigation",
+          "title": "Arrive at Home and retain work across views, scopes and chats",
+          "scope": "standard-path",
+          "entryPath": [
+            "Fresh browser",
+            "Home breadcrumb"
+          ],
+          "prerequisites": [
+            "Production built client and empty-host fixture with synthetic runtime in an owned DTU",
+            "Private browser contexts and disposable project folders; no live account or user history"
+          ],
+          "steps": [
+            "Open a fresh client at Home and switch to Studio",
+            "Choose a project, type search and immediately start a chat",
+            "Hold the real Home query worker; open the project and start a project chat while results are pending",
+            "Hold a project draft command, change its registered path, then require refusal without draft loss or new work",
+            "Return Home and open a saved chat with a private draft and Canvas output",
+            "Reload that chat; open an independent fresh client",
+            "Pin Chats to each project, attempt another requested scope, and pin an unavailable project",
+            "At phone width open Browse, choose the pinned chat, interact with its retained Canvas and return Home"
+          ],
+          "expectedResults": [
+            "Home choices and pending search persist; project creation uses its confirmed folder.",
+            "Project controls use current context independently of pending rows; creation revalidates registration ID and path at acceptance.",
+            "A resumed client retains chat/draft/Canvas; an independent client starts at Home.",
+            "Effective pinned scope settles and controls agree; missing pinned projects cannot widen or create elsewhere.",
+            "Phone drawer cleanup leaves Canvas interactive and retains the private draft.",
+            "The fixture and browser retire cleanly; failures retain a report and screenshot."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "fresh-client",
+            "resumed-client",
+            "pinned-project",
+            "unavailable-project"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/adaptive-work-browser.mjs",
+              "relation": "Extended browser checks owner; focused local smoke on affected Home/navigation changes"
+            },
+            {
+              "path": "tests/test_adaptive_work.py",
+              "relation": "Scope, cache identity, bounded query, client state and no-hydration contracts"
+            },
+            {
+              "path": "frontend/tests/adaptive-work.test.mjs",
+              "relation": "Current-page identity, view preferences and retained navigation choices"
+            }
+          ],
+          "limits": [
+            "Synthetic runtime proves host/browser interaction, not live-provider performance or real-history scale.",
+            "This additive smoke does not make the unrelated existing browser census a release gate."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md#adaptive-home-october-19"
+    },
+    {
+      "id": "delta.914",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/914",
+      "reason": "Busy assignment calls wait automatically; global Advanced settings control waiting without per-workspace setup.",
+      "workflowsAdded": [
+        {
+          "id": "settings.model-capacity",
+          "family": "settings",
+          "title": "Set global model waiting limits and recover an uncertain save",
+          "scope": "advanced-path",
+          "entryPath": [
+            "Settings",
+            "Advanced",
+            "Performance & runtime",
+            "Model capacity"
+          ],
+          "prerequisites": [
+            "Production built client and AppService in an owned disposable host",
+            "Synthetic runtime; no paid provider calls or live settings changes"
+          ],
+          "steps": [
+            "Save finite waiting limits",
+            "Change the same policy from another client and attempt a stale save",
+            "Keep private edits until explicitly discarding them for the newer saved values",
+            "Save unlimited waiting, lose the response after commit, and reopen",
+            "Check the same save and inspect its original command receipt",
+            "Cancel closing with an unsaved draft on a narrow layout",
+            "Discard the draft and verify saved values on cold reopen"
+          ],
+          "expectedResults": [
+            "Settings apply to all current and new workspaces on this host.",
+            "A stale save cannot overwrite newer settings; private edits survive.",
+            "Checking a lost save reuses its exact command identity and contents and produces no second mutation.",
+            "Changing waiting policy starts or stops no worker and preserves selection.",
+            "Desktop and narrow layouts remain usable and saved values survive reopening."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "two-clients",
+            "lost-response",
+            "cold-reopen"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/model-capacity-settings-browser.mjs",
+              "relation": "Registered browser owner using the production service and built UI"
+            },
+            {
+              "path": "tests/test_model_admission_wait.py",
+              "relation": "Capacity waits, cancellation, identity, settings, and spending boundaries"
+            },
+            {
+              "path": "frontend/tests/model-capacity-settings.test.mjs",
+              "relation": "Settings state, command retry, stale edits, and waiting presentation"
+            }
+          ],
+          "limits": [
+            "Synthetic runtime qualification is not live-provider or throughput evidence.",
+            "Waiting policy does not raise spending or assignment concurrency limits."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md#model-capacity-waiting-settings--october-20"
+    },
+    {
+      "id": "delta.907",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/907",
+      "reason": "Global test capacity adds one Settings route and an additive scheduled browser owner; preserve the frozen inventory and original scenarios.",
+      "workflowsAdded": [
+        {
+          "id": "settings.testing-capacity",
+          "family": "settings",
+          "title": "Adjust global isolated-test limits without cancelling waiting work",
+          "scope": "standard-path",
+          "entryPath": [
+            "Settings",
+            "Testing & resources"
+          ],
+          "prerequisites": [
+            "Built client and isolated settings fixture with synthetic state; no production runner or account",
+            "Private browser context and owned fixture process"
+          ],
+          "steps": [
+            "Open Testing & resources without an enabled runner",
+            "Edit global limits including zero and save",
+            "Lose a successful save acknowledgement and reconcile through readback",
+            "Race a second settings writer and retain rejected edits",
+            "Use dirty-close controls at narrow width and cold reopen"
+          ],
+          "expectedResults": [
+            "Global defaults remain available without a runner and persist on reopen.",
+            "Zero is preserved as an explicit disabled ceiling.",
+            "An unknown save response is reconciled without replaying the mutation.",
+            "A stale writer cannot overwrite newer settings or lose its draft.",
+            "Narrow controls remain usable and dirty-close preserves edits."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "cold-reopen",
+            "lost-acknowledgement",
+            "stale-writer"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/testing-settings-browser.mjs",
+              "relation": "Registered Extended browser checks owner; affected-flow local smoke"
+            },
+            {
+              "path": "tests/test_test_capacity_settings.py",
+              "relation": "Global authority, queue wake, mutable policy and immutable cleanup identity"
+            }
+          ],
+          "limits": [
+            "Synthetic browser/backend evidence does not establish native runner or production acceptance.",
+            "The original frozen inventory is unchanged; no unrelated full census is a merge gate."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md#global-test-capacity-october-20"
+    },
+    {
+      "id": "delta.911",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/911",
+      "reason": "Extend the existing testing-settings browser owner to account-shared native machine budgets; no new scenario or frozen inventory rewrite.",
+      "workflowsAdded": [
+        {
+          "id": "settings.machine-test-resources",
+          "family": "settings",
+          "title": "Inspect and adjust shared native-machine test budgets",
+          "scope": "standard-path",
+          "entryPath": [
+            "Settings",
+            "Testing & resources",
+            "This machine\u2019s test resources"
+          ],
+          "prerequisites": [
+            "Isolated synthetic machine authority; no production machine policy or runner effects"
+          ],
+          "steps": [
+            "Inspect effective limits, observed resources and reservations",
+            "Change a machine budget and zero headroom control",
+            "Lose save acknowledgement and reconcile exact readback without replay",
+            "Race another installation writer and preserve stale edits",
+            "Save dependency-build limit at narrow width"
+          ],
+          "expectedResults": [
+            "Scope explicitly describes one native machine OS account and unsupported remote authorities.",
+            "Current effective automatic/saved values and reservations are visible.",
+            "Lost acknowledgement produces one mutation and confirmed readback.",
+            "Stale machine edits cannot overwrite another writer.",
+            "Controls remain usable at narrow width."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "lost-acknowledgement",
+            "stale-writer"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/testing-settings-browser.mjs",
+              "relation": "Existing registered Extended browser owner expanded with exact machine budget assertions"
+            },
+            {
+              "path": "tests/test_test_host_resources.py",
+              "relation": "Shared authority, contention, target identity, request freezing and owner lifecycle"
+            }
+          ],
+          "limits": [
+            "No physical-container, remote-controller or native-Windows shared-authority qualification claimed."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md#shared-machine-test-resources-october-20"
+    },
+    {
+      "id": "delta.908",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/908",
+      "reason": "An authorized manager can add an existing chat; retain the frozen inventory and add the new browser owner.",
+      "workflowsAdded": [
+        {
+          "id": "workspace.assignment-adoption",
+          "family": "workspace",
+          "title": "Add an existing chat to shared work without losing drafts or repeating requests",
+          "scope": "standard-path",
+          "entryPath": [
+            "Chat overview",
+            "Tasks and workers",
+            "Shared tasks and assignment",
+            "Add an existing chat"
+          ],
+          "prerequisites": [
+            "Built production client and isolated production-service fixture with synthetic runtime",
+            "Existing manager assignment and independent stopped chat"
+          ],
+          "steps": [
+            "Keep an unsent manager draft and open the existing-chat picker",
+            "Change the target Stop revision before Add chat; refresh the rejected review",
+            "Drop the acknowledgement after a committed adoption, then check the same change",
+            "Reload and inspect at desktop and phone widths"
+          ],
+          "expectedResults": [
+            "Stale review cannot add the chat and refresh is available",
+            "Unknown response retries the same request identity and binds exactly one member",
+            "No conversation input, Stop clear, history edit, navigation or draft loss occurs",
+            "The confirmed assignment survives reload with no horizontal overflow"
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "stale-review",
+            "lost-acknowledgement",
+            "cold-reopen"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/assignment-adoption-browser.mjs",
+              "relation": "Extended browser checks owner and focused affected-flow smoke"
+            },
+            {
+              "path": "tests/test_assignment_adoption.py",
+              "relation": "Authority, Stop, ownership, native settlement, concurrency and restart contracts"
+            }
+          ],
+          "limits": [
+            "Synthetic runtime proves service/browser interaction, not paid-provider execution or installed-host adoption.",
+            "Adding a chat does not itself continue work or change its execution folder."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md#existing-chat-adoption-october-20"
+    },
+    {
+      "id": "delta.916",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/916",
+      "reason": "Extend the existing testing-settings browser owner with global future-job queue and profile execution limits; preserve the frozen inventory.",
+      "workflowsAdded": [
+        {
+          "id": "settings.test-execution-limits",
+          "family": "settings",
+          "title": "Adjust global queue and test profile execution limits",
+          "scope": "standard-path",
+          "entryPath": [
+            "Settings",
+            "Testing & resources",
+            "Test execution limits"
+          ],
+          "prerequisites": [
+            "Private settings fixture with synthetic runtime and machine authority; no production policy writes"
+          ],
+          "steps": [
+            "Set queue depth and zero queue waiting expiry",
+            "Set per-profile CPU and default/maximum check durations",
+            "Reconcile a lost save acknowledgement without replay",
+            "Race a newer settings writer and preserve the dirty form",
+            "At narrow width, close Settings and keep unsaved execution edits",
+            "Save and reopen the settings"
+          ],
+          "expectedResults": [
+            "Global future-job scope and Docker-only temporary/shared-memory limits are explicit.",
+            "Zero means waiting until Stop or cancellation.",
+            "Effective profile values and saved overrides are visible.",
+            "Unknown acknowledgement causes one mutation and exact readback.",
+            "Stale edits cannot overwrite a newer revision.",
+            "Dirty-close names the execution settings and preserves the edited values.",
+            "Narrow layouts and cold reopen remain usable."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "cold-reopen",
+            "lost-acknowledgement",
+            "stale-writer",
+            "dirty-close"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/testing-settings-browser.mjs",
+              "relation": "Existing registered Extended browser owner; no added broad publication gate"
+            },
+            {
+              "path": "tests/test_test_execution_settings.py",
+              "relation": "Global authority, full queue counts, pagination, accepted policy freezing, historical defaults and validation"
+            },
+            {
+              "path": "tests/test_durable_test_queue.py",
+              "relation": "Restart and cancellation preserve exact admitted resource and timing policy"
+            },
+            {
+              "path": "tests/test_environment_preparation.py",
+              "relation": "Saved preparation budget spans waiting/building without changing recipe identity"
+            }
+          ],
+          "limits": [
+            "Browser/runtime fixtures do not establish production deployment or physical runner qualification.",
+            "No automatic retention deletion or Incus temporary/shared-memory mount enforcement is introduced."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md#test-execution-limits-october-20"
+    },
+    {
+      "id": "delta.922",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/922",
+      "reason": "Extend the registered Testing settings owner with approved remote machine setup and target budgets; preserve the frozen inventory.",
+      "workflowsAdded": [
+        {
+          "id": "settings.registered-test-machines",
+          "family": "settings",
+          "title": "Connect and adjust an approved test machine",
+          "scope": "standard-path",
+          "entryPath": [
+            "Settings",
+            "Testing & resources",
+            "Other test machines"
+          ],
+          "prerequisites": [
+            "Actual private AppService and built client with bounded remote protocol fixture",
+            "No live machine policy changes or daemon setup"
+          ],
+          "steps": [
+            "Enter a named SSH machine and preserve its draft when closing Settings",
+            "Reconcile a lost registration acknowledgement with one write and exact readback",
+            "Edit target environment limits, including zero",
+            "Preserve a dirty target limit across close and a stale revision",
+            "Reconcile a lost target-limit save acknowledgement without replay",
+            "Pause new checks, refresh the controller, and reopen the page"
+          ],
+          "expectedResults": [
+            "Setup prerequisites and global same-account scope are explicit.",
+            "Source, budget and cleanup identities stay bound to their original owner.",
+            "Unknown acknowledgements do not cause duplicate writes.",
+            "Stale revisions preserve the edited draft and cannot overwrite newer values.",
+            "Dirty-close names the target settings and preserves their contents.",
+            "Controller refresh preserves the paused state.",
+            "Narrow layout and cold reopen retain the saved target and limits."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "cold-reopen",
+            "lost-acknowledgement",
+            "stale-writer",
+            "dirty-close"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/testing-settings-browser.mjs",
+              "relation": "Existing registered Extended browser owner and mounted affected-flow checks"
+            },
+            {
+              "path": "tests/test_registered_test_runners.py",
+              "relation": "Target ownership, immutable requests, registration and dispatch contracts"
+            },
+            {
+              "path": "tests/test_registered_test_runner_queue.py",
+              "relation": "Pause race, cancellation, retained unknown cleanup and observation backoff"
+            },
+            {
+              "path": "tests/test_registered_test_runner_recovery.py",
+              "relation": "Archive containment, lost replies, cleanup continuation and retained controller refresh"
+            }
+          ],
+          "limits": [
+            "Browser transport fixtures are not deployment evidence.",
+            "Live qualification covers existing native Linux Incus targets and a managed Linux origin.",
+            "Standalone Windows/macOS origin setup and remote daemon provisioning remain separate work."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md#registered-test-machines-october-20"
+    },
+    {
+      "id": "delta.925",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/925",
+      "reason": "Extend the existing execution-settings workflow with an adjustable per-chat pending limit and explicit serial ownership; reuse the registered browser owner.",
+      "workflowsAdded": [
+        {
+          "id": "settings.per-chat-test-queue",
+          "family": "settings",
+          "title": "Queue several checks from one chat without overlapping environments",
+          "scope": "advanced-path",
+          "entryPath": [
+            "Settings",
+            "Testing & resources",
+            "Advanced execution limits"
+          ],
+          "prerequisites": [
+            "Private production AppService fixture and built client; no production policy changes"
+          ],
+          "steps": [
+            "Set Maximum pending checks per chat above the default of 1",
+            "Lose the successful save acknowledgement and reconcile its exact saved values",
+            "Race a newer writer and preserve the rejected draft",
+            "Discard edits and inspect the winning value",
+            "Reopen at narrow width"
+          ],
+          "expectedResults": [
+            "The per-chat limit is global and defaults to 1.",
+            "The same chat runs one environment at a time; later checks wait for confirmed cleanup.",
+            "A lost acknowledgement does not repeat the mutation.",
+            "Stale writers cannot overwrite newer settings or lose their edits.",
+            "Desktop and narrow controls remain usable and the saved limit survives reopening."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "cold-reopen",
+            "lost-acknowledgement",
+            "stale-writer"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/testing-settings-browser.mjs",
+              "relation": "Existing registered browser owner extended with per-chat field assertions"
+            },
+            {
+              "path": "tests/test_per_chat_test_queue.py",
+              "relation": "Real submissions, local/remote serialization, full counts, restart, cancellation and retained unknown ownership"
+            }
+          ],
+          "limits": [
+            "Controlled backend effects do not qualify a live physical runner or deployment.",
+            "Root allocation and retained-storage safety bounds are unchanged."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md#per-chat-test-queue-october-20"
+    },
+    {
+      "id": "delta.960",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/960",
+      "reason": "Add a global consumer cleanup policy with explicit protected data and recoverable mutations; original frozen inventory is unchanged.",
+      "workflowsAdded": [
+        {
+          "id": "settings.automatic-storage-cleanup",
+          "family": "settings",
+          "title": "Review and clean unused component copies safely",
+          "scope": "standard-path",
+          "entryPath": [
+            "Settings",
+            "Privacy & files",
+            "Storage",
+            "Automatic cleanup"
+          ],
+          "prerequisites": [
+            "Private production AppService fixture and built client",
+            "Synthetic qualified installed graph; actual disposable files; no provider or production effects"
+          ],
+          "steps": [
+            "Save global retention and size settings",
+            "Reject a stale writer while retaining its private draft",
+            "Lose a save acknowledgement, reopen and check the same request",
+            "Preview eligible and protected copies without removal",
+            "Lose a cleanup acknowledgement, reopen and reobserve the same receipt",
+            "Inspect preserved work and narrow-layout draft protection"
+          ],
+          "expectedResults": [
+            "Saved global policy applies to all workspaces and defaults to enabled, 7 days and 10 GiB.",
+            "Stale revisions cannot overwrite current settings; drafts are retained.",
+            "Lost replies reconcile the same durable request without repeating effects.",
+            "Preview is read-only and labels bounded logical-byte accounting.",
+            "Canonical removal deletes only the proven unused fixture generation while preserving project work, source archives and results.",
+            "No worker starts or stops occur and desktop/narrow controls remain usable."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "cold-reopen",
+            "lost-acknowledgement",
+            "stale-writer",
+            "dirty-close"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/storage-cleanup-settings-browser.mjs",
+              "relation": "Registered production client/service browser owner with actual disposable-file retirement"
+            },
+            {
+              "path": "tests/test_storage_cleanup.py",
+              "relation": "Canonical retirement, late references, exact retries, bounded accounting and uncertainty retention"
+            },
+            {
+              "path": "tests/test_storage_cleanup_runner.py",
+              "relation": "Git work preservation and policy/process races at installation removal locks"
+            }
+          ],
+          "limits": [
+            "Logical file content is not physical reclaimed disk space.",
+            "Batch measurement is bounded; the size target is not a global disk quota.",
+            "Selected and unknown engine generations, shared stores and saved source/result archives are preserved.",
+            "Synthetic installed metadata does not qualify a production runtime or deployment."
+          ]
+        }
+      ],
+      "qualification": "docs/STORAGE.md#automatic-cleanup-of-unused-code"
+    },
+    {
+      "id": "delta.954",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/954",
+      "reason": "Shared landing layouts add a standard browsing journey; the frozen inventory remains unchanged.",
+      "workflowsAdded": [
+        {
+          "id": "navigation.shared-work-landings",
+          "family": "navigation",
+          "title": "Browse Home, chats and workspaces with shared layouts",
+          "scope": "standard-path",
+          "entryPath": [
+            "Sidebar Home / Search chats / All workspaces",
+            "Workspace Chats"
+          ],
+          "prerequisites": [
+            "Production bundled client and canonical service with disposable synthetic chat history",
+            "No live provider, user history or production effects"
+          ],
+          "steps": [
+            "Find Home from the sidebar and header",
+            "Switch Focus, Brief and Studio while keeping filters visible",
+            "Browse and return to later-page Focus items",
+            "Select Pick up again in All chats and a workspace; navigate away, return and reload",
+            "Keep search when clearing a status filter",
+            "Open workspace Files, Details and Workspace work",
+            "Use narrow, enlarged-text, keyboard and forced-color layouts"
+          ],
+          "expectedResults": [
+            "Both direct and nested status updates accept Pick up again and return only quiet read chats.",
+            "Status filters and layouts survive navigation and reload; clearing status preserves search.",
+            "Focus position remains bounded and survives returning from a later catalog page.",
+            "Existing chat/workspace actions, folder browsing and workspace tools remain accessible.",
+            "Fresh views start Home; refresh and direct chat links retain their destination.",
+            "Browsing neither starts runtimes nor sends model requests."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "tablet",
+            "enlarged-text",
+            "desktop-keyboard",
+            "forced-colors",
+            "reload",
+            "direct-chat-link"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/shared-landing-browser.mjs",
+              "relation": "Registered extended browser owner for the production client/catalog journey, including both Pick up again paths and retention"
+            },
+            {
+              "path": "tests/test_chat_navigation.py",
+              "relation": "Direct/nested canonical status validation, scoped activity filtering and unchanged attention"
+            },
+            {
+              "path": "tests/test_browser_check_runner.py",
+              "relation": "Maintained scenario registration and environment oracle"
+            }
+          ],
+          "limits": [
+            "Synthetic functional qualification; designer review with live data remains separate.",
+            "No live-provider or latency claims."
+          ]
+        }
+      ],
+      "qualification": "docs/ux/decisions/20261020-landing-pages.md"
+    },
+    {
+      "id": "delta.972",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/972",
+      "reason": "Saved tool detail inspection gains an explicit extended-browser owner; the frozen standard inventory remains unchanged.",
+      "workflowsAdded": [
+        {
+          "id": "conversation.saved-tool-details",
+          "family": "conversation",
+          "title": "Inspect saved tool and delegate details",
+          "scope": "standard-path",
+          "entryPath": [
+            "Conversation",
+            "Work steps"
+          ],
+          "prerequisites": [
+            "Production bundled client with synthetic saved root and child events",
+            "No live provider or user history"
+          ],
+          "steps": [
+            "Read a collapsed command and failure hint without loading payloads",
+            "Expand older saved details, recover from a temporary read failure and request the next bounded page",
+            "Expand delegate request/response and child code/error details",
+            "Inspect legacy records without assuming their attempt identity",
+            "Use the same details at narrow width"
+          ],
+          "expectedResults": [
+            "Collapsed hints do not fetch full fields.",
+            "Retry and explicit older paging recover exact retained content.",
+            "Delegate and child details stay in their admitted session scope.",
+            "Legacy observations remain separate and explicitly unverified.",
+            "Inspection changes no runtime counts or saved source bytes; the narrow view fits."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "temporary-read-failure",
+            "older-record-page"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/tool-details-browser.mjs",
+              "relation": "Registered extended owner for bounded saved details, child/delegate content and unverified legacy observations"
+            },
+            {
+              "path": "tests/test_tool_payload_windows.py",
+              "relation": "Owner, scope, lifetime and bounded continuation controls"
+            },
+            {
+              "path": "tests/test_event_field_stability.py",
+              "relation": "Unrelated append acceptance and exact-content/replacement refusal"
+            }
+          ],
+          "limits": [
+            "Synthetic functional qualification only; no live-history or performance claim."
+          ]
+        }
+      ],
+      "qualification": "docs/EXECUTION-INSPECTION.md"
+    },
+    {
+      "id": "delta.tool-previews",
+      "sourceCommit": "f0149345",
+      "reason": "Unfamiliar tool requests and long results gain a bounded, readable inspection path with an explicit extended-browser owner; the frozen inventory remains unchanged.",
+      "workflowsAdded": [
+        {
+          "id": "conversation.tool-previews",
+          "family": "conversation",
+          "title": "Skim unfamiliar tool requests and inspect long results",
+          "scope": "standard-path",
+          "entryPath": [
+            "Conversation",
+            "Work steps"
+          ],
+          "prerequisites": [
+            "Production bundled client with synthetic recorded tool events",
+            "No live provider or user history"
+          ],
+          "steps": [
+            "Skim single-key and structured requests, nested app actions and errors",
+            "Expand long input or results and switch between the preview and full text",
+            "Recover from an invalid saved-field page",
+            "Copy the original recorded JSON and reopen saved details",
+            "Read the same rows at phone width"
+          ],
+          "expectedResults": [
+            "Collapsed requests expose bounded arguments without fetching full fields.",
+            "Recognizable credential keys are masked in request previews; zero, false and null remain visible.",
+            "Complete JSON is formatted for reading while copy preserves the recorded text.",
+            "Incomplete results are labeled as previews and invalid paging offers retry.",
+            "Phone request previews fit in two lines; inspection starts no runtime work or history writes."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "long-input",
+            "malformed-detail-page",
+            "cold-reopen"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/tool-previews-browser.mjs",
+              "relation": "Registered extended owner for generic previews, readable results, retries and phone layout"
+            },
+            {
+              "path": "frontend/tests/detail-read.test.mjs",
+              "relation": "Timeout, cancellation, Unicode offsets and completion validation"
+            },
+            {
+              "path": "tests/test_tool_input_preview.py",
+              "relation": "Bounded host hints, credential-key masking and shared preview cases"
+            }
+          ],
+          "limits": [
+            "Synthetic functional qualification only; no live-history or latency claim.",
+            "The client does not reconstruct missing or unrecorded payloads."
+          ]
+        }
+      ],
+      "qualification": "docs/EXECUTION-INSPECTION.md"
+    },
+    {
+      "id": "delta.update-release-summary",
+      "sourceCommit": "6293d964e",
+      "reason": "Approved update summary is visible before, during and after installation; older guidance and Changelog remain expandable without changing the frozen inventory.",
+      "workflowsAdded": [
+        {
+          "id": "updates.release-summary",
+          "family": "updates",
+          "title": "Understand the exact release before, during and after an update",
+          "scope": "standard-path",
+          "entryPath": [
+            "Settings",
+            "Updates"
+          ],
+          "prerequisites": [
+            "Synthetic update transitions through the real HTTP/SSE owner; no installation or restart effects"
+          ],
+          "steps": [
+            "Read the offered release without expanding a disclosure",
+            "Discover a newer release while an earlier target is queued",
+            "Reload during restart and after app confirmation with a runner still pending",
+            "Read high-impact guidance separately and inspect a missing-notes fallback at phone width"
+          ],
+          "expectedResults": [
+            "Summary follows the actual update target, then the verified installed version.",
+            "Newer availability never relabels an in-flight target.",
+            "Ordinary summary visibility does not acknowledge high-impact notices.",
+            "Missing notes remain honest and never prevent existing update actions."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "reload",
+            "offline-notes"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/update-progress-browser.mjs",
+              "relation": "Existing registered owner now covers release-summary transitions, notice acknowledgment and phone layout"
+            },
+            {
+              "path": "frontend/tests/update-release-summary.test.mjs",
+              "relation": "Exact target, revision mismatch, feature preparation and stale confirmation cases"
+            }
+          ],
+          "limits": [
+            "Synthetic update presentation; actual updater installation and restart are unchanged."
+          ]
+        }
+      ],
+      "qualification": "docs/UPDATES.md"
+    },
+    {
+      "id": "delta.pin-rapid-reorder",
+      "sourceCommit": "b806bbc37eec1b9152be7472b73cfe3bde835c89",
+      "reason": "Consecutive pin gestures and saved-display recovery gain an additive browser owner; preserve the frozen inventory and original 65-scenario plan hash.",
+      "workflowsAdded": [
+        {
+          "id": "navigation.pin-rapid-reorder",
+          "family": "navigation",
+          "title": "Reorder different sidebar pins while an earlier move settles",
+          "scope": "standard-path",
+          "entryPath": [
+            "Sidebar",
+            "Pinned"
+          ],
+          "prerequisites": [
+            "Production bundled client with synthetic mixed session and workspace pins",
+            "Two fixture clients and controlled receipt/projection delivery; no live pins or model calls"
+          ],
+          "steps": [
+            "Move two different pins before the first response and authoritative readback",
+            "Repeat an adjacent sequence and compare both clients and reload",
+            "Hold a second drag across the first move's success or unknown result",
+            "Recover a saved-display error through Refresh pinned list without replay",
+            "Use keyboard reordering and the narrow drag target"
+          ],
+          "expectedResults": [
+            "Both admitted intents remain in the preview and execute once in order after exact predecessor settlement.",
+            "The complete canonical vector preserves hidden and cross-workspace IDs; final display, second client and reload agree.",
+            "A matching successful commit preserves the held gesture; rejection or unknown outcome cancels later unsent gestures.",
+            "One bounded read can recover cold display completion without reconnect, duplicate mutation or model startup.",
+            "Externally stale pages block new moves; keyboard and narrow controls remain usable."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-layout",
+            "delayed-receipt",
+            "delayed-projection",
+            "unknown-outcome",
+            "second-client",
+            "reload"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/pin-rapid-reorder-browser.mjs",
+              "relation": "Registered additive owner pin-rapid-reorder; evidence in output/browser-checks/pin-rapid-reorder"
+            },
+            {
+              "path": "frontend/tests/pin-order-settlement.test.mjs",
+              "relation": "Complete hidden-ID vector, scope, queue capacity, stale read, rejection and supersession boundaries"
+            },
+            {
+              "path": "tests/test_pinned_navigation.py",
+              "relation": "Canonical mixed identities, idempotence, revision conflict and safe authoritative read"
+            }
+          ],
+          "limits": [
+            "Synthetic source-host checks, not installed/native/live-user acceptance.",
+            "Historical old-race negative-control proof is retained separately; registration alone is not a current pass."
+          ]
+        }
+      ],
+      "qualification": "docs/navigation.md"
+    },
+    {
+      "id": "delta.approval-lifecycle",
+      "sourceCommit": "c275d53a0c67d320691a6c40704f21620b8c5043",
+      "reason": "Expired capability requests gain an additive maintained browser owner; preserve the frozen inventory, baseline hash and all existing scenario entries.",
+      "workflowsAdded": [
+        {
+          "id": "decisions.expired-request-review",
+          "family": "decisions",
+          "title": "Review and dismiss an obsolete configuration request without restarting work",
+          "scope": "standard-path",
+          "entryPath": [
+            "Chat",
+            "Previous permission requests"
+          ],
+          "prerequisites": [
+            "Authenticated production service and bundled client with synthetic saved old and current requests",
+            "Two clients, cold host records and a runtime that records any attempted startup or input; no live grants or provider calls"
+          ],
+          "steps": [
+            "Inspect the reason on a legacy pending request after Stop and open passive current-scope review",
+            "Dismiss only the old request with the keyboard while a newer request remains pending",
+            "Confirm history, second-client state, a late decision refusal and reload with the private draft intact",
+            "Change scope and expiry after review, then exercise the stale decision preflight",
+            "Read the narrow-layout reason, scroll to the hit-testable Dismiss control and complete the adjacent request"
+          ],
+          "expectedResults": [
+            "Stale requests have an evidenced reason and no Allow/Deny controls; unavailable scope remains unknown.",
+            "Scope review starts no worker, model, runtime control or input and does not grant, renew or request authority.",
+            "Exact dismissal retains history and notes, clears only that request's pending attention and leaves newer requests and active authority unchanged.",
+            "Late scope or expiry changes cannot be silently approved; a failed decision refreshes display without replay.",
+            "Both clients, reload and the adjacent cycle agree; private drafts remain intact and narrow controls are reachable."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-layout",
+            "late-decision",
+            "changed-scope",
+            "expired-request",
+            "second-client",
+            "reload"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/approval-lifecycle-browser.mjs",
+              "relation": "Registered additive owner approval-lifecycle; exact run report and screenshots under output/browser-checks/approval-lifecycle"
+            },
+            {
+              "path": "tests/test_capability_lifecycle.py",
+              "relation": "Canonical request/revision/hash, missing-record dismissal, live grant preservation, native Deny-once delivery and storage/await races"
+            },
+            {
+              "path": "frontend/tests/approval-layout-browser.mjs",
+              "relation": "Existing separate reading-column, keyboard visibility and light/dark/split/narrow layout owner"
+            }
+          ],
+          "limits": [
+            "Synthetic request records and runtime, not real-provider or live-user incident acceptance.",
+            "Registration is not a new passing check or a claim about the original UNKNOWN effect; current candidate qualification remains separate."
+          ]
+        }
+      ],
+      "qualification": "docs/workspaces/configuration-authority.md"
+    },
+    {
+      "id": "delta.1035",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/1035",
+      "reason": "Worker-free Next message choices gain an additive maintained browser owner; preserve the frozen inventory and original scenario commands and hash.",
+      "workflowsAdded": [
+        {
+          "id": "conversation.next-message-settings",
+          "family": "conversation",
+          "title": "Choose the next message's configuration before starting a dormant chat worker",
+          "scope": "standard-path",
+          "entryPath": [
+            "Conversation",
+            "Model and reasoning settings / Conversation bundle / Chat options"
+          ],
+          "prerequisites": [
+            "Built production client and isolated production-service fixture with saved history, cached catalogs and a saved artifact",
+            "Conversation runtime calls forbidden; controlled slow/failing catalog resolution and two fixture clients"
+          ],
+          "steps": [
+            "Read saved text and keep an unsent draft while preparation is displayed",
+            "Save bundle, provider, model and effort through visible controls and keyboard selection",
+            "Hold catalog resolution while renaming the chat and opening a saved artifact",
+            "Reload saved choices and reject an older configuration revision from a second client",
+            "Select another bundle with the narrow keyboard controls after catalog failure"
+          ],
+          "expectedResults": [
+            "Choices remain usable before worker readiness and are labeled Next message, not mounted configuration.",
+            "Slow catalog discovery does not block manual naming, saved artifact browsing or the unsent draft.",
+            "Saved choices survive reload; a stale client cannot replace a newer revision or another client's draft.",
+            "Desktop and narrow keyboard controls remain usable after discovery failure.",
+            "Passive controls cause zero conversation-worker starts, prewarms, model calls or input starts."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-keyboard",
+            "absent-worker",
+            "held-catalog",
+            "failed-catalog",
+            "second-client",
+            "reload"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/dormant-controls-browser.mjs",
+              "relation": "Registered additive owner dormant-controls; plan supplies output/browser-checks/dormant-controls for results and screenshots"
+            },
+            {
+              "path": "tests/test_next_message_configuration.py",
+              "relation": "Real retired-record no-hydration, current input, exact revision, Stop and permission guards"
+            },
+            {
+              "path": "tests/fixtures/next_message_native_probe.py",
+              "relation": "Separate genuine-send qualification for latest saved settings, adjacent input, failed mount and Stop rollback"
+            }
+          ],
+          "limits": [
+            "Browser uses synthetic runtime and catalog boundaries; it does not qualify a live provider or native worker.",
+            "Manual rename and artifact opening use the client's public action bridge, not pointer traversal of every entry control.",
+            "Resident retired-record proof is not a universal nonresident zero-I/O claim; no latency or automatic prewarm claim.",
+            "Registration is coverage ownership, not a claim that the current candidate passed."
+          ]
+        }
+      ],
+      "qualification": "docs/clients/live-sessions.md"
+    },
+    {
+      "id": "delta.compact-composer",
+      "sourceCommit": "f1c10e55961bbba30acd9c9c08154f3f3592d3fb",
+      "reason": "Keep ordinary compact writing and configuration paths in automatic source smoke coverage; preserve the frozen checklist.",
+      "workflowsAdded": [
+        {
+          "id": "composer.compact-options",
+          "family": "composer",
+          "title": "Write, attach and configure a chat from the compact composer",
+          "scope": "standard-path",
+          "entryPath": [
+            "Chat",
+            "Composer",
+            "Model and reasoning settings"
+          ],
+          "prerequisites": [
+            "Synthetic host/runtime with built client; no account, live provider or real audio"
+          ],
+          "steps": [
+            "Inspect idle and expanded input at desktop and phone widths across detail/theme choices",
+            "Write multiline text, paste quotes and attach/remove files without sending",
+            "Open model/reasoning/bundle options; close with keyboard and retain focus/draft",
+            "Reload with a retained draft and verify long-input actions stay reachable",
+            "Open Add and invoke Ctrl/Cmd+, without an intervening pointer dismissal; close Settings with Escape",
+            "Repeat with unsaved Settings: Keep settings open, then Discard changes; also dismiss Add normally with Escape"
+          ],
+          "expectedResults": [
+            "Idle field remains compact with usable touch targets and no horizontal overflow.",
+            "IME composition and Shift+Enter do not send; private input stays out of ordinary readback.",
+            "Options remain usable without losing unsent text or attachments.",
+            "Keyboard-opened Settings owns focus and Escape; the background Add menu disappears without taking focus back.",
+            "Keep settings open preserves its unsaved value; accepted Settings close and ordinary Add dismissal return focus to the persistent Add trigger.",
+            "The composer draft is retained and navigation invokes no send, attachment-add, provider-save or access-change action."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-layout",
+            "light-dark",
+            "detail-levels",
+            "reload",
+            "zoom-equivalent"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/compact-composer-browser.mjs",
+              "relation": "Automatic compact-composer owner; bounded geometry, input, privacy and retained draft assertions"
+            },
+            {
+              "path": "frontend/tests/composer-options-browser.mjs",
+              "relation": "Existing automatic Public readiness composer-options owner; choices, invalid controls and keyboard/focus continuity"
+            },
+            {
+              "path": "frontend/tests/composer-panel-ownership-browser.mjs",
+              "relation": "Additive automatic Composer owner for the keyboard Settings regression introduced at 2db7f630fffdef34aa081e90f37563a82efd16ab; retains result.json, keyboard-settings-1280.png, keyboard-settings-390.png and failure.png when applicable under output/browser-checks/composer-panel-ownership. Registration is not a passing result."
+            },
+            {
+              "path": "scripts/compact_composer_checks.py",
+              "relation": "Separate fixed manual source/installed-wheel and adjacent regression qualification"
+            }
+          ],
+          "limits": [
+            "Synthetic source smoke; no live provider, physical keyboard or native audio claim.",
+            "Separate immutable quote-node behavior remains independently owned.",
+            "Keyboard Settings coverage uses synthetic Linux/Mac navigator branches at 1280/390px, not physical macOS keyboard qualification; combined runtime/package qualification remains with Releases."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md"
+    },
+    {
+      "id": "delta.peer-preview",
+      "sourceCommit": "e0155b968c38b5bd8940e827d9e0d07bcb6991b1",
+      "reason": "Give grouped incoming peer messages and read-only source preview an automatic ordinary-path smoke owner, including additive positive narrow-header and removed-invoker focus regressions from PR1182.",
+      "workflowsAdded": [
+        {
+          "id": "conversation.peer-preview",
+          "family": "conversation",
+          "title": "Read grouped peer messages and inspect their source without leaving a draft",
+          "scope": "standard-path",
+          "entryPath": [
+            "Chat",
+            "Messages from another chat",
+            "Preview source chat"
+          ],
+          "prerequisites": [
+            "Synthetic peer messages with canonical delivery receipts; no live history or model calls"
+          ],
+          "steps": [
+            "Expand grouped peers, inspect formatted content and copy exact original Markdown",
+            "Preview source chat, load earlier pages and refresh without reordering or losing place",
+            "Return to the original chat with unsent text and attachment retained",
+            "Attempt preview during dirty Canvas/Settings transitions; cancel and preserve the current owner",
+            "Repeat at narrow widths and verify no runtime starts or page reload",
+            "Read a long source title at 320/390px in neutral, keyboard-focus and hover states with a separately reachable Close",
+            "Revoke the source so its invoker disappears; dismiss with Escape/Close and retain exact originating-message focus and parent editor selection"
+          ],
+          "expectedResults": [
+            "Grouping preserves exact content and reliable sender attribution.",
+            "Preview is bounded and read-only; source rows retain formatting and ordering.",
+            "Drafts, selected chat, dirty editors and renderer leases remain intact.",
+            "Long title, Read only, Close and toolbar do not overlap; Close remains at least 44px and tooltip presentation does not obscure source identity.",
+            "Explicit dismissal after invoker removal returns to the originating disclosure rather than BODY, while successful Open chat keeps its selected destination."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-layout",
+            "delayed-receipt",
+            "dirty-settings",
+            "dirty-canvas"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/peer-preview-browser.mjs",
+              "relation": "Automatic peer-preview owner for grouped formatting, paging, copy, draft and dirty-owner continuity"
+            },
+            {
+              "path": "frontend/tests/peer-preview-header-browser.mjs",
+              "relation": "Automatic default positive 320/390px header geometry, neutral/focus/hover, tooltip, Close hit-target and parent continuity regression"
+            },
+            {
+              "path": "frontend/tests/peer-preview-focus-browser.mjs",
+              "relation": "Automatic real revoked-invoker Escape/Close focus regression with retained thread/editor state and separate guarded Open chat"
+            },
+            {
+              "path": "tests/test_peer_preview.py",
+              "relation": "Canonical source authorization, exact delivery receipts and bounded pagination"
+            },
+            {
+              "path": "scripts/peer_message_qualification.py",
+              "relation": "Separate fixed manual negative-formatting and installed-wheel qualification"
+            }
+          ],
+          "limits": [
+            "Synthetic source smoke; no live-history scale or provider-latency claim.",
+            "Header measurement-only and expected-failure style-restoration modes remain manual qualification, not automatic positive coverage. Registration is not a new runtime or visual pass."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md"
+    },
+    {
+      "id": "delta.canvas-chrome",
+      "sourceCommit": "274c7dff01026478de685ced242aa5cf77c85cdf",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/991",
+      "reason": "Register the maintained Canvas overview and navigation journey once in automatic source coverage; preserve existing canvas-dirty ownership and the frozen inventory.",
+      "workflowsAdded": [
+        {
+          "id": "canvas.overview-navigation",
+          "family": "canvas",
+          "title": "Read the full chat overview and navigate open documents without losing state or focus",
+          "scope": "standard-path",
+          "entryPath": [
+            "Chat",
+            "Container-header Canvas toggle",
+            "Chat overview / open documents"
+          ],
+          "prerequisites": [
+            "Built production client and isolated production-service fixture with synthetic outputs and runtime",
+            "No personal data, live provider or production settings changes"
+          ],
+          "steps": [
+            "Scroll a long Outputs list to lower overview sections and collapse/reopen sections",
+            "Scroll open document tabs while keeping Overview reachable; use the bounded Open documents list",
+            "Read version and compact document controls at wide and narrow widths",
+            "Hide/reopen Canvas and reload only after exact visibility/details receipts settle",
+            "Close a document with a held response, move Home, and retain newer focus intent",
+            "Repeat ordinary close recovery, keyboard navigation and initial/live reduced-motion settings"
+          ],
+          "expectedResults": [
+            "The bounded overview scroll region reaches the lower sections without clipping or wheel forwarding.",
+            "Overview remains visible and clickable beside native horizontally scrolling tabs; Open documents lists every open tab.",
+            "Disclosure, search, reading position and selected document state survive overview/document and panel visibility transitions.",
+            "Compact navigation and document controls remain reachable at narrow widths and layout-zoom equivalence.",
+            "Delayed accepted close cannot steal newer keyboard focus; the owning close interaction still restores focus.",
+            "Exact accepted receipts precede reload and the final HTTP audit exposes failed or unsettled actions."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-layout",
+            "light-dark",
+            "reduced-motion",
+            "delayed-receipt",
+            "reload",
+            "zoom-equivalent"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/canvas-chrome-browser.mjs",
+              "relation": "Automatic source owner canvas-chrome; owned AMPLIFIER_TEST_ARTIFACTS under output/browser-checks/canvas-chrome"
+            },
+            {
+              "path": "frontend/tests/canvas-dirty-browser.mjs",
+              "relation": "Existing independent automatic canvas-dirty owner remains unchanged"
+            },
+            {
+              "path": "scripts/canvas_qualification.py",
+              "relation": "Separate fixed manual source/installed-package qualification retains adjacent journeys and negative-control evidence"
+            }
+          ],
+          "limits": [
+            "Registration is not a new browser execution or installed-package result; exact unchanged product proof remains separately attributed.",
+            "Synthetic browser input and geometry do not establish physical touch, screen-reader, native overlay or live-provider behavior.",
+            "The OS reduced-motion preference is exercised; no separate app-level Less motion preference is introduced."
+          ]
+        }
+      ],
+      "qualification": "https://github.com/microsoft/amplifier-unified/actions/runs/39749556899"
+    },
+    {
+      "id": "delta.multi-quote",
+      "sourceCommit": "063f6b6dc21d628d2fa3ebecfe8f21d6d9eb2ee4",
+      "reason": "Register the reviewed immutable-quote journey as an ordinary automatic source owner, integrated with compact writing; preserve every frozen and additive owner.",
+      "workflowsAdded": [
+        {
+          "id": "composer.immutable-multi-quote",
+          "family": "composer",
+          "title": "Collect exact references and interleave commentary in the compact composer",
+          "scope": "standard-path",
+          "entryPath": [
+            "Chat",
+            "Message actions",
+            "Rendered text selection → Quote selection, or Reply to message"
+          ],
+          "prerequisites": [
+            "Synthetic current-chat messages and attachments; built client; no live history or provider"
+          ],
+          "steps": [
+            "Select two nonadjacent passages and quote a whole message while typing literal commentary before, between and after",
+            "Reload, keyboard-reorder and remove only a quote, preserving exact commentary and attachment",
+            "Hold an addition, move the caret and insertion mode, then verify the new instance at its captured target",
+            "Change commentary while a receipt is held; verify journal ownership and reject the late addition",
+            "Inspect narrow compact layout, send once, copy the exact saved message and repeat a plain cycle",
+            "Collect rendered formatted passages with nearby controls; reject transformed source and stale source digests",
+            "Keep quote source/move/remove hit targets and readable excerpts while scrolling, enlarging text and expanding long quotes",
+            "Preserve a newer selection and separate chat draft across a delayed quote receipt"
+          ],
+          "expectedResults": [
+            "Immutable blocks retain exact Unicode, whitespace, source spans and independent identity without replacing earlier content.",
+            "Independently authored DOM, editor and canonical-draft order survives quote manipulation and reload.",
+            "The compact writing wrapper retains full-width references, accessible controls and no horizontal overflow.",
+            "No collection, composition or quote-removal action sends; normal Send preserves exact interleaving and attachments.",
+            "Delayed additions retain their captured target or fail visibly; newer journaled commentary remains owned."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-layout",
+            "light-dark",
+            "touch-emulated",
+            "reload",
+            "delayed-receipt"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/multi-quote-browser.mjs",
+              "relation": "Automatic multi-quote source owner; artifacts at output/browser-checks/multi-quote"
+            },
+            {
+              "path": "scripts/multi_quote_checks.py",
+              "relation": "Separate fixed focused source/installed qualification with commentary, selection-mapping and hidden-header mutants"
+            }
+          ],
+          "limits": [
+            "Registration is not a passing result; current raw run evidence must be inspected.",
+            "No physical device, real OS IME, live provider or screen-reader claim.",
+            "Lost Send acknowledgement remains a narrower host/model check, not this browser journey.",
+            "Private optional reference-comparison inputs are never part of the public fixture or CI evidence."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md"
+    },
+    {
+      "id": "delta.artifact-one-surface",
+      "sourcePullRequest": 1032,
+      "reason": "Give one-surface artifact presentation and late-hide focus preservation one automatic source smoke owner; keep the frozen inventory and all existing owners.",
+      "workflowsAdded": [
+        {
+          "id": "canvas.artifact-one-surface",
+          "family": "canvas",
+          "title": "Present one exact saved version in chat or Canvas without losing current work",
+          "scope": "standard-path",
+          "entryPath": [
+            "Chat",
+            "Saved artifact card",
+            "Preview in chat / Open in canvas"
+          ],
+          "prerequisites": [
+            "Built client with synthetic authored artifacts and controlled local fixture; no live history or provider calls"
+          ],
+          "steps": [
+            "Show HTML once and count actual mounted primary/inline frames and leases",
+            "Cancel a reset, then transition inline to Canvas and back, hide, reopen and reload",
+            "Use exact historical versions, another client and short Markdown/code/JSON cards",
+            "Hold an accepted Hide response while focusing the composer or an unrelated iframe",
+            "Toggle inline content while preserving unrelated dirty Canvas, unsent draft and Settings"
+          ],
+          "expectedResults": [
+            "One exact artifact version never automatically mounts two full renderers, even hidden ones.",
+            "Cancelled HTML reset retains the original frame and local input; completed transitions preserve exact saved identity.",
+            "Ordinary keyboard Hide returns focus to its disclosure; a newer composer or iframe focus choice wins over a late receipt.",
+            "Unrelated dirty Canvas and unsaved Settings remain mounted and unchanged; replacement still uses the existing guard.",
+            "Shared card controls remain labeled and usable at desktop and narrow widths; presentation creates no additional saved artifacts or messages."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-layout",
+            "delayed-receipt",
+            "dirty-settings",
+            "dirty-canvas",
+            "second-client",
+            "reload"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/artifact-one-surface-browser.mjs",
+              "relation": "Automatic artifact-one-surface owner; real mount counts, delayed focus, versions and draft guards; evidence in output/browser-checks/artifact-one-surface"
+            },
+            {
+              "path": "tests/test_artifact_presentation.py",
+              "relation": "Canonical exact-version ownership, reset refusal and dirty-view transitions"
+            }
+          ],
+          "limits": [
+            "Automatic source smoke, not installed-wheel, physical-device or assistive-screenreader acceptance.",
+            "Registration alone is not a pass. The separate historical negative duplicate-default and installed-boundary receipts remain exact-source evidence, not automatic assertions."
+          ]
+        }
+      ],
+      "qualification": "docs/canvas.md"
+    },
+    {
+      "id": "delta.shared-work",
+      "sourceCommit": "6ac9611ddd85205e2781fe2e17f3bc950feee030",
+      "reason": "Register the existing Shared Work browser journey and native/nested owners additively. sourceCommit identifies the prior qualified checkpoint, not the current uncommitted integration; preserve the frozen inventory and every existing owner.",
+      "workflowsAdded": [
+        {
+          "id": "workspace.shared-work",
+          "family": "workspace",
+          "title": "Inspect retained promises, corrections and evidence without restarting work",
+          "scope": "standard-path",
+          "entryPath": [
+            "Workspace",
+            "Work"
+          ],
+          "prerequisites": [
+            "Production bundled client and real AppService with synthetic persisted Work, saved tasks and separate client drafts",
+            "Cold-task variant enabled; controlled runtime and no live provider or private history",
+            "Native/nested checks separately require actual Core/loop-live, the native OpenAI adapter and tool-exec JavaScript runtime"
+          ],
+          "steps": [
+            "Reopen persisted Work and load a cold saved task through its visible control",
+            "Inspect exact original source, corrections, current criteria and separately attributed evidence",
+            "Observe a changed promise or candidate from another client without overwriting an unfinished edit",
+            "Use Work and Back/Forward while retaining composer text, attachments and dirty Canvas or Settings",
+            "Repeat Work inspection on desktop and narrow clients, including emulated touch"
+          ],
+          "expectedResults": [
+            "Reads retain original wording and responsibility without starting a worker or replaying an effect.",
+            "Old evidence remains tied to its original promise and candidate; unknown, failed and not-run states are not success.",
+            "Publication reports, independent checks and human decisions remain distinct observations, not permission or shipment.",
+            "Unsent drafts and dirty editors survive guarded navigation; clients retain their own view state.",
+            "Controlled native and nested-tool checks reject missing or stale coverage, Stop and reused origins before effects; a Work check never grants ordinary tool authority."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "desktop-keyboard",
+            "narrow-layout",
+            "emulated-touch",
+            "cold-reopen",
+            "multiple-clients",
+            "dirty-canvas",
+            "dirty-settings",
+            "changed-currentness"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/shared-work-browser.mjs",
+              "relation": "Existing single shared-work owner in Extended browser checks with AMPLIFIER_TEST_COLD_TASK=1; source-browser coverage, not automatic installed-wheel proof"
+            },
+            {
+              "path": "tests/fixtures/shared_work_scenario.py",
+              "relation": "Synthetic persisted Work and cold saved-task fixture for the real host journey"
+            },
+            {
+              "path": "frontend/tests/shared-work.test.mjs",
+              "relation": "Automatically discovered frontend Work rendering and interaction regressions"
+            },
+            {
+              "path": "frontend/tests/workspace-work.test.mjs",
+              "relation": "Automatically discovered frontend Work state, revisions and guarded interaction regressions"
+            },
+            {
+              "path": "tests/test_workspace_work.py",
+              "relation": "Ordinary Full Python owner for source retention, Work revisions and evidence attribution"
+            },
+            {
+              "path": "tests/test_work_invocation.py",
+              "relation": "Ordinary Full Python owner for real host commissioning, required sources and currentness with synthetic transport"
+            },
+            {
+              "path": "tests/test_work_effects.py",
+              "relation": "Ordinary Full Python owner for host preconditions with explicitly synthetic authenticated-worker facts; not native acceptance"
+            },
+            {
+              "path": "tests/test_work_origin.py",
+              "relation": "Additive module selector in the existing native owner for exact worker-origin, native callbacks and nested dispatch"
+            },
+            {
+              "path": "tests/test_work_native_effects.py",
+              "relation": "Additive module selector in the existing native owner for controlled native/JavaScript calls through real host effects, including refusal before deduplication"
+            }
+          ],
+          "limits": [
+            "The prior 6ac9611ddd85205e2781fe2e17f3bc950feee030 checkpoint retains its original evidence and exact-input reuse limits; it does not attest the current integration.",
+            "Qualification of the new integration and this registration increment is pending. Tests for these registration changes are UNRUN until owned isolated execution.",
+            "Browser fixtures use synthetic runtime state; installed-wheel proof requires a separately prepared exact candidate outside source.",
+            "Controlled native transport and real nested JavaScript are not paid-provider, generic streaming, unmeasured steering or tool-internal-await qualification.",
+            "Registration adds no workflow, duplicate browser journey, broader publication gate, permission or whole-feature acceptance."
+          ]
+        }
+      ],
+      "evidenceContext": "Historical checkpoint identity only; no new execution is claimed by this additive registration.",
+      "qualification": "docs/validation/standard-ux-inventory-20261015.md"
+    },
+    {
+      "id": "delta.979",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/979",
+      "reason": "Add the chronological delegate Work stream browser owner without replacing any existing scenario or frozen inventory.",
+      "workflowsAdded": [
+        {
+          "id": "conversation.delegate-work-stream",
+          "family": "conversation",
+          "title": "Read delegate exchanges and independently expand their Work steps",
+          "scope": "standard-path",
+          "entryPath": [
+            "Conversation",
+            "Work disclosure"
+          ],
+          "prerequisites": [
+            "Built production client with synthetic recorded delegate requests, replies, operations and follow-ups",
+            "Canonical bounded detail server and actual saved-field read/copy boundary"
+          ],
+          "steps": [
+            "Expand Work and read chronological requests, operations, replies and follow-ups",
+            "Expand each operation independently and copy exact saved content",
+            "Inspect registered-web observer content and long Unicode bodies",
+            "Check actor readability on desktop and narrow layouts, with split-word and occlusion negative controls"
+          ],
+          "expectedResults": [
+            "Control acknowledgments are not represented as delegate replies.",
+            "Repeated owner headers do not replay old exchanges as new messages.",
+            "Unknown associations stay explicit; operation ownership and targeted Stop remain unchanged.",
+            "Complete field copy follows its exact saved reference and lease; no truncation is represented as a complete body.",
+            "Visible actor labels remain readable and hit-testable at measured sizes."
+          ],
+          "variants": [
+            "desktop-pointer",
+            "narrow-layout",
+            "long-Unicode",
+            "saved-detail",
+            "unverified-association"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/delegate-work-stream-browser.mjs",
+              "relation": "New single automatic Extended browser owner for chronology, lazy copy and measured actor readability"
+            },
+            {
+              "path": "tests/test_delegate_work_stream.py",
+              "relation": "Canonical field-reference/lease and real producer/capture component boundaries"
+            },
+            {
+              "path": "frontend/tests/delegate-activity-browser.mjs",
+              "relation": "Existing delegate ownership, control, recording settings and reload workflow"
+            },
+            {
+              "path": "frontend/tests/work-stream.test.mjs",
+              "relation": "Automatically discovered source ordering and ownership regressions"
+            }
+          ],
+          "limits": [
+            "Browser fixture uses synthetic runtime state; installed application acceptance is separately qualified.",
+            "Native component checks do not prove live-provider conversations or OS-process cold-turn retirement; #1009 remains separate.",
+            "Registration records coverage ownership, not an automatic passing qualification claim."
+          ]
+        }
+      ],
+      "qualification": "docs/clients/live-sessions.md"
+    },
+    {
+      "id": "delta.1153",
+      "sourcePullRequest": "https://github.com/microsoft/amplifier-unified/pull/1153",
+      "reason": "Add four single Extended browser owners for voice refinement; preserve frozen readiness and existing voice/scroll owners.",
+      "workflowsAdded": [
+        {
+          "id": "conversation.voice-refinement",
+          "family": "conversation",
+          "title": "Keep voice work, reading position and background refresh coherent",
+          "scope": "standard-path",
+          "entryPath": ["Conversation", "Voice call", "Settings"],
+          "prerequisites": ["Built bundled client and isolated synthetic fixtures; no live provider or physical audio"],
+          "steps": [
+            "Cross call start/end boundaries while reading earlier messages",
+            "Read and compose while history refreshes",
+            "Expand matching voice work without combining unrelated activity",
+            "Open Settings and select a connection draft through shared actions"
+          ],
+          "expectedResults": [
+            "Call transitions preserve explicit reading position; follow-latest remains intentional.",
+            "Refresh retains useful content and local drafts while initial loading and failures remain distinguishable.",
+            "Voice work retains its originating input, controls and exact quote/source behavior.",
+            "Settings actions preserve client ownership and recoverable drafts without implicitly saving credentials."
+          ],
+          "variants": ["desktop-pointer", "narrow-layout", "synthetic-call", "background-refresh"],
+          "existingTests": [
+            {"path": "frontend/tests/chat-scroll-call-boundaries-browser.mjs", "relation": "Single Extended owner for call-boundary reading-position assertions"},
+            {"path": "frontend/tests/semantic-settings-browser.mjs", "relation": "Single Extended owner for real service Settings actions"},
+            {"path": "frontend/tests/history-refresh-browser.mjs", "relation": "Single Extended owner for bounded synthetic refresh, composition and loading states"},
+            {"path": "frontend/tests/voice-work-message-browser.mjs", "relation": "Single Extended owner for voice work association, controls and direct quotation"}
+          ],
+          "limits": [
+            "Registration records ownership, not passing execution evidence.",
+            "Synthetic browser checks do not establish physical audio, live-provider overlap or final installed-wheel acceptance.",
+            "Existing readiness voice and scroll scenarios remain unchanged; no new publication gate is added."
+          ]
+        }
+      ],
+      "qualification": "docs/clients/live-sessions.md"
+    },
+    {
+      "id": "delta.client-traffic",
+      "reason": "Add a single maintained real-server browser traffic and history-scaling owner; preserve frozen standard UX coverage.",
+      "workflowsAdded": [
+        {
+          "id": "conversation.client-traffic",
+          "family": "conversation",
+          "title": "Keep routine client updates independent of retained task history",
+          "scope": "standard-path",
+          "entryPath": [
+            "Conversation",
+            "Work",
+            "Runtime controls"
+          ],
+          "prerequisites": [
+            "Built bundled client and isolated synthetic task history; no provider calls"
+          ],
+          "steps": [
+            "Grow retained task history while keeping current fields fixed",
+            "Observe causal-only updates with panels open and closed",
+            "Reconnect and retrieve complete historical detail through bounded pages"
+          ],
+          "expectedResults": [
+            "Routine task projection bytes do not scale with retained evidence bodies.",
+            "Revision readback advances without application-root rendering or view-report feedback.",
+            "Long current fields and controls remain usable; canonical history and exact detail remain intact."
+          ],
+          "variants": [
+            "small-history",
+            "large-history",
+            "reconnect",
+            "idle-publication"
+          ],
+          "existingTests": [
+            {
+              "path": "frontend/tests/client-traffic-browser.mjs",
+              "relation": "Single Extended owner for built-client traffic and historical-growth semantics"
+            },
+            {
+              "path": "frontend/tests/state-revision-presentation.test.mjs",
+              "relation": "Causal command and observation fences"
+            },
+            {
+              "path": "tests/test_browser_demand.py",
+              "relation": "Canonical projection and snapshot ownership"
+            }
+          ],
+          "limits": [
+            "Synthetic runtime; no native startup or live-provider latency claim.",
+            "Historical contribution is bounded; current fields are preserved and not globally size-capped.",
+            "Registration adds background coverage, not a blanket publication gate."
+          ]
+        }
+      ],
+      "qualification": "docs/validation/performance.md"
+    }
+  ]
+}

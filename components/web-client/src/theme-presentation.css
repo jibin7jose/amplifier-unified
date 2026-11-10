@@ -1,0 +1,4 @@
+/* A client preference, independent of the selected theme and its saved artwork. */
+#amp-one[data-decorations="off"][data-part="app"] {background-image:none!important;background-color:var(--a-bg)!important}
+
+#amp-one[data-decorations="off"][data-part="app"] :is(.a-conversation,.a-nav-rail,.a-canvas-chrome){background-image:none!important}

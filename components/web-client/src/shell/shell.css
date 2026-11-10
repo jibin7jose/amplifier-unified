@@ -1,0 +1,22 @@
+#amp-one .a-shell-modules {display:flex;flex-direction:column;gap:10px;min-width:0}
+#amp-one .a-shell-instance {min-width:0}
+#amp-one .a-shell-instance[hidden] {display:none}
+#amp-one .a-shell-recovery {font-size:var(--a-text-base,14px);margin-top:16px;padding:8px}
+#amp-one .a-shell-recovery button,#amp-one .a-shell-recovery a {display:block;margin-top:8px}
+#amp-one[data-density="compact"] .a-nav-chat {min-height:30px}
+#amp-one[data-density="compact"] .a-workspace-select {padding-top:4px;padding-bottom:4px}
+/* CSS ordering keeps the actual conversation and iframe nodes mounted. */
+#amp-one.a-chat-shell[data-layout="work"] .a-layout>.a-canvas-panel {order:1}
+#amp-one.a-chat-shell[data-layout="work"] .a-layout>.a-conversation {order:2}
+#amp-one.a-chat-shell[data-layout="work"] .a-canvas-resize {left:auto;right:-9px}
+
+#amp-one .a-shell-contribution{display:contents}
+#amp-one .a-slot-overflow,#amp-one .a-slot-overflow-items{display:contents}
+#amp-one .a-slot-overflow-toggle{display:none}
+@media(max-width:760px){
+ #amp-one .a-slot-overflow{display:flex;flex:0 0 auto;min-width:0}
+ #amp-one .a-slot-overflow-toggle{display:inline-flex}
+ #amp-one .a-slot-overflow-items{display:none}
+ /* The measured viewport bottom includes header wrapping and any safe-area inset. */
+ #amp-one .a-slot-overflow[data-open="true"] .a-slot-overflow-items{display:flex;flex-direction:column;align-items:stretch;gap:12px;position:fixed;z-index:75;top:var(--a-navigation-top,calc(60px + env(safe-area-inset-top,0px)));right:8px;box-sizing:border-box;width:min(340px,calc(100vw - 16px));max-height:70dvh;overflow:auto;padding:16px;border:1px solid var(--a-line);border-radius:14px;background:var(--a-surface);color:var(--a-ink);box-shadow:0 12px 40px #0002}
+}

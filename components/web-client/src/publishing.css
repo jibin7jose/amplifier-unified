@@ -1,0 +1,17 @@
+.a-publishing { min-width: 0; }
+.a-publishing .a-selection-card { min-width: 0; margin-block: 12px; }
+.a-publishing p,.a-publishing dd,.a-publishing code,.a-publishing li { overflow-wrap: anywhere; }
+.a-publishing pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.a-publishing dl { display: grid; grid-template-columns: minmax(90px,1fr) minmax(0,3fr); gap: 8px 12px; }
+.a-publishing dt { font-weight: 600; }
+.a-publishing dd { margin: 0; }
+.a-publishing form { display: grid; gap: 8px; margin-block: 16px; }
+.a-publishing form button { justify-self: start; }
+.a-publishing input,.a-publishing select,.a-publishing textarea { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.a-publishing-sites { display: flex; flex-wrap: wrap; gap: 8px; }
+.a-publishing-sites button { display: grid; text-align: left; gap: 4px; }
+.a-publishing-sites button[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 1px; }
+.a-publishing details { margin-block: 16px; }
+.a-publishing summary { cursor: pointer; }
+.a-publishing li { margin-block: 8px; }
+.a-publishing-targets dl { grid-template-columns: minmax(112px,1fr) minmax(0,3fr); }

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="application-name" content="Amplifier">
+<meta name="description" content="Your voice, chat, and collaborative canvas workspace.">
+<meta name="theme-color" content="#e8eeff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Amplifier">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/branding/favicons/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/branding/favicons/apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="/manifest.webmanifest">
+<script src="/pwa.js" defer></script>
+<title>Sign in - Amplifier</title><link rel="stylesheet" href="/app-pages.css">
+</head><body><main>
+<div class="brand"><img src="/branding/icons/amplifier-icon-128.png" alt="" width="44" height="44"><span>Amplifier</span></div>
+<h1>Welcome back</h1><p>Sign in with the system account on the computer running Amplifier.</p>
+<p class="error" role="alert">__ERROR__</p>
+<form method="post" action="/login?next=__NEXT__"><input type="hidden" name="csrf" value="__CSRF__">
+<label for="username">Username</label><input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" autofocus required>
+<label for="password">Password</label><input id="password" type="password" name="password" autocomplete="current-password" required>
+<button type="submit">Sign in</button></form>
+<p class="note">Use your host computer’s login, rather than a model provider API key.</p>
+</main></body></html>

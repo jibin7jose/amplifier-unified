@@ -1,0 +1,46 @@
+import {spawn} from 'node:child_process';
+import {showFixtureConversation} from './browser-chat-pages.mjs';
+import {fileURLToPath} from 'node:url';
+import {readFile,mkdir,writeFile} from 'node:fs/promises';
+import {chromium,expect} from '@playwright/test';
+import assert from 'node:assert/strict';
+const root=fileURLToPath(new URL('../../',import.meta.url));
+const out=process.env.AMPLIFIER_TEST_OUTPUT||'/tmp/amplifier-multi-repository-worktrees';await mkdir(out,{recursive:true});
+const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'/.venv/bin/python',[root+'tests/fixtures/worktrees_ui_server.py','--multi-repo'],{stdio:['ignore','pipe','inherit']});
+let browser,page;
+try{
+ const ready=await new Promise((resolve,reject)=>{let text='';const timer=setTimeout(()=>reject(Error('Fixture timeout')),20000);fixture.once('error',reject);fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exited '+code))});fixture.stdout.on('data',chunk=>{text+=chunk;for(const line of text.split('\n'))try{const row=JSON.parse(line);if(row.url){clearTimeout(timer);resolve(row)}}catch{}})});
+ browser=await chromium.launch({headless:true});page=await browser.newPage({viewport:{width:1280,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.goto(ready.url);await showFixtureConversation(page);await page.getByRole('region',{name:'Task worktrees'}).waitFor();
+ const panel=page.getByRole('region',{name:'Task worktrees'});
+ await panel.getByText('Select a repository within this workspace',{exact:true}).click();
+ const input=panel.getByLabel('Repository folder',{exact:true});
+ await input.fill('api');await panel.getByRole('button',{name:'Inspect repository',exact:true}).click();
+ await expect(panel.locator('[data-part=selected-repository]')).toHaveText(ready.repositories[0]);
+ await expect(panel.getByText('main · Uncommitted changes present',{exact:true})).toBeVisible();
+ await panel.getByRole('button',{name:'Create managed checkout',exact:true}).click();
+ await expect(panel.locator('[data-worktree-id]')).toHaveCount(1);
+ await input.fill('client');
+ await expect(panel.getByRole('button',{name:'Create managed checkout',exact:true})).toHaveCount(0);
+ await panel.getByRole('button',{name:'Inspect repository',exact:true}).click();
+ await expect(panel.locator('[data-part=selected-repository]')).toHaveText(ready.repositories[1]);
+ await panel.getByRole('button',{name:'Create managed checkout',exact:true}).click();
+ await expect(panel.locator('[data-worktree-id]')).toHaveCount(2);
+ await expect(panel.locator('[data-part=execution-directory]')).toHaveText(ready.root);
+ const state=await page.evaluate(()=>window.amplifier.getState());
+ const session=state.sessions.find(row=>row.id===ready.sessionId);
+ assert.equal(session.workspace,ready.root);assert.equal(session.executionRevision||0,0);
+ assert.equal(new Set(session.worktrees.map(row=>row.repository)).size,2);
+ for(const row of session.worktrees)assert.equal(await readFile(row.path+'/file.txt','utf8'),'original\n');
+ assert.equal(await readFile(ready.repositories[0]+'/file.txt','utf8'),'Retain uncommitted API work\n');
+ await panel.scrollIntoViewIfNeeded();await page.screenshot({path:out+'/desktop.png'});
+ await page.reload();await page.getByRole('region',{name:'Task worktrees'}).waitFor();await expect(panel.locator('[data-worktree-id]')).toHaveCount(2);
+ await page.setViewportSize({width:390,height:844});await panel.scrollIntoViewIfNeeded();
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await page.screenshot({path:out+'/mobile.png'});
+ assert.deepEqual(errors,[]);
+ const report={status:'passed',repositories:2,nonGitParent:true,dirtySourcePreserved:true,executionUnchanged:true,runtime:'synthetic'};
+ await writeFile(out+'/report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+}catch(error){await page?.screenshot({path:out+'/failure.png'}).catch(()=>{});console.error((await page?.locator('body').innerText())?.slice(-4500));throw error}
+finally{await browser?.close();fixture.kill('SIGTERM')}

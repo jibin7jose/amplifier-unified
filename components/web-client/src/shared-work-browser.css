@@ -1,0 +1,49 @@
+/* Work is a passive reader: status words never depend on color alone. */
+#amp-one .a-shared-work{min-width:0;font-size:14px;line-height:1.6;color:var(--a-ink)}
+#amp-one .a-shared-work h2{font-size:20px;line-height:1.35;margin:0 0 12px}
+#amp-one .a-shared-work h3{font-size:15px;margin:20px 0 8px}
+#amp-one .a-shared-work h4{font-size:14px;margin:12px 0 6px}
+#amp-one .a-shared-work p{margin:8px 0;overflow-wrap:anywhere}
+#amp-one .a-shared-work header{margin-bottom:20px}
+#amp-one .a-shared-work :is(button,input,select,summary){min-height:44px;min-width:44px;box-sizing:border-box}
+#amp-one .a-shared-work button{white-space:normal;overflow-wrap:anywhere;max-width:100%;padding:8px 12px}
+#amp-one .a-shared-work :is(button,input,select):focus-visible,#amp-one .a-shared-detail h2:focus{outline:2px solid var(--a-accent);outline-offset:2px}
+#amp-one .a-shared-columns{display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,1.5fr);gap:24px;align-items:start;min-width:0}
+#amp-one .a-shared-list,#amp-one .a-shared-detail{min-width:0;max-height:70dvh;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:3px}
+#amp-one .a-shared-detail{border-left:1px solid var(--a-line);padding:3px 3px 16px 20px;overflow-wrap:anywhere}
+#amp-one .a-shared-filters{display:flex;flex-direction:column;gap:12px}
+#amp-one .a-shared-filters label{display:flex;flex-direction:column;gap:4px;color:var(--a-muted);font-size:13px}
+#amp-one .a-shared-filters :is(input,select){width:100%;max-width:100%;border:1px solid var(--a-line);border-radius:8px;background:var(--a-surface);color:var(--a-ink);padding:8px}
+#amp-one .a-shared-items{list-style:none;margin:12px 0;padding:0}
+#amp-one .a-shared-items>li{padding:10px 0;border-bottom:1px solid var(--a-line)}
+#amp-one .a-shared-items>li>button{width:100%;display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;border:1px solid transparent;background:var(--a-soft);color:var(--a-ink);border-radius:8px}
+#amp-one .a-shared-items>li>button[aria-pressed=true]{border-color:var(--a-accent);background:var(--a-tint,var(--a-soft))}
+#amp-one .a-shared-items :is(span,small){color:var(--a-muted);font-size:12px}
+#amp-one .a-shared-items .a-shared-next{margin-top:6px;font-size:13px;color:var(--a-ink)}
+#amp-one .a-shared-items>li>small{display:block;margin:8px 4px;overflow-wrap:anywhere}
+#amp-one .a-shared-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#amp-one .a-shared-facts,#amp-one .a-shared-meta{display:grid;grid-template-columns:minmax(80px,auto) minmax(0,1fr);gap:8px 16px;margin:20px 0}
+#amp-one .a-shared-facts dt,#amp-one .a-shared-meta dt{font-weight:600}
+#amp-one .a-shared-facts dd,#amp-one .a-shared-meta dd{margin:0;overflow-wrap:anywhere}
+#amp-one .a-shared-meta{font-size:12px;color:var(--a-muted)}
+#amp-one .a-shared-source blockquote{white-space:pre-wrap;overflow-wrap:anywhere;border-left:3px solid var(--a-line);margin:12px 0;padding:8px 12px;font:inherit;background:var(--a-soft)}
+#amp-one .a-shared-work pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;font-size:12px;background:var(--a-soft);padding:12px;box-sizing:border-box}
+#amp-one .a-shared-work :is(ul,ol){padding-left:22px}
+#amp-one .a-shared-work ul.a-shared-items{padding-left:0}
+#amp-one .a-shared-history>ol>li{border-top:1px solid var(--a-line);padding:8px 0 16px}
+#amp-one .a-shared-evidence{padding:1px 14px 12px;border:1px solid var(--a-line);border-radius:8px;background:var(--a-soft)}
+#amp-one .a-shared-evidence>ul{list-style:none;padding:0}
+#amp-one .a-shared-evidence>ul>li{padding:12px 0;border-top:1px solid var(--a-line)}
+#amp-one .a-shared-evidence .a-shared-meta{margin:8px 0 0}
+#amp-one .a-shared-work summary{display:flex;align-items:center;cursor:pointer;overflow-wrap:anywhere;font-size:13px}
+#amp-one .a-shared-coverage{margin-top:24px;border-top:1px solid var(--a-line)}
+#amp-one .a-shared-placeholder{color:var(--a-muted);padding:28px}
+@media(max-width:719px){
+ #amp-one .a-shared-columns{display:block}
+ #amp-one .a-shared-list,#amp-one .a-shared-detail{max-height:none;overflow:visible;scrollbar-gutter:auto}
+ #amp-one .a-shared-work[data-detail=true] .a-shared-list{display:none}
+ #amp-one .a-shared-detail{border-left:0;padding:3px 3px 16px}
+ #amp-one .a-shared-placeholder{display:none}
+ #amp-one .a-shared-facts,#amp-one .a-shared-meta{grid-template-columns:1fr;gap:3px}
+ #amp-one .a-shared-facts dd,#amp-one .a-shared-meta dd{margin-bottom:10px}
+}

@@ -1,0 +1,2 @@
+#amp-one .a-working-label{display:inline-grid}
+#amp-one .a-working-label>span{grid-area:1/1}

@@ -1,0 +1,56 @@
+#amp-one .a-workspace-picker>label{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+#amp-one .a-workspace-picker>label svg{width:16px;height:16px;flex:none}
+#amp-one .a-workspace-picker select,#amp-one .a-workspace-setup input:not([type=checkbox]){width:100%;box-sizing:border-box;min-width:0;font:inherit;padding:11px;border-radius:10px;border:1px solid var(--a-line);background:var(--a-surface);color:var(--a-ink)}
+#amp-one .a-workspace-setup{margin:14px 0;padding:18px;border:1px solid var(--a-line);border-radius:16px;background:var(--a-surface);min-width:0}
+#amp-one .a-workspace-setup-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#amp-one .a-workspace-setup h3{margin:0 0 12px;font-size:20px}
+#amp-one .a-workspace-setup label{display:flex;align-items:center;gap:8px;margin:14px 0 8px}
+#amp-one .a-workspace-setup .a-caption,#amp-one .a-workspace-picker .a-caption{color:var(--a-muted);line-height:1.5}
+#amp-one .a-workspace-setup details,#amp-one .a-workspace-picker>details{margin:14px 0;color:var(--a-muted);font-size:13px}
+#amp-one .a-workspace-setup summary,#amp-one .a-workspace-picker summary{cursor:pointer;padding:6px 0}
+#amp-one .a-workspace-setup-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:12px;margin:16px 0}
+#amp-one .a-workspace-destination{display:block;overflow-wrap:anywhere;color:var(--a-muted);font-size:13px;margin-top:6px}
+#amp-one .a-nav-form .a-workspace-setup{margin:0;border:0;padding:0}
+
+#amp-one .a-workspace-picker .a-picker-choice{display:flex;align-items:center;gap:12px;width:100%;padding:11px 10px;border:0;border-radius:8px;background:none;color:var(--a-ink);text-align:left;font:inherit;min-width:0}
+#amp-one .a-workspace-picker .a-picker-choice:hover,#amp-one .a-workspace-picker .a-picker-choice[aria-pressed=true]{background:var(--a-soft)}
+#amp-one .a-picker-choice>svg{width:18px;height:18px;flex:none;color:var(--a-muted)}
+#amp-one .a-picker-choice>svg:last-child:not(:first-child){color:var(--a-accent);width:16px}
+#amp-one .a-picker-choice>span{flex:1;min-width:0}
+#amp-one .a-picker-choice strong,#amp-one .a-picker-choice small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#amp-one .a-picker-choice strong{font-size:14px;font-weight:500;line-height:1.5}
+#amp-one .a-picker-choice small{font-size:12px;color:var(--a-muted);line-height:1.6}
+#amp-one .a-workspace-picker .a-picker-search{display:flex;align-items:center;gap:8px;padding:0 11px;margin:16px 0 8px;border:1px solid var(--a-line);border-radius:8px;background:var(--a-soft)}
+#amp-one .a-picker-search:focus-within{outline:2px solid var(--a-accent);outline-offset:2px}
+#amp-one .a-picker-search input{flex:1;min-width:0;width:100%;border:0;padding:11px 0;margin:0;background:none;color:var(--a-ink);font:inherit;font-size:14px;box-shadow:none;outline:none}
+#amp-one .a-picker-results{max-height:min(320px,42dvh);min-height:100px;overflow:auto;overscroll-behavior:contain}
+#amp-one .a-picker-results ul{list-style:none;padding:0;margin:0}
+#amp-one .a-picker-results p{font-size:13px;color:var(--a-muted);padding:12px;line-height:1.6}
+#amp-one .a-picker-pages{display:flex;gap:16px;align-items:center;font-size:12px;padding:10px;color:var(--a-muted)}
+#amp-one .a-picker-pages>span{margin-right:auto}
+#amp-one .a-picker-actions{display:flex;flex-wrap:wrap;border-top:1px solid var(--a-line);padding-top:12px;margin-top:10px;gap:8px}
+#amp-one .a-picker-actions>button{display:flex;align-items:center;justify-content:flex-start;gap:8px;background:none;border:0;color:var(--a-ink);font:inherit;font-size:13px;border-radius:8px;padding:10px}
+#amp-one .a-picker-actions>button:hover{background:var(--a-soft)}
+#amp-one .a-picker-actions svg{width:16px;height:16px;color:var(--a-muted)}
+#amp-one .a-picker-back{font-size:13px;margin-bottom:12px}
+#amp-one .a-workspace-setup select,#amp-one .a-workspace-setup textarea{width:100%;min-width:0;box-sizing:border-box;font:inherit;color:var(--a-ink);background:var(--a-surface);border:1px solid var(--a-line);border-radius:10px;padding:11px}
+#amp-one .a-workspace-setup fieldset{border:0;padding:0;min-width:0}
+#amp-one .a-starter-list{list-style:none;padding:0}
+#amp-one .a-starter-list>li{border:1px solid var(--a-line);border-radius:12px;padding:14px;margin:12px 0;overflow-wrap:anywhere}
+#amp-one .a-starter-list small{display:block;color:var(--a-muted);margin:6px 0}
+#amp-one .a-starter-list p{color:var(--a-muted);line-height:1.5}
+#amp-one .a-starter-repository{border-top:1px solid var(--a-line);margin:12px 0;padding:8px 0}
+#amp-one .a-starter-editor fieldset{border:0;padding:0;min-width:0;margin:0}
+#amp-one .a-starter-editor h4{margin:0;font-size:18px}
+#amp-one .a-starter-editor label{display:flex;align-items:center;gap:8px;margin:16px 0 8px}
+#amp-one .a-starter-editor input:not([type=checkbox]),#amp-one .a-starter-editor select,#amp-one .a-starter-editor textarea{width:100%;box-sizing:border-box;min-width:0;font:inherit;padding:11px;border-radius:10px;border:1px solid var(--a-line);background:var(--a-surface);color:var(--a-ink)}
+#amp-one .a-starter-editor input:disabled,#amp-one .a-starter-editor select:disabled,#amp-one .a-starter-editor textarea:disabled{opacity:.85}
+#amp-one .a-starter-search{display:flex;gap:8px;align-items:center}
+#amp-one .a-starter-search input{width:100%;min-width:0}
+#amp-one .a-starter-search svg,#amp-one .a-workspace-starters button svg{width:16px;height:16px;flex:none}
+#amp-one .a-starter-options{border-top:1px solid var(--a-line);padding:16px 0;margin:4px 0}
+#amp-one .a-starter-options summary{cursor:pointer;font-weight:550;color:var(--a-ink)}
+#amp-one .a-starter-options summary span{float:right;font-weight:400;color:var(--a-muted);font-size:12px;margin-left:8px}
+#amp-one .a-starter-options .a-caption,#amp-one .a-starter-editor .a-caption{line-height:1.5;color:var(--a-muted)}
+#amp-one .a-starter-danger{border-top:1px solid var(--a-line);margin-top:24px;padding-top:16px}
+#amp-one .a-settings-experience[data-settings-detail=true] [data-part=workspace-starters]>.a-starter-toolbar,#amp-one .a-settings-experience[data-settings-detail=true] [data-part=workspace-starters]>.a-starter-intro{display:none}

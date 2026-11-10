@@ -1,0 +1,11 @@
+#amp-one .a-json-viewer{min-width:0;max-width:100%;padding:8px 0;font-size:var(--a-text-base,14px)}
+#amp-one .a-json-toggle{display:flex;align-items:baseline;gap:6px;text-align:left;max-width:100%;padding:6px 4px;border-radius:5px;flex-wrap:wrap;color:var(--a-ink);font:inherit}
+#amp-one .a-json-toggle:hover{background:var(--a-tint)}
+#amp-one .a-json-key{font-weight:500;overflow-wrap:anywhere}
+#amp-one .a-json-count{color:var(--a-muted);font-size:var(--a-text-sm,13px)}
+#amp-one .a-json-children{margin-left:8px;padding-left:10px;border-left:1px solid var(--a-line);min-width:0}
+#amp-one .a-json-value{padding:5px 4px;min-width:0;overflow-wrap:anywhere;line-height:1.6}
+#amp-one .a-json-value code{white-space:pre-wrap;overflow-wrap:anywhere;font-size:inherit;background:none;color:var(--a-ink);padding:0}
+#amp-one .a-json-value>.a-link{display:block;margin-top:4px}
+#amp-one .a-model-payload{margin:10px 0;min-width:0}
+#amp-one .a-model-payload>small{display:block}

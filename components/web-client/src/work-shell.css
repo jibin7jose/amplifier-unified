@@ -1,0 +1,303 @@
+/* The shell uses the current theme's tokens and keeps existing viewers mounted. */
+#amp-one.a-approachable-shell{padding:0 12px 12px;height:100dvh;gap:0;--a-work-row-height:40px}
+#amp-one.a-approachable-shell .a-layout{gap:12px;padding:0}
+#amp-one.a-approachable-shell .a-nav-rail{padding:10px 8px 0;inset:0 auto 0 0}
+#amp-one.a-approachable-shell .a-nav-head{height:36px;gap:5px;padding:0 2px}
+#amp-one.a-approachable-shell .a-sidebar-modes{display:flex;flex-direction:row;flex:none;min-height:40px;margin-bottom:8px;gap:3px}
+#amp-one.a-approachable-shell .a-sidebar-organizations{display:flex;flex:1;min-width:0;gap:3px;background:var(--a-bg);border-radius:8px;box-shadow:inset 0 0 0 1px var(--a-line)}
+#amp-one.a-approachable-shell .a-sidebar-organizations>button{flex:1;justify-content:center;font-size:var(--a-text-sm,13px);min-height:36px;padding:6px 8px;background:none;border:1px solid transparent;border-radius:7px;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-sidebar-organizations>button[aria-pressed=true]{background:var(--a-surface);border-color:var(--a-line);color:var(--a-ink);font-weight:600}
+#amp-one.a-approachable-shell .a-sidebar-modes button:focus-visible{outline:2px solid var(--a-accent);outline-offset:1px}
+#amp-one.a-approachable-shell .a-sidebar-modes>.a-sidebar-home{flex:0 0 36px;min-height:36px;padding:8px;background:none;border:1px solid transparent;border-radius:7px;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-sidebar-home[aria-current=page]{background:var(--a-soft);color:var(--a-accent)}
+#amp-one.a-approachable-shell .a-nav-main{margin:4px 0;min-height:38px;border-radius:8px}
+#amp-one.a-approachable-shell .a-nav-content{padding:0 0 14px}
+#amp-one.a-approachable-shell .a-nav-search-launch{display:flex;align-items:center;gap:12px;justify-content:flex-start;background:none;color:var(--a-muted);width:100%;padding:9px 10px;text-align:left;border:0}
+#amp-one.a-approachable-shell .a-sidebar-section{margin:16px 0 0}
+#amp-one.a-approachable-shell .a-sidebar-section-heading{margin:0 0 3px;padding:0 3px}
+#amp-one.a-approachable-shell .a-sidebar-section-heading>button{font-size:var(--a-text-xs,12px);justify-content:flex-start;font-weight:550}
+#amp-one.a-approachable-shell .a-nav-chat{min-height:40px;margin:1px 0;border-radius:9px}
+#amp-one.a-approachable-shell .a-nav-chat-select{min-height:40px;padding:8px 7px;gap:9px}
+#amp-one.a-approachable-shell .a-status-sidebar .a-nav-pagination{padding:5px 10px}
+#amp-one.a-approachable-shell .a-status-sidebar .a-sidebar-section-heading small{font-variant-numeric:tabular-nums}
+#amp-one.a-approachable-shell .a-quiet-sidebar .a-nav-chat-label>small,#amp-one.a-approachable-shell .a-quiet-sidebar .a-activity-time{display:none}
+#amp-one.a-approachable-shell .a-quiet-sidebar .a-nav-chat-label>span{font-size:14px}
+#amp-one.a-approachable-shell .a-workspace-explorer[data-compact=true] .a-workspace-select{padding:9px 8px;min-height:40px;gap:10px}
+#amp-one.a-approachable-shell .a-workspace-explorer[data-compact=true] .a-workspace-result-path,#amp-one.a-approachable-shell .a-workspace-explorer[data-compact=true] .a-workspace-count{display:none}
+#amp-one.a-approachable-shell .a-workspace-explorer[data-compact=true] .a-workspace-label{font-size:14px}
+#amp-one.a-approachable-shell[data-interface-detail=detailed] .a-workspace-explorer[data-compact=true] .a-workspace-result-path{display:block}
+#amp-one.a-approachable-shell .a-sidebar-all{font-size:13px;margin:7px 9px;padding:4px 0;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-recent-controls{display:flex;flex-direction:column;align-items:flex-start;padding:0 3px}
+#amp-one.a-approachable-shell .a-recent-controls>small{font-size:12px;color:var(--a-muted);margin:4px 9px}
+#amp-one.a-approachable-shell .a-recent-control{overflow-anchor:none;min-height:36px}
+#amp-one.a-approachable-shell .a-recent-control[aria-pressed=true]{color:var(--a-accent)}
+@media(pointer:coarse){#amp-one.a-approachable-shell .a-recent-control{min-height:44px;min-width:44px}}
+#amp-one.a-approachable-shell .a-nav-empty{font-size:13px;line-height:1.6;margin:8px}
+#amp-one.a-approachable-shell .a-shell-recovery{margin:16px 7px 0;font-size:12px}
+#amp-one.a-approachable-shell:not([data-interface-detail=detailed]):not([data-interface-detail=detailed]) .a-shell-recovery{display:none}
+#amp-one.a-approachable-shell .a-work-footer{margin-top:auto;border-top:1px solid var(--a-line);display:flex;align-items:center;gap:9px;min-height:48px;flex-shrink:0;padding:0 5px;font-size:12px;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-work-footer>.a-work-menu{margin-left:auto}
+#amp-one.a-approachable-shell .a-conversation{position:relative;justify-content:flex-start;box-shadow:none}
+#amp-one.a-approachable-shell .a-work-header{flex:none;display:flex;align-items:center;min-height:48px;padding:6px 4px;gap:12px;width:100%;box-sizing:border-box;background:var(--a-chrome-bg,var(--a-bg));color:var(--a-chrome-ink,var(--a-ink))}
+#amp-one.a-approachable-shell .a-work-brand{flex:none;padding:0 12px 0 0;border:0;border-right:1px solid var(--a-line);background:none;color:inherit;text-align:left}
+#amp-one.a-approachable-shell .a-work-brand img{width:22px;height:22px}
+#amp-one.a-approachable-shell .a-site-navigation{display:flex;align-items:center;flex:none;gap:4px}
+#amp-one.a-approachable-shell .a-work-heading{display:flex;align-items:center;gap:8px;min-width:0;flex:1;font-size:14px}
+#amp-one.a-approachable-shell .a-work-heading>strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:550}
+#amp-one.a-approachable-shell .a-work-crumb{display:flex;gap:7px;align-items:center;max-width:35%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--a-muted);background:none;border:0;padding:0}
+#amp-one.a-approachable-shell .a-work-heading svg{width:16px;flex-shrink:0}
+#amp-one.a-approachable-shell .a-work-header-actions{display:flex;align-items:center;margin-left:auto;flex:none;gap:4px}
+#amp-one.a-approachable-shell .a-work-menu{position:relative}
+#amp-one.a-approachable-shell .a-destination-history{position:relative;display:flex;align-items:center;flex:none;gap:0}
+#amp-one.a-approachable-shell .a-destination-history>.a-icon{width:32px;min-width:32px;height:36px;padding:6px}
+#amp-one.a-approachable-shell .a-destination-history>.a-icon:disabled{opacity:.4}
+#amp-one.a-approachable-shell .a-destination-menu{position:absolute;left:0;top:calc(100% + 8px);z-index:85;width:320px;max-width:calc(100vw - 64px);max-height:min(440px,70vh);overflow:auto;padding:7px;border:1px solid var(--a-line);border-radius:12px;background:var(--a-surface);box-shadow:0 12px 36px #0003;color:var(--a-ink)}
+#amp-one.a-approachable-shell .a-destination-menu [role=menuitem]{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:8px 10px;text-align:left;border:0;border-radius:7px;background:none;color:inherit}
+#amp-one.a-approachable-shell .a-destination-menu [role=menuitem]:is(:hover,:focus-visible){background:var(--a-soft)}
+#amp-one.a-approachable-shell .a-destination-menu [role=menuitem][aria-current=page]{opacity:.7}
+#amp-one.a-approachable-shell .a-destination-menu [role=menuitem]>svg{flex:none;width:16px}
+#amp-one.a-approachable-shell .a-destination-menu [role=menuitem]>span{flex:1;min-width:0}
+#amp-one.a-approachable-shell .a-destination-menu :is(strong,small){display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#amp-one.a-approachable-shell .a-destination-menu strong{font-size:13px;font-weight:500}
+#amp-one.a-approachable-shell .a-destination-menu :is(small,p){font-size:11px;color:var(--a-muted)}
+@media(pointer:coarse),(max-width:760px){
+ #amp-one.a-approachable-shell .a-destination-history>.a-icon{width:44px;min-width:44px;height:44px}
+ #amp-one.a-approachable-shell .a-work-header{gap:4px}
+ #amp-one.a-approachable-shell .a-work-heading .a-work-crumb,#amp-one.a-approachable-shell .a-work-heading>.a-work-crumb+svg{display:none}
+}
+#amp-one.a-approachable-shell .a-work-menu-items{position:absolute;right:0;top:calc(100% + 8px);z-index:85;padding:7px;min-width:220px;border:1px solid var(--a-line);border-radius:12px;background:var(--a-surface);box-shadow:0 12px 36px #0003;color:var(--a-ink)}
+#amp-one.a-approachable-shell .a-work-menu-items>button{display:flex;align-items:center;justify-content:flex-start;gap:11px;width:100%;padding:11px 10px;text-align:left;background:none;border:0;border-radius:7px;font-size:14px;color:inherit}
+#amp-one.a-approachable-shell .a-work-menu-items>button:hover{background:var(--a-soft)}
+#amp-one.a-approachable-shell .a-work-footer .a-work-menu-items{top:auto;bottom:calc(100% + 8px)}
+#amp-one.a-approachable-shell .a-messages{padding:24px max(22px,calc((100% - 820px)/2))}
+#amp-one.a-approachable-shell .is-empty .a-messages{margin-top:auto}
+#amp-one.a-approachable-shell .is-empty .a-messages{width:100%;flex:0 1 auto;padding:28px 20px}
+#amp-one.a-approachable-shell .a-new-chat-setup{text-align:center;margin:0 auto;max-width:720px;padding:0;border:0;background:none}
+#amp-one.a-approachable-shell .a-new-chat-setup img,#amp-one.a-approachable-shell .a-empty img{width:36px;height:36px;margin-bottom:16px}
+#amp-one.a-approachable-shell .a-new-chat-setup h2,#amp-one.a-approachable-shell .a-empty h2{font-size:26px;font-weight:550;letter-spacing:-.5px;margin:0 0 10px;line-height:1.35}
+#amp-one.a-approachable-shell .a-new-chat-setup p,#amp-one.a-approachable-shell .a-empty p{color:var(--a-muted);margin:0;font-size:14px}
+#amp-one.a-approachable-shell .a-empty{gap:0}
+#amp-one.a-approachable-shell .a-composer{max-width:820px;width:calc(100% - 40px);padding:12px 14px;margin-bottom:22px;border-radius:var(--a-radius,16px);border:1px solid var(--a-line)}
+#amp-one.a-approachable-shell .is-empty .a-composer{margin-bottom:auto}
+#amp-one.a-approachable-shell .a-composer-workspace{display:flex;align-items:center;gap:7px;max-width:100%;padding:5px 6px;margin-bottom:7px;font-size:12px;border:0;background:none;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-composer-workspace span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#amp-one.a-approachable-shell .a-composer-workspace svg{width:15px;height:15px}
+#amp-one.a-approachable-shell .a-work-browser{overflow:auto;min-height:0;flex:1;width:100%;padding:36px max(28px,calc((100% - 920px)/2));box-sizing:border-box}
+#amp-one.a-approachable-shell .a-work-browser-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:24px}
+#amp-one.a-approachable-shell .a-work-browser-heading h1{font-size:24px;margin:0 0 9px;line-height:1.3}
+#amp-one.a-approachable-shell .a-work-browser-heading p{font-size:14px;color:var(--a-muted);line-height:1.6;max-width:480px;margin:0}
+#amp-one.a-approachable-shell .a-work-browser-heading>.a-primary{white-space:nowrap;flex-shrink:0;min-height:38px;padding:8px 13px;font-size:13px}
+#amp-one.a-approachable-shell .a-work-browser .a-nav-search{margin:16px 0 8px;min-height:40px;padding:0 12px;background:var(--a-soft)}
+#amp-one.a-approachable-shell .a-work-browser .a-nav-search input{flex:1;min-width:0;width:100%;font-size:14px}
+#amp-one.a-approachable-shell .a-work-browser .a-nav-search svg{flex:none;width:16px;height:16px}
+#amp-one.a-approachable-shell .a-work-browser .a-nav-chat{margin:4px 0;min-height:52px}
+#amp-one.a-approachable-shell .a-work-browser .a-nav-chat-select{padding:10px}
+#amp-one.a-approachable-shell .a-work-browser .a-workspace-select{min-height:58px;padding:10px}
+#amp-one.a-approachable-shell .a-work-browser .a-workspace-modes{justify-content:flex-end;font-size:12px}
+#amp-one.a-approachable-shell .a-work-tabs{display:flex;gap:16px;border-bottom:1px solid var(--a-line);margin:18px 0}
+#amp-one.a-approachable-shell .a-work-tabs button{padding:10px 3px;min-width:44px;min-height:44px;font-size:13px;background:none;border:0;color:var(--a-muted);border-bottom:2px solid transparent}
+#amp-one.a-approachable-shell .a-work-tabs button[aria-pressed=true]{color:var(--a-accent);border-bottom-color:var(--a-accent)}
+#amp-one.a-approachable-shell .a-work-details{max-width:600px;font-size:14px;line-height:1.7}
+#amp-one.a-approachable-shell .a-work-file-path{display:flex;align-items:center;gap:8px;color:var(--a-muted);font-size:12px;overflow-wrap:anywhere;margin:10px 0}
+#amp-one.a-approachable-shell .a-work-file-row{display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--a-line);min-height:48px}
+#amp-one.a-approachable-shell .a-work-file-row>button:not(.a-icon){flex:1;min-width:0;flex-direction:column;align-items:flex-start;justify-content:flex-start;text-align:left;background:none;border:0;padding:12px 0;color:var(--a-ink);overflow-wrap:anywhere}
+#amp-one.a-approachable-shell .a-work-file-row>button>small{color:var(--a-muted);font-size:var(--a-text-xs,12px)}
+#amp-one.a-approachable-shell:not([data-work-surface=chat]) .a-conversation>*:not(.a-work-browser-host){display:none!important}
+#amp-one.a-approachable-shell .a-work-browser-host{display:flex;flex:1;min-height:0;overflow:hidden}
+#amp-one.a-approachable-shell .a-work-browser-host[hidden]{display:none}
+#amp-one.a-approachable-shell .a-work-dialog-backdrop{position:fixed;inset:0;z-index:150;background:#0007;display:grid;place-items:center;padding:20px}
+#amp-one.a-approachable-shell .a-work-dialog{width:min(520px,100%);max-height:calc(100dvh - 40px);overflow:auto;border:1px solid var(--a-line);background:var(--a-surface);color:var(--a-ink);border-radius:var(--a-radius,16px);padding:24px;box-sizing:border-box;box-shadow:0 24px 70px #0005}
+#amp-one.a-approachable-shell .a-work-dialog-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+#amp-one.a-approachable-shell .a-work-dialog .a-workspace-setup{border:0;margin:0;padding:0}
+#amp-one.a-approachable-shell .a-work-dialog .a-workspace-setup-heading{display:none}
+#amp-one.a-approachable-shell .a-canvas-head{min-height:50px;padding:6px 8px;gap:7px}
+#amp-one.a-approachable-shell .a-canvas-head>.a-canvas-tabs{flex:1;min-width:0;margin:0;overflow:auto}
+#amp-one.a-approachable-shell .a-chat-overview-trigger{font-size:12px;white-space:nowrap;margin-right:auto}
+#amp-one.a-approachable-shell .a-canvas-controls{max-height:none;opacity:1;padding:5px 10px!important;visibility:visible}
+#amp-one.a-approachable-shell .a-file-actions-menu{position:relative;float:right;font-size:12px;margin:2px 0}
+#amp-one.a-approachable-shell .a-file-actions-menu>summary,#amp-one.a-approachable-shell .a-viewer-options>summary{cursor:pointer;color:var(--a-muted);padding:6px}
+#amp-one.a-approachable-shell .a-file-actions-menu>.a-canvas-actions{position:absolute;right:0;top:100%;width:170px;display:flex;flex-direction:column;align-items:stretch;padding:9px;background:var(--a-surface);border:1px solid var(--a-line);border-radius:12px;z-index:8;box-shadow:0 12px 24px #0003}
+#amp-one.a-approachable-shell .a-canvas-location>.a-canvas-file-path{clear:both;font-size:11px;margin:4px 0;color:var(--a-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#amp-one.a-approachable-shell .a-viewer-options{font-size:11px}
+#amp-one.a-approachable-shell .a-chat-overview{flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;padding:10px 24px 24px;font-size:14px;line-height:1.6}
+#amp-one.a-approachable-shell .a-chat-overview>section{padding:20px 0;border-bottom:1px solid var(--a-line)}
+#amp-one.a-approachable-shell .a-chat-overview>section:last-child{border:0}
+#amp-one.a-approachable-shell .a-overview-title{display:flex;align-items:center;gap:10px}
+#amp-one.a-approachable-shell .a-overview-title h3{font-size:14px;margin:0;font-weight:600}
+#amp-one.a-approachable-shell .a-overview-title span{margin-left:auto;color:var(--a-muted);font-size:12px}
+#amp-one.a-approachable-shell .a-chat-overview p{color:var(--a-muted);font-size:13px;margin:10px 0}
+#amp-one.a-approachable-shell .a-overview-actions{display:flex;gap:15px;flex-wrap:wrap;margin-top:16px}
+#amp-one.a-approachable-shell .a-chat-overview .a-canvas-library{padding:10px 0}
+#amp-one.a-approachable-shell .a-chat-overview .a-canvas-library h3{display:none}
+#amp-one.a-approachable-shell .a-chat-overview .a-canvas-library input{font-size:12px}
+#amp-one.a-approachable-shell .a-chat-overview ul{padding-left:18px;overflow-wrap:anywhere}
+@media(max-width:760px){
+ #amp-one.a-approachable-shell{padding:0}
+ #amp-one.a-approachable-shell .a-work-header{min-height:56px;padding:6px 8px;gap:4px;flex-wrap:wrap}
+ #amp-one.a-approachable-shell .a-work-heading{order:1;flex:1 0 100%;min-height:44px}
+ #amp-one.a-approachable-shell .a-work-heading>strong{flex:1;min-width:0}
+ #amp-one.a-approachable-shell .a-destination-menu{position:fixed;left:8px;right:8px;top:var(--a-navigation-top,104px);width:auto;max-width:none;box-sizing:border-box}
+ #amp-one.a-approachable-shell .a-work-crumb,#amp-one.a-approachable-shell .a-work-crumb+svg,#amp-one.a-approachable-shell .a-work-brand{display:none}
+ #amp-one.a-approachable-shell[data-work-surface=home] .a-work-brand{display:flex;border:0;padding-right:0}
+ #amp-one.a-approachable-shell .a-work-browser{padding:24px 16px}
+ #amp-one.a-approachable-shell .a-work-browser-heading{flex-direction:column;gap:16px}
+ #amp-one.a-approachable-shell .a-new-chat-setup h2{font-size:25px}
+ #amp-one.a-approachable-shell .a-composer{width:calc(100% - 20px);padding:10px}
+ #amp-one.a-approachable-shell .a-work-dialog{padding:18px}
+ #amp-one.a-approachable-shell .a-messages{padding:20px 16px}
+}
+/* On the smallest phones, keep site navigation on top and let the existing
+   chat actions share the title row instead of creating a third header row. */
+@media(max-width:360px){
+ #amp-one.a-approachable-shell .a-work-heading{flex-basis:calc(100% - 96px)}
+ #amp-one.a-approachable-shell .a-work-header-actions{order:1}
+}
+#amp-one.a-approachable-shell .a-quiet-sidebar .a-navigation-age{display:none}
+#amp-one.a-approachable-shell .a-pinned-chats .a-nav-chat-label>small,#amp-one.a-approachable-shell .a-pinned-chats .a-navigation-age,#amp-one.a-approachable-shell .a-pinned-drag .a-nav-chat-label>small,#amp-one.a-approachable-shell .a-pinned-drag .a-navigation-age{display:none}
+#amp-one.a-approachable-shell .a-pinned-chats .a-nav-chat-select,#amp-one.a-approachable-shell .a-pinned-drag .a-nav-chat-select{min-height:40px;padding:8px 7px}
+#amp-one.a-approachable-shell .a-browser-pins{margin:24px 0}
+#amp-one.a-approachable-shell .a-browser-pins h2{font-size:13px;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-pinned-chats .a-nav-chat{min-height:40px;margin:1px 0}
+#amp-one.a-approachable-shell .a-workspace-explorer[data-compact=true] .a-workspace-row[data-qualified=true] .a-workspace-result-path{display:block;font-size:11px}
+
+/* Single-line shortcuts use the same row rhythm, including the drag preview. */
+#amp-one.a-approachable-shell .a-nav-slot .a-nav-chat:not(.a-nav-chat-rename),
+#amp-one.a-approachable-shell .a-nav-slot .a-workspace-row,
+#amp-one.a-approachable-shell .a-pinned-chats .a-nav-chat,
+#amp-one.a-approachable-shell .a-pinned-drag .a-nav-chat{height:var(--a-work-row-height);min-height:var(--a-work-row-height);max-height:var(--a-work-row-height)}
+#amp-one.a-approachable-shell .a-nav-slot .a-nav-chat-select,
+#amp-one.a-approachable-shell .a-nav-slot .a-workspace-row>.a-workspace-select,
+#amp-one.a-approachable-shell .a-pinned-chats .a-nav-chat-select,
+#amp-one.a-approachable-shell .a-pinned-drag .a-nav-chat-select{height:100%;min-height:0;padding:7px 8px}
+#amp-one.a-approachable-shell .a-nav-slot .a-workspace-row[data-qualified=true],
+#amp-one.a-approachable-shell[data-interface-detail=detailed] .a-nav-slot .a-workspace-row{height:54px;min-height:54px;max-height:54px}
+#amp-one.a-approachable-shell[data-density=compact]{--a-work-row-height:36px}
+#amp-one.a-approachable-shell .a-nav-rail .a-nav-empty{font-size:12px;line-height:1.55;margin:7px 9px 10px;max-width:230px}
+#amp-one.a-approachable-shell .a-work-browser .a-nav-empty{padding:28px 0;margin:0;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-work-browser .a-navigation-status{display:inline-flex;align-items:center;flex:none}
+#amp-one.a-approachable-shell .a-work-browser .a-navigation-age{font-size:12px;color:var(--a-muted);margin-left:auto}
+#amp-one.a-approachable-shell .a-work-browser .a-nav-chat-label{flex:1;min-width:0}
+#amp-one.a-approachable-shell .a-work-browser .a-nav-chat-label>span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#amp-one.a-approachable-shell .a-work-browser .a-nav-chat-label>small{display:block;color:var(--a-muted);font-size:12px}
+@media(max-width:760px),(pointer:coarse){
+ #amp-one.a-approachable-shell{--a-work-row-height:44px}
+ #amp-one.a-approachable-shell .a-work-header .a-icon{width:44px;height:44px}
+}
+
+/* Persistent controls occupy space above the viewer; they never cover content. */
+#amp-one.a-approachable-shell .a-canvas-panel[data-controls] .a-canvas-controls{position:static;max-height:35dvh;overflow:auto;box-shadow:none;border-radius:0;border-bottom:1px solid var(--a-line)}
+#amp-one.a-approachable-shell .a-canvas-location{display:flex;align-items:center;gap:8px;min-width:0}
+#amp-one.a-approachable-shell .a-canvas-location .a-canvas-file-path{flex:1;min-width:0;margin:7px 0;order:-1;font-size:11px}
+#amp-one.a-approachable-shell .a-canvas-location .a-file-actions-menu{float:none;flex:none;margin:0 0 0 auto}
+#amp-one.a-approachable-shell .a-canvas-view-tools .a-canvas-toolbar{padding:5px 0;gap:4px;flex-wrap:wrap}
+#amp-one.a-approachable-shell .a-canvas-view-tools .a-soft{font-size:12px;min-height:28px;padding:4px 7px}
+#amp-one.a-approachable-shell .a-canvas-view-tools .a-icon{width:28px;height:28px}
+#amp-one.a-approachable-shell .a-viewer-options>summary{padding:4px 0}
+
+#amp-one.a-approachable-shell .a-file-actions-menu[open]>.a-canvas-actions{position:static;box-shadow:none;margin-top:6px}
+
+/* Pinned rows share their presentation in the rail, browser and drag overlay. */
+#amp-one.a-approachable-shell :is(.a-pinned-chats,.a-pinned-drag) .a-nav-chat-label>small,
+#amp-one.a-approachable-shell :is(.a-pinned-chats,.a-pinned-drag) .a-navigation-age{display:none}
+#amp-one.a-approachable-shell :is(.a-pinned-chats,.a-pinned-drag) .a-navigation-status{display:inline-flex;align-items:center;justify-content:center;flex:0 0 17px;width:17px;height:19px}
+#amp-one.a-approachable-shell :is(.a-pinned-chats,.a-pinned-drag) .a-navigation-status svg{width:15px;height:15px}
+#amp-one.a-approachable-shell :is(.a-pinned-chats,.a-pinned-drag) .a-navigation-more{width:26px;min-width:26px;height:32px;flex-shrink:0;margin-right:2px}
+#amp-one.a-approachable-shell .a-pinned-chats .a-navigation-more{opacity:0}
+#amp-one.a-approachable-shell .a-pinned-chats :is(.a-nav-chat:hover,.a-nav-chat:focus-within,.a-workspace-row:hover,.a-workspace-row:focus-within,.is-peeking)>.a-navigation-more{opacity:1}
+@media(hover:none),(pointer:coarse){#amp-one.a-approachable-shell .a-pinned-chats .a-navigation-more{opacity:1;width:40px;height:44px}}
+#amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) :is(.a-nav-chat-select,.a-workspace-row>.a-workspace-select){padding-inline:8px;gap:8px}
+
+/* A collapsed sidebar consumes no width and cannot reopen on hover. */
+#amp-one.a-approachable-shell .a-work-nav-toggle{order:-1;flex:none}
+/* The header control remains part of the narrow navigation's focus loop. */
+@media(max-width:900px){
+ #amp-one.a-approachable-shell:has(.a-nav-slot.is-expanded) .a-work-header{position:relative;z-index:91}
+ #amp-one.a-approachable-shell .a-navigation-scrim{top:var(--a-navigation-top,56px)}
+ #amp-one.a-approachable-shell .a-layout[data-pane-layout][data-narrow="true"]>.a-nav-slot[data-docked]{top:var(--a-navigation-top,56px);height:calc(100dvh - var(--a-navigation-top,56px))}
+ #amp-one.a-approachable-shell .a-nav-slot .a-sidebar-modes{flex-direction:row;justify-content:flex-start}
+ #amp-one.a-approachable-shell .a-sidebar-modes button,#amp-one.a-approachable-shell .a-nav-search-launch{min-height:44px}
+}
+@media(max-width:760px){
+ #amp-one.a-approachable-shell .a-layout[data-pane-layout][data-narrow="true"]>.a-nav-slot[data-docked]{width:100%;max-width:none;border-radius:0}
+}
+@media(min-width:761px){
+ #amp-one.a-approachable-shell .a-layout[data-pane-layout]>.a-nav-slot[data-docked="false"]{position:absolute;inset:0 auto 0 0;width:0;min-width:0;flex:none}
+ #amp-one.a-approachable-shell .a-layout[data-pane-layout]>.a-nav-slot[data-docked="false"] .a-nav-rail{width:var(--nav-width)}
+}
+
+/* Composite search fields own one focus ring, including in custom themes. */
+#amp-one.a-approachable-shell .a-picker-search input:focus-visible{outline:none;box-shadow:none}
+#amp-one.a-approachable-shell .a-work-live-controls{flex:none;min-width:0}
+#amp-one.a-approachable-shell .a-work-live-controls .a-call-strip{flex-wrap:wrap}
+#amp-one.a-approachable-shell .a-workspace-explorer[data-compact=true][data-show-paths=true] .a-workspace-result-path{display:block;font-size:11px}
+#amp-one.a-approachable-shell .a-nav-slot .a-workspace-explorer[data-show-paths=true] .a-workspace-row{height:54px;min-height:54px;max-height:54px}
+
+/* The disclosure must override themes that truncate the compact location line. */
+#amp-one.a-approachable-shell details.a-canvas-file-path{white-space:normal;overflow:visible;border:0;padding:4px 0}
+
+#amp-one .a-canvas-controls[hidden]{display:none!important}
+#amp-one .a-canvas-version-shortcut{white-space:nowrap;flex:0 0 auto;font-size:12px}
+#amp-one .a-canvas-unsaved{margin:0;padding:6px 14px;color:var(--a-muted);font-size:12px}
+
+/* Only mounted while away from latest. Give the control its own compact row
+   outside the scrollable transcript, rather than covering readable messages. */
+.a-chat-jump{flex:none;display:flex;justify-content:center;padding:4px 12px}
+.a-chat-jump button{position:static;box-shadow:0 2px 8px #0003;border-radius:24px}
+/* Ownership isolation must not trap composer popups below chat navigation. */
+#amp-one .a-composer{z-index:7}
+
+/* Search shares the native catalog and compact chat rows with navigation. */
+#amp-one.a-approachable-shell .a-chat-search-page .a-nav-search{min-height:50px;margin:0 0 16px}
+#amp-one.a-approachable-shell .a-chat-search-page .a-nav-search:focus-within{outline:2px solid var(--a-accent);outline-offset:2px}
+#amp-one.a-approachable-shell .a-chat-search-page .a-nav-search input:focus,#amp-one.a-approachable-shell .a-chat-search-page .a-nav-search input:focus-visible{outline:none;box-shadow:none}
+#amp-one.a-approachable-shell .a-chat-search-page .a-nav-search input::-webkit-search-cancel-button,#amp-one.a-approachable-shell .a-chat-search-page .a-nav-search input::-webkit-search-decoration{-webkit-appearance:none;appearance:none;display:none}
+#amp-one.a-approachable-shell .a-search-tools{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+#amp-one.a-approachable-shell .a-search-filters{flex:1;min-width:180px}
+#amp-one.a-approachable-shell .a-search-filters summary{cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-search-filters summary::before{content:'›'}
+#amp-one.a-approachable-shell .a-search-filters[open] summary::before{transform:rotate(90deg)}
+#amp-one.a-approachable-shell .a-search-filter-fields{display:flex;flex-wrap:wrap;gap:16px;padding:12px 0 20px}
+#amp-one.a-approachable-shell .a-search-filter-fields label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-search-filter-fields small{flex-basis:100%;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-search-sort{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-chat-search-page select{max-width:100%;min-height:40px}
+#amp-one.a-approachable-shell .a-search-result-summary{display:flex;gap:16px;align-items:center;margin:20px 0 8px;color:var(--a-muted);font-size:13px}
+#amp-one.a-approachable-shell .a-chat-search-page .a-nav-chat{margin:0;border-radius:8px;min-height:56px}
+#amp-one.a-approachable-shell .a-chat-search-page .a-nav-chat-select{padding:10px 8px}
+#amp-one.a-approachable-shell .a-search-empty{padding:32px 0;color:var(--a-muted)}
+#amp-one.a-approachable-shell .a-search-empty h2{font-size:18px;color:var(--a-text)}
+@media(max-width:600px){
+ #amp-one.a-approachable-shell .a-search-tools{gap:8px}
+ #amp-one.a-approachable-shell .a-search-filters{min-width:100%;order:2}
+ #amp-one.a-approachable-shell .a-search-filter-fields{flex-direction:column}
+}
+
+#amp-one .a-dictation{position:relative;flex:0 0 auto}
+#amp-one .a-dictation>button{width:38px;height:38px}
+#amp-one .a-dictation>button[aria-pressed=true]{color:var(--a-accent);background:var(--a-tint)}
+#amp-one .a-dictation-feedback{position:absolute;right:0;bottom:calc(100% + 8px);width:max-content;max-width:min(280px,70vw);padding:8px 12px;border:1px solid var(--a-line);border-radius:8px;background:var(--a-surface);color:var(--a-ink);font-size:13px;box-shadow:0 2px 8px #0002;z-index:8}
+#amp-one .a-dictation-settings{border-bottom:1px solid var(--a-line);padding-bottom:16px;margin-bottom:24px}
+#amp-one .a-dictation-settings label{display:block;margin-bottom:8px}
+@media(pointer:coarse){#amp-one .a-dictation>button{width:44px;height:44px}}
+
+#amp-one .a-workspace-plan{margin:0 16px 12px 38px;font-size:.875rem}
+#amp-one .a-workspace-plan summary{display:flex;align-items:center;gap:12px;cursor:pointer;flex-wrap:wrap}
+#amp-one .a-workspace-plan progress{width:90px;height:8px;accent-color:var(--accent)}
+#amp-one .a-workspace-plan li{overflow-wrap:anywhere}
+
+/* The shared configuration panel is used at every composer width. */
+#amp-one .a-composer-options-panel .a-model-control{display:block}
+#amp-one .a-composer-options-panel details{margin-top:14px}
+#amp-one .a-composer-options-panel summary{color:var(--a-muted);font-size:var(--a-text-sm,13px)}
+#amp-one .a-composer-options-panel .a-composer-options-done{width:100%;margin-top:18px;min-height:40px;justify-content:center}
+
+/* Workspace scope stays visible in both sidebar modes and pin drag previews. */
+#amp-one.a-approachable-shell .a-nav-chat[data-has-workspace=true] .a-nav-chat-label>.a-nav-chat-workspace,
+#amp-one.a-approachable-shell .a-nav-chat[data-show-paths=true] .a-nav-chat-label>small,
+#amp-one.a-approachable-shell .a-workspace-row[data-show-paths=true] .a-workspace-result-path,
+#amp-one.a-approachable-shell[data-interface-detail=detailed] .a-quiet-sidebar .a-nav-chat-label>small,
+#amp-one.a-approachable-shell[data-interface-detail=detailed] :is(.a-pinned-chats,.a-pinned-drag) .a-nav-chat-label>small{display:block}
+#amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-nav-chat[data-has-workspace=true],
+#amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-nav-chat[data-show-paths=true],
+#amp-one.a-approachable-shell :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-workspace-row[data-show-paths=true],
+#amp-one.a-approachable-shell[data-interface-detail=detailed] :is(.a-nav-slot,.a-pinned-chats,.a-pinned-drag) .a-nav-chat{height:54px;min-height:54px;max-height:54px}

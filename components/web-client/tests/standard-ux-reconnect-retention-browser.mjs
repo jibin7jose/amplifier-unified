@@ -1,0 +1,40 @@
+import {fixturePython} from './fixture-python.mjs';
+import {showFixtureConversation} from './browser-chat-pages.mjs';
+// Actual disconnected transport, private attachments, drafts and reading anchors.
+import './composer-test-helpers.mjs';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {fileURLToPath} from 'node:url';
+import assert from 'node:assert/strict';
+import {chromium,expect} from '@playwright/test';
+const root=fileURLToPath(new URL('../../',import.meta.url));
+const fixture=spawn(fixturePython(root+'.venv/bin/python'),['-u',root+'tests/fixtures/browser_detail_server.py',root],{stdio:['ignore','pipe','inherit']});
+let browser;
+try{
+ const ready=await new Promise((resolve,reject)=>{let text='';const timer=setTimeout(()=>reject(Error('Fixture timeout')),15000);fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exit '+code))});fixture.stdout.on('data',chunk=>{text+=chunk;for(const line of text.split('\n'))try{const row=JSON.parse(line);if(row.port){clearTimeout(timer);resolve(row)}}catch{}})});
+ const url=`http://127.0.0.1:${ready.port}`,headers={Authorization:'Bearer fixture-detail-token','content-type':'application/json'};
+ const control=async body=>{const r=await fetch(url+'/api/fixture/control',{method:'POST',headers,body:JSON.stringify(body)});assert.equal(r.status,200);return r.json()};
+ const {alpha}=await control({op:'heavy',messages:300,otherMessages:1,chars:150,nodes:0});
+ const before=await control({op:'inspect'}),original=before.state.sessions.find(row=>row.id===alpha);
+ browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1280,height:950},extraHTTPHeaders:headers}),page=await context.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.addInitScript(()=>{const Native=window.WebSocket;window.fixtureSockets=[];window.WebSocket=class extends Native{constructor(...args){super(...args);window.fixtureSockets.push(this)}}});
+ await page.goto(url);await showFixtureConversation(page,{navPinned:true});const composer=page.getByRole('textbox',{name:'Message Amplifier',exact:true}),pane=page.getByRole('log',{name:'Conversation messages',exact:true});await expect(composer).toBeEditable();
+ await page.getByLabel('Attach files',{exact:true}).setInputFiles({name:'retained-evidence.txt',mimeType:'text/plain',buffer:Buffer.from('Exact private attachment bytes')});
+ const strip=page.locator('[data-part="composer"] .a-attachment');await expect(strip).toContainText('retained-evidence.txt');await expect(page.getByText('Uploading attachments…',{exact:true})).toHaveCount(0);
+ await composer.fill('Private draft before disconnect');
+ const selected=()=>page.evaluate(()=>{const s=window.amplifier.getState();return {sessionId:s.selectedSessionId,attachments:s.sessions.find(r=>r.id===s.selectedSessionId)?.draftAttachments||s.draftAttachments}});
+ const target=await selected();assert.equal(target.sessionId,alpha);assert.equal(target.attachments.length,1);
+ const anchor=()=>pane.evaluate(el=>{const top=el.getBoundingClientRect().top,n=[...el.querySelectorAll('[data-message-id]')].find(n=>n.getBoundingClientRect().bottom>top);return {id:n?.dataset.messageId,offset:n?.getBoundingClientRect().top-top,top:el.scrollTop}});
+ await expect.poll(()=>pane.locator('[data-message-id]').count()).toBeGreaterThan(10);
+ await pane.evaluate(el=>{el.scrollTop=el.scrollHeight*.45;el.dispatchEvent(new Event('scroll'))});
+ const reading=await anchor();assert.ok(reading.id&&reading.top>0);
+ await expect.poll(()=>page.evaluate(id=>JSON.parse(sessionStorage.getItem('amplifier.chat-reading.v1')||'{}')[id]?.messageId,alpha)).toBe(reading.id);
+ const connected=page.locator('.a-footer-status');await expect(connected).toContainText('Connected');
+ await context.setOffline(true);await page.evaluate(()=>window.fixtureSockets.forEach(socket=>socket.close()));await expect(connected).toContainText('Reconnecting');
+ await composer.fill('Private offline draft retained');await expect(strip).toContainText('retained-evidence.txt');assert.deepEqual(await selected(),target);assert.equal((await anchor()).id,reading.id);
+ await context.setOffline(false);await page.evaluate(()=>window.dispatchEvent(new Event('online')));await expect(connected).toContainText('Connected',{timeout:15000});
+ await expect(composer).toHaveDraft('Private offline draft retained');await expect(strip).toContainText('retained-evidence.txt');assert.deepEqual(await selected(),target);await expect.poll(async()=>(await anchor()).id).toBe(reading.id);assert.ok(Math.abs((await anchor()).offset-reading.offset)<3);
+ await page.reload();await expect(connected).toContainText('Connected');await expect(composer).toHaveDraft('Private offline draft retained');await expect(strip).toContainText('retained-evidence.txt');assert.deepEqual(await selected(),target);await expect.poll(async()=>(await anchor()).id).toBe(reading.id);assert.ok(Math.abs((await anchor()).offset-reading.offset)<3);
+ const after=await control({op:'inspect'});assert.deepEqual(after.state.sessions.find(row=>row.id===alpha).messages,original.messages);assert.equal(after.runtimeStarts,before.runtimeStarts);assert.equal(after.runtimeSends,0);assert.deepEqual(after.runtimeControls,[]);assert.deepEqual(errors,[]);
+ console.log(JSON.stringify({passed:true,actualTransportDisconnect:true,offlineDraft:true,exactAttachmentOwner:true,selectedChatAndMessageAnchorRetained:true,reloadAlsoRetains:true,runtimeEffects:0}));
+}finally{try{await browser?.close()}finally{if(fixture.exitCode===null){const done=once(fixture,'exit');fixture.kill('SIGTERM');const timer=setTimeout(()=>fixture.kill('SIGKILL'),5000);try{await done}catch{}finally{clearTimeout(timer)}}}}

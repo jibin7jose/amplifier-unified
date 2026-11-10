@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "Amplifier",
+  "short_name": "Amplifier",
+  "description": "Your voice, chat, and collaborative canvas workspace.",
+  "lang": "en",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "launch_handler": {"client_mode": "focus-existing"},
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#e8eeff",
+  "theme_color": "#e8eeff",
+  "categories": ["productivity", "utilities"],
+  "prefer_related_applications": false,
+  "icons": [
+    {"src": "/branding/pwa/pwa-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/branding/pwa/pwa-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
+  ]
+}

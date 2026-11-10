@@ -1,0 +1,7 @@
+html,body,#root{margin:0;min-height:100%;width:100%}body{background:var(--boot-bg,#e8eeff)}button,input,textarea,select{font:inherit}button:disabled{cursor:not-allowed!important;opacity:.48}.boot{font:16px system-ui;padding:64px;color:var(--boot-ink,#263459)}.boot img{width:56px}.boot button{padding:10px 18px;margin-top:12px;border-radius:12px;border:1px solid #ccc;background:white}
+.a-updates{margin-top:24px;padding-top:20px;border-top:1px solid var(--border,#dce3ef)}
+.a-update-options{display:grid;gap:12px}.a-update-options label{display:flex;align-items:center;gap:10px;margin:0}.a-update-options input[type=checkbox]{width:18px;height:18px;flex-shrink:0}.a-update-list{padding:0;list-style:none;max-height:300px;overflow:auto}.a-update-list li{display:grid;gap:3px;padding:12px 0;border-bottom:1px solid var(--border,#dce3ef);overflow-wrap:anywhere}.a-update-list small,.a-update-list span{opacity:.75}.a-update-count{font-size:var(--a-text-base,14px);padding:3px 7px;border-radius:12px;background:#e0e7ff;color:#3730a3}.a-settings-dot{width:7px;height:7px;border-radius:50%;background:#6750e8;position:absolute;top:4px;right:4px}
+
+.a-diagnostic-streams{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.55rem;margin:.8rem 0}.a-diagnostic-destinations{display:grid;gap:.5rem;margin:.8rem 0}
+
+.a-diagnostic-streams .a-inline-checkbox{margin:0!important;min-height:44px;align-items:center}

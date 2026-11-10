@@ -1,0 +1,13 @@
+#amp-one .a-observability-preferences{margin:16px 0}
+#amp-one .a-observability-preferences fieldset{display:flex;flex-wrap:wrap;gap:10px 20px;margin:12px 0;border:0;padding:0}
+#amp-one .a-observability-preferences label{display:inline-flex;gap:7px;align-items:center}
+#amp-one .a-metric-export{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:8px}
+#amp-one .a-conversation-status{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;padding:8px 16px;color:var(--a-muted);font-size:var(--a-text-sm,13px);border-bottom:1px solid var(--a-line)}
+#amp-one .a-conversation-status details{flex-basis:100%}
+
+#amp-one .a-execution-call-counts[data-metrics-selected=true]{display:inline}
+
+#amp-one[data-execution-detail="minimal"] .a-execution-content .a-execution-usage[data-metrics-explicit=true]{display:block}
+#amp-one .a-metric-state{display:block;font-size:var(--a-text-xs,12px)}
+
+#amp-one .a-execution-usage[data-metrics-only-breakdown=true]>.a-usage-breakdown{display:block}

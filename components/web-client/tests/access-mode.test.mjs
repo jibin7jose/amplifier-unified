@@ -1,0 +1,50 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import React,{act as renderAct} from 'react';
+import {create} from 'react-test-renderer';
+import {createServer} from 'vite';
+const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
+const {AccessMode}=await server.ssrLoadModule('/src/access-mode.jsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+test.after(()=>server.close());
+const report=(id,mode='ask')=>({sessionId:id,mode,source:mode==='full'?'workspace':'default',revision:'rev-'+id,
+ overrides:{session:{mode:'inherit'},workspace:{mode},app:{mode:'inherit'}}});
+const button=(root,label)=>root.root.findAllByType('button').find(node=>node.children.includes(label));
+test('explicit scope and revision; a failed save requires reload and is not repeated',async()=>{
+ const calls=[];let root;
+ const act=async(action,args)=>{calls.push([action,args]);if(action==='access.set')throw Error('Connection lost');return {accepted:true,result:report('owner')}};
+ await renderAct(async()=>{root=create(React.createElement(AccessMode,{session:{id:'owner'},act}))});
+ await renderAct(async()=>root.root.findByProps({'aria-label':'Access scope'}).props.onChange({target:{value:'workspace'}}));
+ await renderAct(async()=>root.root.findByProps({'aria-label':'Access mode'}).props.onChange({target:{value:'full'}}));
+ await renderAct(async()=>button(root,'Save access preference').props.onClick());
+ assert.deepEqual(calls[1],['access.set',{sessionId:'owner',scope:'workspace',mode:'full',expectedRevision:'rev-owner'}]);
+ assert.equal(root.root.findByType('fieldset').props.disabled,true);
+ assert.match(JSON.stringify(root.toJSON()),/Connection lost/);
+ await renderAct(async()=>button(root,'Reload access settings').props.onClick());
+ assert.equal(calls.filter(([action])=>action==='access.set').length,1);
+ await renderAct(async()=>root.unmount());
+});
+test('late previous-chat preview cannot replace current-chat mode',async()=>{
+ let root;const waits=new Map();const act=(_,args)=>new Promise(resolve=>waits.set(args.sessionId,resolve));
+ const render=id=>React.createElement(AccessMode,{session:{id},act});
+ await renderAct(async()=>{root=create(render('old'))});
+ await renderAct(async()=>root.update(render('new')));
+ await renderAct(async()=>waits.get('new')({accepted:true,result:report('new','full')}));
+ await renderAct(async()=>waits.get('old')({accepted:true,result:report('old')}));
+ assert.equal(root.root.findByProps({'aria-label':'Access mode'}).props.value,'inherit');
+ assert.match(JSON.stringify(root.toJSON()),/Full access/);
+ assert.equal(root.root.findByType('strong').children[0],'Full access');
+ await renderAct(async()=>root.unmount());
+});
+test('global settings works with no chat and saves app scope explicitly',async()=>{
+ const calls=[];let root;
+ const act=async(action,args)=>{calls.push([action,args]);return {accepted:true,result:{mode:action==='access.set'?'full':'ask',source:'app',revision:'global-rev',overrides:{app:{mode:action==='access.set'?'full':'inherit'}}}}};
+ await renderAct(async()=>{root=create(React.createElement(AccessMode,{globalOnly:true,act}))});
+ assert.deepEqual(calls[0],['access.get',{scope:'app'}]);
+ assert.equal(root.root.findAllByProps({'aria-label':'Access scope'}).length,0);
+ await renderAct(async()=>root.root.findByProps({'aria-label':'Access mode'}).props.onChange({target:{value:'full'}}));
+ await renderAct(async()=>button(root,'Save access preference').props.onClick());
+ assert.deepEqual(calls[1],['access.set',{scope:'app',mode:'full',expectedRevision:'global-rev'}]);
+ assert.equal(root.root.findByType('strong').children[0],'Full access');
+ await renderAct(async()=>root.unmount());
+});

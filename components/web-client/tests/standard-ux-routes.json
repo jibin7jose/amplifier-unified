@@ -1,0 +1,1180 @@
+{
+  "schemaVersion": 1,
+  "baseline": "1d993e0bb32bc90b75fc66f56f1b9014c2d63f87",
+  "settings": [
+    {
+      "id": "route.settings.ai-connections",
+      "page": "ai-connections",
+      "label": "AI connections",
+      "section": "ai",
+      "entryPath": [
+        "Settings",
+        "AI connections"
+      ],
+      "configurationScope": "Across workspaces on this Amplifier host",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 4
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.overview",
+      "page": "overview",
+      "label": "AI connections",
+      "section": "ai",
+      "entryPath": [
+        "Settings",
+        "AI connections"
+      ],
+      "configurationScope": "Across workspaces on this Amplifier host",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 4
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.smart-tools",
+      "page": "smart-tools",
+      "label": "Smart Tools",
+      "section": "smart-tools",
+      "entryPath": [
+        "Settings",
+        "Smart Tools"
+      ],
+      "configurationScope": "This Amplifier host",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 5
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.appearance",
+      "page": "appearance",
+      "label": "Appearance",
+      "section": "appearance",
+      "entryPath": [
+        "Settings",
+        "Appearance"
+      ],
+      "configurationScope": "This interface",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 6
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.workspaces",
+      "page": "workspaces",
+      "label": "Workspaces",
+      "section": "workspaces",
+      "entryPath": [
+        "Settings",
+        "Workspaces"
+      ],
+      "configurationScope": "New workspaces on this host",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 7
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.workspace-starters",
+      "page": "workspace-starters",
+      "label": "Workspace starters",
+      "section": "workspaces",
+      "entryPath": [
+        "Settings",
+        "Workspaces",
+        "Workspace starters"
+      ],
+      "configurationScope": "New workspaces on this host",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 7
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.voice",
+      "page": "voice",
+      "label": "Voice",
+      "section": "voice",
+      "entryPath": [
+        "Settings",
+        "Voice"
+      ],
+      "configurationScope": "Future voice connections",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 8
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.notifications",
+      "page": "notifications",
+      "label": "Notifications",
+      "section": "notifications",
+      "entryPath": [
+        "Settings",
+        "Notifications"
+      ],
+      "configurationScope": "This app",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 9
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.privacy",
+      "page": "privacy",
+      "label": "Privacy & files",
+      "section": "privacy",
+      "entryPath": [
+        "Settings",
+        "Privacy & files"
+      ],
+      "configurationScope": "Your work and access choices",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 10
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.permissions",
+      "page": "permissions",
+      "label": "File access",
+      "section": "privacy",
+      "entryPath": [
+        "Settings",
+        "Privacy & files",
+        "File access"
+      ],
+      "configurationScope": "Your work and access choices",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 10
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.desktop",
+      "page": "desktop",
+      "label": "Screen & computer access",
+      "section": "privacy",
+      "entryPath": [
+        "Settings",
+        "Privacy & files",
+        "Screen & computer access"
+      ],
+      "configurationScope": "Your work and access choices",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 10
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.diagnostics",
+      "page": "diagnostics",
+      "label": "App diagnostic capture",
+      "section": "privacy",
+      "entryPath": [
+        "Settings",
+        "Privacy & files",
+        "App diagnostic capture"
+      ],
+      "configurationScope": "Your work and access choices",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 10
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.history",
+      "page": "history",
+      "label": "Saved work",
+      "section": "privacy",
+      "entryPath": [
+        "Settings",
+        "Privacy & files",
+        "Saved work"
+      ],
+      "configurationScope": "Your work and access choices",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 10
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.storage",
+      "page": "storage",
+      "label": "Storage",
+      "section": "privacy",
+      "entryPath": [
+        "Settings",
+        "Privacy & files",
+        "Storage"
+      ],
+      "configurationScope": "Your work and access choices",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 10
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.updates",
+      "page": "updates",
+      "label": "Updates",
+      "section": "updates",
+      "entryPath": [
+        "Settings",
+        "Updates"
+      ],
+      "configurationScope": "This Amplifier host",
+      "disposition": "included",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 11
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.advanced",
+      "page": "advanced",
+      "label": "Advanced",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.image-generation",
+      "page": "image-generation",
+      "label": "Image generation",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Image generation"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "included",
+      "alternateStandardEntry": [
+        "Settings",
+        "AI connections",
+        "Image preferences"
+      ],
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.providers",
+      "page": "providers",
+      "label": "Provider configuration",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Provider configuration"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.routing",
+      "page": "routing",
+      "label": "Model rules",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Model rules"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "included",
+      "alternateStandardEntry": [
+        "Workspace",
+        "Details",
+        "Model rules"
+      ],
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.app-bundles",
+      "page": "app-bundles",
+      "label": "Configured bundles",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Configured bundles"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.add-bundles",
+      "page": "add-bundles",
+      "label": "Discover bundles",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Discover bundles"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.defaults",
+      "page": "defaults",
+      "label": "Conversation defaults",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Conversation defaults"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.registries",
+      "page": "registries",
+      "label": "Module & source registries",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Module & source registries"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "included",
+      "alternateStandardEntry": [
+        "Workspace",
+        "Details",
+        "Modules & sources"
+      ],
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.tool-connections",
+      "page": "tool-connections",
+      "label": "Tool connections",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Tool connections"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.custom-appearance",
+      "page": "custom-appearance",
+      "label": "Custom appearance",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Custom appearance"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.repair",
+      "page": "repair",
+      "label": "Backup & repair",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Backup & repair"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "included",
+      "alternateStandardEntry": [
+        "Settings",
+        "Privacy & files",
+        "Backups & recovery"
+      ],
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.reset",
+      "page": "reset",
+      "label": "Advanced recovery",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Advanced recovery"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.ready-conversations",
+      "page": "ready-conversations",
+      "label": "Ready conversations",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Ready conversations"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.automation",
+      "page": "automation",
+      "label": "Terminal & automation",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Terminal & automation"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.settings.install-app",
+      "page": "install-app",
+      "label": "Install app",
+      "section": "advanced",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Install app"
+      ],
+      "configurationScope": "Full configuration",
+      "disposition": "advanced-boundary-only",
+      "alternateStandardEntry": null,
+      "source": {
+        "path": "frontend/src/settings-navigation.js",
+        "line": 12
+      },
+      "browserStatus": "not-run"
+    }
+  ],
+  "chat": [
+    {
+      "id": "route.chat.chat-error",
+      "page": "chat-error",
+      "label": "Error details",
+      "disposition": "included",
+      "entryPath": [
+        "Chat",
+        "Error details"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.session-details",
+      "page": "session-details",
+      "label": "Chat info",
+      "disposition": "included",
+      "entryPath": [
+        "Chat",
+        "Chat info"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-rename",
+      "page": "chat-rename",
+      "label": "Rename",
+      "disposition": "included",
+      "entryPath": [
+        "Chat",
+        "Rename"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-share",
+      "page": "chat-share",
+      "label": "Share or save",
+      "disposition": "included",
+      "entryPath": [
+        "Chat",
+        "Share or save"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-help",
+      "page": "chat-help",
+      "label": "Help & diagnostics",
+      "disposition": "included",
+      "entryPath": [
+        "Chat",
+        "Help & diagnostics"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-advanced",
+      "page": "chat-advanced",
+      "label": "Advanced",
+      "disposition": "advanced-boundary-only",
+      "entryPath": [
+        "Chat",
+        "Advanced",
+        "Advanced"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-work",
+      "page": "chat-work",
+      "label": "Work & automation",
+      "disposition": "advanced-boundary-only",
+      "entryPath": [
+        "Chat",
+        "Advanced",
+        "Work & automation"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-models",
+      "page": "chat-models",
+      "label": "Model & tools",
+      "disposition": "advanced-boundary-only",
+      "entryPath": [
+        "Chat",
+        "Advanced",
+        "Model & tools"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-memory",
+      "page": "chat-memory",
+      "label": "Memory & past work",
+      "disposition": "advanced-boundary-only",
+      "entryPath": [
+        "Chat",
+        "Advanced",
+        "Memory & past work"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-files",
+      "page": "chat-files",
+      "label": "Project file access",
+      "disposition": "advanced-boundary-only",
+      "entryPath": [
+        "Chat",
+        "Advanced",
+        "Project file access"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-write-files",
+      "page": "chat-write-files",
+      "label": "Files this chat can edit",
+      "disposition": "advanced-boundary-only",
+      "entryPath": [
+        "Chat",
+        "Advanced",
+        "Files this chat can edit"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-context",
+      "page": "chat-context",
+      "label": "Context & recovery",
+      "disposition": "included",
+      "entryPath": [
+        "Chat",
+        "Chat info",
+        "Inspect current model context"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    },
+    {
+      "id": "route.chat.chat-computer",
+      "page": "chat-computer",
+      "label": "Computer access",
+      "disposition": "advanced-boundary-only",
+      "entryPath": [
+        "Chat",
+        "Advanced",
+        "Computer access"
+      ],
+      "source": {
+        "path": "frontend/src/chat-pages.jsx",
+        "line": 24
+      },
+      "browserStatus": "not-run"
+    }
+  ],
+  "workspace": [
+    "Chats",
+    "Files",
+    "Details",
+    "Workspace work"
+  ],
+  "global": [
+    "New chat",
+    "Open/close navigation",
+    "Search chats",
+    "All workspaces",
+    "Activity",
+    "Settings",
+    "More app options"
+  ],
+  "customControlCarriers": [
+    {
+      "component": "ModelSelect",
+      "path": "frontend/src/ai-connections.jsx",
+      "lines": [
+        120
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "SettingsLink",
+      "path": "frontend/src/ai-connections.jsx",
+      "lines": [
+        90,
+        95
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "CollectionRow",
+      "path": "frontend/src/bundles.jsx",
+      "lines": [
+        55,
+        84
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "PathField",
+      "path": "frontend/src/chat-file-access.jsx",
+      "lines": [
+        87,
+        89
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "MarkdownComposer",
+      "path": "frontend/src/main.jsx",
+      "lines": [
+        569
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "ShellSlot",
+      "path": "frontend/src/main.jsx",
+      "lines": [
+        571
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "PathField",
+      "path": "frontend/src/maintenance.jsx",
+      "lines": [
+        33,
+        33
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "PathField",
+      "path": "frontend/src/registry.jsx",
+      "lines": [
+        30,
+        30
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "CollectionRow",
+      "path": "frontend/src/routing-settings.jsx",
+      "lines": [
+        55,
+        59
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "ModelSelect",
+      "path": "frontend/src/routing-settings.jsx",
+      "lines": [
+        63
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "ReorderList",
+      "path": "frontend/src/settings-collections.jsx",
+      "lines": [
+        26
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "SettingsLink",
+      "path": "frontend/src/settings-everyday.jsx",
+      "lines": [
+        12,
+        12,
+        12,
+        26,
+        26,
+        26
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "ShellSlot",
+      "path": "frontend/src/settings-experience.jsx",
+      "lines": [
+        65,
+        67
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "PathField",
+      "path": "frontend/src/settings-ui.jsx",
+      "lines": [
+        88
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "CollectionRow",
+      "path": "frontend/src/setup.jsx",
+      "lines": [
+        105
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "ModelSelect",
+      "path": "frontend/src/setup.jsx",
+      "lines": [
+        107
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "PathField",
+      "path": "frontend/src/setup.jsx",
+      "lines": [
+        117
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "PathField",
+      "path": "frontend/src/shell/navigation-components.jsx",
+      "lines": [
+        99
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "ReorderList",
+      "path": "frontend/src/shell/navigation-components.jsx",
+      "lines": [
+        352,
+        376
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "CanvasWorkspace",
+      "path": "frontend/src/shell-panels.jsx",
+      "lines": [
+        109
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "PathField",
+      "path": "frontend/src/shell-panels.jsx",
+      "lines": [
+        102
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "ShellSlot",
+      "path": "frontend/src/shell-panels.jsx",
+      "lines": [
+        99
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "CollectionRow",
+      "path": "frontend/src/smart-tools.jsx",
+      "lines": [
+        204,
+        213,
+        214,
+        217,
+        217
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "PathField",
+      "path": "frontend/src/smart-tools.jsx",
+      "lines": [
+        244
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "ActionMenu",
+      "path": "frontend/src/work-shell.jsx",
+      "lines": [
+        49,
+        63
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "ShellSlot",
+      "path": "frontend/src/work-shell.jsx",
+      "lines": [
+        49,
+        49,
+        61
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "PathField",
+      "path": "frontend/src/workspace-setup.jsx",
+      "lines": [
+        43,
+        44,
+        89
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    },
+    {
+      "component": "CollectionRow",
+      "path": "frontend/src/workspace-starters.jsx",
+      "lines": [
+        39
+      ],
+      "requirement": "Trace component native controls and enumerate runtime instances; no control-count pass inferred."
+    }
+  ],
+  "exclusions": [
+    {
+      "id": "exclude.global-advanced-only",
+      "entryPath": [
+        "Settings",
+        "Advanced"
+      ],
+      "reason": "User excludes advanced-only configuration. Visit entry/back boundary only; provider internals, full bundle/module authoring, ready-conversation retention and terminal automation are not executed unless a standard alternate route below exposes them.",
+      "sourceRefs": [
+        {
+          "path": "frontend/src/settings-navigation.js",
+          "line": 13
+        }
+      ],
+      "status": "not-applicable"
+    },
+    {
+      "id": "exclude.chat-advanced-work",
+      "entryPath": [
+        "Chat",
+        "Advanced",
+        "Work & automation"
+      ],
+      "reason": "Only advanced chat entry exposes worktree handoff, cross-host portability, saved-task/goal controls and schedules. No copied schedules or worker replay are enabled. Workspace work review/assignment controls have a separate standard path and are included.",
+      "sourceRefs": [
+        {
+          "path": "frontend/src/chat-pages.jsx",
+          "line": 85
+        },
+        {
+          "path": "frontend/src/runtime-settings.jsx",
+          "line": 41
+        }
+      ],
+      "status": "not-applicable"
+    },
+    {
+      "id": "exclude.chat-advanced-tools",
+      "entryPath": [
+        "Chat",
+        "Advanced",
+        "Model & tools"
+      ],
+      "reason": "Direct raw session tool invocation, module mutation, capability grants and artifact runtime controls are advanced-only. Ordinary composer bundle/model/effort and Settings Smart Tools remain included.",
+      "sourceRefs": [
+        {
+          "path": "frontend/src/runtime-settings.jsx",
+          "line": 40
+        }
+      ],
+      "status": "not-applicable"
+    },
+    {
+      "id": "exclude.chat-advanced-memory",
+      "entryPath": [
+        "Chat",
+        "Advanced",
+        "Memory & past work / Files this chat can edit / Project file access"
+      ],
+      "reason": "Advanced-only per-chat recall and write overrides excluded. Standard Privacy file access and Chat info context/usage remain included.",
+      "sourceRefs": [
+        {
+          "path": "frontend/src/chat-pages.jsx",
+          "line": 85
+        }
+      ],
+      "status": "not-applicable"
+    },
+    {
+      "id": "exclude.raw-customization",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Custom appearance / extension settings"
+      ],
+      "reason": "Arbitrary CSS/code/plugin authoring is outside standard detail. Saved appearance gallery, layout/detail preferences and ordinary interactive rendered components remain included.",
+      "sourceRefs": [
+        {
+          "path": "frontend/src/settings-everyday.jsx",
+          "line": 26
+        }
+      ],
+      "status": "not-applicable"
+    },
+    {
+      "id": "exclude.advanced-reset",
+      "entryPath": [
+        "Settings",
+        "Advanced",
+        "Advanced recovery"
+      ],
+      "reason": "Destructive global reset/repair not part of standard smoke; Privacy→Backups & recovery entry and safe backup are included. Do not operate on private replica.",
+      "sourceRefs": [
+        {
+          "path": "frontend/src/maintenance.jsx",
+          "line": 37
+        }
+      ],
+      "status": "not-applicable"
+    },
+    {
+      "id": "exclude.advanced-input-disclosures",
+      "entryPath": [
+        "Workspace work",
+        "Combine and check work",
+        "Advanced source/import expectations or Advanced collection inputs"
+      ],
+      "reason": "Manual repository/dependency JSON and result override declarations are explicitly advanced. Standard source inspection and safe local validation remain included.",
+      "sourceRefs": [
+        {
+          "path": "frontend/src/integration-evidence.jsx",
+          "line": 49
+        },
+        {
+          "path": "frontend/src/integration-validation.jsx",
+          "line": 49
+        }
+      ],
+      "status": "not-applicable"
+    },
+    {
+      "id": "exclude.external-effects",
+      "entryPath": [
+        "Account/device/external integration controls"
+      ],
+      "reason": "Live OAuth/accounts, paid provider calls, OS permissions, external publication, email/notification delivery and production update are not silently marked passed. UI uses controlled synthetic services; actual external acceptance is blocked with an explicit reason.",
+      "status": "blocked",
+      "externalAcceptance": true
+    }
+  ]
+}

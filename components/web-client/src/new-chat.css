@@ -1,0 +1,13 @@
+#amp-one .a-new-chat-setup{width:min(100%,650px);margin:auto;padding:32px 8px 20px;color:var(--a-ink);text-align:left}
+#amp-one .a-new-chat-setup h2{font-size:26px;letter-spacing:-.5px;margin:0 0 8px}
+#amp-one .a-new-chat-setup>p{color:var(--a-muted);line-height:1.5;margin:0 0 24px}
+#amp-one .a-chat-starters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}
+#amp-one .a-chat-starters button{display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:8px;padding:14px;white-space:normal;min-width:0}
+#amp-one .a-chat-starters button span{color:var(--a-muted);font-size:var(--a-text-sm,13px);line-height:1.5}
+@media(max-width:600px){#amp-one .a-chat-starters{grid-template-columns:1fr}}
+#amp-one .a-new-chat-setup label{display:flex;align-items:center;gap:7px;margin:14px 0 7px;font-size:var(--a-text-base,14px)}
+#amp-one .a-new-chat-setup label svg{width:16px;height:16px;flex:none}
+#amp-one .a-new-chat-setup input:not([type=checkbox]){box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--a-line);background:var(--a-surface);color:var(--a-ink);border-radius:9px;padding:10px;font:inherit}
+#amp-one .a-composer-controls{flex:none}
+#amp-one .a-send[data-action="conversation.stop"] svg{width:15px;height:15px;fill:currentColor}
+@media(max-width:600px){#amp-one .a-new-chat-setup{padding:18px 0 8px}}

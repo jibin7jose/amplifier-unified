@@ -1,0 +1,37 @@
+#amp-one .a-chat-references{min-width:0;max-width:100%}
+#amp-one .a-chat-references:empty{margin:0}
+#amp-one .a-chat-reference{min-width:0;max-width:100%;margin:12px 0}
+#amp-one .a-chat-reference-button{
+ display:flex;align-items:center;justify-content:flex-start;gap:12px;
+ width:100%;max-width:100%;min-width:0;min-height:44px;padding:12px 14px;
+ border:1px solid var(--a-line);border-radius:10px;background:var(--a-soft);
+ color:var(--a-ink);text-align:left;white-space:normal;line-height:1.5;
+}
+#amp-one .a-chat-reference-button:not([aria-disabled=true]):hover{
+ border-color:var(--a-accent);background:var(--a-tint);filter:none;
+}
+#amp-one .a-chat-reference-button:focus-visible{
+ outline:2px solid var(--a-accent);outline-offset:3px;
+}
+#amp-one .a-chat-reference-button[aria-disabled=true]{cursor:default;filter:none}
+#amp-one .a-chat-reference-button[aria-busy=true]{cursor:wait}
+#amp-one .a-chat-reference-button:disabled{opacity:1}
+#amp-one .a-chat-reference-copy{display:grid;gap:2px;min-width:0;flex:1;overflow-wrap:anywhere}
+#amp-one .a-chat-reference-action{font-size:var(--a-text-xs,12px);font-weight:600;color:var(--a-accent)}
+#amp-one .a-chat-reference-title{font-size:var(--a-text-base,14px);font-weight:600;unicode-bidi:plaintext}
+#amp-one .a-chat-reference-workspace{font-size:var(--a-text-xs,12px);color:var(--a-muted);unicode-bidi:plaintext}
+#amp-one .a-chat-reference-icon,#amp-one .a-chat-reference-arrow{flex-shrink:0;color:var(--a-muted)}
+#amp-one .a-chat-reference-button:disabled .a-chat-reference-action{color:var(--a-danger)}
+#amp-one .a-chat-reference-button:disabled .a-chat-reference-arrow{visibility:hidden}
+#amp-one .a-chat-references .a-chat-reference-help{
+ margin:6px 0 0;font-size:var(--a-text-xs,12px);color:var(--a-muted);overflow-wrap:anywhere;
+}
+#amp-one .a-chat-references .a-chat-reference-error{
+ margin:6px 0 0;font-size:var(--a-text-sm,13px);color:var(--a-danger);overflow-wrap:anywhere;
+}
+#amp-one .a-chat-reference-failure{display:grid;justify-items:start;gap:8px;margin:12px 0}
+#amp-one .a-chat-reference-failure button{min-height:44px;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:480px){
+ #amp-one .a-chat-reference-button{gap:8px;padding:12px 10px}
+ #amp-one .a-chat-reference-icon{display:none}
+}

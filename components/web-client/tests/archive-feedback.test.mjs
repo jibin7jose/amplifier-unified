@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import React,{act} from 'react';
+import {create} from 'react-test-renderer';
+import {createServer} from 'vite';
+const vite=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
+const {ArchiveContext,ArchiveButton,ArchiveNotice}=await vite.ssrLoadModule('/src/archive-feedback.jsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+test.after(()=>vite.close());
+test('shared button has pending label and same target for archive and restore',async()=>{
+ const calls=[],chat={id:'a',title:'Example'},value={pending:[],run:(...args)=>calls.push(args)};
+ let root;const render=(archived=false)=>React.createElement(ArchiveContext.Provider,{value},React.createElement(ArchiveButton,{chat,archived}));
+ await act(async()=>{root=create(render())});
+ await act(async()=>root.root.findByType('button').props.onClick());
+ assert.deepEqual(calls,[[chat,true]]);
+ value.pending=['a'];await act(async()=>root.update(render()));
+ const button=root.root.findByType('button');
+ assert.equal(button.props['aria-disabled'],true);assert.equal(button.props.disabled,undefined);assert.ok(button.children.includes('Saving…'));
+ value.pending=[];await act(async()=>root.update(render(true)));
+ await act(async()=>root.root.findByType('button').props.onClick());
+ assert.deepEqual(calls.at(-1),[chat,false]);await act(async()=>root.unmount());
+});
+test('success Undo is bound to the archived id; error/unknown never offers Undo',async()=>{
+ const calls=[],value={notice:{id:'a',title:'Example',phase:'success',archive:true,text:'Chat archived'},pending:[],run:(...args)=>calls.push(args),dismiss(){}};
+ let root;await act(async()=>{root=create(React.createElement(ArchiveNotice,{value}))});
+ assert.equal(root.root.findByProps({'data-archive-notice':true}).props.style.color,'var(--a-ink)');
+ await act(async()=>root.root.findByProps({'data-action':'session.restore'}).props.onClick());
+ assert.deepEqual(calls,[[{id:'a',title:'Example'},false]]);
+ value.notice={...value.notice,phase:'unknown',text:'Unconfirmed'};
+ await act(async()=>root.update(React.createElement(ArchiveNotice,{value})));
+ assert.equal(root.root.findAllByProps({'data-action':'session.restore'}).length,0);
+ value.notice={...value.notice,phase:'error'};
+ await act(async()=>root.update(React.createElement(ArchiveNotice,{value})));
+ assert.equal(root.root.findByProps({'data-archive-notice':true}).props.role,'alert');
+ assert.equal(root.root.findByProps({'data-archive-notice':true}).props.style,undefined);
+ await act(async()=>root.unmount());
+});

@@ -1,0 +1,21 @@
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {fileURLToPath} from 'node:url';
+import {mkdir,writeFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import {chromium,expect} from '@playwright/test';
+import {openSettingsPage} from './browser-settings.mjs';
+const root=fileURLToPath(new URL('../../',import.meta.url)),out=process.env.AMPLIFIER_TEST_ARTIFACTS;
+if(!out)throw Error('Owned artifacts required');await mkdir(out,{recursive:true});
+const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'.venv/bin/python',['-u',root+'tests/fixtures/signin_terminal_ui_server.py'],{stdio:['ignore','pipe','pipe']});
+let browser,page,logs='';fixture.stderr.on('data',chunk=>logs+=chunk);
+try{
+ const url=await new Promise((resolve,reject)=>{let text='';const timer=setTimeout(()=>reject(Error('Fixture startup timed out')),20000);fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exit '+code))});fixture.stdout.on('data',chunk=>{text+=chunk;const match=text.match(/http:\/\/127\.0\.0\.1:\d+/);if(match){clearTimeout(timer);resolve(match[0])}})});
+ browser=await chromium.launch({headless:true});page=await browser.newPage({viewport:{width:1280,height:940},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ const observations=async()=>{const response=await page.request.get(url+'/fixture/signin-observations');assert.equal(response.status(),200);return response.json()};
+ await page.goto(url);await openSettingsPage(page,'ai-connections');await page.getByRole('button',{name:'Connect another service',exact:true}).click();await page.getByRole('button',{name:/ChatGPT Subscription Sign in/}).click();await page.getByLabel('ChatGPT connection',{exact:true}).selectOption('chatgpt_codex');await page.getByRole('button',{name:'Get sign-in code',exact:true}).click();
+ await expect(page.getByText('Sign-in expired. Start again.',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Try sign-in again',exact:true})).toBeEnabled();await expect(page.getByRole('link',{name:'Open ChatGPT',exact:true})).toHaveCount(0);await expect(page.getByLabel('1. Copy your sign-in code')).toHaveCount(0);await expect.poll(async()=>(await observations()).liveChildren).toBe(0);const expired=await observations();assert.deepEqual(expired.attempts,['expired']);assert.deepEqual(expired.statuses,['expired']);assert.equal(expired.credentialFiles,0);await page.screenshot({path:out+'/expired.png'});
+ await page.getByRole('button',{name:'Try sign-in again',exact:true}).click();await expect(page.getByText('Sign-in did not finish. Update the included ChatGPT provider if necessary, then try again.',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Try sign-in again',exact:true})).toBeEnabled();await expect(page.getByRole('link',{name:'Open ChatGPT',exact:true})).toHaveCount(0);await expect(page.getByLabel('1. Copy your sign-in code')).toHaveCount(0);await expect.poll(async()=>(await observations()).liveChildren).toBe(0);const denied=await observations();assert.deepEqual(denied.attempts,['expired','denied']);assert.deepEqual(denied.statuses,['failed']);assert.equal(denied.credentialFiles,0);await expect(page.getByText('Signed in. Choose your model below.',{exact:true})).toHaveCount(0);assert.deepEqual(errors,[]);await page.screenshot({path:out+'/denied.png'});
+ const result={passed:true,expired,denied,errors,limits:['Synthetic provider child and shortened login deadline; actual login task, subprocess cleanup, command and rendered UI. No account or external provider acceptance.']};await writeFile(out+'/observations.json',JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
+}catch(error){await page?.screenshot({path:out+'/failure.png'}).catch(()=>{});throw error}
+finally{try{await browser?.close()}finally{if(fixture.exitCode===null){const exited=once(fixture,'exit');fixture.kill('SIGTERM');const timer=setTimeout(()=>fixture.kill('SIGKILL'),5000);try{const [code,signal]=await exited;assert.equal(code,0);assert.equal(signal,null)}finally{clearTimeout(timer)}}await writeFile(out+'/fixture.log',logs)}}

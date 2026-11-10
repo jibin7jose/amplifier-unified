@@ -1,0 +1,41 @@
+import {showFixtureConversation} from './browser-chat-pages.mjs';
+import {chromium,expect} from '@playwright/test';
+import {openSettingsPage} from './browser-settings.mjs';
+import {spawn} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {mkdir,writeFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const root=fileURLToPath(new URL('../../',import.meta.url)).replace(/\/$/,''),out=process.env.EVIDENCE_DIR||root+'/output/media-transition';
+await mkdir(out,{recursive:true});
+const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||root+'/.venv/bin/python',['-u',root+'/tests/fixtures/browser_detail_server.py',root],{stdio:['ignore','pipe','pipe']});
+let log='',browser,page;fixture.stderr.on('data',data=>log+=data);
+const exited=new Promise(resolve=>fixture.once('exit',resolve));
+try{
+ const started=await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>reject(Error('Fixture timeout '+log)),30000);fixture.stdout.on('data',data=>{output+=data;const line=output.split('\n').find(line=>line.startsWith('{"port":'));if(line){clearTimeout(timer);resolve(JSON.parse(line))}});fixture.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exit '+code+log))})});
+ const base=`http://127.0.0.1:${started.port}`,headers={Authorization:'Bearer fixture-detail-token','content-type':'application/json'};
+ const control=async body=>{const response=await fetch(base+'/api/fixture/control',{method:'POST',headers,body:JSON.stringify(body)});assert.equal(response.ok,true,await response.clone().text());return response.json()};
+ await control({op:'interim-start'});await control({op:'interim-finish'});await control({op:'interim-media'});
+ const busy=async value=>control({op:'patch',sessions:{[started.alpha]:{configurationBusy:value}}});await busy(true);
+ browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_SINGLE_PROCESS==='1'?{args:['--no-zygote','--single-process','--disable-gpu']}: {})});
+ const context=await browser.newContext({viewport:{width:1440,height:1100},extraHTTPHeaders:headers});
+ await context.addCookies([{name:'amplifier_unified_session',value:started.cookie,url:base,httpOnly:true,sameSite:'Strict'}]);
+ page=await context.newPage();const errors=[],requests=[];page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(new URL(request.url()).pathname==='/api/outputs/media')requests.push(request.url())});
+ await page.goto(base);await showFixtureConversation(page);await expect(page.getByText('The final next step.',{exact:true})).toBeVisible();
+ await page.waitForTimeout(250);assert.equal(requests.length,0,'ordinary messages defer while busy');
+ await busy(false);await expect(page.getByText('Retained interim animation',{exact:true})).toBeVisible();
+ const ordinaryCount=requests.length;await busy(true);await expect(page.getByText('Retained interim animation',{exact:true})).toBeVisible();
+ await page.waitForTimeout(250);assert.equal(requests.length,ordinaryCount,'qualified media remains without new discovery');
+ await busy(false);await expect.poll(()=>requests.length).toBeGreaterThan(ordinaryCount);
+ await openSettingsPage(page,'appearance');await page.getByRole('checkbox',{name:/Collapse interim replies/}).check();await page.getByRole('button',{name:'Close panel',exact:true}).click();
+ await expect(page.locator('[data-interim-group]')).toHaveCount(1);await expect(page.getByText('Retained interim animation',{exact:true})).toBeVisible();
+ await busy(true);requests.length=0;await page.reload();await expect(page.locator('[data-interim-group]')).toHaveCount(1);
+ await page.waitForTimeout(250);assert.equal(requests.length,0,'folded interim output defers while busy');
+ await page.screenshot({path:out+'/busy.png'});
+ await busy(false);await expect(page.getByText('Retained interim animation',{exact:true})).toBeVisible();
+ const foldedCount=requests.length;await page.waitForTimeout(300);assert.equal(requests.length,foldedCount,'settled view does not poll');
+ await expect(page.getByRole('button',{name:'Retry media metadata'})).toHaveCount(0);
+ assert.deepEqual(errors,[]);await page.screenshot({path:out+'/settled.png'});
+ await writeFile(out+'/result.json',JSON.stringify({passed:true,ordinaryMessagePath:true,foldedInterimPath:true,initialBusyMetadataRequests:0,foldedBusyMetadataRequests:0,ordinarySettledRequests:ordinaryCount,foldedSettledRequests:foldedCount,qualifiedMediaRetainedDuringBusy:true,errors,scope:'Built bundled client + real ephemeral AppService/GIF registry; synthetic configurationBusy publication, not real provider bundle switching.'},null,2)+'\n');
+ console.log('Browser media transition paths passed');
+}catch(error){await writeFile(out+'/failure.txt',String(error.stack)+'\n'+log);if(page)await page.screenshot({path:out+'/failure.png'}).catch(()=>{});throw error}
+finally{if(browser)await browser.close();fixture.kill('SIGTERM');await exited;await writeFile(out+'/fixture.log',log)}

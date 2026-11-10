@@ -1,0 +1,16 @@
+/* Feedback belongs to the initiating control. Region busy markers are semantic:
+   no surface wash, moving top edge, new frame, or automatic region lock. */
+#amp-one button:is([data-action-pending],[aria-busy="true"]){cursor:progress;opacity:.65}
+/* Model discovery is background work: its enabled trigger still opens choices.
+   Keep the label readable without changing busy feedback or disabled states. */
+#amp-one button.a-model-trigger[aria-busy="true"]:enabled:not([aria-disabled="true"]){opacity:1}
+/* Replace the existing icon in place; preserve the label, focus and geometry.
+   Text-only controls keep their owner-provided working label/status. */
+#amp-one button:is([data-action-pending],[aria-busy="true"])>svg:first-child{box-sizing:border-box;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:a-action-working .8s linear infinite}
+#amp-one button:is([data-action-pending],[aria-busy="true"])>svg:first-child>*{visibility:hidden}
+@keyframes a-action-working{to{transform:rotate(360deg)}}
+#amp-one :is(select,input)[data-action-pending]{cursor:progress}
+/* Operational icons on accent buttons must use the on-accent foreground. */
+#amp-one button .a-progress-spinner{color:inherit;margin-top:0}
+@media(prefers-reduced-motion:reduce){#amp-one button:is([data-action-pending],[aria-busy="true"])>svg:first-child{animation:none}}
+@media(forced-colors:active){#amp-one button:is([data-action-pending],[aria-busy="true"]){opacity:1!important}#amp-one button:is([data-action-pending],[aria-busy="true"])>svg:first-child{border-color:ButtonText;border-right-color:transparent}}

@@ -1,0 +1,6 @@
+#amp-one .a-location-options{display:inline-flex;gap:4px;margin:0 0 8px;padding:4px;border:1px solid var(--a-line);border-radius:12px;background:var(--a-soft)}
+#amp-one .a-location-options button{border-radius:8px;padding:9px 13px;color:var(--a-muted)}
+#amp-one .a-location-options button[aria-pressed=true]{background:var(--a-surface);box-shadow:0 2px 6px #1926500b;color:var(--a-accent)}
+#amp-one .a-chat-location>.a-caption{color:var(--a-muted);margin:8px 0 0}
+#amp-one .a-managed-chat-filter{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:13px;color:var(--a-muted)}
+#amp-one .a-managed-chat-filter select{min-width:0;flex:1;padding:8px;border:1px solid var(--a-line);border-radius:8px;background:var(--a-surface);color:var(--a-ink)}

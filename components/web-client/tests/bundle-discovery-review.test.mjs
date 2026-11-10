@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import React,{act as renderAct} from 'react';
+import {create} from 'react-test-renderer';
+import {createServer} from 'vite';
+const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
+const {BundleSettings}=await server.ssrLoadModule('/src/bundles.jsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+test.after(()=>server.close());
+test('selected discovery passes its host review receipt through the shared add action',async()=>{
+ const uri='git+https://example.invalid/bundle@main#subdirectory=bundle.md',calls=[];
+ let state={view:{settingsExpanded:['add-bundles'],bundleManager:{selectedUri:uri,alias:'reviewed',role:'standalone'}},bundleDiscovery:{candidates:[{uri,name:'reviewed',reviewId:'first-review',revision:'a'.repeat(40)}]},bundles:[]};
+ const act=async(name,args)=>{calls.push({name,args});return {accepted:true}};
+ let root;await renderAct(async()=>{root=create(React.createElement(BundleSettings,{state,act}))});
+ await renderAct(async()=>root.root.findByProps({'data-action':'bundles.add'}).props.onClick());
+ assert.deepEqual(calls.find(row=>row.name==='bundles.add').args,{uri,reviewId:'first-review',name:'reviewed',role:'standalone'});
+ state={...state,bundleDiscovery:{candidates:[{uri,name:'reviewed',reviewId:'second-review',revision:'b'.repeat(40)}]}};
+ await renderAct(async()=>root.update(React.createElement(BundleSettings,{state,act})));
+ await renderAct(async()=>root.root.findByProps({'data-action':'bundles.add'}).props.onClick());
+ assert.equal(calls.filter(row=>row.name==='bundles.add').at(-1).args.reviewId,'second-review');
+ await renderAct(async()=>root.unmount());
+});

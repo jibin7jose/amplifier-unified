@@ -6,6 +6,11 @@ repositories. Compare retained candidate implementations before choosing a home.
 Use existing ownership and public APIs where they fit. Independent repositories
 may publish libraries, executables or optional capabilities; not all are services.
 
+The independent web client's [temporary source delivery](../../components/README.md)
+keeps a pinned copy in this repository while its owning repository awaits public
+availability. The selection can switch to repository delivery without changing
+the component's build or runtime boundary; this does not adopt it as the shipped client.
+
 ## Core boundaries
 
 | Repository | Disposition and responsibility | Public seam / owns | Must not depend on |

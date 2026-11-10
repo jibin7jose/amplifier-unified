@@ -1,0 +1,57 @@
+/* App navigation uses full-width content on narrow screens; desktop preferences
+   survive resizing. Hidden viewers stay mounted but never occupy layout space. */
+#amp-one.a-chat-shell [hidden]{display:none!important}
+#amp-one.a-chat-shell .a-mobile-chat-title,#amp-one.a-chat-shell .a-toolbar-scrim{display:none}
+#amp-one.a-chat-shell .a-layout[data-canvas-open="false"] .a-conversation{min-width:0}
+#amp-one.a-chat-shell .a-navigation-scrim,#amp-one.a-chat-shell .a-details-scrim{position:fixed;inset:0;background:#0006;z-index:89}
+#amp-one.a-chat-shell .a-canvas-back{white-space:nowrap;flex:none}
+@media(max-width:1024px){
+ #amp-one.a-chat-shell .a-top-end>.a-desktop-action{display:none}
+}
+@media(max-width:760px){
+ #amp-one.a-chat-shell{padding:0}
+ #amp-one.a-chat-shell .a-top{height:64px;min-height:64px;padding:0 8px;gap:4px}
+ #amp-one.a-chat-shell .a-top>.a-brand,#amp-one.a-chat-shell .a-top>.a-dot,#amp-one.a-chat-shell .a-top>.a-session-select{display:none}
+ #amp-one.a-chat-shell .a-mobile-chat-title{display:block;flex:1;min-width:0;padding:0 4px}
+ #amp-one.a-chat-shell .a-mobile-chat-title strong,#amp-one.a-chat-shell .a-mobile-chat-title small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.45}
+ #amp-one.a-chat-shell .a-mobile-chat-title strong{font-size:14px;font-weight:600}
+ #amp-one.a-chat-shell .a-mobile-chat-title small{font-size:12px;color:var(--a-muted)}
+ #amp-one.a-chat-shell .a-top-end{margin-left:0;gap:0}
+ #amp-one.a-chat-shell .a-top .a-icon{width:44px;min-width:44px;height:44px;min-height:44px}
+ #amp-one.a-chat-shell .a-layout[data-pane-layout]{gap:0;position:relative}
+ #amp-one.a-chat-shell .a-layout[data-pane-layout] .a-conversation{min-width:0;width:100%;border-radius:0;border-left:0;border-right:0}
+ #amp-one.a-chat-shell .a-layout[data-narrow="true"][data-canvas-open="true"]>.a-conversation{visibility:hidden;pointer-events:none}
+ #amp-one.a-chat-shell .a-layout[data-pane-layout][data-narrow="true"] .a-nav-slot[data-docked]{position:fixed;inset:0;z-index:90;width:100%;height:100dvh;flex:none;transform:none}
+ #amp-one.a-chat-shell .a-layout[data-pane-layout] .a-nav-slot .a-nav-rail{position:relative;width:100%;max-width:100%;height:100%;max-height:100%;border:0;border-radius:0;box-shadow:none;transition:none;padding:calc(12px + env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));overflow:visible}
+ #amp-one.a-chat-shell .a-nav-slot .a-nav-reveal{visibility:visible;opacity:1;pointer-events:auto}
+ #amp-one.a-chat-shell .a-nav-slot .a-nav-head{flex-direction:row-reverse;justify-content:space-between;flex:none}
+ #amp-one.a-chat-shell .a-nav-slot .a-nav-head .a-icon{width:44px;height:44px}
+ #amp-one.a-chat-shell .a-nav-slot .a-nav-main{min-height:44px}
+ #amp-one.a-chat-shell .a-nav-slot .a-nav-content{min-height:0;overflow:auto;overscroll-behavior:contain}
+ #amp-one.a-chat-shell .a-nav-slot .a-navigation-more{opacity:1;width:40px;min-width:40px;height:44px}
+ #amp-one.a-chat-shell .a-navigation-flyout{left:8px!important;right:8px;top:auto!important;bottom:8px;width:auto;max-height:calc(100dvh - 32px);z-index:92;padding:22px 18px calc(18px + env(safe-area-inset-bottom));border-radius:18px}
+ #amp-one.a-chat-shell .a-details-scrim{z-index:91}
+ #amp-one.a-chat-shell .a-navigation-flyout button{min-height:44px;min-width:44px}
+ #amp-one.a-chat-shell .a-navigation-flyout .a-navigation-close{width:44px;height:44px;top:4px;right:4px}
+ #amp-one.a-chat-shell .a-toolbar-scrim{display:block;position:fixed;inset:0;background:#0006;z-index:89}
+ #amp-one.a-chat-shell .a-toolbar-menu{position:fixed;inset:auto 8px 8px;width:auto;max-width:none;max-height:calc(100dvh - 32px);overflow:auto;z-index:90;padding:8px 8px calc(8px + env(safe-area-inset-bottom));border-radius:18px}
+ #amp-one.a-chat-shell .a-toolbar-menu>button{min-height:48px;font-size:14px}
+ #amp-one.a-chat-shell .a-layout[data-pane-layout]>.a-canvas-panel{position:absolute;inset:0;z-index:20;flex:none;width:100%;height:100%;border-radius:0;border:0}
+ #amp-one.a-chat-shell .a-canvas-head{height:52px;min-height:52px;gap:4px}
+ #amp-one.a-chat-shell .a-canvas-head>svg,#amp-one.a-chat-shell .a-canvas-head>strong,#amp-one.a-chat-shell .a-canvas-head>[aria-label="Focus canvas"],#amp-one.a-chat-shell .a-canvas-head>[aria-label="Close canvas panel"]{display:none}
+ #amp-one.a-chat-shell .a-canvas-head>.a-canvas-back{margin-right:auto}
+ #amp-one.a-chat-shell .a-canvas-head .a-icon{width:44px;height:44px}
+ #amp-one.a-chat-shell .a-composer{width:calc(100% - 16px);margin-bottom:calc(8px + env(safe-area-inset-bottom))}
+ #amp-one.a-chat-shell :is(input,textarea,select){font-size:max(16px,var(--a-text-base,14px))!important}
+}
+
+/* Navigation becomes modal at the panel layout's tablet breakpoint, before
+   the phone shell changes at 760px. Give the modal a real, visible box. */
+@media(min-width:761px) and (max-width:900px){
+ #amp-one.a-chat-shell .a-layout[data-pane-layout][data-narrow="true"]>.a-nav-slot[data-docked]{position:fixed;inset:0 auto 0 0;z-index:90;width:min(360px,85vw);min-width:0;height:100dvh;flex:none;transform:none}
+ #amp-one.a-chat-shell .a-layout[data-pane-layout][data-narrow="true"]>.a-nav-slot[data-docked] .a-nav-rail{position:relative;inset:0;width:100%;max-width:100%;height:100%;max-height:100%;border:0;border-right:1px solid var(--a-line);border-radius:0;box-shadow:8px 0 30px #0002;transition:none;padding:12px 10px;overflow:visible}
+ #amp-one.a-chat-shell .a-layout[data-narrow="true"] .a-nav-reveal{visibility:visible;opacity:1;pointer-events:auto}
+ #amp-one.a-chat-shell .a-layout[data-narrow="true"] .a-nav-head{flex-direction:row-reverse;justify-content:space-between}
+ #amp-one.a-chat-shell .a-layout[data-narrow="true"] .a-nav-head .a-icon{width:44px;height:44px}
+ #amp-one.a-chat-shell .a-layout[data-narrow="true"] .a-nav-content{min-height:0;overflow:auto;overscroll-behavior:contain}
+}
