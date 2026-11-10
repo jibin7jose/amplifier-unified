@@ -37,6 +37,13 @@ reuse one canonical encoding. Keep resource identity and transaction/rollback
 ownership unchanged. Qualify changed and unchanged saves, exact readback and
 borrowed nested edits; skipping writes alone must not conceal duplicate encoding.
 
+A synchronous checkpoint can borrow its caller-owned transcript while the writer
+validates and encodes it without mutation. Do not deep-copy the entire history
+solely to produce immediately consumed checkpoint anchors. Recovery should copy
+only the rows it changes. Keep ownership through the call, and verify that later
+in-place nested edits are persisted and the earlier disk checkpoint stays intact.
+Borrowed return values are not detached snapshots or reusable cache entries.
+
 ## Separate current presentation from historical evidence
 
 Routine state carries the current fields its consumers need. Historical bodies
