@@ -104,9 +104,22 @@ def definitions(schema, string):
                    "description": "Auto or queue: atomically register a guarded return before the recipient can run. Omitted/false keeps one-way send behavior; exact retries never rearm a saved wait."},
                "replyToRequestId": string(200), "references": references,
                "expiresInSeconds": {"type": "integer", "minimum": 1, "maximum": 86400},
-               "resume": schema({"sourceMessageId": string(200),
+               "resume": {**schema({"sourceMessageId": string(200),
+                   "sourceRequestId": {**string(200), "description":
+                       "Alternative to direct sourceMessageId: exact host-issued resumeHandoff inputId positively "
+                       "admitted in the commissioning owner's current authenticated native generation. One fresh "
+                       "member input only; preserve humanInput:null, budgets, Stop and unknown outcomes."},
                    "expectedInterruptionRevision": {"type": "integer", "minimum": 0}},
-                   ["sourceMessageId", "expectedInterruptionRevision"]),
+                   ["expectedInterruptionRevision"]),
+                   "oneOf": [{"required": ["sourceMessageId"]}, {"required": ["sourceRequestId"]}]},
+               "resumeHandoff": {**schema({"sourceMessageId": string(200), "memberSessionId": string(200),
+                   "expectedInterruptionRevision": {"type": "integer", "minimum": 0}},
+                   ["sourceMessageId", "memberSessionId", "expectedInterruptionRevision"]),
+                   "description": "Direct-human origin only, auto/queue to the actual commissioning owner for one "
+                       "exact existing member. Host captures original human text/digest, native generation, all "
+                       "three human/Stop/task/access/placement boundaries and deadline. Owner assesses canonical "
+                       "humanInstruction, then deliberately uses resume.sourceRequestId. Not recursive peer, "
+                       "Full/configuration/question/schedule authority; cancellation revokes unadmitted scope."},
                "scheduleRepair": schema({"sourceMessageId": string(200),
                    "schedules": {"type": "array", "minItems": 1, "maxItems": 16,
                        "items": schema({"id": string(200), "expectedRevision": {"type": "integer", "minimum": 0}}, ["id", "expectedRevision"])}},
@@ -950,6 +963,10 @@ class Collaboration:
             if target.get("interruptionRevision", 0) != receipt["interruptionRevision"]:
                 return "The user interrupted the recipient after this request."
             from . import peer_resume
+            if (receipt.get('resumeHandoff') and receipt.get('delivery') in {'queued', 'submitting'}):
+                from .resume_handoff import guard as handoff_guard
+                if reason := handoff_guard(self.service, receipt):
+                    return reason
             resuming = peer_resume.pending(receipt)
             if resuming and (reason := peer_resume.guard(self.service, receipt, source, target)):
                 return reason
@@ -2082,12 +2099,18 @@ class Collaboration:
                 if reason:
                     self.error(reason, 409)
                 mode = args.get("mode", "auto")
+                if sum(bool(args.get(key)) for key in ('resume', 'resumeHandoff', 'scheduleRepair')) > 1:
+                    self.error('Choose exactly one scoped handoff or resume operation.', 400)
                 notify_return = args.get('returnNotification', False)
                 creation_owned = bool(creation and identity == creation[4]['requestId'] + ':brief')
                 if notify_return:
                     self.require_continuation()
                 if args.get('resume') and (origin != 'agent' or mode not in {'queue', 'auto'}):
                     self.error('Resume requires a current human-rooted agent request using auto or queue.')
+                if args.get('resumeHandoff') and (
+                        origin != 'agent' or mode not in {'queue', 'auto'}
+                        or args.get('resume') or args.get('scheduleRepair')):
+                    self.error('Issue a resume handoff only from a direct human-rooted agent send using auto or queue.')
                 self.service.assignments.require_request(source, target, mode)
                 if mode == "steer":
                     active = target.get("collaborationGeneration") or {}
@@ -2159,7 +2182,7 @@ class Collaboration:
                         ("creatorSessionId", "requestId", "outputNamespace", "configurationHash")}
                 wait = None
                 if not creation_owned:
-                    if mode == 'notify' or notify_return:
+                    if mode == 'notify' or notify_return or args.get('resume') or args.get('resumeHandoff'):
                         recovery_boundary.enter_context(self.return_send_transaction(
                             identity, source, target, notify=mode == 'notify'))
                     if notify_return:
@@ -2176,12 +2199,26 @@ class Collaboration:
                             'to the saved Stop/task, capacity and outcome-revision guards.')
                 repair = None
                 resume = None
+                handoff = None
+                if args.get('resumeHandoff'):
+                    from .resume_handoff import prepare, view
+                    handoff = prepare(self.service, source, target, args['resumeHandoff'], lineage)
+                    envelope['resumeHandoff'] = {**view(self.service, handoff),
+                        'instruction': 'The host captured an exact one-hop human resume scope. Read the original '
+                            'human instruction and assess its intent, not sender prose. Only you, the commissioning '
+                            'owner, may deliberately send one fresh member input with resume.sourceRequestId '
+                            'equal to this inputId. This is not humanInput, forwarding authority, task/Stop '
+                            'clearance, permission, a question answer or schedule/configuration authority.'}
                 if args.get('resume'):
                     from .peer_resume import prepare
                     resume = prepare(self.service, source, target, args['resume'], lineage, recovery_boundary)
+                    if resume.get('handoffRequestId'):
+                        from .resume_handoff import reserve
+                        reserve(self.service, resume['handoffRequestId'], identity)
                     envelope['humanResume'] = {
                         'sourceMessageId': resume['sourceMessageId'],
-                        'instruction': 'The host verified a fresh human resume request in the commissioning owner. '
+                        **({'handoffRequestId': resume['handoffRequestId']} if resume.get('handoffRequestId') else {}),
+                        'instruction': 'The host verified a fresh human resume scope through the commissioning owner. '
                             'Reconcile completed effects first. You may resume your own paused task if its blocker '
                             'is resolved. Keep completed objectives completed; only establish follow-on work '
                             'within the human request. This does not answer questions, grant permissions or reset budgets.'}
@@ -2219,6 +2256,11 @@ class Collaboration:
                     receipt['scheduleRepair'] = repair
                 if resume:
                     receipt['humanResume'] = resume
+                    if resume.get('handoffRequestId'):
+                        receipt['expiresAt'] = min(receipt['expiresAt'],
+                            self.receipt(resume['handoffRequestId'])['expiresAt'])
+                if handoff:
+                    receipt['resumeHandoff'] = handoff
                 if mode == "steer":
                     receipt.update(delivery="pending_steer", targetGenerationId=active["id"])
                 if creation and identity == creation[4]['requestId'] + ':brief':

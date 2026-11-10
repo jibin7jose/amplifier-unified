@@ -127,8 +127,15 @@ def retained_terminal_evidence(target):
 
 
 def prepare(app, source, target, value, lineage, boundary):
-    human, question = human_input(app, source)
-    if (not human or human['id'] != value['sourceMessageId']
+    origin = source
+    handoff = None
+    if value.get('sourceRequestId'):
+        from .resume_handoff import consume
+        origin, human, handoff = consume(app, source, target, value['sourceRequestId'])
+        question = None
+    else:
+        human, question = human_input(app, source)
+    if not handoff and (not human or human['id'] != value['sourceMessageId']
             or human.get('inputId') not in lineage.get('sourceInputIds', [])):
         raise ValueError('Resume requires the latest actual human request in the owner’s current admitted input.')
     assignment = app.assignments.current(source)
@@ -167,7 +174,7 @@ def prepare(app, source, target, value, lineage, boundary):
         recovery = {**proof, 'failure': copy.deepcopy(failure),
                     **({'generation': copy.deepcopy(active)} if interrupted else {}),
                     **({'terminalEvidence': evidence} if evidence else {})}
-    key = fingerprint([source['id'], human['id'], target['id'], target.get('interruptionRevision', 0)])
+    key = fingerprint([origin['id'], human['id'], target['id'], target.get('interruptionRevision', 0)])
     previous = app.db.execute("""SELECT id FROM commands
         WHERE json_extract(receipt,'$.humanResume.authorizationKey')=?""", (key,)).fetchone()
     if previous:
@@ -178,6 +185,8 @@ def prepare(app, source, target, value, lineage, boundary):
         'assignmentId': assignment['id'], 'assignmentRevision': assignment['revision'],
         'targetHumanMessageId': (latest_intent(target) or {}).get('id'),
         'authorizationKey': key,
+        **({'handoffRequestId': handoff['requestId'],
+            'ownerGenerationId': lineage['sourceGenerationId']} if handoff else {}),
         **({'questionAnswer': question,
             'questionSettings': question_settings(app, source, target)}
            if question else {}),
@@ -187,7 +196,21 @@ def prepare(app, source, target, value, lineage, boundary):
 
 def guard(app, receipt, source, target):
     scope = receipt['humanResume']
-    human, question = human_input(app, source)
+    if scope.get('handoffRequestId'):
+        if receipt.get('expiresAt', 0) <= time.time():
+            return 'The handoff-backed member resume expired before input admission.'
+        from .resume_handoff import guard as handoff_guard, participants, direct_human
+        handoff = app.collaboration.receipt(scope['handoffRequestId'])
+        if reason := handoff_guard(app, handoff, command_id=receipt['requestId']):
+            return reason
+        _, origin, owner, member = participants(app, handoff)
+        if owner['id'] != source['id'] or member['id'] != target['id']:
+            return 'The resume handoff endpoint changed.'
+        if (source.get('collaborationGeneration') or {}).get('id') != scope['ownerGenerationId']:
+            return 'The consuming owner generation changed before member admission.'
+        human, question = direct_human(origin), None
+    else:
+        human, question = human_input(app, source)
     if scope.get('questionAnswer'):
         # The queue claim is not input admission. Preparation may outlive its
         # deadline; accepted/unknown operations never use this pending guard.
