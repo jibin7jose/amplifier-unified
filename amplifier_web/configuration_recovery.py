@@ -570,6 +570,14 @@ def command(management, action, args, origin, caller, *, operator=None):
         recovery_source["accessRevision"] = recovery_authority["accessRevision"]
     elif operator is not None:
         recovery_source["accessRevision"] = operator['chain'][0]['accessRevision']
+    if operator is not None:
+        # Reconcile can release a proven no-effect fence. Hold older inputs
+        # before that release too, not only when Resume is later accepted.
+        record['recoveryNoInput'] = True
+        session['pendingConfiguration']['recoveryNoInput'] = {
+            'generationId': (session.get('collaborationGeneration') or {}).get('id'),
+            'acceptedAt': time.time()}
+        write_private(management.configuration_record_path(session['id'], operation), json.dumps(record))
     if action.endswith(".reconcile"):
         # Cancellation leaves its original applying/interrupted evidence intact
         # until the host task settles and an explicit reconciliation observes
@@ -578,11 +586,6 @@ def command(management, action, args, origin, caller, *, operator=None):
             effect=effect, recoveryRequired=False, recovery_source=recovery_source)
         management.settle_configuration_fence(session, operation)
     elif action.endswith(".resume"):
-        if operator is not None:
-            record['recoveryNoInput'] = True
-            session['pendingConfiguration']['recoveryNoInput'] = {
-                'generationId': (session.get('collaborationGeneration') or {}).get('id'),
-                'acceptedAt': time.time()}
         if recovery_authority is not None:
             # Preserve current request lineage as an additional ceiling, never
             # replace the original authority or source binding.
