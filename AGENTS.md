@@ -34,6 +34,11 @@ Do not reopen source requests or readiness/release blockers solely because these
 checks remain skipped or their dependencies are unavailable. Waived is not passed;
 other integration, physical-device and approval requirements are unchanged.
 
+Dependency security changes must cover both the host project and the separately
+packaged worker manifest in `amplifier_web/runtime_deps/`. A root lock update alone
+does not upgrade a worker. Check actual resolved versions, fresh preparation and
+the ordinary new-generation update path without rewriting old runtime receipts.
+
 ## Make performance changes reviewable
 
 For changes to repeated reads, publication, persistence, runtime preparation or
