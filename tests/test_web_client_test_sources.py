@@ -1,4 +1,4 @@
-"""Prepared test sources preserve edits and recover whole-directory replacement."""
+"""Prepared authored sources preserve edits and recover whole-directory replacement."""
 import importlib.util
 import json
 from pathlib import Path
@@ -48,9 +48,58 @@ class PreparedClientTests(unittest.TestCase):
                 else:
                     target.unlink()
                 before = snapshot(self.source)
-                with self.assertRaisesRegex(ValueError, 'Edited prepared client tests retained'):
+                with self.assertRaisesRegex(ValueError, 'Edited prepared client source retained'):
                     delivery.verify_development(self.source)
                 self.assertEqual(snapshot(self.source), before)
+
+    def test_readme_edits_and_unknown_authored_members_are_preserved(self):
+        readme = self.source / 'README.md'
+        write(readme, 'original guidance')
+        write(self.source / '.client-development.json', json.dumps(delivery.development_inventory(self.source)))
+        for change in ('readme', 'new-note', 'new-nested-file'):
+            with self.subTest(change=change):
+                readme.write_text('original guidance')
+                note = self.source / 'notes.txt'
+                note.unlink(missing_ok=True)
+                nested = self.source / 'notes/discovery.txt'
+                nested.unlink(missing_ok=True)
+                if change == 'readme':
+                    readme.write_text('unsaved guidance')
+                else:
+                    write(note if change == 'new-note' else nested, 'new investigation')
+                before = snapshot(self.source)
+                with self.assertRaisesRegex(ValueError, 'Edited prepared client source retained'):
+                    delivery.verify_development(self.source)
+                self.assertEqual(snapshot(self.source), before)
+
+    def test_selection_refresh_does_not_erase_a_readme_edit(self):
+        source_record = {'schema': 1, 'kind': 'amplifier-web-client-source',
+            'source': {'repository': 'https://github.com/microsoft/amplifier-client-web', 'revision': 'a' * 40},
+            'inputsSha256': 'b' * 64, 'delivery': {'type': 'directory', 'path': 'components/web-client'}}
+        write(self.source / '.client-source.json', json.dumps(source_record))
+        write(self.source / 'README.md', 'original guidance')
+        write(self.source / '.client-development.json', json.dumps(delivery.development_inventory(self.source)))
+        source_record['source']['revision'] = 'c' * 40
+        write(self.root / 'components/web-client.source.json', json.dumps(source_record))
+        write(self.source / 'README.md', 'unsaved guidance')
+        before = snapshot(self.source)
+        with patch.object(build, 'verify_source'), patch.object(delivery, 'prepare') as prepare:
+            with self.assertRaisesRegex(ValueError, 'Edited prepared client source retained'):
+                build.prepare(self.root)
+            prepare.assert_not_called()
+        self.assertEqual(snapshot(self.source), before)
+
+    def test_only_canonical_generated_public_members_are_ignored(self):
+        write(self.source / 'public/authored.js', 'authored')
+        generated = ['branding-fixture', 'worker-fixture.js']
+        write(self.source / '.client-development.json', json.dumps(
+            delivery.development_inventory(self.source, generated_public=generated)))
+        write(self.source / 'public/branding-fixture/icon.png', 'generated')
+        write(self.source / 'public/worker-fixture.js', 'generated')
+        delivery.verify_development(self.source)
+        write(self.source / 'public/authored.js', 'edited')
+        with self.assertRaisesRegex(ValueError, 'Edited prepared client source retained'):
+            delivery.verify_development(self.source)
 
     def test_dependencies_and_build_outputs_are_not_test_source(self):
         write(self.source / 'node_modules/tool/index.js', 'generated dependency')
@@ -68,10 +117,23 @@ class PreparedClientTests(unittest.TestCase):
             target.symlink_to(external)
         except OSError:
             self.skipTest('Symlink creation unavailable')
-        with self.assertRaisesRegex(ValueError, 'Expected regular prepared test source'):
+        with self.assertRaisesRegex(ValueError, 'Expected regular prepared source'):
             delivery.verify_development(self.source)
         self.assertTrue(target.is_symlink())
         self.assertEqual(external.read_text(), 'external content')
+
+    def test_unknown_directory_links_are_not_traversed(self):
+        external = self.root / 'external-directory'
+        write(external / 'private.txt', 'outside content')
+        link = self.source / 'notes'
+        try:
+            link.symlink_to(external, target_is_directory=True)
+        except OSError:
+            self.skipTest('Symlink creation unavailable')
+        with self.assertRaisesRegex(ValueError, 'Expected regular prepared source'):
+            delivery.verify_development(self.source)
+        self.assertEqual((external / 'private.txt').read_text(), 'outside content')
+        self.assertTrue(link.is_symlink())
 
     def test_failed_replacement_restores_the_complete_previous_source(self):
         ready = self.root / 'ready'

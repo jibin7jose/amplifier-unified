@@ -947,8 +947,8 @@ def run_fixed_stage(python, env, evidence, stage):
 
 
 RESIDUAL_HELPER_COUNTS = {
-    'tests.test_integration_clients': 15,
-    'tests.test_integration_checks': 64,
+    'tests.test_integration_clients': 16,
+    'tests.test_integration_checks': 109,
 }
 
 

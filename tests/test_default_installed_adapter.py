@@ -685,7 +685,7 @@ def test_fixed_product_waits_for_changed_helper_contracts(monkeypatch, tmp_path,
         assert result['testExit'] is None
 
 
-def test_residual_helper_expected_counts_match_the_two_unchanged_modules():
+def test_residual_helper_expected_counts_match_the_two_current_modules():
     import ast
     for module, expected in adapter.RESIDUAL_HELPER_COUNTS.items():
         tree = ast.parse((ROOT / (module.replace('.', '/') + '.py')).read_text())

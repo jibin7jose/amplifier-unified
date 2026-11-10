@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createPendingView} from '../../.build/web-client/src/pending-view.js';
 import {acceptedCanvasReceipt,settleCanvasReceipts,assertCanvasVisibility,acceptedCanvasVisibility} from './canvas-test-receipts.mjs';
 
 test('receipt barrier accepts only the exact fully read accepted command',async()=>{

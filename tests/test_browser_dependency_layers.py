@@ -34,7 +34,15 @@ def test_current_repository_npm_inputs_remain_independently_eligible():
     host = json.loads(files['tests/web/package.json'])
     canonical = json.loads(files[client + '/package.json'])
     assert host['name'] != canonical['name']
-    assert 'vite' not in host.get('devDependencies', {})
+    # Host fixtures use Vite, React and Playwright as explicit test tools;
+    # the client still owns production dependencies and the production build.
+    assert not host.get('dependencies')
+    assert {'vite', 'playwright', '@playwright/test'} <= host['devDependencies'].keys()
+    host_lock = json.loads(files['tests/web/package-lock.json'])
+    for name, version in host['devDependencies'].items():
+        assert version == host_lock['packages']['node_modules/' + name]['version'], name
+    assert 'build' not in host['scripts']
+    assert canonical['scripts']['build']
 
 
 @pytest.mark.parametrize('algorithm,length', [('sha1', 20), ('sha256', 32), ('sha384', 48), ('sha512', 64)])

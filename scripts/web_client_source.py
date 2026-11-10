@@ -52,8 +52,21 @@ def copy_tracked(source, destination, *, node='node', development=False):
         if development:
             # Authored tests travel only for development/integration preparation.
             # Package installation still uses the bounded production manifest.
-            paths = sorted(set(paths) | {p.relative_to(source).as_posix()
-                for p in (source / 'tests').rglob('*') if p.is_file()})
+            tests = []
+            pending = [source / 'tests'] if (source / 'tests').exists() or (source / 'tests').is_symlink() else []
+            while pending:
+                directory = pending.pop()
+                if directory.is_symlink() or not directory.resolve().is_relative_to(source.resolve()):
+                    raise ValueError('Expected owned test source directory: ' + str(directory))
+                for path in sorted(directory.iterdir()):
+                    mode = path.lstat().st_mode
+                    if stat.S_ISDIR(mode):
+                        pending.append(path)
+                    elif stat.S_ISREG(mode):
+                        tests.append(path.relative_to(source).as_posix())
+                    else:
+                        raise ValueError('Expected regular test source: ' + str(path))
+            paths = sorted(set(paths) | set(tests))
     destination.mkdir()
     for name in paths:
         if not name:
@@ -66,22 +79,43 @@ def copy_tracked(source, destination, *, node='node', development=False):
         shutil.copy2(path, target)
 
 
-def development_inventory(source):
-    """Local edit protection for authored test support, separate from build identity."""
-    result = {}
-    for path in sorted((source / 'tests').rglob('*')):
-        if path.is_dir() and not path.is_symlink():
-            continue
-        if not stat.S_ISREG(path.lstat().st_mode):
-            raise ValueError('Expected regular prepared test source: ' + str(path))
-        result[path.relative_to(source).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return result
+def development_inventory(source, *, generated_public=()):
+    """Local overwrite guard for copied authored files, never release identity."""
+    if not isinstance(generated_public, (list, tuple)) or any(not isinstance(name, str) or not name or '/' in name or '\\' in name
+           or name in {'.', '..'} for name in generated_public):
+        raise ValueError('Expected canonical generated-public member names')
+    generated_public = sorted(set(generated_public))
+    generated_roots = {'node_modules', 'dist', 'output', '.build-inputs'}
+    receipts = {'.client-source.json', '.client-development.json'}
+    files = {}
+
+    def visit(directory):
+        for path in sorted(directory.iterdir()):
+            relative = path.relative_to(source)
+            if (len(relative.parts) == 1 and (path.name in generated_roots | receipts
+                    or path.name.startswith('.build-inputs-stage-'))
+                    or len(relative.parts) == 2 and relative.parts[0] == 'public'
+                    and path.name in generated_public):
+                continue
+            mode = path.lstat().st_mode
+            if stat.S_ISDIR(mode):
+                visit(path)
+            elif stat.S_ISREG(mode):
+                files[relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+            else:
+                raise ValueError('Expected regular prepared source: ' + str(path))
+
+    visit(source)
+    return {'schema': 1, 'generatedPublic': generated_public, 'files': files}
 
 
 def verify_development(source):
     recorded = json.loads((source / '.client-development.json').read_text())
-    if recorded != development_inventory(source):
-        raise ValueError('Edited prepared client tests retained; save changes in the client repository before refreshing')
+    if (not isinstance(recorded, dict) or recorded.get('schema') != 1
+            or not isinstance(recorded.get('generatedPublic'), list)):
+        raise ValueError('Unrecognized local prepared-source inventory; retain existing work')
+    if recorded != development_inventory(source, generated_public=recorded['generatedPublic']):
+        raise ValueError('Edited prepared client source retained; save changes in the client repository before refreshing')
 
 
 def fetch_source(source, destination):
@@ -124,8 +158,12 @@ def prepare(root, record_path, destination, *, node='node', development=False):
             raise ValueError('Client verification failed; restore the selected source or refresh '
                              'its record from the corresponding canonical client commit')
         if development:
-            (prepared / '.client-development.json').write_text(
-                json.dumps(development_inventory(prepared), sort_keys=True) + '\n')
+            generated = command(node, '--input-type=module', '-e',
+                'const m=await import(process.argv[1]); console.log(JSON.stringify([...m.generatedPublic]));',
+                (prepared / 'scripts/build-identity.mjs').as_uri(), capture=True, timeout=30)
+            (prepared / '.client-development.json').write_text(json.dumps(
+                development_inventory(prepared, generated_public=json.loads(generated.stdout)),
+                sort_keys=True) + '\n')
         prepared.rename(destination)
     return {'directory': str(destination), 'source': record['source'],
             'record': str(destination / '.client-source.json')}

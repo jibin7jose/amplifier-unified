@@ -208,7 +208,7 @@ def test_workflow_consolidates_checks_without_sharing_publication_credentials():
         assert f'--lane {lane}' in commands
     # Distribution bytes and their receipt are frozen before isolated native setup.
     assert commands.index('uv build') < commands.index('--lane package') < commands.index('runtime-project')
-    assert commands.index('python scripts/web_client_build.py build') < commands.index('--lane frontend') < commands.index('uv build')
+    assert commands.index('historical_web_layout.py" validate') < commands.index('--lane frontend') < commands.index('uv build')
     assert commands.count('qualify_host_dependencies.py --verify') == 3
     assert steps[0]['with']['fetch-depth'] == "${{ inputs.release_revision != '' && '0' || '1' }}"
     assert 'plan --revision "$SELECTED_RELEASE_REVISION" --fetch-tag' in commands
@@ -301,9 +301,15 @@ def test_broad_checks_are_nightly_or_explicit_and_keep_distinct_package_boundari
     assert 'always()' in post['jobs']['report']['if']
     assert set(post['jobs']['report']['needs']) == {'resolve', 'readiness', 'python', 'browser', 'integrations'}
     frontend = '\n'.join(step.get('run', '') for step in release['jobs']['prepare']['steps'])
-    assert 'npm test --prefix .build/web-client' in frontend
-    assert 'npm test --prefix tests/web' in frontend
-    assert 'python scripts/web_client_build.py build' in frontend
+    assert 'historical_web_layout.py" validate' in frontend
+    spec = importlib.util.spec_from_file_location('selected_web_layout', ROOT / 'scripts/historical_web_layout.py')
+    selected = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(selected)
+    commands = selected.commands(ROOT, 'validate')
+    assert ['npm', 'test', '--prefix', '.build/web-client'] in commands
+    assert ['npm', 'test', '--prefix', 'tests/web'] in commands
+    assert commands[-2:] == [selected.build_command(ROOT),
+                             ['npm', 'run', 'test:artifact-assets', '--prefix', '.build/web-client']]
     assert 'git diff --exit-code -- amplifier_web/static' in frontend
 
 
@@ -417,8 +423,9 @@ def test_media_diagnostic_product_guard_rejects_unlisted_changes(monkeypatch, ex
     workflow = yaml.load((ROOT / '.github/workflows/public-readiness.yml').read_text(), Loader=yaml.BaseLoader)
     guard = workflow['jobs']['installed-media-diagnostic']['steps'][1]['run']
     script = compile('\n'.join(guard.splitlines()[1:-1]), 'diagnostic-source-guard', 'exec')
+    # Frozen diagnostic compares the original historical candidate, never today's moved tree.
     changed = ['.github/workflows/public-readiness.yml',
-               'tests/web/inline-media-browser.mjs', 'tests/test_release_qualification.py']
+               'frontend/tests/inline-media-browser.mjs', 'tests/test_release_qualification.py']
     if extra:
         changed.append(extra)
     def git(args, **kwargs):
@@ -2377,7 +2384,7 @@ def test_coordination_prepares_real_loop_before_first_contract_suite():
     assert 'importorskip' not in steps[verify]['run']
     assert not any('continue-on-error' in s for s in steps)
     assert any(s.get('name') == 'Verify mounted child identity and file boundaries' for s in steps[contracts + 1:])
-    assert any(s.get('run') == 'node tests/coordination-browser.mjs' for s in steps)
+    assert any(s.get('run', '').strip() == 'node tests/web/coordination-browser.mjs' for s in steps)
     assert steps[-1]['if'] == 'always()'
     assert '${{ runner.temp }}/test-environments' in steps[-1]['with']['path']
     assert 'output/coordination-runtime-readiness.json' in steps[-1]['with']['path']

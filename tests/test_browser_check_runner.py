@@ -883,6 +883,23 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     assert appearance_preview in readiness_scripts
     assert appearance_preview not in extended_scripts
     assert sum(f'node {appearance_preview}' in line for _, line in commands) == 1
+    # These two existing installed journeys used ../tests/ and frontend/tests/
+    # spellings, outside the historical reader's `node tests/` match. Their new
+    # paths make them visible here; validate their sole owners before excluding
+    # them from the frozen counts below, without inventing two new journeys.
+    relocated_readiness = {
+        'tests/block-copy-browser.mjs': ('Check rendered block and saved source copying',
+                                         'node tests/block-copy-browser.mjs'),
+        'tests/inline-media-browser.mjs': ('Check retained inline media in installed package',
+                                           'node tests/web/inline-media-browser.mjs'),
+    }
+    for script, (owner, command) in relocated_readiness.items():
+        assert script in readiness_scripts and script not in extended_scripts
+        matches = [index for index, line in commands if f'node {script}' in line]
+        assert len(matches) == 1, f'{script}: missing or duplicate readiness owner'
+        step = steps[matches[0]]
+        assert step['name'] == owner
+        assert command in current_layout_commands(step['run'])
     # All 108 original scripts, three navigation regressions, confirmed restart,
     # Smart Tool recovery, archive feedback and appearance preview navigation
     # and sequential keyboard reflow, saved MCP recovery, device pairing, and media transition
@@ -963,7 +980,7 @@ def test_source_browser_duplicates_have_one_owner_and_package_overlaps_remain():
     resume_addition = question_resume_browser_addition(plan['scenarios'], readiness_scripts)
     # Freeze all three prior counts; validate each new owner before subtracting
     # the additions so missing or duplicated coverage cannot disappear.
-    previous_scripts = ((readiness_scripts | extended_scripts) - {state_stream, update_delivery}
+    previous_scripts = ((readiness_scripts | extended_scripts) - relocated_readiness.keys() - {state_stream, update_delivery}
                         - provider_additions - breadbin_addition - canvas_additions - question_fade_addition - context_addition - immediate_addition - delivery_addition - waiting_addition - resume_addition)
     assert len(previous_scripts - {attachment, cancellation, shared_landing, tool_details, tool_previews, attachment_experience, pin_reorder, approval, dormant, shared_work} - feature_additions - voice_additions) == 146
     assert len(previous_scripts - {shared_work, 'tests/delegate-work-stream-browser.mjs', 'tests/client-traffic-browser.mjs'} - voice_additions) == 164
