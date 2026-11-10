@@ -38,7 +38,7 @@ async def issue(app, origin, owner, member, human, identity='handoff', **patch):
     return await agent_action(app, origin, 'coordination.send', {
         'sessionId': owner['id'], 'text': 'Assess the original human request for this member.',
         'mode': 'queue', 'resumeHandoff': {'sourceMessageId': human['id'],
-            'memberSessionId': member['id'], 'expectedInterruptionRevision': member['interruptionRevision']},
+            'memberSessionId': member['id'], 'expectedInterruptionRevision': member.get('interruptionRevision', 0)},
         **patch}, identity)
 
 
