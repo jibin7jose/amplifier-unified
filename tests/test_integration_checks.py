@@ -50,7 +50,10 @@ def test_changed_feature_selects_its_owner_without_full_matrix():
 @pytest.mark.parametrize('path', ['components/web-client/src/main.jsx',
     'components/web-client/public/pwa.js', 'components/web-client.source.json',
     'scripts/web_client_build.py', 'scripts/web_client_source.py',
-    'scripts/web_client_development.py'])
+    'scripts/web_test_harness.py', 'scripts/web-client-inputs.mjs',
+    'tests/web/package.json', 'tests/web/package-lock.json',
+    'tests/test_web_client_build.py', 'tests/test_web_test_harness.py',
+    'tests/test_integration_clients.py'])
 def test_selected_client_changes_keep_the_existing_browser_owner(path):
     assert checks.select_lanes([path]) == [{'lane': 'browser-headless', 'os': 'ubuntu-latest'}]
 

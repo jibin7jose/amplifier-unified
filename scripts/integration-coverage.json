@@ -188,6 +188,9 @@
         "scripts/web_test_harness.py",
         "scripts/web-client-inputs.mjs",
         "scripts/integration_clients.py",
+        "tests/test_web_client*.py",
+        "tests/test_web_test_harness.py",
+        "tests/test_integration_clients.py",
         "tests/test_browser_auth.py",
         "tests/test_setup_page.py"
       ]
