@@ -414,10 +414,12 @@ class ConfigurationAuthority:
         """
         from .collaboration import valid_binding, participant_matches
         checked, authorities = set(), []
-        def visit(owner, identities, depth=0):
+        def visit(owner, identities, depth=0, authorized=()):
             if depth > 8 or len(checked) > 64:
                 self.error('Recovery peer authority lineage exceeds its supported bound.')
             for identity in identities:
+                if identity in authorized:
+                    continue  # Exact inputs the user already reviewed for this grant.
                 key = (owner['id'], identity)
                 if key in checked:
                     continue
@@ -445,15 +447,23 @@ class ConfigurationAuthority:
                 sender = self.service._session(receipt['senderSessionId'], hydrate=False)
                 if (not participant_matches(receipt, owner) or not participant_matches(receipt, sender)
                         or receipt.get('delivery') not in {'accepted', 'applied', 'notified'}
-                        or receipt.get('sourceInterruptionRevision') != sender.get('interruptionRevision', 0)
-                        or not self.service.access_mode.full(sender)):
-                    self.error('The originating peer cannot supply current Full recovery authority.')
+                        or receipt.get('sourceInterruptionRevision') != sender.get('interruptionRevision', 0)):
+                    self.error('The originating peer cannot supply current recovery authority.')
                 authority = {'sessionId': sender['id'], 'workspace': sender['workspace'],
-                    'accessRevision': self.service.access_mode.snapshot(sender)['revision'],
                     'interruptionRevision': sender.get('interruptionRevision', 0),
                     'effect': 'runtime_configuration', 'scope': 'session'}
+                reviewed = ()
+                if self.service.access_mode.full(sender):
+                    authority['accessRevision'] = self.service.access_mode.snapshot(sender)['revision']
+                else:
+                    grant = next((row for row in self.eligible(sender) if self.valid(row, sender)
+                        and 'runtime_configuration' in row['effects'] and 'session' in row['scopes']), None)
+                    if grant is None:
+                        self.error('The originating peer cannot supply current recovery authority.')
+                    authority.update(grantId=grant['id'], grantRevision=grant['revision'])
+                    reviewed = grant.get('authorizedInputIds', [])
                 authorities.append(authority)
-                visit(sender, self.continuation_inputs(receipt), depth+1)
+                visit(sender, self.continuation_inputs(receipt), depth+1, reviewed)
         visit(source, inputs)
         return authorities
 

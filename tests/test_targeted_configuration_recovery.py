@@ -248,12 +248,17 @@ async def test_stale_rejected_recovery_is_read_without_replay(process_boundary):
 
 
 @pytest.mark.parametrize('process_boundary', ['full'], indirect=True)
-@pytest.mark.parametrize('peer_mode', ['ask', 'full'])
+@pytest.mark.parametrize('peer_mode', ['ask', 'full', 'grant'])
 async def test_recovery_cannot_launder_peer_authority(process_boundary, monkeypatch, peer_mode):
     b = process_boundary
     saved = await saved_failure(b, monkeypatch)
     source = await manager(b)
-    sender = await manager(b, peer_mode)
+    sender = await manager(b, 'ask' if peer_mode == 'grant' else peer_mode)
+    authorized = None
+    if peer_mode == 'grant':
+        authorized = (await b.app.dispatch('capability.grant', {'sessionId': sender['id'],
+            'effects': ['runtime_configuration'], 'scopes': ['session'],
+            'reason': 'Authorize this exact recovery task'}))['result']
     request = await agent(b.app, sender, 'coordination.send', {
         'sessionId': source['id'], 'text': 'Recover the original', 'mode': 'notify'}, 'recovery-peer')
     source['collaborationGeneration'] = {'id': 'peer-requested-recovery',
@@ -277,8 +282,11 @@ async def test_recovery_cannot_launder_peer_authority(process_boundary, monkeypa
     await asyncio.wait_for(entered.wait(), 5)
     retained = operation(b)['resumptions'][0]['chain']
     assert retained[1]['sessionId'] == sender['id']
-    await mode_for(b, sender, 'ask')
-    await mode_for(b, sender, 'full')
+    if authorized:
+        await revoke(b.app, authorized)
+    else:
+        await mode_for(b, sender, 'ask')
+        await mode_for(b, sender, 'full')
     release.set()
     await asyncio.wait_for(task, 10)
     assert operation(b)['state']['phase'] == 'error'
