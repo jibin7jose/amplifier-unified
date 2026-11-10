@@ -155,7 +155,8 @@ async def navigation(app, source, destination, *, command='agent-navigation', cl
 
 
 async def test_agent_navigation_binds_client_receipt_not_calling_snapshot(app, monkeypatch):
-    first, source = [row['id'] for row in app._state['sessions']]
+    first, source = [next(row['id'] for row in app._state['sessions'] if row['title'] == title)
+                     for title in ('First', 'Second')]
     with app.clients.bind('one'):
         app.clients.draft(source, 'Unsubmitted source draft')
         app.clients.draft(first, 'Private destination draft')
@@ -205,7 +206,8 @@ async def test_agent_navigation_binds_client_receipt_not_calling_snapshot(app, m
 
 @pytest.mark.parametrize('kind', ['detached', 'ambiguous', 'foreign', 'saved-disconnected'])
 async def test_agent_navigation_does_not_guess_a_client(app, kind):
-    destination, source = [row['id'] for row in app._state['sessions']]
+    destination, source = [next(row['id'] for row in app._state['sessions'] if row['title'] == title)
+                           for title in ('First', 'Second')]
     with app.clients.bind('one'):
         own = app.subscribe()
     with app.clients.bind('two'):
@@ -228,7 +230,8 @@ async def test_agent_navigation_does_not_guess_a_client(app, kind):
 
 async def test_agent_navigation_uses_origin_and_rechecks_after_lock(app, monkeypatch):
     import asyncio
-    destination, source = [row['id'] for row in app._state['sessions']]
+    destination, source = [next(row['id'] for row in app._state['sessions'] if row['title'] == title)
+                           for title in ('First', 'Second')]
     with app.clients.bind('one'):
         own = app.subscribe()
     try:
@@ -255,7 +258,8 @@ async def test_agent_navigation_uses_origin_and_rechecks_after_lock(app, monkeyp
 
 
 async def test_agent_navigation_keeps_dirty_canvas(app):
-    destination, source = [row['id'] for row in app._state['sessions']]
+    destination, source = [next(row['id'] for row in app._state['sessions'] if row['title'] == title)
+                           for title in ('First', 'Second')]
     with app.clients.bind('one'):
         own = app.subscribe()
         await app.dispatch('canvas.show', {'kind': 'text', 'content': 'Unsaved editor'})
@@ -272,7 +276,8 @@ async def test_agent_navigation_keeps_dirty_canvas(app):
 
 
 async def test_raw_agent_selection_cannot_change_default_or_borrow_a_client(app):
-    destination, source = [row['id'] for row in app._state['sessions']]
+    destination, source = [next(row['id'] for row in app._state['sessions'] if row['title'] == title)
+                           for title in ('First', 'Second')]
     with app.clients.bind('one'):
         own = app.subscribe()
     before = deepcopy(app.clients.records)

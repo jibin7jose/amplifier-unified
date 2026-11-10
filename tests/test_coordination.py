@@ -237,8 +237,8 @@ async def test_metadata_query_filters_before_paging_and_fences_catalog(app, monk
 async def test_metadata_lookup_preserves_managed_and_workspace_scope(app):
     caller, peer = app.state['sessions']
     peer['title'] = 'Scoped unique title'
-    await app.dispatch('session.create', {'title': peer['title'], 'location': {'kind': 'managed'}, 'select': False})
-    managed = app.state['sessions'][-1]
+    receipt = await app.dispatch('session.create', {'title': peer['title'], 'location': {'kind': 'managed'}, 'select': False})
+    managed = next(row for row in app.state['sessions'] if row['id'] == receipt['sessionId'])
     app._save()
     own = app.coordination.list({'query': peer['title']}, caller['id'])
     assert [item['target']['sessionId'] for item in own['items']] == [peer['id']]

@@ -8,6 +8,7 @@ import {createServer} from 'vite';
 import {chromium} from '@playwright/test';
 
 const legacyTouchOnly=process.argv.includes('--legacy-touch-only');
+const navigationOnly=process.argv.includes('--agent-navigation-only');
 const root=fileURLToPath(new URL('../',import.meta.url));
 const fixture=spawn(process.env.AMPLIFIER_TEST_PYTHON||fileURLToPath(new URL('../../.venv/bin/python',import.meta.url)),['-u',fileURLToPath(new URL('../../tests/fixtures/chat_library_server.py',import.meta.url))],{stdio:['ignore','pipe','pipe']});
 let fixtureLog='';
@@ -42,25 +43,11 @@ try{
  const waitFilter=value=>page.waitForFunction(value=>window.amplifier.getShellState()?.snapshots?.chats?.sidebarNavigation?.recent?.scope?.filter===value,value);
 
  await page.goto(vite.resolvedUrls.local[0]);
+ await page.waitForFunction(()=>window.amplifier?.getState()?.client?.id);
+ await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{workSurface:'chat',navPinned:true}}));
  await page.locator('[data-sidebar-section=recent] .a-nav-chat').first().waitFor();
  const first=await info(),paths=first.paths,initial=first.initialSession,quiet=first.quietSession;
- let beta;
- if(!legacyTouchOnly){
- await waitScope('all');
- assert.equal(await page.locator('[data-sidebar-section]').count(),3);
- let current=await state();
- assert.equal(current.selectedSessionId,initial);
- assert.equal(current.chatNavigation.total,206);
- assert.equal(current.chatNavigation.index,0);
- assert.equal(await rows().count(),40);
- assert.equal(current.chatNavigation.items[0].title,'Beta 002');
- assert.equal(await page.getByRole('group',{name:'Chat view'}).count(),0);
- assert.equal(await page.locator('.a-workspace-explorer:visible').count(),1);
- for(const path of [paths.one,paths.two])assert.ok((await page.locator('.a-nav-chat-workspace').evaluateAll(rows=>rows.map(row=>row.title))).includes(path),'full workspace paths remain available with compact distinguishing labels');
- assert.equal(current.chatNavigation.items.some(chat=>chat.title==='Hidden worker'||chat.title==='Deleted workspace chat'),false);
- assert.deepEqual((await info()).runtimeStarts,[]);
- assert.deepEqual((await info()).runtimeSends,[]);
-
+ async function proveNavigation(){
     // The metadata finder is passive; explicit agent navigation addresses one
     // connected browser, never the calling chat's global/default projection.
     const composer=page.getByRole('textbox',{name:'Message Amplifier',exact:true});
@@ -68,6 +55,8 @@ try{
     const second=await browser.newPage({viewport:{width:1280,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
     try{
      await second.goto(vite.resolvedUrls.local[0]);
+     await second.waitForFunction(()=>window.amplifier?.getState()?.client?.id);
+     await second.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{workSurface:'chat'}}));
      const secondComposer=second.getByRole('textbox',{name:'Message Amplifier',exact:true});
      await secondComposer.waitFor();await secondComposer.fill('Second client source draft');
      const secondId=await second.evaluate(()=>window.amplifier.getState().client.id);
@@ -98,6 +87,28 @@ try{
      assert.deepEqual((await info()).runtimeSends,[]);
     }finally{await second.close()}
     await composer.fill('');
+ }
+ await proveNavigation();
+ if(navigationOnly){
+  assert.deepEqual(errors,[]);
+  console.log('PASS: passive metadata discovery, explicit connected-client navigation, rendered destination, independent clients, retained drafts, source-bound readback, no runtime starts or sends.');
+ }else{
+ let beta;
+ if(!legacyTouchOnly){
+ await waitScope('all');
+ assert.equal(await page.locator('[data-sidebar-section]').count(),3);
+ let current=await state();
+ assert.equal(current.selectedSessionId,initial);
+ assert.equal(current.chatNavigation.total,206);
+ assert.equal(current.chatNavigation.index,0);
+ assert.equal(await rows().count(),40);
+ assert.equal(current.chatNavigation.items[0].title,'Beta 002');
+ assert.equal(await page.getByRole('group',{name:'Chat view'}).count(),0);
+ assert.equal(await page.locator('.a-workspace-explorer:visible').count(),1);
+ for(const path of [paths.one,paths.two])assert.ok((await page.locator('.a-nav-chat-workspace').evaluateAll(rows=>rows.map(row=>row.title))).includes(path),'full workspace paths remain available with compact distinguishing labels');
+ assert.equal(current.chatNavigation.items.some(chat=>chat.title==='Hidden worker'||chat.title==='Deleted workspace chat'),false);
+ assert.deepEqual((await info()).runtimeStarts,[]);
+ assert.deepEqual((await info()).runtimeSends,[]);
 
  assert.equal(await page.getByRole('button',{name:'New workspace',exact:true}).count(),1);
 
@@ -255,6 +266,7 @@ try{
  }finally{await touchContext.close()}
  assert.deepEqual(errors,[]);
  console.log(legacyTouchOnly?'Saved custom skin real-touch checks passed: visible unselected-row details and Pin, fixed rows and full-path flyouts, tap without selecting, saved skin retained.':'Chat library browser checks passed: 206 roots, bounded Recent pages, independent sidebar sections, full paths, fnmatch search, pins first, true activity recency, agent parity, real service restart pin/unpin persistence, narrow layout, correct new-chat workspace, real touch with saved custom skin, no provider calls.');
+ }
 }catch(error){
  await page?.screenshot({path:'/tmp/chat-library-views-failure.png'}).catch(()=>{});
  if(fixtureLog)console.error(fixtureLog);
