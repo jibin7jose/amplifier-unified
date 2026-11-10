@@ -10,7 +10,7 @@ const artifact=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/delivery-warning';awa
 const message={id:'saved',inputId:'original',role:'user',text:'Keep this historical request and its reference.',attachments:[{id:'a',name:'reference.txt',size:12}],delivery:{status:'unknown',error:'Transport interrupted. Delivery is uncertain.'}};
 const session=id=>({id,title:id,sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[structuredClone(message)],workers:[]});
 let state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{navPinned:true},sessions:[session('chat'),session('other')],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false}};
-const shell=createShellHttpFixture(()=>state),calls=[],pending=[],errors=[];let vite,browser,page;
+const shell=createShellHttpFixture(()=>state),calls=[],pending=[],errors=[];let vite,browser,page,holdChecks=false;
 const outbox=()=>page.evaluate(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')||'[]'));
 const emit=async()=>{state.revision++;await page.evaluate(s=>window.emitState(s),shell.state())};
 const original=()=>page.locator('[data-input-id="original"]');
@@ -19,7 +19,7 @@ try{
  browser=await chromium.launch({headless:true});page=await browser.newPage({viewport:{width:1280,height:900}});page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(installFixtureEvents);
  await page.addInitScript(()=>{if(!sessionStorage.getItem('fixture-seeded')){
-  sessionStorage.setItem('fixture-seeded','1');sessionStorage.setItem('amplifier.messageOutbox.v1',JSON.stringify([{id:'local',commandId:'original',sessionId:'chat',text:'Keep this historical request and its reference.',attachmentIds:['a'],attachments:[{id:'a',name:'reference.txt',size:12}],status:'unknown',error:'Transport interrupted. Delivery is uncertain.'}]));
+  sessionStorage.setItem('fixture-seeded','1');sessionStorage.setItem('amplifier.messageOutbox.v1',JSON.stringify([{id:'local',commandId:'original',sessionId:'chat',scope:JSON.stringify(['fixture-shell-host','/fixture','chat']),text:'Keep this historical request and its reference.',attachmentIds:['a'],attachments:[{id:'a',name:'reference.txt',size:12}],status:'unknown',error:'Transport interrupted. Delivery is uncertain.'}]));
  }});
  await page.route('**/api/**',async route=>{
   const path=new URL(route.request().url()).pathname,response=shell.response(route.request());
@@ -28,13 +28,18 @@ try{
   if(path==='/api/actions'&&route.request().method()==='GET')return route.fulfill({json:[]});
   if(path!=='/api/actions')return route.fulfill({json:{ok:true}});
   const body=route.request().postDataJSON();calls.push(body);
-  if(body.action==='conversation.delivery'){pending.push({route,body});return}
+  if(body.action==='conversation.delivery'){
+   const target=state.sessions.find(session=>session.id===body.args.sessionId);
+   const source={workspace:target.workspace||null,nativeIdentity:target.runtimeSessionId||target.nativeIdentity||target.id};
+   if(holdChecks&&body.args.sessionId==='chat'){pending.push({route,body,source});return}
+   return route.fulfill({json:{accepted:true,result:{...body.args,source,delivery:'unknown',message:'Still uncertain. Nothing was resent.'},state:shell.state()}});
+  }
   if(body.action==='view.update')state.view={...state.view,...body.args.patch};
   if(body.action==='session.select')state.selectedSessionId=body.args.id;
   state.revision++;return route.fulfill({json:{accepted:true,state:shell.state()}});
  });
  await page.goto(vite.resolvedUrls.local[0]);
- await expect(original().getByRole('button',{name:'Dismiss warning',exact:true})).toBeVisible();
+ await expect(original().getByRole('button',{name:'Dismiss warning',exact:true})).toBeEnabled();
  const composer=page.getByRole('textbox',{name:'Message Amplifier'});await composer.fill('Keep the next unsent thought');
  const before=await outbox(),effects=()=>calls.filter(c=>['conversation.send','conversation.retry','message.edit','session.delete'].includes(c.action));
  await page.screenshot({path:artifact+'/desktop-warning.png'});
@@ -50,10 +55,13 @@ try{
  await original().locator('summary').click();await original().getByRole('button',{name:'Show warning',exact:true}).click();
  await expect(original().getByRole('button',{name:'Dismiss warning',exact:true})).toBeVisible();
  // A pending read cannot be dismissed and cannot resend.
+ holdChecks=true;
  await original().getByRole('button',{name:'Check delivery',exact:true}).click();
  await expect(original().getByRole('button',{name:'Dismiss warning',exact:true})).toBeDisabled();
  await expect.poll(()=>pending.length).toBe(1);
- await pending.shift().route.fulfill({json:{accepted:true,result:{delivery:'unknown',message:'Still uncertain. Nothing was resent.'},state:shell.state()}});
+ const unknownCheck=pending.shift();
+ await unknownCheck.route.fulfill({json:{accepted:true,result:{sessionId:'chat',inputId:'original',source:unknownCheck.source,delivery:'unknown',message:'Still uncertain. Nothing was resent.'},state:shell.state()}});
+ holdChecks=false;
  await expect(original().getByRole('button',{name:'Dismiss warning',exact:true})).toBeEnabled();
  await original().getByRole('button',{name:'Dismiss warning',exact:true}).click();
  // Same input identity in another chat must not inherit local dismissal.
@@ -71,6 +79,7 @@ try{
  await original().locator('summary').click();
  await page.screenshot({path:artifact+'/mobile-details.png'});
  // Receipt arrives after original leaves server window: retire exact outbox anyway.
+ holdChecks=true;
  await original().getByRole('button',{name:'Check delivery',exact:true}).click();await expect.poll(()=>pending.length).toBe(1);
  state.selectedSessionId='other';await emit();
  await expect(original().getByRole('button',{name:'Check delivery',exact:true})).toBeEnabled();
@@ -81,7 +90,8 @@ try{
  await expect(original().getByRole('button',{name:'Checking…',exact:true})).toBeVisible();
  assert.equal(pending.length,1,'Remount does not issue a duplicate read');
  state.sessions[0].messages=[];state.revision++;
- await pending.shift().route.fulfill({json:{accepted:true,result:{delivery:'accepted',message:'Received. Not resent.'},state:shell.state()}});
+ const acceptedCheck=pending.shift();
+ await acceptedCheck.route.fulfill({json:{accepted:true,result:{sessionId:'chat',inputId:'original',source:acceptedCheck.source,delivery:'accepted',message:'Received. Not resent.'},state:shell.state()}});
  await expect.poll(async()=>(await outbox()).length).toBe(0);
  assert.equal(await page.evaluate(()=>sessionStorage.getItem('amplifier.deliveryWarning.v1:'+JSON.stringify(['chat','original']))),null);
  await expect(original()).toHaveCount(0);

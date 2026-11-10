@@ -7,10 +7,17 @@ import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 let state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{navPinned:true},sessions:[{id:'chat',title:'Saved conversation',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[],workers:[]}],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false}};
 const shell=createShellHttpFixture(()=>state);
-const waiting=[],calls=[],errors=[];let browser,vite,page,blockedDraft;let blockNextDraft=false;
+const waiting=[],deliveryWaiting=[],deferredDelivery=new Set(),calls=[],errors=[];let browser,vite,page,blockedDraft;let blockNextDraft=false;
+const unknownDelivery='Delivery is still uncertain. Nothing was sent again.';
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(check,label){for(let i=0;i<150&&!check();i++)await sleep(10);assert.ok(check(),label)}
 async function next(){await until(()=>waiting.length,'Expected pending operation');return waiting.shift()}
+async function nextDelivery(inputId){await until(()=>deliveryWaiting.some(item=>item.body.args.inputId===inputId),'Expected pending delivery read for '+inputId);return deliveryWaiting.splice(deliveryWaiting.findIndex(item=>item.body.args.inputId===inputId),1)[0]}
+function deliveryReply(item,delivery,extra={}){
+ const {sessionId,inputId}=item.body.args;
+ assert.equal(item.body.action,'conversation.delivery');assert.equal(sessionId,'chat');assert.equal(typeof inputId,'string');
+ return item.route.fulfill({json:{accepted:true,result:{...extra,sessionId,inputId,delivery,source:item.source},state:shell.state()}});
+}
 const chat=()=>state.sessions.find(s=>s.id===state.selectedSessionId);
 async function emit(){state.revision++;await page.evaluate(state=>window.emitState(state),shell.state())}
 async function received(item,text=item.body.args.text){const message={id:'server-'+item.body.id,inputId:item.body.id,role:'user',text,createdAt:Date.now()/1000,delivery:{status:'accepted'}};chat().messages.push(message);state.revision++;await item.route.fulfill({json:{accepted:true,delivery:'accepted',state:shell.state()}})}
@@ -27,7 +34,16 @@ try{
   if(path==='/api/actions'&&route.request().method()==='GET')return route.fulfill({json:[]});
   if(path!=='/api/actions')return route.fulfill({json:{ok:true}});
   const body=route.request().postDataJSON();calls.push(body);
-  if(['conversation.send','conversation.delivery','conversation.retry','message.edit'].includes(body.action)){waiting.push({route,body,client:route.request().headers()['x-amplifier-client']});return}
+  // Passive mount/reconnect reads have their own queue. Only the cases testing
+  // a particular delayed read hold it; other reads return exact-bound unknown.
+  const item={route,body,client:route.request().headers()['x-amplifier-client']};
+  if(body.action==='conversation.delivery'){
+   const target=state.sessions.find(session=>session.id===body.args.sessionId);
+   item.source={workspace:target.workspace||null,nativeIdentity:target.runtimeSessionId||target.nativeIdentity||target.id};
+   if(deferredDelivery.has(body.args.inputId)){deliveryWaiting.push(item);return}
+   return deliveryReply(item,'unknown',{message:unknownDelivery});
+  }
+  if(['conversation.send','conversation.retry','message.edit'].includes(body.action)){waiting.push(item);return}
   if(body.action==='view.update'&&blockNextDraft&&body.args.patch?.draft===''){blockNextDraft=false;blockedDraft={route,body};return}
   if(body.action==='view.update')state.view={...state.view,...body.args.patch};
   state.revision++;return route.fulfill({json:{accepted:true,state:shell.state()}});
@@ -111,6 +127,7 @@ try{
  // A lost draft-autosave reply must not prevent a durable outbox send.
  blockNextDraft=true;
  const independent=await send('Send while draft autosave is stalled');
+ assert.equal((await outbox()).find(row=>row.commandId===independent.body.id).scope,JSON.stringify([shell.state().client.historyScope||shell.state().client.hostInstanceId,'/fixture','chat']),'Submitted payload persists its exact source/workspace/chat scope');
  assert.ok(blockedDraft,'The draft clear is still waiting for its HTTP receipt');
  await received(independent);
  await composer().fill('New draft while old clear waits');
@@ -177,22 +194,39 @@ try{
  await page.getByRole('button',{name:'Save & regenerate',exact:true}).click();const sharedRetryAccepted=await next();assert.notEqual(sharedRetryAccepted.body.id,sharedRetry.body.id);assert.equal(sharedRetryAccepted.body.args.text,sharedRetryText);
  await received(sharedRetryAccepted);await page.waitForFunction(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).length===0);
  assert.equal(chat().messages.at(-1).text,sharedRetryText);assert.equal(state.sessions.length,1);assert.equal(calls.filter(c=>c.action==='message.edit').length,0);
- const lostRejection=await send('Rejection reply lost');await lostRejection.route.abort('failed');await page.getByRole('button',{name:'Check delivery',exact:true}).click();
- const rejectionCheck=await next();assert.equal(rejectionCheck.body.action,'conversation.delivery');assert.equal(rejectionCheck.body.args.inputId,lostRejection.body.id);await rejectionCheck.route.fulfill({json:{accepted:true,result:{delivery:'not_saved',message:'No saved copy; retry the original submission.'},state:shell.state()}});
- assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.id===lostRejection.body.id).length,1,'Check never resends');
+ const lostRejection=await send('Rejection reply lost');deferredDelivery.add(lostRejection.body.id);await lostRejection.route.abort('failed');
+ const rejectionCheck=await nextDelivery(lostRejection.body.id);assert.equal(rejectionCheck.body.args.inputId,lostRejection.body.id);
+ await page.getByRole('button',{name:'Checking…',exact:true}).waitFor();
+ deferredDelivery.delete(lostRejection.body.id);await deliveryReply(rejectionCheck,'not_saved',{message:'No saved evidence; the original submission remains uncertain.'});
+ assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.id===lostRejection.body.id).length,1,'Automatic passive check never resends');
  await page.getByRole('button',{name:'Retry original submission',exact:true}).click();
+ await page.getByText(/Sending again could repeat that work/).waitFor();
+ assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.id===lostRejection.body.id).length,1,'Opening uncertain-retry confirmation is not admission');
+ await page.getByRole('button',{name:'Send this message again',exact:true}).click();
  const rejectionReceipt=await next();assert.equal(rejectionReceipt.body.action,'conversation.send');assert.equal(rejectionReceipt.body.id,lostRejection.body.id,'Original-submission retry keeps its deduplication identity');assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.id===lostRejection.body.id).length,2,'Only the explicit click retries the original submission');await rejectionReceipt.route.fulfill({json:{accepted:false,duplicate:true,status:409,error:'Saved rejection',state:shell.state()}});
  await page.getByRole('button',{name:'Retry',exact:true}).click();const rejectedRetry=await next();assert.notEqual(rejectedRetry.body.id,lostRejection.body.id);await received(rejectedRetry);
  const delayed=await send('Acknowledgement delayed');chat().status='working';chat().messages.push({id:'delayed',inputId:delayed.body.id,role:'user',text:delayed.body.args.text,delivery:{status:'sending'}});await emit();
  await composer().fill('Keep this next draft');await until(()=>state.view.draft==='Keep this next draft','Draft saves while acknowledgement waits');
  await delayed.route.fulfill({status:504,json:{error:'The runtime operation has not returned yet. It may still be running; do not automatically repeat it.',code:'runtime_pending',delivery:'unknown'}});
- await page.getByRole('button',{name:'Check delivery',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Retry',exact:true}).count(),0,'Unknown delivery does not offer a fresh retry');
+ await page.waitForFunction(id=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).find(row=>row.commandId===id)?.status==='unknown',delayed.body.id);
+ // A lost HTTP receipt does not replace the shared row's authoritative sending
+ // state. It stays locked until the late canonical acknowledgement arrives.
+ const delayedBubble=page.locator(`[data-input-id="${delayed.body.id}"]`);
+ await delayedBubble.getByText('Sending…',{exact:true}).waitFor();
+ assert.equal(await delayedBubble.getByRole('button',{name:'Edit message',exact:true}).isDisabled(),true);
+ assert.equal(await delayedBubble.getByRole('button',{name:'Check delivery',exact:true}).count(),0);
+ assert.equal(await page.getByRole('button',{name:'Retry',exact:true}).count(),0,'Unknown receipt with authoritative sending does not offer a fresh retry');
+ assert.equal(calls.filter(c=>c.action==='conversation.delivery'&&c.args.inputId===delayed.body.id).length,0,'An authoritative active row does not trigger passive recovery');
  assert.equal(await readComposerDraft(composer()),'Keep this next draft');assert.equal(calls.filter(c=>c.id===delayed.body.id).length,1,'Timeout does not automatically resend');
  chat().messages.at(-1).delivery.status='accepted';chat().status='idle';await emit();
  await page.waitForFunction(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).length===0);assert.equal(await page.getByText('Acknowledgement delayed',{exact:true}).count(),1);assert.equal(await readComposerDraft(composer()),'Keep this next draft');assert.equal(calls.filter(c=>c.id===delayed.body.id).length,1,'Late acknowledgement does not resend');
- const lost=await send('Delivery uncertain');await lost.route.abort('failed');await page.getByRole('button',{name:'Check delivery',exact:true}).waitFor();
- await page.reload();await composer().waitFor();await page.getByRole('button',{name:'Check delivery',exact:true}).click();const checked=await next();assert.equal(checked.body.action,'conversation.delivery');assert.equal(checked.body.args.inputId,lost.body.id);assert.notEqual(checked.client,lost.client,'Reload has a new client identity');
- await checked.route.fulfill({json:{accepted:true,result:{delivery:'sending',message:'The original send is still in progress.'},state:shell.state()}});await page.getByRole('button',{name:'Check delivery',exact:true}).waitFor();
+ const lost=await send('Delivery uncertain');await lost.route.abort('failed');
+ await page.locator(`[data-input-id="${lost.body.id}"]`).getByText(unknownDelivery,{exact:true}).waitFor();
+ assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.id===lost.body.id).length,1,'Initial automatic recovery is read-only');
+ deferredDelivery.add(lost.body.id);await page.reload();await composer().waitFor();
+ const checked=await nextDelivery(lost.body.id);assert.equal(checked.body.args.inputId,lost.body.id);assert.notEqual(checked.client,lost.client,'Reload has a new client identity');
+ await page.getByRole('button',{name:'Checking…',exact:true}).waitFor();
+ deferredDelivery.delete(lost.body.id);await deliveryReply(checked,'sending',{message:'The original send is still in progress.'});await page.getByRole('button',{name:'Check delivery',exact:true}).waitFor();
  chat().messages.push({id:'late',inputId:lost.body.id,role:'user',text:lost.body.args.text,delivery:{status:'accepted'}});await emit();
  await page.waitForFunction(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).length===0);assert.equal(await page.getByText('Delivery uncertain',{exact:true}).count(),1);assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.id===lost.body.id).length,1,'Check did not resubmit');
  const editText='  Edit the last input — e\u0301\nKeep\tspacing.  \n',savedHistory=JSON.stringify(chat().messages);
@@ -250,8 +284,8 @@ assert.equal(fork.body.action,'message.edit');assert.equal(fork.body.args.mode,'
  const steered={id:'steered',inputId:correction.body.id,role:'user',text:correction.body.args.text,delivery:{status:'accepted'},steering:{generationId:'original-run',disposition:'queued'}};
  chat().messages.push(steered);state.revision++;await correction.route.fulfill({json:{accepted:true,delivery:'accepted',steering:steered.steering,state:shell.state()}});
  await page.getByText('Received by the active run; waiting for its next step…',{exact:true}).waitFor();
- await page.getByRole('button',{name:'Check delivery',exact:true}).click();const steeringCheck=await next();assert.equal(steeringCheck.body.action,'conversation.delivery');
- await steeringCheck.route.fulfill({json:{accepted:true,result:{delivery:'accepted',steering:steered.steering},state:shell.state()}});
+ deferredDelivery.add(correction.body.id);await page.getByRole('button',{name:'Check delivery',exact:true}).click();const steeringCheck=await nextDelivery(correction.body.id);
+ deferredDelivery.delete(correction.body.id);await deliveryReply(steeringCheck,'accepted',{steering:steered.steering});
  steered.steering.disposition='applied';await emit();await page.getByText('Added to the active run’s context',{exact:true}).waitFor();
  assert.equal(calls.filter(c=>c.id===correction.body.id).length,1,'Steering updates and checks never resend');
  await page.screenshot({path:'/tmp/amplifier-steering-applied.png'});
@@ -272,5 +306,6 @@ assert.equal(fork.body.action,'message.edit');assert.equal(fork.body.args.mode,'
  await page.addInitScript(()=>Object.defineProperty(window,'sessionStorage',{get(){throw new DOMException('Fixture storage blocked','SecurityError')}}));await page.reload();await composer().waitFor();
  const blockedStorage=await send('Storage unavailable');await blockedStorage.route.fulfill({status:409,json:{accepted:false,error:'Fixture rejection'}});
  await page.getByRole('button',{name:'Retry',exact:true}).waitFor();await page.getByText('This browser could not save the pending message. Keep this tab open until delivery is confirmed.',{exact:true}).waitFor();
- assert.deepEqual(errors,[]);console.log('Outbox browser passed: immediate clear/bubble, late identical draft, server dedup, held current/fork locks typing/paste/mode/Escape/submit and direct handlers, pre-render double requestSubmit, closed pending retry with byte-exact outbox text across local/shared identities and explicit Edit after rejection, old rejection preserves newer editor without restoration writes, blocked editor guards, neighboring drafts/outbox, delayed504/late acknowledgement without replay, uncertain reload/check, mobile, blocked storage. Controlled transport measures admission/saved/accepted states, not model execution.');
+ assert.equal(deliveryWaiting.length,0,'All deliberately deferred passive reads were settled');assert.equal(deferredDelivery.size,0);
+ assert.deepEqual(errors,[]);console.log('Outbox browser passed: scoped payload, immediate clear/bubble, late identical draft, server dedup, held current/fork locks typing/paste/mode/Escape/submit and direct handlers, pre-render double requestSubmit, closed pending retry with byte-exact outbox text across local/shared identities and explicit Edit after rejection, old rejection preserves newer editor without restoration writes, blocked editor guards, neighboring drafts/outbox, delayed504/late acknowledgement without replay, automatic passive mount/reload reads on an independent queue, exact-bound replies, confirmed original-identity retry, mobile, blocked storage. Controlled transport measures admission/saved/accepted states, not model execution.');
 }finally{await browser?.close();await vite?.close()}

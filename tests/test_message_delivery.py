@@ -216,6 +216,9 @@ async def test_send_exact_text_still_obeys_pre_admission_guards(held_post, guard
     else:
         root['fileAccessPending'] = {'status': 'pending'}
     app.state['view']['draft'] = text
+    # Materialize the existing client-owned empty attachment view before taking
+    # a whole-session snapshot; a rejected send may inspect it but cannot consume it.
+    attachments = copy.deepcopy(app.clients.attachments(root))
     before = copy.deepcopy(root)
 
     with pytest.raises(AppError) as exc:
@@ -224,6 +227,7 @@ async def test_send_exact_text_still_obeys_pre_admission_guards(held_post, guard
     assert exc.value.status == 409
     assert root == before and not runtime.sent
     assert app.state['view']['draft'] == text
+    assert app.clients.attachments(root) == attachments
     assert app.db.execute('SELECT receipt FROM commands WHERE id=?', ('guarded-text',)).fetchone() is None
 
 

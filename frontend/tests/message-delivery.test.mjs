@@ -12,7 +12,7 @@ const text=node=>typeof node==='string'?node:(node?.children||[]).map(text).join
 const button=(root,label)=>root.root.findAllByType('button').find(row=>text(row)===label);
 async function fixture(saved=true){
  const calls=[],retryCalls=[],message={id:'m',inputId:'original',role:'user',text:'Request'},session={id:'chat',status:'stopped',messages:saved?[message]:[]};
- const dispatch=async(action,args)=>{calls.push({action,args});return {accepted:true,result:action==='conversation.delivery'?{delivery:'unknown',message:'Checking does not resend it.'}:{delivery:'accepted',resent:true}}};
+ const dispatch=async(action,args)=>{calls.push({action,args});return {accepted:true,result:action==='conversation.delivery'?{sessionId:args.sessionId,inputId:args.inputId,delivery:'unknown',message:'Checking does not resend it.'}:{delivery:'accepted',resent:true}}};
  const retry=async m=>retryCalls.push(m);let root;
  await act(async()=>{root=create(React.createElement(MessageDelivery,{message,session,delivery:{status:'unknown'},localDelivery:saved?null:{commandId:'original'},dispatch,retry}))});
  return {root,calls,retryCalls,session};
@@ -50,12 +50,14 @@ for(const [phase,label] of Object.entries({sent:'Sending live direction',accepte
   await act(async()=>root.unmount());
  });
 }
-test('a local-only message explicitly retries its original identity without claiming to repeat work',async()=>{
+test('a local-only unknown message requires explicit intent before retrying its original identity',async()=>{
  const {root,calls,retryCalls}=await fixture(false);
  await act(async()=>button(root,'Check delivery').props.onClick());
  assert.equal(retryCalls.length,0);
- assert.doesNotMatch(JSON.stringify(root.toJSON()),/could repeat that work/);
  await act(async()=>button(root,'Retry original submission').props.onClick());
+ assert.match(JSON.stringify(root.toJSON()),/could repeat that work/);
+ assert.equal(retryCalls.length,0);
+ await act(async()=>button(root,'Send this message again').props.onClick());
  assert.equal(retryCalls[0].inputId,'original');assert.equal(calls.length,1);
  await act(async()=>root.unmount());
 });
@@ -105,7 +107,7 @@ test('dismissal preserves uncertainty, survives remount, restores and stays scop
 });
 test('exact accepted check removes stale warning without a message in the visible window',async()=>{
  const calls=[],message={id:'m',inputId:'original'},session={id:'chat',messages:[],status:'idle'};let root;
- await act(async()=>{root=create(React.createElement(MessageDelivery,{message,session,delivery:{status:'unknown'},dispatch:async(action,args)=>{calls.push({action,args});return {accepted:true,result:{delivery:'accepted',message:'Received, not resent.'}}}}))});
+ await act(async()=>{root=create(React.createElement(MessageDelivery,{message,session,delivery:{status:'unknown'},dispatch:async(action,args)=>{calls.push({action,args});return {accepted:true,result:{sessionId:args.sessionId,inputId:args.inputId,delivery:'accepted',message:'Received, not resent.'}}}}))});
  await act(async()=>button(root,'Check delivery').props.onClick());
  assert.doesNotMatch(JSON.stringify(root.toJSON()),/Delivery not confirmed|Not sent|Send again/);
  assert.deepEqual(calls,[{action:'conversation.delivery',args:{sessionId:'chat',inputId:'original'}}]);
@@ -128,7 +130,7 @@ test('unknown warning cannot hide the exact active input or a pending check; old
  assert.ok(button(root,'Dismiss warning'));
  let request;await act(async()=>{request=button(root,'Check delivery').props.onClick()});
  assert.equal(button(root,'Dismiss warning').props.disabled,true);
- await act(async()=>{finish({result:{delivery:'unknown'}});await request});
+ await act(async()=>{finish({accepted:true,result:{sessionId:'chat',inputId:'original',delivery:'unknown'}});await request});
  assert.equal(button(root,'Dismiss warning').props.disabled,false);
  await act(async()=>root.unmount());
 });
@@ -137,12 +139,14 @@ test('exact positive check retires only matching outbox and a late error cannot 
  function Harness(){api=useMessageOutbox();return null}
  await act(async()=>{root=create(React.createElement(Harness))});
  await act(async()=>{
-  api.update('one',{sessionId:'chat',commandId:'input',text:'Keep',attachmentIds:['a'],status:'unknown'});
-  api.update('two',{sessionId:'other',commandId:'input',text:'Other',attachmentIds:[],status:'unknown'});
+  api.update('one',{scope:'source-a',sessionId:'chat',commandId:'input',text:'Keep',attachmentIds:['a'],status:'unknown'});
+  api.update('two',{scope:'source-a',sessionId:'other',commandId:'input',text:'Other',attachmentIds:[],status:'unknown'});
  });
- await act(async()=>api.acknowledge('chat','input',{accepted:true,delivery:'unknown'}));
+ await act(async()=>api.acknowledge('chat','input',{accepted:true,delivery:'unknown'},'source-a'));
  assert.equal(api.entries.length,2);
- await act(async()=>api.acknowledge('chat','input',{delivery:'accepted'}));
+ await act(async()=>api.acknowledge('chat','input',{delivery:'accepted'},'source-b'));
+ assert.equal(api.entries.length,2,'A different source must not retire the saved input');
+ await act(async()=>api.acknowledge('chat','input',{delivery:'accepted'},'source-a'));
  assert.deepEqual(api.entries.map(row=>row.id),['two']);
  await act(async()=>api.update('one',{status:'unknown',error:'Late timeout'}));
  assert.deepEqual(api.entries.map(row=>row.id),['two']);
@@ -150,7 +154,7 @@ test('exact positive check retires only matching outbox and a late error cannot 
 });
 test('a check reporting active sending cannot be dismissed while the original frame is uncertain',async()=>{
  let root;
- await act(async()=>{root=create(React.createElement(MessageDelivery,{message:{inputId:'input'},session:{id:'chat'},delivery:{status:'unknown'},dispatch:async()=>({result:{delivery:'sending',message:'Still in progress'}})}))});
+ await act(async()=>{root=create(React.createElement(MessageDelivery,{message:{inputId:'input'},session:{id:'chat'},delivery:{status:'unknown'},dispatch:async()=>({accepted:true,result:{sessionId:'chat',inputId:'input',delivery:'sending',message:'Still in progress'}})}))});
  await act(async()=>button(root,'Check delivery').props.onClick());
  assert.equal(button(root,'Dismiss warning'),undefined);
  await act(async()=>root.unmount());
@@ -172,7 +176,7 @@ test('pending delivery check survives remount without collapse, duplicate reques
  assert.equal(button(root,'Show warning').props.disabled,true);
  await act(async()=>button(root,'Checking…').props.onClick());
  assert.equal(calls,1);
- await act(async()=>{finish({result:{delivery:'unknown',message:'Settled uncertain'}});await running});
+ await act(async()=>{finish({accepted:true,result:{sessionId:'chat',inputId:'pending',delivery:'unknown',message:'Settled uncertain'}});await running});
  assert.match(JSON.stringify(root.toJSON()),/Settled uncertain/);
  await act(async()=>root.unmount());delete globalThis.sessionStorage;
 });

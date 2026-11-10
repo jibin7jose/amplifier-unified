@@ -13,6 +13,10 @@ try{
  browser=await chromium.launch({headless:true});
  const context=await browser.newContext({viewport:{width:1280,height:900},extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
  const page=await context.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
+ const isActionResponse=(response,action)=>{const request=response.request();return new URL(request.url()).pathname==='/api/actions'&&request.method()==='POST'&&request.postDataJSON()?.action===action};
+ // Observe the real service's automatic passive check; do not suppress it or
+ // replace its response merely to preserve the former manual-check sequence.
+ const automaticCheck=page.waitForResponse(response=>isActionResponse(response,'conversation.delivery'));
  await page.goto(ready.url);await showFixtureConversation(page);
  const original=page.locator('.a-user').filter({hasText:'Recover this synthetic message with its attachment.'});
  await expect(original).toHaveCount(1);
@@ -20,13 +24,16 @@ try{
  await composer.fill('Preserve my next unsent thought');
  assert.equal(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')||'[]').length),0,'Recovery works without a local outbox');
  const inspect=async()=>await (await page.request.get(ready.url+'/fixture')).json();
- await original.getByRole('button',{name:'Check delivery',exact:true}).click();
+ const checked=await automaticCheck,checkRequest=checked.request().postDataJSON(),checkReceipt=await checked.json();
+ const sessionId=await page.evaluate(()=>window.amplifier.getState().selectedSessionId);
+ assert.equal(checkRequest.args.sessionId,sessionId);assert.equal(checkRequest.args.inputId,'original-fixture-input');
+ assert.equal(checkReceipt.accepted,true);assert.equal(checkReceipt.result.sessionId,sessionId);assert.equal(checkReceipt.result.inputId,'original-fixture-input');assert.equal(checkReceipt.result.delivery,'unknown');
  await expect(original.getByText(/Delivery is still uncertain/)).toBeVisible();
- assert.deepEqual((await inspect()).sent,[]);assert.deepEqual((await inspect()).retried,[]);
+ const passive=await inspect();assert.ok(passive.checked.includes('original-fixture-input'));assert.deepEqual(passive.sent,[]);assert.deepEqual(passive.retried,[]);
  await original.getByRole('button',{name:'Send again',exact:true}).click();
  await expect(original.getByText(/Sending again could repeat that work/)).toBeVisible();
  await original.getByRole('button',{name:'Cancel',exact:true}).click();
- assert.deepEqual((await inspect()).sent,[]);
+ assert.deepEqual((await inspect()).sent,[]);assert.deepEqual((await inspect()).retried,[]);
  await page.setViewportSize({width:390,height:844});
  await original.getByRole('button',{name:'Send again',exact:true}).click();
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
@@ -35,7 +42,11 @@ try{
  assert.ok(confirmation.width>=200,'Phone confirmation remains readable');
  assert.ok(resendButton.width>=150&&resendButton.height<80,'Resend label must not collapse into a vertical column');
  await page.screenshot({path:'/tmp/unified26-delivery-confirmation-mobile.png'});
+ assert.deepEqual((await inspect()).sent,[]);assert.deepEqual((await inspect()).retried,[],'Opening confirmation alone never retries');
+ const retryResponse=page.waitForResponse(response=>isActionResponse(response,'conversation.retry'));
  await original.getByRole('button',{name:'Send this message again',exact:true}).click();
+ const retryRequest=(await retryResponse).request().postDataJSON();
+ assert.equal(retryRequest.args.sessionId,sessionId);assert.equal(retryRequest.args.inputId,'original-fixture-input');assert.equal(retryRequest.args.confirmUncertain,true);
  await expect(page.getByText('Recovery succeeded: one synthetic submission received.',{exact:true})).toBeVisible();
  await expect(composer).toHaveDraft('Preserve my next unsent thought');
  await expect(original).toHaveCount(1);
@@ -44,6 +55,6 @@ try{
  const saved=state.sessions.find(s=>s.id===state.selectedSessionId).messages.find(m=>m.inputId==='original-fixture-input');
  assert.equal(saved.delivery.status,'accepted');assert.equal(saved.attachments[0].name,'reference.txt');
  await page.reload();await expect(composer).toHaveDraft('Preserve my next unsent thought');
- assert.equal((await inspect()).sent.length,1);assert.deepEqual(errors,[]);
- console.log('Delivery recovery browser passed: passive check, no local outbox, cancel, explicit single retry, original identity/attachment, preserved draft, reload and mobile bounds.');
+ const reloaded=await inspect();assert.equal(reloaded.sent.length,1);assert.equal(reloaded.retried.length,1);assert.deepEqual(errors,[]);
+ console.log('Delivery recovery browser passed: automatic passive check with exact-bound service receipt, no local outbox, cancel and confirmation without admission, explicit single confirmed retry, original identity/attachment, preserved draft, reload and mobile bounds.');
 }finally{if(browser)await browser.close();fixture.kill('SIGTERM');}

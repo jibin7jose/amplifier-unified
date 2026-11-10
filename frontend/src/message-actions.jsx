@@ -1,6 +1,7 @@
 import {messageTime} from './message-time';
 import {MessageInteractions,QuoteCard,QuotedDocument,AssistantReactions} from './message-interactions';
 import {MessageDelivery} from './message-delivery';
+import {deliveryRecovery} from './pending-delivery-checks';
 import {readDetail} from './conversation-detail';
 import React,{useEffect,useRef,useState} from 'react';
 import {MessageText} from './message-text';
@@ -88,7 +89,7 @@ export function MessageEntry({message:m,session,state,act,stamp,working,forkTurn
    {!localDelivery&&!m.displayOnly&&['user','assistant'].includes(m.role)&&<MessageInteractions message={m} sessionId={session.id} dispatch={dispatch}/>}
    {m.role==='user'&&!external&&!m.displayOnly&&<button type="button" className="a-icon" title={quoted?'Quoted messages retain exact references. Send a correction instead.':session.historyReadOnlyReason|| (session.workspaceAvailable===false?'Workspace folder unavailable':blocked?'Wait for the current work to finish':'Edit message')} aria-label="Edit message" disabled={editLocked} data-operation-pending={saving||undefined} aria-busy={saving||undefined} data-action="view.update" onClick={async()=>{if(editLocked||submitting.current||pendingEdit.isPending())return;setSaving(true);try{patch({sessionId:session.id,messageId:m.id,text:m.textDetail?await readDetail(m.textDetail):m.text,fork:false})}catch(e){setDetailError(e.message)}finally{setSaving(false)}}}><Pencil/></button>}
    {forkTurn&&!m.displayOnly&&<ForkTurn session={session} turn={forkTurn} act={act} working={working}/>}
-   <MessageDelivery message={m} session={session} delivery={delivery} localDelivery={localDelivery} dispatch={dispatch} retry={retry} discard={discard}/>
+   <MessageDelivery message={m} session={session} delivery={delivery} localDelivery={localDelivery} dispatch={dispatch} retry={retry} discard={discard} recovery={deliveryRecovery(state,session)}/>
 
    {copied?.status==='ready'&&<span role="status" className="a-copy-result success">Copied Markdown</span>}
    {copied?.status==='error'&&<span role="alert" className="a-copy-result error"><AlertCircle/>{copied.message||'Could not copy'}</span>}

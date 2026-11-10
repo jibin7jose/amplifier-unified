@@ -334,7 +334,7 @@ def test_existing_scenario_commands_environments_and_distinct_modes_are_preserve
     original = [row for row in historical_rows if row['id'] not in additions and row['id'] not in recovery_ids]
     assert len(original) == 65 and len(historical_rows) == 132
     # Preserve the preceding total after validating all exact additive owners.
-    assert len([row for row in rows if row['id'] not in {'context-inspector-layout', 'delivery-warning', 'navigation-waiting', 'canvas-versions', 'question-resume'}]) == 138
+    assert len([row for row in rows if row['id'] not in {'context-inspector-layout', 'delivery-warning', 'delivery-reconciliation', 'delivery-new-chat', 'navigation-waiting', 'canvas-versions', 'question-resume'}]) == 138
     # Existing scenarios retain their commands; only evidence ownership changes.
     evidence = {
         'bundle': {'AMPLIFIER_BUNDLE_SCREENSHOT': '{root}/output/browser-checks/bundle-mobile.png'},
@@ -611,19 +611,23 @@ def test_canvas_browser_additions_reject_changed_or_duplicate_ordinary_owner(can
 
 
 def delivery_warning_browser_addition(rows, readiness_scripts):
-    script = 'tests/delivery-warning-browser.mjs'
-    expected = {'id': 'delivery-warning', 'command': ['node', script],
-                'env': {'AMPLIFIER_TEST_ARTIFACTS': '{root}/output/browser-checks/delivery-warning'}}
-    owners = [row for row in rows if row['id'] == expected['id'] or script in row['command']]
-    assert owners == [expected], f'{script}: expected exactly one ordinary owner'
-    assert script not in readiness_scripts, f'{script}: duplicate readiness owner'
-    return {script}
+    scripts = set()
+    for name in ('delivery-warning', 'delivery-reconciliation', 'delivery-new-chat'):
+        script = f'tests/{name}-browser.mjs'
+        expected = {'id': name, 'command': ['node', script],
+                    'env': {'AMPLIFIER_TEST_ARTIFACTS': f'{{root}}/output/browser-checks/{name}'}}
+        owners = [row for row in rows if row['id'] == name or script in row['command']]
+        assert owners == [expected], f'{script}: expected exactly one ordinary owner'
+        assert script not in readiness_scripts, f'{script}: duplicate readiness owner'
+        scripts.add(script)
+    return scripts
 
 
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'command', 'environment', 'readiness'])
-def test_delivery_warning_browser_owner_is_exact(fault):
+@pytest.mark.parametrize('name', ['delivery-warning', 'delivery-reconciliation', 'delivery-new-chat'])
+def test_delivery_warning_browser_owner_is_exact(fault, name):
     rows = json.loads((ROOT / 'frontend/tests/browser-checks.json').read_text())['scenarios']
-    owner = next(row for row in rows if row['id'] == 'delivery-warning')
+    owner = next(row for row in rows if row['id'] == name)
     readiness = set()
     if fault == 'missing':
         rows.remove(owner)
@@ -634,8 +638,8 @@ def test_delivery_warning_browser_owner_is_exact(fault):
     elif fault == 'environment':
         owner['env'] = {}
     else:
-        readiness.add('tests/delivery-warning-browser.mjs')
-    with pytest.raises(AssertionError, match='delivery-warning'):
+        readiness.add(f'tests/{name}-browser.mjs')
+    with pytest.raises(AssertionError, match=name):
         delivery_warning_browser_addition(rows, readiness)
 
 

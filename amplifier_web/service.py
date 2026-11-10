@@ -4192,58 +4192,105 @@ class AppService:
             raise AppError(str(exc),409,code=receipt['code']) from exc
 
     async def _check_delivery(self, sid, input_id):
-        from .message_delivery import find_message, receipt_delivery
-        async with self.lock:
-            session = copy.deepcopy(self._session(sid))
+        from .message_delivery import find_message, receipt_delivery, receipt_mapping
+        from .session_files import validate_id
+
+        def source_anchor(session):
+            workspace = session.get('workspace')
+            if not isinstance(workspace, str) or not workspace or not Path(workspace).is_absolute():
+                return None  # Never infer a native source from the process directory.
+            try:
+                validate_id(session.get('runtimeSessionId') or session.get('nativeIdentity') or session['id'])
+            except (KeyError, ValueError):
+                return None
+            return tuple(session.get(key) for key in ('id', 'workspace', 'runtimeSessionId', 'nativeIdentity'))
+
+        def saved_evidence(session):
             question = self.questions.for_input(sid, input_id)
             row = self.db.execute('SELECT receipt FROM commands WHERE id=?', (input_id,)).fetchone()
+            receipt = receipt_mapping(row[0]) if row else None
             receipt_status = receipt_delivery(row[0], sid, input_id) if row else None
-        message = find_message(session, input_id)
-        if message is None and question is not None:
-            # The answer record survives a cold/pruned message projection.
-            # Its exact input binding permits a passive evidence probe, not send.
-            message = {'delivery': question['delivery']}
-        if message is None and receipt_status is not None:
-            # Exact command delivery survives a bounded/pruned message view.
-            # Command admission alone (accepted=True) is not input delivery.
-            message = {'delivery': {'status': receipt_status}}
-        if message is None:
-            return {'delivery': 'not_saved', 'message': 'This app has no saved copy. You can try sending the original message again with the same delivery identity.'}
-        if message.get('steering'):
-            # Admission is distinct from application. Checking must not route a
-            # held correction through ordinary input or wake a retired worker.
-            return {'delivery': message['delivery']['status'], 'steering': copy.deepcopy(message['steering']),
-                    'message': 'Steering status: ' + message['steering']['disposition'] + '. This correction is bound to its original run and was not sent again.'}
-        status = message.get('delivery', {}).get('status', 'unknown')
-        if receipt_status == 'accepted':
-            status = 'accepted'
-        if status in {'queued_for_update', 'held'}:
-            return {'delivery': status, 'message': message['delivery'].get('reason') or 'Saved for delivery after the app update. Nothing has been sent yet.'}
-        if status != 'accepted' and self.runtime and hasattr(self.runtime, 'delivery'):
+            conflict = receipt is not None and any(
+                key in receipt and receipt[key] != value for key, value in (
+                    ('sessionId', sid), ('inputId', input_id),
+                    ('action', 'conversation.send'), ('commandAction', 'conversation.send')))
+            message = find_message(session, input_id)
+            if message is None and question is not None:
+                message = {'delivery': question['delivery']}
+            if message is None and receipt_status is not None:
+                message = {'delivery': {'status': receipt_status}}
+            if receipt_status is not None and not (message.get('steering') or
+                    message.get('delivery', {}).get('status') in {'queued_for_update', 'held'}):
+                steering = receipt.get('steering')
+                if isinstance(steering, dict) and isinstance(steering.get('disposition'), str):
+                    message = {'delivery': {'status': receipt_status}, 'steering': steering}
+                elif steering:
+                    conflict = True
+                elif receipt_status in {'queued_for_update', 'held'}:
+                    message = {'delivery': {'status': receipt_status}}
+            status = message.get('delivery', {}).get('status', 'unknown') if message else (
+                'unknown' if row else 'not_saved')
+            protected = bool(message and message.get('steering')) or status in {'queued_for_update', 'held'}
+            if not protected and (receipt_status == 'accepted' or
+                    question is not None and question['delivery']['status'] == 'accepted'):
+                status = 'accepted'
+            # _delivery can reconcile a message with unreadable receipt bytes,
+            # but must not rewrite a contradictory/incomplete receipt mapping.
+            writable = row is None or receipt is None or receipt_status is not None
+            return message, status, protected, conflict, writable
+
+        def result(status, session, message=None):
+            value = {'sessionId': sid, 'inputId': input_id, 'delivery': status,
+                     'source': {'workspace': session.get('workspace') or None,
+                                'nativeIdentity': session.get('runtimeSessionId') or
+                                session.get('nativeIdentity') or session['id']}}
+            if message and message.get('steering'):
+                return {**value, 'steering': copy.deepcopy(message['steering']),
+                        'message': 'Steering status: ' + message['steering']['disposition'] + '. This correction is bound to its original run and was not sent again.'}
+            if status in {'queued_for_update', 'held'}:
+                return {**value, 'message': message['delivery'].get('reason') or 'Saved for delivery after the app update. Nothing has been sent yet.'}
+            return {**value, 'message': {
+                'accepted': 'Amplifier received this message. It was not sent again.',
+                'sending': 'The original send is still in progress. Nothing was sent again.',
+                'failed': 'The worker failed to start before this message was sent. Your saved message is available to retry.',
+                'not_saved': 'Delivery could not be confirmed from saved evidence. This does not prove non-delivery. Checking does not resend it.',
+            }.get(status, 'Delivery is still uncertain. Checking does not resend it. Sending again may repeat work if the earlier attempt ran.')}
+
+        async with self.lock:
+            session = copy.deepcopy(self._session(sid))
+            message, status, protected, conflict, _ = saved_evidence(session)
+        if protected:
+            return result(status, session, message)
+        if conflict:
+            return result('unknown', session)
+        anchor = source_anchor(session)
+        runtime = self.runtime
+        evidence = None
+        # The canonical source, not a resident bubble or receipt, anchors this
+        # read. Missing host evidence must not hide positive native evidence.
+        if status != 'accepted' and anchor is not None and runtime and hasattr(runtime, 'delivery'):
             try:
-                evidence = await self.runtime.delivery(session, input_id)
-                if evidence == 'accepted':
-                    status = 'accepted'
+                evidence = await runtime.delivery(session, input_id)
             except Exception:
                 pass  # A failed probe cannot prove that the input was not delivered.
         async with self.lock:
             current = self._session(sid)
-            current_message = find_message(current, input_id)
-            current_question = self.questions.for_input(sid, input_id)
-            row = self.db.execute('SELECT receipt FROM commands WHERE id=?', (input_id,)).fetchone()
-            current_receipt_status = receipt_delivery(row[0], sid, input_id) if row else None
-            if ((current_message and current_message.get('delivery', {}).get('status') == 'accepted') or
-                    (current_question and current_question['delivery']['status'] == 'accepted') or
-                    current_receipt_status == 'accepted'):
+            message, status, protected, conflict, writable = saved_evidence(current)
+            if protected:
+                return result(status, current, message)
+            if conflict:
+                return result('unknown', current)
+            if (evidence == 'accepted' and anchor is not None
+                    and source_anchor(current) == anchor and self.runtime is runtime):
                 status = 'accepted'
-            if status == 'accepted':
+            # Current positive evidence wins a late unknown probe. A source
+            # change invalidates only the old probe, not a new exact receipt.
+            # A native-only confirmation returns evidence; it invents no host
+            # message, command receipt or delivery metadata.
+            if status == 'accepted' and message is not None and writable:
                 self._delivery(current, input_id, status)
                 self._publish_changes(sessions={sid})
-        return {'delivery': status, 'message': {
-            'accepted': 'Amplifier received this message. It was not sent again.',
-            'sending': 'The original send is still in progress. Nothing was sent again.',
-            'failed': 'The worker failed to start before this message was sent. Your saved message is available to retry.',
-        }.get(status, 'Delivery is still uncertain. Checking does not resend it. Sending again may repeat work if the earlier attempt ran.')}
+            return result(status, current, message)
 
     async def _retry_message(self, session, text, input_id, original_status, original_turn, known_undelivered=False):
         result = await self._send(session, text, input_id, preserve_draft=True, retry=True, known_undelivered=known_undelivered)

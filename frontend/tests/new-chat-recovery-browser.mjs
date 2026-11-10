@@ -12,17 +12,20 @@ let state={revision:1,settings:{workspace:'/existing'},runtime:{available:true},
  registeredBundles:[{value:'work',label:'Work'}],draftDefaults:Object.fromEntries(['/missing','/existing'].map(workspace=>[JSON.stringify([workspace,'']),{phase:'ready',bundle:'work',effective:{instance:'fixture',model:'fixture-model'},providers:[{id:'fixture'}]}])),canvas:{open:false}};
 const calls=[],workers=[],folders=[],errors=[];let browser,vite,page;
 const shell=createShellHttpFixture(()=>state);
+const draftScope=JSON.stringify([shell.state().client.historyScope||shell.state().client.hostInstanceId,null,null]);
 const action=(name,args={})=>page.evaluate(([name,args])=>window.amplifier.dispatch(name,args),[name,args]);
 const reply=(route,extra={})=>{state.revision++;return route.fulfill({json:{accepted:true,state:shell.state(),...extra}})};
 try{
  vite=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),server:{host:'127.0.0.1',port:0,hmr:false},optimizeDeps:{include:['react','react-dom/client','react/jsx-dev-runtime']}});await vite.listen();
  browser=await chromium.launch({headless:true,...(process.env.DTU_CHROMIUM_SINGLE_PROCESS?{args:['--no-zygote','--single-process','--disable-gpu']}:{ }),...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{})});page=await browser.newPage({viewport:{width:1280,height:900}});page.on('pageerror',e=>errors.push(e.message));
- await page.addInitScript(()=>{
+ await page.addInitScript(scope=>{
   // The event stream owns bootstrap; /api/state alone no longer loads the app.
   window.EventSource=class extends EventTarget{constructor(){super();this.readyState=0;queueMicrotask(async()=>{const state=await fetch('/api/state').then(r=>r.json());if(this.readyState===2)return;this.readyState=1;this.onopen?.();this.dispatchEvent(new MessageEvent('state',{data:JSON.stringify(state)}))})}close(){this.readyState=2}};
+  // This is a failed submission from this known source, not a legacy unbound
+  // row (which must remain retained and must not be assigned to the current host).
   if(sessionStorage.getItem('amplifier.messageOutbox.v1')===null)sessionStorage.setItem('amplifier.messageOutbox.v1',JSON.stringify([
-   {id:'old-failed',commandId:'old-command',sessionId:null,text:'Hi!',attachmentIds:[],status:'failed',error:'Old workspace unavailable',createdAt:1}]));
- });
+   {id:'old-failed',commandId:'old-command',sessionId:null,scope,text:'Hi!',attachmentIds:[],status:'failed',error:'Old workspace unavailable',createdAt:1}]));
+ },draftScope);
  await page.route('**/api/**',async route=>{
   const path=new URL(route.request().url()).pathname;
   const shellResponse=shell.response(route.request());
@@ -37,8 +40,11 @@ try{
   if(body.action==='workspace.list')return reply(route,{result:{items:state.workspaces,nextOffset:null}});
   if(body.action==='session.create'){
    if(body.args.workspace!=='/existing')return route.fulfill({status:409,json:{accepted:false,error:'Workspace folder does not exist: /missing'}});
-   const chat={...state.sessions[0],id:'created',title:'Created conversation',messages:[],creationCommandId:body.id};
+   const chat={...state.sessions[0],id:'created',runtimeSessionId:'created-native',title:'Created conversation',messages:[],creationCommandId:body.id};
    state.sessions.unshift(chat);state.selectedSessionId=chat.id;delete state.view.newSessionDraft;
+   // Creation returns a selected canonical record with workspace/native identity,
+   // not only an ID that cannot bind the first submitted payload.
+   return reply(route,{sessionId:chat.id});
   }
   if(body.action==='conversation.send'){
    state.sessions.find(row=>row.id===body.args.sessionId).messages.push({id:'received',inputId:body.id,role:'user',text:body.args.text,delivery:{status:'accepted'}});
@@ -54,6 +60,7 @@ try{
  await page.goto(vite.resolvedUrls.local[0]);const composer=page.getByRole('textbox',{name:'Message Amplifier'});await composer.waitFor();
  await expect(page.getByRole('banner')).toContainText('New chat');
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),null);
+ assert.equal(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1'))[0].scope),draftScope);
  await expect(page.getByText('Old workspace unavailable',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Discard unsent message',exact:true}).click();
  await expect(page.getByText('Hi!',{exact:true})).toHaveCount(0);await page.reload();await composer.waitFor();
@@ -118,6 +125,6 @@ try{
  await expect(page.getByRole('textbox',{name:/Folder on/})).toHaveValue(createdPath);
  assert.equal(calls.filter(row=>row.action==='conversation.send').length,1,'Folder selection does not send a new message');
  assert.deepEqual(errors,[]);
- console.log('New chat recovery passed: truthful new-chat header; persisted failed-message discard; inline creation error; corrected-path retry sends once; worker success persists reset; failure/local and shared newer drafts retained; modal error dismissal. Zero model calls.');
+ console.log('New chat recovery passed: truthful new-chat header; scoped persisted failed-message discard; inline creation error; corrected-path retry with canonical created-chat identity sends once; worker success persists reset; failure/local and shared newer drafts retained; modal error dismissal. Zero model calls.');
 }catch(error){console.error('Recovery fixture evidence:',JSON.stringify({errors,body:await page?.locator('body').innerText().catch(()=>''),actions:calls.map(row=>({action:row.action,id:row.id}))}));throw error}
 finally{await browser?.close();await vite?.close()}

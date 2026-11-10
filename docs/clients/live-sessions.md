@@ -122,6 +122,32 @@ client retires only the matching accepted outbox entry; late transport errors
 cannot recreate it. Missing evidence remains uncertain/not saved, not proven
 non-delivery. Dismissal leaves drafts, selection and shared history unchanged.
 
+The bundled client automatically performs that same passive reconciliation when
+an unresolved input becomes visible and after a connection is restored. Manual
+and automatic checks share one in-flight owner for the exact host/account source,
+conversation and input. They do not poll on a timer, send the message, start a
+worker or relax Stop. A source/authentication change invalidates an outstanding
+result. Each check returns its bound conversation/input identities and observed
+workspace/effective native identity, including compact replies without state.
+Both that source and any returned target-session frame must match the original
+scope before acknowledgement or state adoption. A generic, malformed or
+conflicting acknowledgement cannot retire the outbox.
+Passive checks do not occupy the mutation queue, so they cannot delay Stop.
+New outbox entries retain their original nonsecret host/account and native-source
+namespace. Projection and acknowledgement require that exact namespace. Legacy
+entries without it remain stored with an explicit notice, rather than being
+silently assigned to the currently connected account or sent again.
+
+An input that left the resident message window may still have positive canonical
+runtime history, even when its command receipt is absent or unreadable. The
+existing passive runtime reader can establish that exact positive fact without
+loading a worker for execution. Missing evidence remains unresolved, not proof
+that admission never occurred. If there is no original client submission or
+saved retryable message, the UI does not recommend an unavailable retry.
+Reconciliation never automatically resubmits even a request dropped before
+admission: that case is indistinguishable from an unrecorded effect without
+stronger canonical evidence. Any deliberate uncertain resend remains explicit.
+
 The optional `expectedRevision` checks the app's global state revision, including
 presentation changes; it is not a per-session revision. Do not use it as a
 mandatory send precondition during active streaming.

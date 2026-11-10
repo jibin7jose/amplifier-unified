@@ -92,6 +92,8 @@
     {"id": "attachment-experience", "command": ["node", "tests/attachment-experience-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/attachment-experience"}},
     {"id": "message-delivery", "command": ["node", "tests/message-delivery-browser.mjs"]},
     {"id": "delivery-warning", "command": ["node", "tests/delivery-warning-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/delivery-warning"}},
+    {"id": "delivery-reconciliation", "command": ["node", "tests/delivery-reconciliation-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/delivery-reconciliation"}},
+    {"id": "delivery-new-chat", "command": ["node", "tests/delivery-new-chat-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/delivery-new-chat"}},
     {"id": "canvas-media", "command": ["node", "tests/canvas-media-browser.mjs"], "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/canvas-media"}},
     {"id": "inline-media-transition", "command": ["node", "tests/inline-media-transition-browser.mjs"], "env": {"EVIDENCE_DIR": "{root}/output/browser-checks/inline-media-transition"}},
     {"id": "artifact-one-surface", "command": ["node", "tests/artifact-one-surface-browser.mjs"], "env": {"ARTIFACT_EVIDENCE_DIR": "{root}/output/browser-checks/artifact-one-surface"}},
