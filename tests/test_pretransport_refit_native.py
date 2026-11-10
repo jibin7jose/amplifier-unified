@@ -112,7 +112,7 @@ async def native_case(mode='stale_visual', max_iterations=-1, legacy_budget=Fals
             return {'inputIds': list(scope['inputIds'])}
         if operation == 'outputs.images.read':
             assert output_pair is not None
-            assert args == {'images': identities(output_pair.rows)}
+            assert args == {'images': identities(output_pair.rows), 'scope': 'workspace'}
             state.image_reads += 1
             if state.image_reads == 2 or (mode == 'pair_refit_unavailable_again' and state.image_reads == 5):
                 started = time.monotonic()

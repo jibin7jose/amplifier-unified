@@ -123,12 +123,13 @@ class Runtime:
     def request(self):
         return ChatRequest(messages=list(self.messages), tools=[ToolSpec(name='app_control', parameters={})])
 
-    async def read(self, rows=None, *, single=False, live_loop=False, hook=True):
+    async def read(self, rows=None, *, single=False, live_loop=False, hook=True, scope=None):
         self.counter += 1
         rows = self.pair.rows if rows is None else rows
         arguments = {'operation': 'dispatch', 'args': {
             'action': 'outputs.image' if single else 'outputs.images',
             'args': identities(rows)[0] if single else {'images': identities(rows)}}}
+        if scope is not None:arguments['args']['args']['scope'] = scope
         call = ToolCall(id=f'image-call-{self.counter}', name='app_control', arguments=arguments)
         # This is the actual loop's persisted assistant tool-call shape.
         self.messages.append(Message(role='assistant', content='', tool_calls=[{

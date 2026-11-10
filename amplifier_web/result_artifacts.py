@@ -145,7 +145,7 @@ def resolve(collaboration, sid, request_id, reference, response_revision=None, *
                 'detail': 'The retained version is unavailable or failed its content hash. No mutable source was substituted.'}, None, response
 
 
-def image_record(collaboration, sid, record):
+def image_record(collaboration, sid, record, *, scope='workspace'):
     """Resolve one output through its exact retained reply, never a peer library."""
     provenance = record.get('collaborationResult') or {}
     if not all(provenance.get(key) for key in ('requestId', 'commandId', 'reference')):
@@ -157,7 +157,7 @@ def image_record(collaboration, sid, record):
             or not isinstance(response.get('responseRevision'), int)):
         raise ValueError('This exact retained image response is unavailable.')
     item, retained, _ = resolve(collaboration, sid, provenance['requestId'],
-        provenance['reference'], response['responseRevision'])
+        provenance['reference'], response['responseRevision'], scope=scope)
     if (retained != record or item.get('outputId') != record['id']
             or item.get('sha256') != record.get('sha256')):
         raise ValueError('This exact retained image response is unavailable.')

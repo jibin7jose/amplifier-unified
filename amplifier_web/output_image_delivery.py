@@ -148,7 +148,8 @@ class OutputImageDelivery:
             if not await self.previous.image_capabilities.supports(request, provider):
                 return self._pair_message(request, observation, reason_code='vision_unavailable')
             try:
-                value = await asyncio.wait_for(self.bridge('outputs.images.read', {'images': self.output_selection()}), 2)
+                value = await asyncio.wait_for(self.bridge('outputs.images.read', {
+                    'images': self.output_selection(), 'scope': observation['receipt']['result'].get('scope', 'workspace')}), 2)
                 return self._pair_message(request, observation, value=value)
             except asyncio.TimeoutError:
                 return self._pair_message(request, observation, reason_code='image_read_timeout')
@@ -182,7 +183,8 @@ class OutputImageDelivery:
             if not context_available:
                 reason_code = 'context_read_unavailable'
                 raise ValueError('The current input could not be checked.')
-            value = dict(await asyncio.wait_for(self.bridge('outputs.image.read', identity), 2))
+            value = dict(await asyncio.wait_for(self.bridge('outputs.image.read', {
+                **identity, 'scope': saved.get('scope', 'workspace')}), 2))
             pixels = value.pop('_image')
             if not await self.previous.image_capabilities.supports(request,provider):
                 pixels, reason_code = None, 'vision_unavailable'
@@ -251,7 +253,8 @@ class OutputImageDelivery:
                     raise ValueError('The input changed.')
                 reason_code, timeout_code = 'image_read_unavailable', 'image_read_timeout'
                 await asyncio.wait_for(self.bridge('outputs.images.read' if pair else 'outputs.image.read',
-                    {'images': selected} if pair else selected[0]), 2)
+                    {**({'images': selected} if pair else selected[0]),
+                     'scope': observation['receipt']['result'].get('scope', 'workspace')}), 2)
                 continue
             except asyncio.TimeoutError:
                 reason_code = timeout_code
