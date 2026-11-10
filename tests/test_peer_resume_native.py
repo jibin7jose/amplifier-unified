@@ -98,7 +98,8 @@ class HandoffOwner(ScriptedProvider):
         return self.final('Deliberately sent one fresh member input after assessing original human intent.')
 
 
-async def test_different_origin_and_owner_native_handoff_keeps_human_input_null(tmp_path, monkeypatch):
+@pytest.mark.parametrize('interrupted', [False, True])
+async def test_different_origin_and_owner_native_handoff_keeps_human_input_null(tmp_path, monkeypatch, interrupted):
     host = DirectNativeHost()
     monkeypatch.setattr(runtime_worker, 'publish', host.publish)
     monkeypatch.setenv('AMPLIFIER_HOME', str(tmp_path/'native'))
@@ -127,6 +128,17 @@ async def test_different_origin_and_owner_native_handoff_keeps_human_input_null(
                 'commandId': 'pause-task', 'expectedRevision': 1, 'reason': 'Update boundary'}))['task']
             member.update(task=copy.deepcopy(task), status='stopped', interruptionRevision=1,
                           lastInterruption={'at': time.time()-1, 'origin': 'ui'})
+            if interrupted:
+                # Retained host lifecycle is fixture-supplied; the stopped
+                # boundary itself acquires the real private native owner lock.
+                # This remains scripted native evidence, not process recovery.
+                from amplifier_web.runtime import RuntimeManager
+                member.update(status='interrupted',
+                    collaborationGeneration={'id': 'retained-interrupted-member', 'terminal': True,
+                        'inputIds': ['prior-member-input'], 'interruptionRevision': 1},
+                    failure={'category': 'unknown', 'type': 'ExecutionInterrupted',
+                        'generationId': 'retained-interrupted-member'})
+                host.stopped_boundary = RuntimeManager().stopped_boundary
             before = copy.deepcopy(member_worker.controls.tasks.record())
             await app.dispatch('conversation.send', {'sessionId': origin['id'],
                 'text': 'Resume the exact paused member; preserve previous results.'},
@@ -140,6 +152,10 @@ async def test_different_origin_and_owner_native_handoff_keeps_human_input_null(
             assert not host.approvals and not host.errors
             assert len([row for row in host.admissions if row['sessionId'] == member['id']]) == 1
             assert app.collaboration.receipt('native-member-resume')['humanResume']['handoffRequestId'] == 'native-handoff'
+            if interrupted:
+                proof = app.collaboration.receipt('native-member-resume')['humanResume']['interruptedRecovery']
+                assert proof['workerAbsent'] and not proof['inputsReplayed']
+                assert proof['ownershipAcquisitionId'] and proof['generation']['terminal']
             assert not [row for row in owner['messages'] + member['messages'] if row.get('inputOrigin') == 'ui']
     finally:
         await app.close()

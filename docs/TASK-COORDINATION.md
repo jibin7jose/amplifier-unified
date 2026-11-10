@@ -117,8 +117,9 @@ The host captures the current transport-bound direct human input, original
 generation and digest, exact owner/member and locations, assignment revision,
 all three task/access/configuration/placement/human/Stop boundaries and the
 send's original deadline. Question, scheduled, generated and peer inputs cannot
-mint or recursively forward this scope. The origin can be in another registered
-workspace; the owner and its existing member must share their assignment/workspace.
+mint or recursively forward this scope. All three roots must share the same
+workspace at issuance and final admission; the owner and its existing member
+must retain their active assignment.
 
 The receiving owner sees peer input, **not** `humanInput`. It assesses the actual
 canonical human instruction supplied in full in the bounded envelope, rather than
