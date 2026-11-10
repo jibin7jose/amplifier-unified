@@ -13,15 +13,13 @@ This repository is for developing the web client as an independent component.
 
 This experimental extraction preserves the client history from Unified v0.70.0
 (`4854dbd9ec555690269747b7dbe273f008e9e179`, `LICENSE` and `frontend/`).
-Accepted client behavior was caught up through Unified main
-`0ae9528811a42c205ecface14646e1dae25ea044` (server `0.72.5`). This `0.2.0`
-review candidate also carries the compact sidebar and reset-cleanup feedback from
-Unified PR [#1842](https://github.com/microsoft/amplifier-unified/pull/1842), exact
-source `d939ae3d16ab431f86f7a426ac28a3bc46a5d707`. Those server changes are still
-pending acceptance; this source does not claim a released or qualified pairing.
+The browser interface matches accepted Unified main
+`5692ad7bb7b79e0a000ccc7415cd0ac97d58738e`, preserving the current HTTP/SSE
+behavior. This `0.2.0` candidate changes build assembly and source ownership;
+it does not include the pending compact-sidebar or reset-cleanup interface.
 The 14 canonical shared inputs are selected from accepted Unified main
-`816c7a67dbafc20bfb28723dd317c71d3bd2bb28` (server `0.73.1`); their bytes match
-the candidate. Shared-input provenance and actual server qualification are distinct.
+`816c7a67dbafc20bfb28723dd317c71d3bd2bb28`; their bytes still match the current
+accepted server. Shared-input provenance and actual server qualification are distinct.
 The repository is currently private. Its independent package is
 `@amplifier/client-web`, currently `0.2.0`; no registry release or default
 Unified adoption is claimed. Current source changes remain coordinated with
@@ -179,7 +177,7 @@ than remote URLs.
 
 `npm run test:portable` names the initial standalone checks: app reload, draft
 journal, state stream, build identity, branding synchronization, AI connection
-actions, reset cleanup feedback, chat rows, navigation/grouping, work rendering,
+actions, chat rows, navigation/grouping, work rendering,
 media, explicit and passive delivery recovery, canonical-input preparation and
 copied-source provenance.
 `npm run test:updates` checks update summaries, component progress and application

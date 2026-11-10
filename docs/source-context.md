@@ -51,8 +51,8 @@ Generated output still ships and must pass existing build/package checks.
 The temporary [independent client delivery](../components/README.md) is classified
 as generated context because it is mechanically copied from its owning repo.
 Its selection and maintenance guide stay visible; use `--all --under components/web-client`
-to inspect the copy. It is not another authored client owner or shipped build.
-Source bootstrap files in `frontend/public` and shipped documentation in
+to inspect the copy. It is the selected production build source, not another authored client owner.
+Source bootstrap files in `components/web-client/public` and shipped documentation in
 `docs/shell` remain authored inputs. Frozen UX inventory/control JSON is retained
 evidence; its maintained delta and completion-policy ledgers remain test inputs.
 Dated documents can contain current follow-ups, so documentation is not
@@ -75,10 +75,10 @@ guides remain visible for current direction, reproduction and evidence limits.
 | Admission, action receipts and errors | [service](../amplifier_web/service.py), domain handlers and [save scope](../amplifier_web/action_save_scope.py) | [Current wire](clients/live-sessions.md), [client state](../contracts/client-state.v1.md) |
 | Runtime and provider lifecycle | [runtime](../amplifier_web/runtime.py), [worker](../amplifier_web/runtime_worker.py), [host adapter](../amplifier_web/host) | [Agent boundary](../contracts/agent-protocol.v1.md), [request recovery](../contracts/model-request-recovery.v1.md); native Core/Foundation own native mechanisms |
 | History, catalog and display | [shared state](../amplifier_web/shared_state.py), [history directory](../amplifier_web/history_directory.py), [cold display](../amplifier_web/cold_display.py) | [Working set](../contracts/working-set.v1.md), [state/storage design](architecture/state-and-storage.md); derived views are not new history authorities |
-| Browser transport, commands and private view | [main](../frontend/src/main.jsx), [state stream](../frontend/src/state-stream.js), [draft journal](../frontend/src/draft-journal.js) | [Client state](../contracts/client-state.v1.md), [client experience](../contracts/client-experience.v1.md); stream, action and optimistic state have distinct causality |
+| Browser transport, commands and private view | [main](../components/web-client/src/main.jsx), [state stream](../components/web-client/src/state-stream.js), [draft journal](../components/web-client/src/draft-journal.js) | [Client state](../contracts/client-state.v1.md), [client experience](../contracts/client-experience.v1.md); stream, action and optimistic state have distinct causality |
 | Agent instructions and readbacks | [app guidance](../amplifier_web/app_guidance.py), [agent state](../amplifier_web/agent_state.py), [receipts](../amplifier_web/agent_receipts.py) | [Agent results](AGENT-RESULTS.md), client privacy and receipt contracts; optional skill absence does not remove supported actions |
 | Domain capabilities | Relevant `amplifier_web` handler, portable `amplifier_*` package, frontend consumer and domain tests | Domain guide under `docs/`; [component boundaries](../contracts/component-boundaries.v1.md) |
-| Shell, canvas and appearance | [shell](shell), [SDK](../packages/shell-sdk), [frontend shell](../frontend/src/shell) | Public extension/appearance contracts; saved user skins and independent components remain consumers |
+| Shell, canvas and appearance | [shell](shell), [SDK](../packages/shell-sdk), [frontend shell](../components/web-client/src/shell) | Public extension/appearance contracts; saved user skins and independent components remain consumers |
 | Test and release mechanisms | [Python tests](../tests), [browser registry](../frontend/tests/browser-checks.json), [scripts](../scripts) | [Performance validation](validation/performance.md), [release qualification](validation/release-qualification.md); exact evidence and independent modes remain distinct |
 
 The [family vision](architecture/VISION.md) and [client direction index](clients/direction.md)

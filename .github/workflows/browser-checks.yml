@@ -124,6 +124,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
         run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Run full frontend units for unfiltered nightly/manual coverage
@@ -214,6 +215,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
         run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - run: npx playwright install --with-deps chromium
@@ -360,6 +362,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
         run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - run: npm run build --prefix frontend
@@ -498,6 +501,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
         run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Install the locked browser
@@ -541,6 +545,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
         run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Build exact candidate
@@ -646,6 +651,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
         run: python scripts/web_client_development.py prepare-view
       - id: node_dependencies
         run: npm ci --prefix frontend
@@ -820,6 +826,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
         run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Install Chromium
@@ -864,6 +871,7 @@ jobs:
         with:
           node-version: '22'
       - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
         run: python scripts/web_client_development.py prepare-view
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - name: Resolve the exact locked private runtime source
@@ -932,6 +940,7 @@ jobs:
         with:
           node-version: '22'
       - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
         run: python scripts/web_client_development.py prepare-view
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - name: Resolve the exact locked private runtime source

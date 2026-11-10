@@ -59,6 +59,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Prepare selected client source for host checks
+        if: hashFiles('scripts/web_client_development.py') != ''
         run: python scripts/web_client_development.py prepare-view
       - run: npm ci --prefix frontend
       - name: Record source and synthetic qualification limits
