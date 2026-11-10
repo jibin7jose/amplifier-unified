@@ -265,6 +265,7 @@ class Management:
             raise
         try:
             guarded=None
+            reset_completed=False
             phase,error='ready',None
             try:
                 await self.command_transition(action,args,command_id,'working')
@@ -278,10 +279,11 @@ class Management:
                             raise ValueError('Finish active work before saving this conversation bundle')
                         current['configurationBusy']=True;guarded=current['id']
                         self.service._publish_changes(sessions={guarded})
-                await self.perform(action,args,command_id=command_id,
+                performed=await self.perform(action,args,command_id=command_id,
                     **({"authority":authority} if authority is not None else {}),
                     **({"source":source} if source is not None else {}),
                     **({"configuration_operation":configuration_operation} if configuration_operation is not None else {}))
+                reset_completed=action=='maintenance.reset' and performed is True
             except asyncio.CancelledError:
                 phase,error='error','Settings operation cancelled.'
                 raise
@@ -303,7 +305,8 @@ class Management:
                         for session in self.service.state['sessions']:
                             if session['id']==guarded:session['configurationBusy']=False
                         self.service._publish_progress(session_ids={guarded}, record_only=True)
-                await self.command_transition(action,args,command_id,phase,error)
+                if not reset_completed:
+                    await self.command_transition(action,args,command_id,phase,error)
         finally:
             if not independent:self.lock.release()
 
@@ -1559,7 +1562,10 @@ class Management:
             await self.publish(maintenance=result)
         elif action=='maintenance.reset':
             from .recovery import reset
-            await reset(self,args)
+            return await reset(self,args,command_id=command_id)
+        elif action=='maintenance.resetCleanup':
+            from .recovery import cleanup
+            await cleanup(self)
         elif action=='maintenance.repair':
             updates = self.service.update_manager
             async with self.service.runtime_lifecycle():

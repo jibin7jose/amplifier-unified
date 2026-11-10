@@ -89,6 +89,10 @@ def catalog(home, workspaces, sessions=(), installation=None):
         stamp = datetime.fromtimestamp((path / 'private-state.tar.gz').stat().st_mtime).strftime('%b %d, %Y %H:%M')
         add(path, 'backups', 'Private backup · ' + stamp,
             backupId=path.name, protected=index == 0)
+    from .reset_retention import recovery_members
+    for member in recovery_members(home):
+        add(member['path'], 'backups', 'Reset recovery · ' + member['role'],
+            resetOperationId=member['operationId'], protected=True)
     if installation:
         add(installation, 'runtime', 'Installed application', protected=True)
     # Named managed chats can be reviewed through the existing deletion contract.

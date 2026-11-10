@@ -36,7 +36,8 @@ async def test_duplicate_hover_value_does_not_publish_or_advance_revision(app, m
     monkeypatch.setattr(app, '_save', original_save)
 
 
-async def test_age_is_private_durable_and_never_saves_history(app, monkeypatch):
+@pytest.mark.parametrize('age', ['24h', '14d', '1y'])
+async def test_age_is_private_durable_and_never_saves_history(app, monkeypatch, age):
     with app.clients.bind('one'):
         await app.dispatch('view.update', {'patch': {'draft': 'Keep old reading draft'}})
         app.state['view'].update(workHomePages={'idle': 4}, navStatusPages={'idle': 3})
@@ -44,13 +45,13 @@ async def test_age_is_private_durable_and_never_saves_history(app, monkeypatch):
     other = deepcopy(app.clients.records['two'])
     with monkeypatch.context() as patch:
         patch.setattr(app, '_save', lambda: pytest.fail('Age must not save conversations'))
-        result = await command(app, {'navAge': '24h'}, command_id='age')
-    assert result['state']['view']['navAge'] == '24h'
+        result = await command(app, {'navAge': age}, command_id='age')
+    assert result['state']['view']['navAge'] == age
     assert result['state']['view']['draft'] == 'Keep old reading draft'
     assert result['state']['view']['workHomePages'] == result['state']['view']['navStatusPages'] == {}
     assert app.clients.records['two'] == other
     assert app._state['sessions'] == before
-    assert json.loads(app.db.execute("SELECT value FROM client_views WHERE id='one'").fetchone()[0])['view']['navAge'] == '24h'
+    assert json.loads(app.db.execute("SELECT value FROM client_views WHERE id='one'").fetchone()[0])['view']['navAge'] == age
     with pytest.raises(AppError):
         await command(app, {'navAge': 'invalid'})
 

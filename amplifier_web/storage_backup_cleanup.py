@@ -12,12 +12,16 @@ from .managed_deletion import _safe, _inventory
 
 
 def candidates(home):
+    from .reset_retention import archive_ids, MARKER
+    reset_archives = archive_ids(home)
     root = _safe(Path(home) / 'backups')
     if not root.is_dir():
         return []
     result = []
     for path in root.iterdir():
         if not re.fullmatch(r'[a-f0-9]{32}', path.name) or path.is_symlink() or not path.is_dir():
+            continue
+        if reset_archives is None or path.name in reset_archives or (path / MARKER).exists() or (path / MARKER).is_symlink():
             continue
         archive = path / 'private-state.tar.gz'
         if archive.is_file() and not archive.is_symlink():

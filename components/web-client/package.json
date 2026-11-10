@@ -1,6 +1,6 @@
 {
   "name": "@amplifier/client-web",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -113,7 +113,7 @@
     "test:shared-work-browser": "node tests/shared-work-browser.mjs",
     "prepare:inputs": "node scripts/prepare-inputs.mjs",
     "package:artifact": "node scripts/package-client.mjs",
-    "test:portable": "node --test tests/app-reload.test.mjs tests/draft-journal.test.mjs tests/state-stream.test.mjs tests/build-identity.test.mjs tests/sync-branding.test.mjs tests/ai-connection-actions.test.mjs tests/chat-row.test.mjs tests/prepare-inputs.test.mjs tests/client-source.test.mjs tests/chat-navigation.test.mjs tests/navigation-presentation.test.mjs tests/work-shell.test.mjs tests/delivery-reconciliation.test.mjs tests/inline-media.test.mjs tests/message-delivery.test.mjs tests/adaptive-work.test.mjs tests/navigation-demand.test.mjs tests/navigation-snapshot.test.mjs tests/shell-navigation-demand.test.mjs tests/shell-panels.test.mjs tests/shell-resources.test.mjs",
+    "test:portable": "node --test tests/app-reload.test.mjs tests/draft-journal.test.mjs tests/state-stream.test.mjs tests/build-identity.test.mjs tests/sync-branding.test.mjs tests/ai-connection-actions.test.mjs tests/chat-row.test.mjs tests/prepare-inputs.test.mjs tests/client-source.test.mjs tests/chat-navigation.test.mjs tests/navigation-presentation.test.mjs tests/work-shell.test.mjs tests/delivery-reconciliation.test.mjs tests/inline-media.test.mjs tests/message-delivery.test.mjs tests/adaptive-work.test.mjs tests/navigation-demand.test.mjs tests/navigation-snapshot.test.mjs tests/shell-navigation-demand.test.mjs tests/shell-panels.test.mjs tests/shell-resources.test.mjs tests/reset-retention.test.mjs",
     "test:artifact": "node tests/client-artifact-browser.mjs",
     "test:delivery-recovery-browser": "node tests/delivery-reconciliation-browser.mjs && node tests/delivery-new-chat-browser.mjs",
     "test:navigation": "node --test tests/adaptive-work.test.mjs tests/chat-navigation.test.mjs tests/navigation-demand.test.mjs tests/navigation-snapshot.test.mjs tests/shell-navigation-demand.test.mjs tests/shell-panels.test.mjs tests/shell-resources.test.mjs tests/work-shell.test.mjs tests/chat-row.test.mjs",

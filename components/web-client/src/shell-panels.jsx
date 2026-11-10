@@ -42,11 +42,12 @@ export function WorkspaceRail({state,session,act,selectSession,newSession,shell,
  return <NavigationOpen.Provider value={expanded}><ChatShortcutScope navigation={nav} enabled={expanded&&!view.panel&&!view.toolbarMenuOpen&&!draft.mode&&!view.canvasFocused} scope={[state.selectedSessionId,view.workSurface,view.workWorkspaceId,view.navChatScope].join(':')}>{layout.narrow&&expanded&&<div className="a-navigation-scrim" onClick={close}/>}
  <aside ref={nav} id="workspace-navigation" role={layout.narrow?'dialog':undefined} aria-modal={layout.narrow&&expanded||undefined} aria-owns={layout.narrow&&expanded?'navigation-toggle':undefined} hidden={!expanded} inert={!expanded} className={`a-nav-slot ${pinned?'is-pinned':''} ${expanded?'is-expanded':''}`} data-docked={layout.docked} data-part="navigation" aria-label="Workspaces and chats" onClick={e=>{if(layout.narrow&&e.target.closest('[data-navigation-select],[data-action="session.select"]'))close()}}>
   <div className="a-nav-rail">
-   <div className="a-nav-head a-sidebar-modes">{navigation&&<button type="button" className="a-sidebar-home a-icon" aria-label="Home" title="Home" aria-current={view.workSurface==='home'?'page':undefined} onClick={()=>navigation.home(layout.narrow?{navExpanded:false}:{})}><HomeIcon/></button>}<div className="a-sidebar-organizations" role="group" aria-label="Sidebar view">{supportsStatus?['browse','status'].map(mode=><button type="button" key={mode} aria-pressed={(view.navMode||'browse')===mode} onClick={()=>patch(act,{navMode:mode})}>{mode==='browse'?'Browse':'Status'}</button>):<strong>Browse</strong>}</div></div>
-   <button className="a-nav-main" type="button" onClick={add} data-action="session.draft" aria-label="New chat" title="New chat"><Plus/><span className="a-nav-reveal">New chat</span></button>
-   {navigation&&<button type="button" className="a-nav-search-launch" data-action="view.update" onClick={()=>navigation.browse('chats')}><Search/>Search chats</button>}
-   {supportsStatus&&<ChatAgeFilter view={view} act={act}/>}
-   <div className="a-nav-content a-nav-reveal"><ShellModules shell={shell}/></div>{footer}
+   <div className="a-nav-head a-sidebar-modes">{navigation&&<button type="button" className="a-sidebar-home a-icon" aria-label="Home" title="Home" aria-current={view.workSurface==='home'?'page':undefined} onClick={()=>navigation.home(layout.narrow?{navExpanded:false}:{})}><HomeIcon/></button>}<div className="a-sidebar-organizations" role="group" aria-label="Sidebar view">{supportsStatus?['browse','status'].map(mode=><button type="button" key={mode} aria-pressed={(view.navMode||'browse')===mode} onClick={()=>patch(act,{navMode:mode})}>{mode==='browse'?'Browse':'Status'}</button>):<strong>Browse</strong>}</div><button className="a-sidebar-new a-icon" type="button" onClick={add} data-action="session.draft" aria-label="New chat" title="New chat"><Plus/></button></div>
+   <div className="a-nav-content a-nav-reveal">
+    {navigation&&<button type="button" className="a-nav-search-launch" data-action="view.update" onClick={()=>navigation.browse('chats')}><Search/>Search chats</button>}
+    {supportsStatus&&<ChatAgeFilter view={view} act={act}/>}
+    <ShellModules shell={shell}/>
+   </div>{footer}
   </div>
   {layout.docked&&<PaneResizer layout={layout} pane="nav"/>}
  </aside></ChatShortcutScope></NavigationOpen.Provider>;

@@ -34,9 +34,10 @@ def bulk_sessions(service, *, include_native=False):
     return list(rows.values())
 
 
-def _backup_files(data_dir, session_paths, publishing=None, publishing_captures=()):
-    folder=data_dir/'backups'/uuid.uuid4().hex
-    folder.mkdir(parents=True,mode=0o700)
+def _backup_files(data_dir, session_paths, publishing=None, publishing_captures=(), operation_id=None):
+    folder=data_dir/'backups'/(operation_id or uuid.uuid4().hex)
+    if operation_id is None:
+        folder.mkdir(parents=True,mode=0o700)
     database=folder/'app.sqlite3'
     # This thread owns its connections; never use the event-loop connection here.
     with sqlite3.connect(f"file:{data_dir / 'app.sqlite3'}?mode=ro",uri=True) as source, sqlite3.connect(database) as target:
@@ -92,10 +93,10 @@ def _backup_files(data_dir, session_paths, publishing=None, publishing_captures=
     return {'backup':str(archive),'phase':'ready','detail':'Private backup includes app-owned shared session files, artifacts, configuration and saved credentials. Keep it private; it is not encrypted.'}
 
 
-async def backup(service, *, publishing_locked=False):
+async def backup(service, *, publishing_locked=False, operation_id=None):
     if not publishing_locked:
         async with service.publishing.lock:
-            return await backup(service, publishing_locked=True)
+            return await backup(service, publishing_locked=True, operation_id=operation_id)
     started=False
     try:
         async with service.lock:
@@ -133,7 +134,7 @@ async def backup(service, *, publishing_locked=False):
                 include(session['workspace'],session.get('runtimeSessionId') or session['id'])
                 for worker in session.get('workers',[]):
                     if worker.get('id'):include(session['workspace'],worker['id'])
-        task=asyncio.create_task(asyncio.to_thread(_backup_files,service.data_dir,paths,service.publishing.store,tuple(service.publishing.captures.items())))
+        task=asyncio.create_task(asyncio.to_thread(_backup_files,service.data_dir,paths,service.publishing.store,tuple(service.publishing.captures.items()),operation_id))
         try:return await asyncio.shield(task)
         except asyncio.CancelledError:
             await task
@@ -147,19 +148,102 @@ async def backup(service, *, publishing_locked=False):
     finally:
         if started:service.backup_in_progress=False
 
-async def reset(manager,args):
-    # Reset must not discard ownership while a publishing action is starting.
-    async with manager.service.publishing.lock:
-        return await _reset(manager, args)
+async def _settled_thread(function, *args):
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # Repeated shutdown cancellation must not detach a still-running file
+        # worker or release its process lease early.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+        task.result()
+        raise
 
 
-async def _reset(manager,args):
+async def cleanup(manager):
+    """Explicit retry, without repeating a reset or changing success order."""
+    from .reset_retention import retry_cleanup
+    result = await _settled_thread(retry_cleanup, manager.service.data_dir)
+    detail = ('Older reset recovery cleanup finished.' if result['cleanupComplete'] else
+              'Reset succeeded; older-backup cleanup incomplete. Retry maintenance.resetCleanup after resolving the reported errors.')
+    if result.get('reviewRequired'):
+        detail += ' Unresolved attempts or ambiguous legacy recovery copies remain; review them explicitly.'
+    await manager.publish(maintenance={**manager.service.state.get('maintenance', {}),
+        'resetRetention': result, 'detail': detail})
+    return result
+
+
+async def reset(manager,args,command_id=None):
+    from .reset_retention import Retention
+    service = manager.service
+    if not args.get('apply'):
+        async with service.publishing.lock:
+            return await _reset(manager, args)
+    # Validate before creating ownership state (including rejected confirmations).
+    parts = args.get('parts', ['runtime'])
+    if not parts or set(parts)-set(PARTS):raise ValueError('Choose runtime, cache, settings or conversations')
+    if args.get('confirmation') != 'RESET':raise ValueError('Type RESET to apply the selected reset')
+    if 'conversations' in parts and any(service.publishing.owns_records(row['id']) for row in bulk_sessions(service)):
+        raise ValueError('Conversations own retained publishing releases and receipts. Archive them to preserve publishing controls and ownership.')
+    owner = Retention(service.data_dir)
+    try:
+        await _settled_thread(owner.acquire)
+    except BaseException:
+        owner.close()
+        raise
+    operation = None
+    try:
+        operation = await _settled_thread(owner.begin, 'in-app')
+        # Reset must not discard ownership while a publishing action is starting.
+        async with service.publishing.lock:
+            await _reset(manager, args, operation)
+        # The final outcome must be committed as well as reset stores. The reset
+        # owns this terminal transition so _command must not make a second one.
+        await manager.command_transition('maintenance.reset', args, command_id, 'ready')
+    except BaseException:
+        try:
+            if operation:
+                await _settled_thread(owner.fail, operation)
+        finally:
+            owner.close()
+        raise
+    try:
+        try:
+            await _settled_thread(owner.succeed, operation)
+            result = await _settled_thread(owner.cleanup)
+        except Exception as error:
+            result = {'cleanupComplete': False, 'errors': [str(error)], 'retainedOperationId': operation}
+        except asyncio.CancelledError:
+            # The action outcome is already durable; cancellation stops further
+            # delivery, not the successful reset or its completed thread work.
+            return True
+        detail = ('Selected app data reset. The latest reset recovery set is retained privately; older successful sets were removed.'
+                  if result['cleanupComplete'] else 'Reset succeeded; older-backup cleanup incomplete. Retry maintenance.resetCleanup after resolving the reported errors.')
+        if result.get('reviewRequired'):
+            detail += ' Unresolved attempts or ambiguous legacy recovery copies remain; review them explicitly.'
+        # These are cleanup results, outside the runtime rollback handler.
+        try:
+            await manager.publish(maintenance={**service.state['maintenance'], 'resetRetention': result, 'detail': detail})
+        except (Exception, asyncio.CancelledError):
+            # Filesystem cleanup evidence is durable; a publication failure must
+            # not replace the already-saved successful reset receipt with error.
+            return True
+    finally:
+        owner.close()
+    return True
+
+
+async def _reset(manager,args,operation=None):
     service=manager.service
     parts=args.get('parts',['runtime'])
     if not parts or set(parts)-set(PARTS):raise ValueError('Choose runtime, cache, settings or conversations')
     targets=[p for part in parts for p in PARTS[part]]
     if not args.get('apply'):
-        await manager.publish(maintenance={'resetPreview':{'parts':parts,'paths':targets},'detail':'Reset only affects this app’s data. A private backup and retained originals are created before applying.'})
+        await manager.publish(maintenance={'resetPreview':{'parts':parts,'paths':targets},'detail':'Reset only affects this app’s data. A private backup and retained originals are created before applying. A successful reset replaces the previous reset recovery point.'})
         return
     if args.get('confirmation')!='RESET':raise ValueError('Type RESET to apply the selected reset')
     if 'conversations' in parts and any(service.publishing.owns_records(row['id']) for row in bulk_sessions(service)):
@@ -180,11 +264,10 @@ async def _reset(manager,args):
             for key in ("setup_manager", "global_setup_manager"):
                 setup=getattr(manager,key,None)
                 if setup:await setup.close();setattr(manager,key,None)
-            result=await backup(service, publishing_locked=True)
+            result=await backup(service, publishing_locked=True, operation_id=operation)
             async with service.lock:
                 sessions=bulk_sessions(service, include_native=True) if 'conversations' in parts else []
-                retained=service.data_dir/'backups'/('reset-'+uuid.uuid4().hex)
-                retained.mkdir(mode=0o700)
+                retained=service.data_dir/'backups'/('reset-'+operation)
                 for name in targets:
                     path=service.data_dir/name
                     if path.is_symlink():raise ValueError('Refusing to reset a linked app directory')
@@ -196,7 +279,8 @@ async def _reset(manager,args):
                         service.history.hide_session(session)
                     service.forget_session_records(row['id'] for row in sessions)
                     service.state.update(sessions=[],selectedSessionId=None,runtimeControl={},sessionConfiguration={},history=[])
-                    service.db.execute('DELETE FROM commands')
+                    # Commands own idempotent effect receipts, including this
+                    # reset's queued identity. Reset chats, never replay rights.
                 if 'settings' in parts:
                     from .updates import DEFAULT_CHECK_INTERVAL_HOURS
                     service.state['settings']['updates']={'autoCheck':True,'autoInstall':False,'intervalHours':DEFAULT_CHECK_INTERVAL_HOURS}
@@ -212,7 +296,7 @@ async def _reset(manager,args):
                     service.state['updates'].update(release=None,pendingRelease=None,canRollback=False,items=[],available=0)
                     service.update_manager.inventory=[]
                 service.state['updates'].update(phase='idle',pendingApp=None)
-                result.update(retained=str(retained),detail='Selected app data reset. Backup and original files are retained privately; your workspaces and CLI data were untouched.')
+                result.update(retained=str(retained),resetOperationId=operation,detail='Selected app data reset. Backup and original files are retained privately; your workspaces and CLI data were untouched.')
                 service.state['maintenance']=result
                 service._publish_full(reason='Explicit reset of selected application stores')
         except BaseException:

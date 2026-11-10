@@ -47,6 +47,107 @@ try{
  const settled=()=>expect.poll(async()=>Object.keys((await shell()).navigationResourcePending||{}).length).toBe(0);
  await page.goto(`http://127.0.0.1:${port}`);await ready();await choose('Brief');
  await page.getByRole('button',{name:'Open navigation',exact:true}).click();
+ // Compact sidebar qualification uses the same production fixture and actions.
+ const baseline=await info(),originalPins=[...baseline.state.pinnedSessionIds];
+ const slider=sidebar.getByRole('slider',{name:'Filter conversations by age',exact:true});
+ const ageValue=()=>sidebar.locator('.a-chat-age-filter strong');
+ const scroller=sidebar.locator('.a-nav-content');
+ const options=sidebar.getByRole('button',{name:'App options',exact:true});
+ const menu=sidebar.getByRole('group',{name:'App options',exact:true});
+ const resetScroll=()=>scroller.evaluate(node=>{node.scrollTop=0});
+ const oneRow=async()=>{
+  await expect.poll(()=>sidebar.evaluate(node=>{const rail=node.getBoundingClientRect();return [...node.querySelectorAll('.a-sidebar-modes button')].every(button=>{const box=button.getBoundingClientRect();return box.left>=rail.left&&box.right<=rail.right})})).toBe(true);
+  const boxes=await sidebar.locator('.a-sidebar-modes button').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right}}));
+  assert.equal(boxes.length,4);assert.ok(boxes.every(box=>Math.abs(box.top-boxes[0].top)<2));
+  assert.ok(boxes.every((box,i)=>!i||box.left>=boxes[i-1].right-1));
+  const rail=await sidebar.boundingBox();assert.ok(boxes.every(box=>box.left>=rail.x&&box.right<=rail.x+rail.width));
+  assert.ok(await newChat.evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))}));
+  await expect(newChat).toHaveText('');await expect(newChat).toHaveAttribute('title','New chat');
+ };
+ await oneRow();
+ assert.equal(await sidebar.locator('.a-chat-age-stops>span').count(),6);
+ assert.equal(await sidebar.locator('.a-chat-age-stops').textContent(),'');
+ assert.equal(await sidebar.locator('.a-chat-age-filter small').count(),0);
+ assert.ok(await slider.evaluate(node=>getComputedStyle(node).padding==='0px'&&getComputedStyle(node).borderWidth==='0px'));
+ const ages=['24h','7d','14d','30d','90d','all'];
+ for(let index=0;index<ages.length;index++){
+  await slider.focus();await page.keyboard.press('Home');
+  for(let key=0;key<index;key++)await page.keyboard.press('ArrowRight');
+  await expect(ageValue()).toHaveText(ages[index]==='all'?'All':ages[index]);
+  await expect.poll(async()=>(await state()).view.navAge).toBe(ages[index]);
+  await settled();
+ }
+ for(let index=0;index<ages.length;index++){
+  const box=await slider.boundingBox();
+  await page.mouse.click(box.x+8+(box.width-16)*index/5,box.y+box.height/2);
+  await expect.poll(async()=>(await state()).view.navAge).toBe(ages[index]);
+ }
+ await act('view.update',{patch:{navAge:'1y'}});await expect(ageValue()).toHaveText('1y');
+ await page.reload();await ready();await expect(ageValue()).toHaveText('1y');
+ await slider.focus();await page.keyboard.press('ArrowLeft');await expect(ageValue()).toHaveText('90d');
+ await act('view.update',{patch:{navAge:'1y'}});await slider.focus();await page.keyboard.press('ArrowRight');await expect(ageValue()).toHaveText('All');
+ report.checks.push('Six unlabeled native tick stops work with pointer and keyboard, 14d is canonical; saved 1y remains truthful through reload and arrows choose 90d/All');
+ const inspectFooter=async(name)=>{
+  await options.click();await expect(menu).toBeVisible();
+  for(const label of ['Automation','Activity','Settings','Send feedback','What the agent sees'])await expect(menu.getByRole('button',{name:new RegExp('^'+label)})).toBeVisible();
+  const box=await menu.boundingBox(),footerBox=await sidebar.locator('.a-work-footer').boundingBox();
+  assert.ok(box.y>=0&&box.y+box.height<=footerBox.y+footerBox.height&&box.x>=0);
+  assert.ok(await menu.evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.left+r.width/2,r.top+10))}));
+  assert.ok(await menu.getByRole('button',{name:'What the agent sees',exact:true}).evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))}));
+  await page.screenshot({path:join(output,name+'.png')});
+  await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(options).toBeFocused();
+ };
+ for(const width of [320,216]){
+  await act('view.update',{patch:{navWidth:width,navPinned:true,navExpanded:true}});
+  await oneRow();await resetScroll();
+  const positions=()=>sidebar.evaluate(node=>Object.fromEntries(['.a-sidebar-modes','.a-nav-search-launch','.a-chat-age-filter','.a-work-footer'].map(selector=>[selector,node.querySelector(selector).getBoundingClientRect().top])));
+  const top=await positions();await scroller.evaluate(node=>{node.scrollTop=node.scrollHeight});
+  await expect.poll(()=>scroller.evaluate(node=>node.scrollTop)).toBeGreaterThan(0);
+  const bottom=await positions();
+  assert.equal(bottom['.a-sidebar-modes'],top['.a-sidebar-modes']);assert.equal(bottom['.a-work-footer'],top['.a-work-footer']);
+  assert.ok(bottom['.a-nav-search-launch']<top['.a-nav-search-launch']);assert.ok(bottom['.a-chat-age-filter']<top['.a-chat-age-filter']);
+  await inspectFooter('compact-footer-'+width);await resetScroll();
+  await page.screenshot({path:join(output,'compact-desktop-'+width+'.png')});
+ }
+ const details=page.locator('.a-navigation-flyout');
+ const pinTarget=baseline.state.sessions.find(row=>row.nativeIdentity==='alpha-198');
+ await act('session.pin',{id:pinTarget.id,pinned:true});await settled();
+ const pinnedRow=sidebar.locator(`[data-sidebar-section=pinned] [data-session-id="${pinTarget.id}"]`);
+ await pinnedRow.hover();
+ await pinnedRow.getByRole('button',{name:/Details and actions/}).click();await expect(details).toBeVisible();
+ assert.deepEqual(await details.locator('code').allTextContents(),['alpha-198',pinTarget.workspace]);
+ assert.ok(await details.evaluate(node=>[...node.querySelectorAll('.a-navigation-copy,dl')].findIndex(n=>n.textContent.includes('Session ID'))<[...node.querySelectorAll('.a-navigation-copy,dl')].findIndex(n=>n.textContent.startsWith('Workspace'))));
+ await expect(details).not.toContainText('Discovered in');await expect(details.getByRole('button',{name:/^Move .* (up|down)$/})).toHaveCount(0);
+ await page.context().grantPermissions(['clipboard-read','clipboard-write']);
+ await details.getByRole('button',{name:'Copy session id',exact:true}).click();
+ assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'alpha-198');
+ await page.screenshot({path:join(output,'compact-pinned-flyout.png')});await page.keyboard.press('Escape');
+ await expect(pinnedRow.getByRole('button',{name:/Details and actions/})).toBeFocused();
+ if(!originalPins.includes(pinTarget.id))await act('session.pin',{id:pinTarget.id,pinned:false});
+ await settled();await resetScroll();
+ const unpinnedRow=sidebar.locator(`[data-session-id="${pinTarget.id}"]`).first();await unpinnedRow.hover();
+ await unpinnedRow.getByRole('button',{name:/Details and actions/}).click();
+ await expect(details.getByRole('button',{name:'Pin '+pinTarget.title,exact:true})).toBeVisible();
+ await page.screenshot({path:join(output,'compact-unpinned-flyout.png')});await page.keyboard.press('Escape');
+ await act('view.update',{patch:{navAge:'24h'}});await settled();await resetScroll();
+ await page.screenshot({path:join(output,'compact-short-list.png')});
+ await act('view.update',{patch:{navAge:'all',navWidth:320}});
+ await page.locator('#amp-one').evaluate(node=>{node.style.fontSize='20px';node.style.setProperty('--a-text-sm','16px')});
+ await oneRow();await page.screenshot({path:join(output,'compact-enlarged-text.png')});
+ await page.locator('#amp-one').evaluate(node=>{node.style.removeProperty('font-size');node.style.removeProperty('--a-text-sm')});
+ await page.setViewportSize({width:390,height:844});
+ await expect(page.locator('.a-layout')).toHaveAttribute('data-narrow','true');
+ await act('view.update',{patch:{navExpanded:false}});
+ await expect(sidebar).toBeHidden();await page.locator('#navigation-toggle').click();await expect(sidebar).toBeVisible();
+ await oneRow();await resetScroll();await page.screenshot({path:join(output,'compact-mobile.png')});
+ await scroller.evaluate(node=>{node.scrollTop=node.scrollHeight});await inspectFooter('compact-mobile-footer');
+ await page.keyboard.press('Escape');await expect(sidebar).toBeHidden();
+ await expect(page.locator('#navigation-toggle')).toBeFocused();
+ await page.setViewportSize({width:1440,height:1000});
+ await act('view.update',{patch:{navPinned:true,navExpanded:true}});await resetScroll();
+ assert.deepEqual((await info()).state.pinnedSessionIds,originalPins);
+ assert.deepEqual((await info()).runtimeSends,baseline.runtimeSends);assert.deepEqual((await info()).runtimeStarts,baseline.runtimeStarts);
+ report.checks.push('216px/320px one-row controls; search+age actually scroll while modes/footer stay fixed; upward footer entries and focus/Escape; mobile drawer; pinned/unpinned flyout native ID copy and order; pins/runtime preserved');
  await switchTo('Status');await settled();
  const before=await info(),selected=(await state()).selectedSessionId;
  await expect(brand).toBeVisible();await expect(homeButton).toHaveAttribute('aria-current','page');
@@ -58,7 +159,8 @@ try{
  const initialNewChatStyle=await newChatStyle();
  const track=await sidebarView.evaluate(node=>{const style=getComputedStyle(node),box=node.getBoundingClientRect();return {background:style.backgroundColor,outline:style.boxShadow,radius:parseFloat(style.borderRadius),bottom:box.bottom}});
  assert.notEqual(track.background,'rgba(0, 0, 0, 0)');assert.notEqual(track.outline,'none');assert.ok(track.radius>0);
- assert.ok(initialNewChatStyle.y>=track.bottom,'New chat remains below the sidebar switch');
+ assert.ok(initialNewChatStyle.y<track.bottom&&initialNewChatStyle.y+initialNewChatStyle.height>track.bottom-40,'New chat shares the sidebar switch row');
+ await expect(newChat).toHaveText('');
  await expect(sidebarView.getByRole('button')).toHaveCount(2);
  for(const label of ['New chat','Search chats'])await expect(sidebar.getByRole('button',{name:label,exact:true})).toBeVisible();
  assert.equal(await page.locator('header #navigation-toggle').count(),1);

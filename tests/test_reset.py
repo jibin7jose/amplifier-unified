@@ -205,6 +205,7 @@ def test_real_uv_repairs_modified_packages_and_missing_dependencies(tmp_path):
         "amplifier_web/__init__.py": "__version__ = '1.0.0'\n",
         "amplifier_web/cli.py": (package / "cli.py").read_bytes(),
         "amplifier_web/reset.py": package.joinpath("reset.py").read_bytes(),
+        "amplifier_web/reset_retention.py": package.joinpath("reset_retention.py").read_bytes(),
         "amplifier_web/host_dependencies.py": package.joinpath("host_dependencies.py").read_bytes(),
         "amplifier_web/__main__.py": "from .cli import main; main()\n",
         "amplifier_web/application_generations.py": "def delegate(): pass\n",

@@ -31,7 +31,7 @@ try{
  const grouping=area.getByRole('combobox',{name:'Group conversations'}),age=page.locator('#workspace-navigation').getByRole('slider',{name:'Filter conversations by age'});
  await expect(page.getByRole('slider',{name:'Filter conversations by age'})).toHaveCount(1);
  await expect(area.getByRole('slider')).toHaveCount(0);
- await expect(grouping).toBeVisible();await expect(age).toBeVisible();await expect(age).toHaveValue('5');
+ await expect(grouping).toBeVisible();await expect(age).toBeVisible();await expect(age).toHaveValue('10');
  const sliderBox=await age.boundingBox();
  await page.mouse.click(sliderBox.x+8,sliderBox.y+sliderBox.height/2);
  await expect(age).toHaveValue('0');await expect(results).toHaveCount(1);
@@ -62,11 +62,11 @@ try{
  const other=await browser.newPage({extraHTTPHeaders:{Authorization:'Bearer fixture-browser-control-token'}});
  await other.goto(`http://127.0.0.1:${port}`);await showFixtureConversation(other,{navPinned:true});
  await other.getByRole('button',{name:'Search chats',exact:true}).click();
- await expect(other.getByRole('slider',{name:'Filter conversations by age'})).toHaveValue('5');
+ await expect(other.getByRole('slider',{name:'Filter conversations by age'})).toHaveValue('10');
  await expect(other.getByRole('combobox',{name:'Group conversations'})).toHaveValue('recent');await other.close();
- await grouping.selectOption('status');await age.focus();await age.press('End');await expect(age).toHaveValue('5');
- await age.press('ArrowLeft');await expect(age).toHaveValue('4');await expect(age).toHaveAttribute('aria-valuetext','Within the last year');
- await age.press('ArrowRight');await expect(age).toHaveValue('5');
+ await grouping.selectOption('status');await age.focus();await age.press('End');await expect(age).toHaveValue('10');
+ await age.press('ArrowLeft');await expect(age).toHaveValue('8');await expect(age).toHaveAttribute('aria-valuetext','Within the last 90 days');
+ await age.press('ArrowRight');await expect(age).toHaveValue('10');
  await expect(area.getByRole('status')).toHaveText('206 chats');await expect(area.getByRole('heading',{name:'Pick up again',exact:true})).toBeVisible();
  await expect(page.locator('[data-sidebar-section=recent] .a-nav-chat')).toHaveCount(20);
  await expect(page.locator('[data-sidebar-section=recent] .a-recent-shortcuts')).toHaveAttribute('aria-busy','false');
@@ -98,7 +98,7 @@ try{
  await page.emulateMedia({forcedColors:'active'});await expect(grouping).toBeVisible();await expect(age).toBeVisible();
  await age.focus();await age.press('Home');await expect(age).toHaveValue('0');await expect(results).toHaveCount(0);await expect(area.getByRole('heading',{name:'No chats found'})).toBeVisible();
  await page.screenshot({path:'/tmp/unified-age-mobile-forced-colors.png'});
- await age.press('End');await expect(age).toHaveValue('5');await expect(area.getByRole('status')).toHaveText('3 chats found');
+ await age.press('End');await expect(age).toHaveValue('10');await expect(area.getByRole('status')).toHaveText('3 chats found');
  await page.emulateMedia({forcedColors:'none'});
  await page.getByRole('button',{name:'Close navigation',exact:true}).click();
  await area.locator('summary').click();await page.screenshot({path:'/tmp/unified-search-mobile.png'});
