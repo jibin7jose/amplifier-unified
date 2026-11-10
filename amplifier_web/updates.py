@@ -1665,7 +1665,13 @@ class UpdateManager:
         sequence = state.get('sequence', {})
         install_intent = (sequence.get('install') if sequence.get('manualHandoff')
                           else settings.get('autoInstall', True) or sequence.get('install'))
-        if not managed_preview and install_intent and state.get('phase')=='available' and state.get('available',0):
+        batch = self.diagnostics.state.get('batch', {})
+        retry = batch.get('retry') or {}
+        retry_due = (state.get('phase') == 'error' and batch.get('kind') == 'ecosystem'
+                     and retry.get('mode') == 'backoff' and retry.get('retryAt', 0) <= time.time())
+        if not managed_preview and install_intent and state.get('available',0) and (state.get('phase') == 'available' or retry_due):
+            # The timer wakes the existing install owner, which rechecks source,
+            # intent and uncertain-operation guards before preparing anything.
             await self.install(automatic=True)
             return
         if self.independent_tool_results(state) and (state.get('phase') not in {'error', 'interrupted'} or any(

@@ -446,7 +446,11 @@ Automatic preparation remembers the input witness and disposition of its last
 attempt. An unchanged deterministic source/configuration conflict performs no
 duplicate copy, resolver or installer work. Changed source/configuration/application
 inputs or an explicit install request can re-evaluate; transient failures use a
-bounded backoff. Interrupted or unknown effects wait quietly on automatic ticks.
+bounded backoff. When that backoff expires, the normal background timer must
+resume an already-authorized component installation without a manual check or
+waiting for the next availability-check interval. It reuses the install owner's
+source, intent and uncertain-operation guards. Interrupted or unknown effects
+wait quietly on automatic ticks.
 Pinned and exact checked-revision mismatches retain a typed source-policy reason
 and sanitized package identity; they are not transient transport failures.
 The preparation witness includes the canonical source-configuration key, checked
