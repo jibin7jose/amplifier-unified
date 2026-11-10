@@ -51,7 +51,7 @@ flow. **Development** adds repository guidance without forcing Git or a bundle.
 **Amplifier development** adds the Amplifier, Core and Foundation repositories
 as independent child checkouts. New plans inherit an explicitly saved Unified app
 or shared Amplifier bundle default, without copying that choice into project
-settings. If neither is set, this starter keeps its `anchors-amp-dev` workspace
+settings. If neither is set, this starter uses its `work-amp-dev` workspace
 fallback. The currently selected workspace's override does not choose the default
 for a different new workspace. Blank and Development continue to inherit defaults.
 
@@ -69,6 +69,9 @@ An inherited plan stays inherited if defaults later change; new chats use the
 then-current defaults. Already reviewed revision-5 plans keep their explicit
 bundle, as do saved custom starters. Duplicating a built-in copies its current
 choice when duplicated, including inheritance, from a fresh server snapshot.
+Revision 9 changes the built-in fallback from `anchors-amp-dev` to `work-amp-dev`
+for future plans only; existing workspaces, prepared plans and custom starters
+retain their saved choices.
 The returned copy is loaded into the editor; a previously displayed choice may
 be stale. Duplication does not create or change a workspace. Explicit chat choices
 and existing conversations are unchanged; no workspace settings are migrated.

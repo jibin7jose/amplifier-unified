@@ -93,7 +93,7 @@ BUILTINS = [
      'instructions': DEVELOPMENT_INSTRUCTIONS, 'bundle': '', 'repositories': [], 'trackResources': True, 'scratch': True, 'rootGit': False},
     {'id': 'amplifier-development', 'name': 'Amplifier development',
      'description': 'Amplifier, Core and Foundation as child repositories, with working memory and local workspace Git.',
-     'instructions': DEVELOPMENT_INSTRUCTIONS, 'bundle': 'anchors-amp-dev', 'trackResources': True, 'scratch': True, 'rootGit': True,
+     'instructions': DEVELOPMENT_INSTRUCTIONS, 'bundle': 'work-amp-dev', 'trackResources': True, 'scratch': True, 'rootGit': True,
      'repositories': [{'url': f'https://github.com/microsoft/{name}.git', 'directory': name, 'ref': ''}
                       for name in ('amplifier', 'amplifier-core', 'amplifier-foundation')]},
 ]
@@ -178,7 +178,7 @@ class StarterCatalog:
 
     def listing(self):
         value = self._read()
-        revisions = {'blank': 1, 'development': 7, 'amplifier-development': 8}
+        revisions = {'blank': 1, 'development': 7, 'amplifier-development': 9}
         builtins = [{**copy.deepcopy(row), 'builtIn': True, 'revision': revisions[row['id']]} for row in BUILTINS]
         if self.inherit_amplifier_default:
             # Inherit deliberately saved defaults, not the automatic Work fallback.
