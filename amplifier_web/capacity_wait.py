@@ -21,9 +21,15 @@ async def admit(service, sid, args):
     def child_guard(current):
         if not has_child_scope:
             return None
-        live = child_execution(service, current, child_id=row.get('sessionId'))
-        if live is None or live != child_scope or input_id(row) not in live['inputIds']:
-            return 'The native child execution changed; no provider request was sent.'
+        live, reason = child_execution(service, current, child_id=row.get('sessionId'), explain=True)
+        if live is None:
+            return f'{reason} No provider request was sent.'
+        if live != child_scope:
+            reason = 'The authenticated child execution binding changed while waiting.'
+            return f'{reason} No provider request was sent.'
+        if input_id(row) not in live['inputIds']:
+            reason = 'The child input is outside its authorized assignment.'
+            return f'{reason} No provider request was sent.'
     if not args.get('waitForCapacity') or row.get('lifecycle') == 'background':
         return await admission(service, sid, args, guard=child_guard)
     async with service.lock:

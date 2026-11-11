@@ -142,3 +142,49 @@ async def test_supplied_child_origin_uses_canonical_owner_without_root_fallback(
         else:
             with pytest.raises(AppError, match='native child execution'):
                 app.collaboration.active_binding(source, allow_descendant=True)
+
+
+@pytest.mark.parametrize(('task_status', 'accepted'), [('completed', True), ('paused', False)])
+async def test_child_execution_ignores_completed_history_but_honors_paused_task(app, monkeypatch, task_status, accepted):
+    from amplifier_web.child_execution import current
+
+    source = app.state['sessions'][0]
+    source['status'] = 'working'
+    await started(app, source, 'fresh-generation', interruptionRevision=0)
+    source['collaborationGeneration']['inputIds'] = ['fresh-input']
+    native = source.get('runtimeSessionId') or source.get('nativeIdentity') or source['id']
+    app.runtime.workers = {source['id']: {'process': SimpleNamespace(returncode=None),
+                                         'runtimeOwnerId': 'current-process'}}
+    monkeypatch.setattr(app.coordination, 'task', lambda _sid: {'status': task_status})
+    origin = {'rootSessionId': native, 'runtimeSessionId': 'native-child',
+              'generationId': 'fresh-generation', 'inputIds': ['fresh-input'], 'runId': 'fresh-run',
+              **{key: source.get(key, 0) for key in
+                 ('interruptionRevision', 'executionRevision', 'configurationPendingRevision')}}
+    with bound(source, principal='native-child'):
+        binding = BINDING.get()
+        binding.update(_childOrigin=origin, _runtimeOwnerId='current-process')
+        assert (current(app, source) == origin) is accepted
+        if not accepted:
+            _child, reason = current(app, source, explain=True)
+            assert 'task is paused' in reason
+
+
+async def test_child_execution_explains_stale_runtime_owner(app):
+    from amplifier_web.child_execution import current
+
+    source = app.state['sessions'][0]
+    source['status'] = 'working'
+    await started(app, source, 'fresh-generation', interruptionRevision=0)
+    source['collaborationGeneration']['inputIds'] = ['fresh-input']
+    native = source.get('runtimeSessionId') or source.get('nativeIdentity') or source['id']
+    app.runtime.workers = {source['id']: {'process': SimpleNamespace(returncode=None),
+                                         'runtimeOwnerId': 'replacement-process'}}
+    origin = {'rootSessionId': native, 'runtimeSessionId': 'native-child',
+              'generationId': 'fresh-generation', 'inputIds': ['fresh-input'], 'runId': 'fresh-run',
+              **{key: source.get(key, 0) for key in
+                 ('interruptionRevision', 'executionRevision', 'configurationPendingRevision')}}
+    with bound(source, principal='native-child'):
+        binding = BINDING.get()
+        binding.update(_childOrigin=origin, _runtimeOwnerId='original-process')
+        child, reason = current(app, source, explain=True)
+        assert child is None and 'runtime owner changed' in reason
