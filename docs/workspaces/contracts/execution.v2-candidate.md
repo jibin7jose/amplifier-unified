@@ -724,10 +724,21 @@ observation still neither starts the target nor proves successful task completio
 New waits and reply boundaries capture a task continuation epoch separately
 from its exact edit revision. Updating progress, references, constraints or
 corrections within the same objective preserves this epoch. Creating or changing
-the objective, pausing, blocking, resuming or completing it advances the epoch;
-a pause followed by resume cannot revive an earlier notification. Existing
+the objective, pausing or completing it advances the epoch. An agent-authored
+dependency block and its agent-authored resume preserve the epoch: waiting for
+work must not invalidate its result or sibling results. A human block or any
+resume from a human suspension advances it; a pause followed by resume cannot
+revive an earlier notification. Existing
 receipts without this field retain their exact-revision boundary. Migration
 never retries suppressed, accepted or uncertain input.
+
+A qualified, claimed result for the same objective may receive one bounded idle
+review turn while its recipient is agent-dependency-blocked. This uses the existing
+blocked-input admission and turn allowance; it does not automatically resume the
+goal. Explicit Stop, human suspension, changed objectives, cancellation, stale
+outcomes, membership and current permissions still prevent admission. The owner
+can deliberately resume its task after inspecting the result under its existing
+authority. Re-observing the same result does not create another turn.
 
 New commissioned-task receipts also capture the requester's continuation epoch.
 An already admitted member can return evidence in a later root generation after

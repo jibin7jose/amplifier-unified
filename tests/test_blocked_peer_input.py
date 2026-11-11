@@ -144,6 +144,91 @@ async def checkpoint_reply(ctx, identity, text):
     return anchor
 
 
+async def waiting_dependency(ctx, identity="manager-dependency"):
+    """The task owner requests work, subscribes, then waits for its result."""
+    ctx.source["collaborationGeneration"]["terminal"] = True
+    await ctx.app.on_runtime_event("runtime.status", {
+        "sessionId": ctx.source["id"], "status": "idle",
+    })
+    await generation(ctx.app, ctx.target, "manager-generation", ["manager-input"])
+    await agent_action(ctx.app, ctx.target, "coordination.send", {
+        "sessionId": ctx.source["id"], "text": "Finish the dependency and return its evidence",
+        "mode": "queue",
+    }, identity)
+    await settled(ctx.app, identity, "accepted")
+    await agent_action(ctx.app, ctx.target, "coordination.subscribe", {
+        "sessionId": ctx.target["id"], "requestId": identity,
+    }, "subscribe-" + identity)
+    await generation(ctx.app, ctx.source, "recipient-" + identity, [identity])
+    await block(ctx)
+    await ctx.app.on_runtime_event("runtime.status", {
+        "sessionId": ctx.target["id"], "status": "idle",
+    })
+    return identity
+
+
+async def finish_dependency(ctx, identity):
+    await agent_action(ctx.app, ctx.source, "coordination.reply", {
+        "requestId": identity, "kind": "result", "outcome": "success",
+        "text": "Dependency completed; inspect the retained evidence.",
+        "references": ["urn:fixture:completed-dependency"],
+    }, "reply-" + identity)
+    await finish(ctx.app, ctx.source, identity)
+    request = ctx.app.collaboration.receipt(identity)
+    assert request["response"]["qualified"]
+    return request["subscription"]["continuationId"]
+
+
+@pytest.mark.parametrize("resume", [False, True])
+async def test_saved_dependency_result_returns_across_owner_wait(task_app, resume):
+    ctx = task_app
+    identity = await waiting_dependency(ctx)
+    if resume:
+        await mutate(ctx, "task.resume")
+    task = copy.deepcopy(ctx.target["task"])
+    selection, draft = ctx.app.state["selectedSessionId"], ctx.app.state["view"]["draft"]
+    returned = await finish_dependency(ctx, identity)
+    await until(lambda: ctx.app.collaboration.receipt(returned)["delivery"] in {
+        "accepted", "suppressed", "unknown",
+    })
+    receipt = ctx.app.collaboration.receipt(returned)
+    assert receipt["delivery"] == "accepted", receipt.get("detail")
+    assert receipt["dependencyRequestId"] == identity
+    assert receipt["taskContinuationEpoch"] == task["continuationEpoch"]
+    assert ctx.target["task"] == task
+    assert ctx.app.state["selectedSessionId"] == selection
+    assert ctx.app.state["view"]["draft"] == draft
+    # Re-observing the same terminal result does not create another input.
+    ctx.app.collaboration.enqueue_continuation(ctx.app.collaboration.receipt(identity))
+    await ctx.app.collaboration.drain(ctx.target["id"])
+    assert [row[1] for row in ctx.app.runtime.inputs].count(returned) == 1
+
+
+@pytest.mark.parametrize("change", ["human-block", "pause-resume", "objective", "stop", "cancel"])
+async def test_saved_dependency_result_respects_later_owner_boundaries(task_app, change):
+    ctx = task_app
+    identity = await waiting_dependency(ctx)
+    if change == "human-block":
+        await block(ctx, origin="ui")
+    elif change == "pause-resume":
+        await mutate(ctx, "task.pause", origin="ui")
+        await mutate(ctx, "task.resume", origin="ui")
+    elif change == "objective":
+        await mutate(ctx, "task.update", objective="An explicitly different objective")
+    elif change == "stop":
+        ctx.target["interruptionRevision"] = 1
+    else:
+        await agent_action(ctx.app, ctx.target, "coordination.cancel", {
+            "sessionId": ctx.target["id"], "requestId": identity,
+            "reason": "The result is no longer requested",
+        }, "cancel-" + identity)
+    before = copy.deepcopy(ctx.target["task"])
+    returned = await finish_dependency(ctx, identity)
+    await ctx.app.collaboration.drain(ctx.target["id"])
+    assert not any(row[1] == returned for row in ctx.app.runtime.inputs)
+    assert ctx.target["task"] == before
+
+
 async def test_fresh_handoffs_reply_and_repeat_without_resuming_task(task_app):
     ctx = task_app
     await block(ctx)

@@ -23,12 +23,14 @@ pytest.importorskip(
 
 from fixtures.collaboration_native_probe import (
     DirectNativeHost,
+    PUBLISH_ROOT,
     ScriptedProvider,
     peer_envelopes,
     tool_output,
 )
 from amplifier_web import runtime_worker
 from amplifier_web.automatic_history import display_message
+from amplifier_web.management import Management
 from amplifier_web.service import AppService
 
 
@@ -71,6 +73,129 @@ async def settled_receipt(app, identity):
             if receipt["delivery"] not in {"queued", "submitting"}:
                 return receipt
             await asyncio.sleep(.01)
+
+
+async def test_native_dependency_return_reaches_waiting_manager_once(tmp_path, monkeypatch):
+    """A real send/subscribe/block cycle receives its sealed native result."""
+    class Host(DirectNativeHost):
+        async def start(self, session, emit, **kwargs):
+            # Both actual native sessions are already mounted by this fixture.
+            assert session["id"] in self.roots
+
+        async def control(self, sid, operation, args, *, guard=None):
+            worker = self.roots[sid]
+            async with worker.command_lock:
+                if guard is not None:
+                    guard()
+                token = PUBLISH_ROOT.set(sid)
+                try:
+                    return await worker.controls.perform(operation, args)
+                finally:
+                    PUBLISH_ROOT.reset(token)
+
+    host = Host()
+    release_dependency = asyncio.Event()
+    request_id = "native-waiting-manager-dependency"
+
+    class Manager(ScriptedProvider):
+        continuation = before = worker = None
+
+        async def complete(self, request, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return self.dispatch(request_id, "coordination.send", {
+                    "sessionId": target["id"], "mode": "queue",
+                    "text": "Finish the dependency and return its evidence.",
+                })
+            if self.calls == 2:
+                assert tool_output(request, request_id)["accepted"]
+                return self.dispatch("subscribe-native-dependency", "coordination.subscribe", {
+                    "sessionId": source["id"], "requestId": request_id,
+                })
+            if self.calls == 3:
+                result = tool_output(request, "subscribe-native-dependency")["result"]
+                assert result["status"] == "waiting"
+                self.continuation = result["continuationId"]
+                return self.dispatch("block-for-native-dependency", "task.block", {
+                    "sessionId": source["id"], "expectedRevision": 1,
+                    "reason": "Waiting for the requested dependency result",
+                })
+            if self.calls == 4:
+                assert tool_output(request, "block-for-native-dependency")["accepted"]
+                self.before = copy.deepcopy(self.worker.controls.tasks.record())
+                assert self.before["status"] == "blocked"
+                return self.final("Waiting for the dependency's retained result.")
+            assert self.calls == 5, "Duplicate or unrelated manager continuation"
+            envelope, _ = peer_envelopes(request)[-1]
+            assert envelope["inputId"] == self.continuation
+            assert envelope["replyToRequestId"] == request_id
+            assert envelope["blockedTaskHandling"]["taskId"] == self.before["id"]
+            assert_task_retained(self.worker, self.before, 1, self.continuation)
+            assert not await self.worker.controls.tasks.continuation_allowed()
+            return self.final("The dependency result arrived; review it before resuming the objective.")
+
+    class Dependency(ScriptedProvider):
+        async def complete(self, request, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                await release_dependency.wait()
+                return self.dispatch("reply-native-dependency", "coordination.reply", {
+                    "requestId": request_id, "kind": "result", "outcome": "success",
+                    "text": "The requested dependency is ready for review.",
+                    "references": ["urn:fixture:native-dependency"],
+                })
+            assert self.calls == 2
+            assert tool_output(request, "reply-native-dependency")["accepted"]
+            return self.final("Dependency finished; evidence retained.")
+
+    monkeypatch.setattr(runtime_worker, "publish", host.publish)
+    monkeypatch.setenv("AMPLIFIER_HOME", str(tmp_path / "native"))
+    monkeypatch.setenv("AMPLIFIER_WEB_HOME", str(tmp_path / "app"))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    app = host.app = AppService(tmp_path / "app", host, workspace=workspace)
+    app.management = Management(app)
+    source, target = [app._new_session({"title": title}) for title in ("Manager", "Dependency")]
+    app.state["sessions"] = [source, target]
+    app._publish()
+    paths = {}
+    for name in ("loop-live", "context-simple"):
+        spec = importlib.util.find_spec("amplifier_module_" + name.replace("-", "_"))
+        assert spec and spec.origin
+        paths[name] = Path(spec.origin).parent
+    manager, dependency = Manager(), Dependency()
+    host.pump = asyncio.create_task(host.route_events())
+    try:
+        async with asyncio.timeout(60):
+            worker = manager.worker = await host.mount(source, manager, paths)
+            dependency_worker = await host.mount(target, dependency, paths)
+            created = await worker.controls.perform("task.create", {
+                "commandId": "native-manager-task", "origin": "agent", "expectedRevision": 0,
+                "objective": "Review the requested dependency before integration", "maxTurns": 6,
+            })
+            source["task"] = copy.deepcopy(created["task"])
+            app._publish()
+            await host.send(source, "Request the dependency, then wait for its result.", HUMAN_INPUT, None)
+            await host.outcome(worker, HUMAN_INPUT)
+            assert manager.calls == 4
+            release_dependency.set()
+            await host.outcome(dependency_worker, request_id)
+            await host.outcome(worker, manager.continuation)
+            receipt = await settled_receipt(app, manager.continuation)
+            assert receipt["delivery"] == "accepted"
+            assert receipt["dependencyRequestId"] == request_id
+            assert receipt["taskContinuationEpoch"] == created["task"]["continuationEpoch"]
+            app.collaboration.enqueue_continuation(app.collaboration.receipt(request_id))
+            await app.collaboration.drain(source["id"])
+            await host.flush()
+            assert manager.calls == 5 and dependency.calls == 2
+            assert len([r for r in host.admissions if r.get("inputId") == manager.continuation]) == 1
+            assert_task_retained(worker, manager.before, 1, manager.continuation)
+            assert not host.errors and not host.approvals
+    finally:
+        release_dependency.set()
+        await host.close()
+        await app.close()
 
 
 class BlockedRecipient(ScriptedProvider):

@@ -28,6 +28,17 @@ DEFAULT_QUEUE_SECONDS = 86400
 REPORT_OUTCOMES = {'failed', 'deferred', 'declined', 'question', 'conflict', 'cancelled'}
 
 
+def blocked_task_handling(task):
+    return {
+        'taskId': task['id'], 'taskRevision': task['revision'],
+        'instruction': 'Handle this new peer input within existing authority. The saved objective '
+            'remains blocked. Reconcile the dependency; do not infer approval, resume the goal '
+            'automatically, discard conditions or replay older input. You may reply, defer, decline '
+            'or deliberately call task.resume once you verify the dependency is resolved within your '
+            'standing scope. That owner decision needs no fresh human approval; actual Stop, '
+            'unresolved questions and uncertain effects remain in force.'}
+
+
 def intake_task_binding(receipt):
     """Use the already captured objective identity for ordinary peer intake.
 
@@ -892,6 +903,16 @@ class Collaboration:
         return bool(hasattr(self.service.runtime, "collaboration_steer") and active.get("id") and not active.get("terminal"))
 
     def blocked_input(self, receipt, task):
+        # Canonical result returns already carry the saved wait and exact
+        # outcome claim, rechecked by guard(). They use the same bounded idle
+        # review admission as fresh dependency input, without resuming the goal.
+        if receipt.get('dependencyRequestId'):
+            return (receipt.get('origin') == 'system'
+                    and receipt.get('commandAction') == 'coordination.send'
+                    and receipt.get('mode') == 'auto'
+                    and bool(receipt.get('dependencyOutcomeRevision'))
+                    and 'taskContinuationEpoch' in receipt
+                    and task_matches(task, receipt) and dependency_blocked(task))
         return (receipt.get('blockedTaskInput') is True
                 and receipt.get('commandAction') == 'coordination.send'
                 and receipt.get('mode') in {'queue', 'auto'}
@@ -1701,6 +1722,9 @@ class Collaboration:
                         "requestId": identity, "inputId": identity, "replyToRequestId": request["requestId"],
                         "mode": "auto", "purpose": "Resume the saved request-specific wait",
                         "references": ([response['terminalMessageId']] if response.get('terminalMessageId') else []) + response.get('references', [])[:15]}
+            task = sender.get('task') or self.service.coordination.task(sender['id'])
+            if dependency_blocked(task) and task_matches(task, wait):
+                envelope['blockedTaskHandling'] = blocked_task_handling(task)
             if response.get("qualified"):
                 text = "A recipient declared a successful result and its root generation terminated. Independently check the referenced artifact before using it.\n"
             elif request.get('commandAction') == 'coordination.create':
@@ -2162,14 +2186,7 @@ class Collaboration:
                     "mode": mode, "purpose": "Scoped collaboration task input", "references": args.get("references", []),
                     "replyToRequestId": args.get("replyToRequestId")}
                 if blocked_input:
-                    envelope['blockedTaskHandling'] = {
-                        'taskId': task['id'], 'taskRevision': task['revision'],
-                        'instruction': 'Handle this new peer input within existing authority. The saved objective '
-                            'remains blocked. Reconcile the dependency; do not infer approval, resume the goal '
-                            'automatically, discard conditions or replay older input. You may reply, defer, decline '
-                            'or deliberately call task.resume once you verify the dependency is resolved within your '
-                            'standing scope. That owner decision needs no fresh human approval; actual Stop, '
-                            'unresolved questions and uncertain effects remain in force.'}
+                    envelope['blockedTaskHandling'] = blocked_task_handling(task)
                 if completed_followup:
                     envelope['completedTaskHandling'] = {**completed_followup,
                         'instruction': 'Handle this fresh authorized peer request within your existing authority. '
