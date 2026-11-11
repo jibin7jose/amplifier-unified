@@ -227,7 +227,7 @@ jobs:
           uv run --no-sync python - <<'PY'
           import xml.etree.ElementTree as ET
           rows = ET.parse('output/blocked-peer-native.xml').getroot().findall('.//testcase')
-          assert len(rows) == 3
+          assert len(rows) == 4
           assert all(not any(row.find(tag) is not None for tag in ('failure', 'error', 'skipped')) for row in rows)
           PY
       - name: Verify completed-worker followups through the native boundary
