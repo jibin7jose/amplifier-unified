@@ -98,6 +98,28 @@ def test_capture_scrubs_nested_and_known_credentials_without_mutating_request(mo
     assert safe['messages'][0]['content'] == 'prefix [REDACTED]'
 
 
+@pytest.mark.parametrize('rows', [1, 1024])
+def test_capture_reads_environment_once_and_refreshes_secrets_between_captures(monkeypatch, rows):
+    from amplifier_web import worker_diagnostics
+
+    monkeypatch.setenv('SYNTHETIC_API_KEY', 'first-fixture-credential')
+    reads = []
+    original_items = worker_diagnostics.os.environ.items
+    def environment_items():
+        reads.append(1)
+        return original_items()
+    monkeypatch.setattr(worker_diagnostics.os.environ, 'items', environment_items)
+
+    for index, secret in enumerate(('first-fixture-credential', 'rotated-fixture-credential'), 1):
+        monkeypatch.setenv('SYNTHETIC_API_KEY', secret)
+        payload = [{'label ' + secret: 'value ' + secret} for _ in range(rows)]
+        safe, truncated = redact_request(payload)
+        assert not truncated
+        assert safe == [{'label [REDACTED]': 'value [REDACTED]'}] * rows
+        assert payload == [{'label ' + secret: 'value ' + secret}] * rows
+        assert len(reads) == index, 'Environment work must not grow with request fields'
+
+
 def test_capture_scrubs_generic_token_fields_in_structured_and_litellm_string_forms():
     original = {'extra_headers':{'Authorization':'Bearer opaque-bearer',
         'Cookie':'sid=opaque-cookie', 'token':'opaque-token', 'x-auth-token':'opaque-auth'},

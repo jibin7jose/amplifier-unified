@@ -45,7 +45,10 @@ unchanged. Historical recordings are not rewritten.
 
 Unified scrubs recognizable credentials, including known credential environment
 values, before the community logging hook observes the diagnostic copy. It
-limits each captured raw field to approximately one million characters (plus
+reads known environment credentials once per capture, rather than once per
+field or key. The next capture reads current values again, including rotations;
+no process-wide secret snapshot is retained. It limits each captured raw field
+to approximately one million characters (plus
 JSON formatting), bounds depth, and marks truncation. Redaction failure replaces
 the raw copy with a capture-unavailable marker; it does not interrupt inference
 or forward the unsanitized raw field. Neither redaction nor bounding modifies

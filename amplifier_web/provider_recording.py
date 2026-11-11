@@ -68,8 +68,9 @@ def apply_provider_recording(plan, *, enabled=None, home=None):
 
 def redact_request(value, *, limit=MAX_CAPTURE_CHARS):
     """Bound stored content and scrub recognizable secrets before CI sees it."""
-    from .worker_diagnostics import redact_diagnostic
+    from .worker_diagnostics import diagnostic_redactor
     from .provider_recording_media import child_context, element_context, fingerprint
+    redact_diagnostic = diagnostic_redactor()
     remaining, truncated = limit, False
     def visit(item, depth=0, context=None):
         nonlocal remaining, truncated

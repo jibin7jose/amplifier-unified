@@ -88,16 +88,26 @@ def redact_diagnostic(value):
     Receipts remain private because arbitrary module exception text can contain
     sensitive context beyond recognizable credentials. Never publish this text.
     """
-    text = str(value)
-    for name, secret in os.environ.items():
-        if _SECRET_NAME.search(name) and len(secret) >= 4:
+    return diagnostic_redactor()(value)
+
+
+def diagnostic_redactor():
+    """Snapshot known secrets once for one diagnostic traversal, never globally."""
+    secrets = tuple(secret for name, secret in os.environ.items()
+                    if _SECRET_NAME.search(name) and len(secret) >= 4)
+
+    def redact(value):
+        text = str(value)
+        for secret in secrets:
             text = text.replace(secret, '[REDACTED]')
-    text = re.sub(r'(?is)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----', '[REDACTED PRIVATE KEY]', text)
-    text = re.sub(r'(?i)(bearer\s+)[^\s"\']+', r'\1[REDACTED]', text)
-    text = re.sub(r'(?i)(https?://)[^\s/@]+:[^\s/@]+@', r'\1[REDACTED]@', text)
-    text = _SECRET_ASSIGNMENT.sub(r'\1[REDACTED]', text)
-    text = re.sub(r'\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{16,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b', '[REDACTED]', text)
-    return text
+        text = re.sub(r'(?is)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----', '[REDACTED PRIVATE KEY]', text)
+        text = re.sub(r'(?i)(bearer\s+)[^\s"\']+', r'\1[REDACTED]', text)
+        text = re.sub(r'(?i)(https?://)[^\s/@]+:[^\s/@]+@', r'\1[REDACTED]@', text)
+        text = _SECRET_ASSIGNMENT.sub(r'\1[REDACTED]', text)
+        text = re.sub(r'\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{16,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b', '[REDACTED]', text)
+        return text
+
+    return redact
 
 
 def _bounded(text, limit=MAX_DETAIL_BYTES):
