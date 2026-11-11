@@ -15,6 +15,15 @@ def test_collaboration_guidance_does_not_require_an_optional_skill():
     assert 'discover coordination.* and load the coordinate-work skill' not in CANVAS_GUIDANCE
 
 
+def test_manager_guidance_keeps_open_objectives_alive_across_process_boundaries():
+    from amplifier_web.app_guidance import CANVAS_GUIDANCE
+
+    assert 'A progress report is not a completion boundary' in CANVAS_GUIDANCE
+    assert 'Do not promise to continue after ending the current turn' in CANVAS_GUIDANCE
+    assert 'independent root has no automatic result return' in CANVAS_GUIDANCE
+    assert 'coordination.send mode:auto' in CANVAS_GUIDANCE
+
+
 def test_surface_runtime_import_does_not_require_host_css_parser():
     result = subprocess.run([sys.executable, '-c', """
 import importlib.abc

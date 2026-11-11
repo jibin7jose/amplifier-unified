@@ -63,6 +63,9 @@ async def run():
             assert 'web-canvas' in str(session.coordinator.hooks) or 'app_control' in serialized
             assert 'one full preview surface at a time' in serialized
             assert 'unified-app' in serialized
+            assert 'A progress report is not a completion boundary' in serialized
+            assert 'an independent root has no automatic result return' in serialized
+            assert 'coordination.send mode:auto' in serialized
             # Recipes are available on demand, not charged to every model call.
             assert 'resetPreview' not in serialized and 'window.BABYLON' not in serialized
             assert len(CANVAS_GUIDANCE.encode('utf-8')) < 9000

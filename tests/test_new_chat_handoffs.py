@@ -14,6 +14,21 @@ from test_service import Runtime
 PREFIX = 'session.handoff.'
 
 
+def test_action_descriptions_distinguish_independent_handoffs_from_commissioned_work():
+    from amplifier_web.new_chat_handoffs import definitions
+    from amplifier_web.service import schema, string
+
+    actions = definitions(schema, string)
+    start = actions[PREFIX + 'start'][0]
+    propose = actions[PREFIX + 'propose'][0]
+    read = actions[PREFIX + 'read'][0]
+    assert 'does not commission a worker' in start
+    assert 'use coordination.create for subordinate work' in start
+    assert 'does not commission a worker or establish a completion return' in propose
+    assert 'not that its work completed' in read
+    assert 'not that its work completed or that its result will return to the source manager' in read
+
+
 @pytest.fixture
 async def handoff(tmp_path):
     runtime = Runtime()
