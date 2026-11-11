@@ -250,6 +250,14 @@ The old candidate and failed attempt remain inspectable. Exact retries read
 `manualHandoffResults`; interrupted verification is not replayed. This does not
 grant optional-feature eligibility or promote an inactive component generation.
 
+Before that explicit verification, a native Windows host already running at or
+above its exact settled manual-refusal target retains that target across newer
+release discovery (the same version must have the same revision). Newer release
+availability stays visible, but does not supersede the target awaiting proof.
+This is only a scheduling hold: it neither verifies adoption nor admits component
+work. It does not recover an older target that was already superseded before this
+behavior was installed, and does not retire a newer pending candidate.
+
 When a qualified application update is waiting, expand **View active work** to
 find **Force restart…**. Its confirmation explains that running chats, workers,
 tools and calls will be interrupted, saved history and drafts are retained, and

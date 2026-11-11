@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -79,6 +80,165 @@ async def test_exact_refusal_retires_only_pending_app_and_preserves_truth(manage
     assert state['sequence']['nextStage'] == 'included' and state['sequence']['install']
     assert update_health.current(state)['status'] == 'action-required'
     assert update_health.current(state, manual_verified='request-one')['status'] == 'available'
+
+
+@pytest.mark.parametrize('same_version', [False, True])
+async def test_newer_availability_before_first_reconcile_preserves_manual_target(
+        manager, proof, monkeypatch, same_version):
+    monkeypatch.setattr(handoff, 'sys', SimpleNamespace(platform='win32'))
+    state = manager.service.state['updates']
+    if same_version:
+        state['pendingApp'].update(latest='v0.71.4', revision='b' * 40)
+        manager.diagnostics.begin('application', 'b' * 40, 'd' * 32, application_extras=[])
+        manager.diagnostics.record('restart-capability', 'failed', errorType='RuntimeError')
+    before = copy.deepcopy(state)
+    async def forbidden(*args, **kwargs):
+        pytest.fail('A newer release must not replace the completed manual launch target')
+    monkeypatch.setattr(app_updates, 'stage', forbidden)
+    monkeypatch.setattr(app_updates, 'activate', forbidden)
+    monkeypatch.setattr(manager, 'check', forbidden)
+    # Real owner path, before explicit reconciliation, including repeated ticks.
+    await manager.app()
+    await manager.app()
+    assert state == before
+    assert not state.get(handoff.RESULTS) and 'manualHandoff' not in state
+    assert handoff.awaiting_verification(manager)
+    result = await handoff.reconcile(manager, target(manager), 'manual-after-startup')
+    assert result['status'] == 'succeeded'
+    assert state['pendingApp'] is None and not handoff.awaiting_verification(manager)
+    assert state['application'] == before['application']  # Newer availability survives.
+    assert state['sequence']['stage'] == 'included' and state['sequence']['install']
+
+
+@pytest.mark.parametrize('change', [
+    'newer-pending', 'same-version-other-revision', 'missing-failure',
+    'changed-attempt', 'changed-failure', 'malformed-target', 'malformed-version',
+    'lower-running-version', 'unknown-restart', 'feature', 'non-windows',
+])
+def test_manual_target_hold_is_not_a_bypass_for_other_owners(manager, monkeypatch, change):
+    monkeypatch.setattr(handoff, 'sys', SimpleNamespace(platform='win32'))
+    state = manager.service.state['updates']
+    if change == 'newer-pending':
+        state['pendingApp']['latest'] = 'v0.72.0'
+    elif change == 'same-version-other-revision':
+        state['pendingApp']['latest'] = 'v0.71.4'
+    elif change == 'missing-failure':
+        manager.diagnostics.state.pop('lastFailure')
+    elif change == 'changed-attempt':
+        state['pendingApp']['attemptId'] = 'f' * 32
+    elif change == 'changed-failure':
+        manager.diagnostics.state['lastFailure'] = {
+            **manager.diagnostics.state['lastFailure'], 'revision': 'f' * 40}
+    elif change == 'malformed-target':
+        state['pendingApp']['generation'] = 'not-a-generation'
+    elif change == 'malformed-version':
+        state['pendingApp']['latest'] = {'version': '0.71.3'}
+    elif change == 'lower-running-version':
+        manager.running_identity['version'] = '0.71.2'
+    elif change == 'unknown-restart':
+        state['pendingRestart'] = {'unknown': True}
+    elif change == 'feature':
+        state['pendingApp']['featureSelection'] = {'new': True}
+    else:
+        monkeypatch.setattr(handoff, 'sys', SimpleNamespace(platform='linux'))
+    before = copy.deepcopy(state)
+    assert not handoff.awaiting_verification(manager)
+    assert state == before
+
+
+async def test_manual_target_is_rechecked_after_awaited_availability(manager, monkeypatch):
+    monkeypatch.setattr(handoff, 'sys', SimpleNamespace(platform='win32'))
+    state = manager.service.state['updates']
+    original = copy.deepcopy(state['pendingApp'])
+    state['pendingApp']['latest'] = 'v0.72.0'
+    async def check(**kwargs):
+        state['pendingApp'] = original
+    async def forbidden(*args, **kwargs):
+        pytest.fail('The target changed while availability was awaited')
+    monkeypatch.setattr(manager, 'check', check)
+    monkeypatch.setattr(app_updates, 'stage', forbidden)
+    monkeypatch.setattr(app_updates, 'activate', forbidden)
+    await manager.app()
+    assert state['pendingApp'] == original
+    assert handoff.awaiting_verification(manager)
+
+
+@pytest.mark.parametrize('hold', [False, True])
+async def test_automatic_check_and_install_before_reconcile_survives_owner_reload(manager, monkeypatch, hold):
+    monkeypatch.setattr(handoff, 'sys', SimpleNamespace(platform='win32'))
+    state = manager.service.state['updates']
+    pending = copy.deepcopy(state['pendingApp'])
+    failure = copy.deepcopy(manager.diagnostics.state['lastFailure'])
+    identity = copy.deepcopy(manager.running_identity)
+    async def available():
+        return {'id': 'application', 'current': '0.71.4', 'latest': 'v0.72.0',
+                'revision': 'e' * 40, 'status': 'update', 'canInstall': True}
+    calls = []
+    newer = {'revision': 'e' * 40, 'generation': 'f' * 32, 'attemptId': '1' * 32,
+             'latest': 'v0.72.0', 'extras': []}
+    async def stage(owner):
+        calls.append('stage-B')
+        state['pendingApp'] = copy.deepcopy(newer)
+    async def activate(owner):
+        calls.append('activate-B')
+        owner.diagnostics.begin('application', newer['revision'], newer['attemptId'], application_extras=[])
+        owner.diagnostics.record('restart-capability', 'failed', errorType='RuntimeError')
+    async def no_components(*args, **kwargs):
+        pytest.fail('No component admission is authorized before manual verification')
+    monkeypatch.setattr(app_updates, 'check', available)
+    monkeypatch.setattr(app_updates, 'stage', stage)
+    monkeypatch.setattr(app_updates, 'activate', activate)
+    monkeypatch.setattr(manager, 'inventory_sources', no_components)
+    if not hold:
+        # Scheduling-only predecessor discriminator. All other real owner paths
+        # run unchanged; native staging observations are synthetic in this file.
+        monkeypatch.setattr(handoff, 'awaiting_verification', lambda manager: False)
+    await manager.check(automatic=True)
+    assert state['application']['revision'] == 'e' * 40
+    await manager.install(automatic=True)
+    if not hold:
+        assert calls == ['stage-B', 'activate-B']
+        assert state['pendingApp'] == newer  # The exact A target has been lost.
+        assert manager.diagnostics.state['lastFailure']['revision'] == newer['revision']
+        return
+    assert calls == []
+    assert state['pendingApp'] == pending
+    assert manager.diagnostics.state['lastFailure'] == failure
+    assert state['sequence'] == {'stage': 'application', 'install': True}
+    assert not state.get(handoff.RESULTS) and 'manualHandoff' not in state
+    manager.service._save_changes(globals={'updates'})
+    restored = UpdateManager(manager.service)
+    restored.running_identity = identity
+    # The hold derives from saved exact intent/refusal, never a transient flag.
+    await restored.app()
+    assert restored.service.state['updates']['pendingApp'] == pending
+    assert restored.diagnostics.state['lastFailure'] == failure
+    assert handoff.awaiting_verification(restored)
+
+
+async def test_preventive_hold_never_borrows_missing_native_proof(manager, monkeypatch):
+    monkeypatch.setattr(handoff, 'sys', SimpleNamespace(platform='win32'))
+    state = manager.service.state['updates']
+    pending = copy.deepcopy(state['pendingApp'])
+    async def missing(*args):
+        raise ValueError('fixture: official wheel or installed graph changed')
+    monkeypatch.setattr(handoff, 'qualify', missing)
+    assert handoff.awaiting_verification(manager)
+    result = await handoff.reconcile(manager, target(manager), 'missing-native-proof')
+    assert result['status'] == 'rejected'
+    assert state['pendingApp'] == pending
+    assert 'manualHandoff' not in state
+    assert state['sequence']['stage'] == 'application'
+
+
+def test_scheduling_hold_does_not_copy_release_notes_or_history(manager, monkeypatch):
+    monkeypatch.setattr(handoff, 'sys', SimpleNamespace(platform='win32'))
+    manager.service.state['updates']['pendingApp']['releaseNotes'] = [
+        {'changes': ['retained history'] * 1000}]
+    def forbidden(*args, **kwargs):
+        pytest.fail('Scheduling must not copy pending release history')
+    monkeypatch.setattr(handoff, 'copy', SimpleNamespace(deepcopy=forbidden))
+    assert handoff.awaiting_verification(manager)
 
 
 @pytest.mark.parametrize('install', [False, True])

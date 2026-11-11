@@ -26,7 +26,7 @@ def _require(condition, detail='The manual handoff proof or update target change
         raise ValueError(detail)
 
 
-def _state_witness(manager):
+def _state_witness(manager, *, snapshot=True):
     state = manager.service.state['updates']
     from .update_health import pending_preparation
     _require(not manager.closed and state.get('pendingReplacement') is None
@@ -50,10 +50,11 @@ def _state_witness(manager):
              and failure.get('revision') == pending['revision']
              and failure == manager.diagnostics.state.get('latest'),
              'Only the exact settled pre-effect Windows refusal can be reconciled.')
-    return copy.deepcopy({'pending': pending, 'failure': failure,
+    witness = {'pending': pending, 'failure': failure,
         'sequence': state.get('sequence'), 'configuration': manager.service.state.get('configurationRevision'),
         'featureResults': state.get('featureResults'), 'forceRestartResult': state.get('forceRestartResult'),
-        'drain': state.get('drain'), 'intentRevision': state.get('intentRevision', 0)})
+        'drain': state.get('drain'), 'intentRevision': state.get('intentRevision', 0)}
+    return copy.deepcopy(witness) if snapshot else witness
 
 
 def require_target(manager, args):
@@ -63,6 +64,29 @@ def require_target(manager, args):
                      for key in ('revision', 'generation', 'attemptId')),
              'The selected host or pending application changed.')
     return witness
+
+
+def awaiting_verification(manager):
+    """Hold a reconcilable target across availability refreshes, not adopt it.
+
+    A manual launch can reach the new server before its explicit verification
+    request. Do not replace that exact settled refusal with another release in
+    the meantime. Native payload/owner/listener proof still belongs to reconcile.
+    """
+    if sys.platform != 'win32':
+        return False
+    from .app_updates import version_tuple
+    try:
+        # No await follows this synchronous observation. Do not copy the pending
+        # release's complete notes/history on each scheduling tick.
+        pending = _state_witness(manager, snapshot=False)['pending']
+        current = version_tuple(manager.running_identity.get('version'))
+        staged = version_tuple(pending.get('latest'))
+        return bool(current and staged and current >= staged
+                    and (current != staged
+                         or manager.running_identity.get('revision') == pending['revision']))
+    except (TypeError, ValueError):
+        return False
 
 
 def _read(path):

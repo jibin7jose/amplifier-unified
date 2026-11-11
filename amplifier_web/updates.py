@@ -1029,6 +1029,8 @@ class UpdateManager:
 
     async def app(self):
         if self.lock.locked() or self.awaiting_restart():return
+        from .manual_app_handoff import awaiting_verification
+        if awaiting_verification(self):return
         from .app_updates import stage,activate,supersedes_staged
         state = self.service.state['updates']
         pending = state.get('pendingApp')
@@ -1039,6 +1041,7 @@ class UpdateManager:
             await self.check(fresh=True)
         async with self.lock:
             if self.closed or self.awaiting_restart():return
+            if awaiting_verification(self):return
             state = self.service.state['updates']
             pending = state.get('pendingApp')
             if not pending or supersedes_staged(state.get('application', {}), pending):
