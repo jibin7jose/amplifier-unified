@@ -71,6 +71,8 @@ async def main():
             await prepare_dependencies(args.workspace,bundle=args.bundle,install_overrides=args.install_overrides, global_only=args.global_only, runtime_plan=runtime_plan)
             facts.update(ok=True,stage='prepared',dependenciesPrepared=True)
         else:
+            from amplifier_web.runtime_qualification import required_activation_gate
+            required_activation_gate()
             from amplifier_web.host.session import prepare_manager
             session,runtime,report=await prepare_manager(args.workspace,bundle=args.bundle,resume=False,ask=deny,
                 install_overrides=args.install_overrides, qualification_readonly=args.read_only, global_only=args.global_only, runtime_plan=runtime_plan)

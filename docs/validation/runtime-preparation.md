@@ -67,6 +67,16 @@ order, eager restoration, provider selection or native-history authority.
 
 ## Startup cleanup ownership
 
+The final worker compatibility probe and ordinary worker startup require
+Foundation's canonical session activation API. Startup checks the actual loaded
+worker interpreter before acquiring native ownership, restoring history or
+admitting input. An older retained generation receives bounded guidance to
+install included-component updates; its files and saved conversation remain
+unchanged. The ordinary updater prepares and qualifies a new generation before
+selecting it. App-only installation can leave the old runtime selected: this is
+an execution-admission check, not protection against app promotion by an older
+updater, and it does not silently refresh or rewrite a recorded generation.
+
 Before registration, the startup coroutine owns any spawned process and its
 generation lease. Awaited preparation-heartbeat teardown belongs inside that
 ownership boundary: cancellation there must reap the process before releasing

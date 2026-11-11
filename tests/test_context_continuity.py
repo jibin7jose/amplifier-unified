@@ -443,7 +443,7 @@ async def ordinary_recovery_case(directory, wire, messages=()):
     """
     from amplifier_core import HookResult, ToolResult
     from amplifier_web.host.session import SelectedProvider
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
     plan = {'session': {
         'orchestrator': {'module': 'loop-streaming', 'config': {
             'use_streaming': False, 'extended_thinking': True,
@@ -1000,7 +1000,7 @@ async def test_decision_account_recovery_rejects_unvalidated_projection(
 
 def bind_continuity_recovery_guards(coordinator, adapter, contract):
     """Host ownership/contract observations for the existing synthetic fixture."""
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
     gate = ActivationGate()
     gate.activate()
     coordinator.cancellation = SimpleNamespace(is_cancelled=False)

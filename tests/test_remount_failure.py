@@ -12,7 +12,7 @@ from amplifier_web.module_failures import ConfiguredModuleError
 from amplifier_web.runtime import RuntimeManager, RuntimeOperationPending
 from amplifier_web.runtime_worker import Worker
 from amplifier_web.service import AppError, AppService
-from amplifier_web.shared_state import ActivationGate
+from amplifier_foundation.session.activation import ActivationGate
 
 
 FAILURES = [{'module': 'tool-fixture', 'type': 'tool', 'reason_code': 'validation_failed'}]

@@ -90,7 +90,7 @@ async def test_context_cancellation_keeps_cleanup_and_original_outcome(mounted_h
 async def test_worker_failure_receipt_does_not_publish_timings(tmp_path, monkeypatch, cancel, disk_fails):
     import sys
     from amplifier_web.runtime_worker import Worker
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
     monkeypatch.setattr('amplifier_web.runtime_bootstrap.bootstrap_app_package', lambda: None)
     monkeypatch.setattr('amplifier_web.host.config.app_home', lambda: tmp_path)
     monkeypatch.setattr('amplifier_web.runtime_qualification.active_install_overrides', lambda *args: None)

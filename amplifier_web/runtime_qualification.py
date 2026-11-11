@@ -16,6 +16,30 @@ from urllib.parse import urlsplit, urlunsplit
 from . import runtime_environment as environments
 
 
+class RuntimeDependencyError(RuntimeError):
+    """The selected worker lacks an API required by the installed application."""
+
+
+def required_activation_gate():
+    """Check the loaded worker, without installing or changing its generation."""
+    from importlib import import_module
+
+    module = 'amplifier_foundation.session.activation'
+    message = ('This conversation setup needs an included-component update. '
+               'Open Settings > Updates and install the included updates, then retry. '
+               'The saved runtime and conversation have not been changed.')
+    try:
+        activation = import_module(module)
+    except ModuleNotFoundError as error:
+        if error.name not in {'amplifier_foundation', 'amplifier_foundation.session', module}:
+            raise
+        raise RuntimeDependencyError(message) from error
+    gate = getattr(activation, 'ActivationGate', None)
+    if not isinstance(gate, type):
+        raise RuntimeDependencyError(message)
+    return gate
+
+
 def _file_url_path(parsed):
     """Decode a file URL with native drive/authority rules, not URI path rules."""
     from urllib.request import url2pathname

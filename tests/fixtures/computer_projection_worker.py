@@ -17,7 +17,7 @@ from amplifier_module_loop_live.runtime import Input
 from amplifier_web import runtime_worker
 from amplifier_web.host.session import SelectedProvider
 from amplifier_web.host.children import StandaloneHostAdapter
-from amplifier_web.shared_state import ActivationGate
+from amplifier_foundation.session.activation import ActivationGate
 from test_context_inspection import config, evidence
 
 

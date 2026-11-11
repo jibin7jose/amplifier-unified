@@ -26,7 +26,7 @@ async def test_first_child_mount_retains_invoking_assignment_through_provider_wa
     from amplifier_web.provider_isolation import ProviderIsolation
     from amplifier_web.runtime import RuntimeManager
     from amplifier_web.runtime_worker import Worker
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
 
     spec = importlib.util.spec_from_file_location('assignment_child_fixture',
         Path(__file__).parent / 'fixtures/standalone_children_probe.py')

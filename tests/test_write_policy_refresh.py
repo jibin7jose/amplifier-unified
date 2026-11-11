@@ -214,7 +214,7 @@ async def test_same_mounted_writer_running_during_grant_keeps_its_old_snapshot(t
 @pytest.mark.parametrize('state', ['active', 'stale', 'parked', 'superseded-settings'])
 async def test_worker_refresh_binds_only_existing_activation_and_never_starts_input(tmp_path, monkeypatch, state):
     from amplifier_web.runtime_worker import Worker
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
     coordinator, tools, policy = await root(tmp_path)
     worker = Worker()
     worker.session = SimpleNamespace(coordinator=coordinator)

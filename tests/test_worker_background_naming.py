@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from amplifier_web.runtime_worker import Worker
-from amplifier_web.shared_state import ActivationGate
+from amplifier_foundation.session.activation import ActivationGate
 
 
 @pytest.fixture

@@ -163,6 +163,10 @@ def failure_details(error, error_type=None):
         category, summary, guidance = 'worker_exit', 'The chat process stopped unexpectedly.', 'Your conversation is saved. You can send a new message to continue. If this happens again, copy the diagnostics and share them with support.'
     elif kind == 'WorkerCommunicationError':
         category, summary, guidance = 'worker_communication', 'Amplifier lost contact with the chat process.', 'Your conversation is saved. Check the recorded details before continuing; work already in progress may have completed.'
+    elif kind == 'RuntimeDependencyError' or 'runtimedependencyerror:' in text:
+        kind = 'RuntimeDependencyError'
+        category, summary = 'runtime_dependency', 'This conversation setup needs an included-component update.'
+        guidance = 'Open Settings > Updates and install the included updates, then retry. Your history and saved message are kept; this attempt did not send it.'
     elif kind == 'ProviderSelectionError' or 'providerselectionerror:' in text:
         category, summary = 'provider_selection', 'Choose a replacement AI connection for this chat.'
         guidance = 'Its saved provider connection is no longer available. Open the model selector to choose a connection, model, and reasoning effort. Your history and saved message are kept; choosing does not send it.'

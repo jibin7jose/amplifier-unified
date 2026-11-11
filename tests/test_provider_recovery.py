@@ -133,7 +133,7 @@ async def test_model_control_repairs_startup_without_sending_saved_message(tmp_p
 ])
 async def test_worker_mount_uses_saved_exact_id_or_explicit_replacement(tmp_path, monkeypatch, saved, override, expected):
     from amplifier_web.runtime_worker import Worker
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
     home = tmp_path / 'app'
     monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(home))
     monkeypatch.setattr('amplifier_web.runtime_bootstrap.bootstrap_app_package', lambda: None)

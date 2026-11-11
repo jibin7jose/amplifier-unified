@@ -12,7 +12,7 @@ import pytest
 
 from amplifier_web.runtime import RuntimeManager, normalize_event
 from amplifier_web.runtime_worker import Worker
-from amplifier_web.shared_state import ActivationGate
+from amplifier_foundation.session.activation import ActivationGate
 
 FIXTURE = r'''
 import json,sys
@@ -304,21 +304,6 @@ class NormalizationTests(unittest.TestCase):
 
 
 class WorkerActivityTests(unittest.TestCase):
-    def test_activation_gate_rejects_a_callback_from_before_park(self):
-        gate = ActivationGate()
-        first = gate.activate()
-        stale_context = gate.bind(first)
-        gate.reset(stale_context)
-        gate.release(first)
-        second = gate.activate()
-        current_context = gate.bind(second)
-        try:
-            gate.check_current()
-            with self.assertRaisesRegex(RuntimeError, "released or superseded"):
-                gate.check(first)
-        finally:
-            gate.reset(current_context)
-
     def test_waiting_counts_actual_pending_jobs_and_preserves_agent_identity(self):
         worker=Worker()
         loop=SimpleNamespace(jobs={

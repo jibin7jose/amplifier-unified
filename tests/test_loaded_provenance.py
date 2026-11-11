@@ -7,7 +7,7 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 from amplifier_web import loaded_provenance, runtime_worker
-from amplifier_web.shared_state import ActivationGate
+from amplifier_foundation.session.activation import ActivationGate
 
 
 def test_mount_snapshot_only_reads_bounded_in_memory_identities(tmp_path, monkeypatch):

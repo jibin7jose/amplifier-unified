@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from amplifier_web import runtime_worker
-from amplifier_web.shared_state import ActivationGate
+from amplifier_foundation.session.activation import ActivationGate
 
 
 class PolicyBoundaryReached(Exception):

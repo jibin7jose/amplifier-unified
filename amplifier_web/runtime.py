@@ -1174,6 +1174,7 @@ class RuntimeManager:
                             labels = {'authentication': 'AuthenticationError', 'rate_limit': 'RateLimitError',
                                       'context_limit': 'ContextLengthError', 'invalid_image': 'InvalidImageError',
                                       'tool_configuration': 'ToolConfigurationError', 'provider_selection': 'ProviderSelectionError',
+                                      'runtime_dependency': 'RuntimeDependencyError',
                                       'bundle_configuration': detail['errorType']}
                             label = labels.get(detail['category'])
                             # Publish only our bounded classification and guidance,

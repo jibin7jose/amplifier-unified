@@ -138,7 +138,7 @@ async def test_worker_rejects_uncontrolled_naming_before_execute(tmp_path, monke
     import sys
     from unittest.mock import AsyncMock, Mock
     from amplifier_web.runtime_worker import Worker
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
     hooks = HookRegistry()
     async def scheduler(event, data): raise AssertionError('Uncontrolled model call')
     count = 2 if duplicate else 1

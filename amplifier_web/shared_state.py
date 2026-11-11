@@ -1,13 +1,11 @@
 """Shared host/worker helpers for Foundation's session ownership lock.
 
-Configuration stamps and activation ownership remain pure helpers. The worker
-uses the lock in its isolated dependency environment; navigation uses the same
-Foundation version to read native history.
+Path and configuration stamps remain runtime-free helpers. Foundation owns
+activation authority and session locking inside the isolated worker dependency
+environment; navigation uses its native-history reader.
 """
 from __future__ import annotations
 
-from contextvars import ContextVar
-from dataclasses import dataclass
 import os
 from pathlib import Path
 
@@ -20,56 +18,6 @@ def shared_state_home() -> Path:
     if state_home:
         return (Path(state_home).expanduser() / "amplifier" / "sessions").absolute()
     return Path.home() / ".local" / "state" / "amplifier" / "sessions"
-
-
-@dataclass(frozen=True)
-class Activation:
-    """An opaque, per-acquisition authority token."""
-
-    number: int
-
-
-class ActivationGate:
-    """Reject writes from a released or superseded worker activation."""
-
-    def __init__(self):
-        self._number = 0
-        self._active: Activation | None = None
-        self._current: ContextVar[Activation | None] = ContextVar("amplifier_web_activation", default=None)
-
-    def activate(self) -> Activation:
-        self._number += 1
-        self._active = Activation(self._number)
-        # Mount-time checkpoints run before the first Input exists.  A spawned
-        # turn still binds its own captured token explicitly.
-        self._current.set(self._active)
-        return self._active
-
-    def release(self, activation: Activation) -> None:
-        self.check(activation)
-        self._active = None
-
-    def check(self, activation: Activation | None) -> None:
-        if activation is None or activation is not self._active:
-            raise RuntimeError("This session activation has been released or superseded.")
-
-    def bind(self, activation: Activation):
-        self.check(activation)
-        return self._current.set(activation)
-
-    def reset(self, token) -> None:
-        self._current.reset(token)
-
-    def check_current(self) -> None:
-        self.check(self._current.get())
-
-    def current(self) -> Activation | None:
-        """Capture the calling task's token, never the latest owner's token."""
-        return self._current.get()
-
-    @property
-    def current_valid(self) -> bool:
-        return self._active is not None and self._current.get() is self._active
 
 
 def configuration_paths(workspace: Path, session_id: str, home: Path) -> tuple[Path, ...]:

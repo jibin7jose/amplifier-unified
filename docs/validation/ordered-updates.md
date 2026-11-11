@@ -138,12 +138,29 @@ installation, freeze and offered-profile mounts. Run it only in the prepared
 Supply Git bundles at `evidence/foundation-transition/{foundation,routing}.bundle`
 containing the exact old/new revisions named in the test. The fixture transports
 Git fetches to local mirrors while retaining public source identities; its
+fixture disables uv's GitHub API shortcut so branch resolution uses that same
+transport, and asserts both the baseline lock and installed Foundation revision
+before moving any remote reference. Its
 synthetic routing `main` is candidate evidence until an accepted public merge is
 verified. It repacks installed test-image registry payloads and declares a
 fixture Core Git source; it does not qualify public registry transport or Core
 publication. Preserve those limits, the raw prior failures, and the source/run
 identities with any reported result. These affected checks are not a new routine
 release gate or permission to refresh installed user components.
+
+The current activation-API successor qualifies Foundation `82798feb` through
+the ordinary included update and preserves rollback to the original generation.
+Separate cases keep the pre-API `c67e3ada` and explicitly pinned `a52ad155` bytes
+unchanged and require compatibility refusal before adoption. Selecting the old
+generation again does not make it executable by the newer app; ordinary worker
+startup still checks the required API before native ownership or history access.
+Historical fixture measurements retain their original source identities.
+
+An owned prepared environment may set `AMPLIFIER_EFFECTIVE_UPDATE_ROOT` for its
+artifacts and temporary projects, `AMPLIFIER_EFFECTIVE_UPDATE_BUNDLES` for those
+exact Git bundles, and `AMPLIFIER_EFFECTIVE_UPDATE_UV` for its existing resolver.
+Its Python 3.13 interpreter must be discoverable on `PATH`; these fixture paths
+do not select a product runtime or authorize writing another environment.
 
 For accepted-public-source follow-up, the manual `python-checks.yml` suite
 `updater-public-selected-source` reuses the existing hosted omitted-ref lane.

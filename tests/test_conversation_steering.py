@@ -215,7 +215,7 @@ async def test_parked_worker_refuses_without_reacquiring(monkeypatch):
 
 async def test_worker_routes_correction_under_existing_ownership(monkeypatch):
     import asyncio
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
 
     worker = Worker()
     coordinator = SimpleNamespace(

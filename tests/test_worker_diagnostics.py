@@ -162,7 +162,7 @@ async def test_worker_captures_original_validation_error_before_safe_metadata_re
     from types import SimpleNamespace
     from amplifier_web.module_failures import ConfiguredModuleError
     from amplifier_web.runtime_worker import Worker
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
     monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(tmp_path / 'app'))
     monkeypatch.setenv('SYNTHETIC_TOKEN', 'synthetic-worker-secret')
     monkeypatch.setattr('amplifier_web.runtime_bootstrap.bootstrap_app_package', lambda: None)

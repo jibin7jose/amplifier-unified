@@ -15,8 +15,10 @@ import os
 import platform
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
+import tomllib
 import zipfile
 
 import pytest
@@ -31,7 +33,8 @@ ROOT=Path(__file__).resolve().parents[1]
 FURL='https://github.com/microsoft/amplifier-foundation'
 RURL='https://github.com/microsoft/amplifier-bundle-routing-matrix'
 OLD='a52ad1558419c828c86c0139b9b4bc351e3a618f'
-NEW='c67e3ada021a5bbb93df9567feb23e2a72c93f55'
+PRE_API='c67e3ada021a5bbb93df9567feb23e2a72c93f55'
+NEW='82798febe57899497eccd659c8657f8bd8960138'
 ROLD='64138b9c544cbaddad6c24fd57f955da2c4e03ba'
 RNEW='574e864ec953d1729867becc7f1eef9c609f45ad'
 OUT=Path('/artifacts/effective-full')
@@ -146,19 +149,21 @@ def fixture_module(root, wheels, distribution, package):
     return root
 
 
-@pytest.mark.parametrize('case',['shared-rollback','old-pin','custom-pin','failed-qualification','dirty-source','retain-pin'])
+@pytest.mark.parametrize('case',['shared-rollback','missing-activation-api','old-pin','custom-pin','failed-qualification','dirty-source','retain-pin'])
 async def test_actual_check_install_qualifies_selected_app_behavior(tmp_path,monkeypatch,case):
     routing_target=ROLD if case in {'old-pin','retain-pin'} else RNEW
-    foundation_target=OLD if case=='retain-pin' else NEW
-    positive=case in {'shared-rollback','retain-pin'}
+    foundation_target=OLD if case=='retain-pin' else PRE_API if case=='missing-activation-api' else NEW
+    positive=case=='shared-rollback'
+    shared_case=case in {'shared-rollback','missing-activation-api'}
     global OUT
-    OUT=Path('/artifacts/effective-full')/case
+    artifacts=Path(os.environ.get('AMPLIFIER_EFFECTIVE_UPDATE_ROOT','/artifacts'))
+    OUT=artifacts/'effective-full'/case
     # Keep executable/native inputs off noexec /tmp and outside the product
     # checkout: its pyproject must not become a fixture module's package root.
-    work=Path('/artifacts/effective-native');work.mkdir(exist_ok=True)
+    work=artifacts/'effective-native';work.mkdir(parents=True,exist_ok=True)
     work=work/tmp_path.name;work.mkdir()
     OUT.mkdir(parents=True,exist_ok=True)
-    uv='/opt/unified-prepared/bootstrap/bin/uv';assert Path(uv).is_file()
+    uv=os.environ.get('AMPLIFIER_EFFECTIVE_UPDATE_UV','/opt/unified-prepared/bootstrap/bin/uv');assert Path(uv).is_file()
     home=work/'app';home.mkdir();shared=work/'shared';shared.mkdir()
     envhome=work/'process-home';envhome.mkdir()
     monkeypatch.setenv('HOME',str(envhome))
@@ -169,6 +174,9 @@ async def test_actual_check_install_qualifies_selected_app_behavior(tmp_path,mon
     monkeypatch.delenv('UV_OFFLINE',raising=False)
     monkeypatch.setenv('UV_NO_INDEX','1');monkeypatch.setenv('UV_NO_CONFIG','1')
     monkeypatch.setenv('UV_PYTHON_DOWNLOADS','never');monkeypatch.setenv('UV_CACHE_DIR',str(work/'uv-cache'))
+    # Keep GitHub branch resolution on the same local transport as Git fetch.
+    # uv's API fast path would otherwise resolve today's public main first.
+    monkeypatch.setenv('UV_NO_GITHUB_FAST_PATH','1')
     monkeypatch.setenv('PATH',str(Path(uv).parent)+':'+os.environ['PATH'])
     monkeypatch.setenv('GIT_CONFIG_NOSYSTEM','1');monkeypatch.setenv('PYTHONDONTWRITEBYTECODE','1')
     wheels=work/'wheels';proof=repack_registry_wheels(wheels);monkeypatch.setenv('UV_FIND_LINKS',str(wheels))
@@ -179,8 +187,8 @@ async def test_actual_check_install_qualifies_selected_app_behavior(tmp_path,mon
     installer_config.write_text('no-index=true\nfind-links=['+json.dumps(str(wheels))+']\n')
     binpath=work/'bin';binpath.mkdir()
     shim=binpath/'uv'
-    shim.write_text('#!/bin/sh\nexec /opt/unified-prepared/bootstrap/bin/uv --config-file '+
-                   str(installer_config)+' "$@"\n')
+    shim.write_text('#!/bin/sh\nexec '+shlex.quote(uv)+' --config-file '+
+                   shlex.quote(str(installer_config))+' "$@"\n')
     shim.chmod(0o755);uv=str(shim)
     monkeypatch.setenv('PATH',str(binpath)+':'+os.environ['PATH'])
     monkeypatch.delenv('UV_NO_CONFIG',raising=False)
@@ -188,7 +196,8 @@ async def test_actual_check_install_qualifies_selected_app_behavior(tmp_path,mon
     from amplifier_foundation.paths.resolution import parse_uri
     from amplifier_foundation.sources.git import GitSourceHandler
     for name,url,revision in [('foundation',FURL,OLD),('routing',RURL,ROLD)]:
-        bundle=ROOT/f'evidence/foundation-transition/{name}.bundle';mirror=work/(name+'-remote.git')
+        bundles=Path(os.environ.get('AMPLIFIER_EFFECTIVE_UPDATE_BUNDLES',str(ROOT/'evidence/foundation-transition')))
+        bundle=bundles/f'{name}.bundle';mirror=work/(name+'-remote.git')
         git(work,'clone','--bare',bundle,mirror)
         if name=='foundation':git(mirror,'fetch',bundle,'refs/remotes/origin/main:refs/heads/main')
         git(mirror,'update-ref','refs/heads/main',revision)
@@ -216,7 +225,7 @@ async def test_actual_check_install_qualifies_selected_app_behavior(tmp_path,mon
         'os.execv("/usr/bin/git",["/usr/bin/git",*flags,*args])\n')
     git_shim.chmod(0o755)
     beforebindings={}
-    if case=='shared-rollback':
+    if shared_case:
         from amplifier_foundation.sources.shared import SharedSourceStore
         store=SharedSourceStore(home/'source-store')
         await store.bind(home/'foundation/cache',RURL,'main',ROLD)
@@ -240,6 +249,13 @@ async def test_actual_check_install_qualifies_selected_app_behavior(tmp_path,mon
     setup=subprocess.run([uv,'sync','--project',str(project),'--python',sys.executable],capture_output=True,text=True)
     (OUT/'baseline-sync.log').write_text(setup.stdout+setup.stderr)
     assert setup.returncode==0,setup.stdout+setup.stderr
+    baseline=next(row for row in installed_graph(project) if row['name']=='amplifier-foundation')
+    baseline_source=next(row['source']['git'] for row in tomllib.loads((project/'uv.lock').read_text())['package']
+                         if row['name']=='amplifier-foundation')
+    assert baseline_source==FURL+'?branch=main#'+OLD,baseline_source
+    assert baseline['directUrl']['url']==FURL
+    assert baseline['directUrl']['vcs_info']['commit_id']==OLD,baseline
+    (OUT/'baseline-foundation.json').write_text(json.dumps({'lockSource':baseline_source,'installed':baseline},indent=2))
     dependencies=['amplifier-core @ git+'+core_url+'@main']
     if case=='custom-pin':
         dependencies.append('amplifier-foundation @ git+'+FURL+'@'+OLD)
@@ -324,7 +340,7 @@ async def test_actual_check_install_qualifies_selected_app_behavior(tmp_path,mon
             assert any(r.get('package')=='amplifier-core' and r.get('current')==oldcore
                        and r.get('latest')==newcore and r.get('status')=='update'
                        for r in manager.inventory)
-        if case=='shared-rollback':
+        if shared_case:
             assert any(r.get('sharedSource') and r.get('url')==RURL
                        and r.get('updateTier')=='included' for r in manager.inventory)
         await manager.install()
@@ -332,6 +348,7 @@ async def test_actual_check_install_qualifies_selected_app_behavior(tmp_path,mon
         (OUT/'state.json').write_text(json.dumps(dict(app.state['updates']),indent=2))
         assert (project/'uv.lock').read_bytes()==beforelock
         assert {k:git(v,'rev-parse','HEAD') for k,v in roots.items()}==beforeheads
+        assert all((home/path).read_bytes()==data for path,data in beforebindings.items())
         if not positive:
             assert app.state['updates']['phase']==('checked' if case=='dirty-source' else 'error'),app.state['updates']
             assert not updates.active_release(home).get('current')
@@ -344,6 +361,25 @@ async def test_actual_check_install_qualifies_selected_app_behavior(tmp_path,mon
                 assert not any('"dependenciesPrepared": true' in text for text in probes)
             if case=='failed-qualification':
                 assert manager.diagnostics.state['lastFailure']['phase']=='ecosystem-compatibility'
+            if case in {'missing-activation-api','retain-pin'}:
+                # A valid retained source policy is not API compatibility. Freeze
+                # preserves its exact bytes; the final probe must refuse adoption.
+                failure=manager.diagnostics.state['lastFailure']
+                assert failure['phase']=='ecosystem-compatibility'
+                assert failure['probe']['ok'] is False
+                assert failure['probe']['errorType']=='RuntimeDependencyError'
+                stages=list((home/'updates/releases').iterdir());assert len(stages)==1
+                stage=stages[0];final=runtime_environment.project_path(home,stage.name)
+                verify_recorded(final,stage)
+                graph=installed_graph(final)
+                foundation=next(row for row in graph if row['name']=='amplifier-foundation')
+                assert foundation['directUrl']['vcs_info']['commit_id']==foundation_target
+                if case=='retain-pin':
+                    assert next(r for r in graph if r['name']=='amplifier-core')['directUrl']['vcs_info']['commit_id']==newcore
+                    policy=json.loads((stage/'selected-source-declarations.json').read_text())
+                    assert policy['packages']['amplifier-foundation']['status']=='explicit-pin'
+                    assert policy['packages']['amplifier-foundation']['ref']==OLD
+                (OUT/'installed-refused.json').write_text(json.dumps(graph,indent=2))
             if case=='dirty-source':
                 assert manifest_file.read_text().endswith('# user edit retained\n')
                 assert not list((home/'updates/releases').glob('*'))
@@ -355,11 +391,6 @@ async def test_actual_check_install_qualifies_selected_app_behavior(tmp_path,mon
         graph=installed_graph(final)
         foundation=next(row for row in graph if row['name']=='amplifier-foundation')
         assert foundation['directUrl']['vcs_info']['commit_id']==foundation_target
-        if case=='retain-pin':
-            assert next(r for r in graph if r['name']=='amplifier-core')['directUrl']['vcs_info']['commit_id']==newcore
-            policy=json.loads((stage/'selected-source-declarations.json').read_text())
-            assert policy['packages']['amplifier-foundation']['status']=='explicit-pin'
-            assert policy['packages']['amplifier-foundation']['ref']==OLD
         assert (stage/'profiles-qualified.json').is_file()
         assert (project/'uv.lock').read_bytes()==beforelock
         assert {k:git(v,'rev-parse','HEAD') for k,v in roots.items()}==beforeheads

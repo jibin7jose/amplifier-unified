@@ -22,7 +22,7 @@ from fixtures.collaboration_native_probe import DirectNativeHost, ScriptedProvid
 
 class NativeHost(DirectNativeHost):
     async def before_execute(self, worker):
-        from amplifier_web.shared_state import ActivationGate
+        from amplifier_foundation.session.activation import ActivationGate
         worker.activation_gate = ActivationGate()
         worker.activation = worker.activation_gate.activate()
         worker.runtime.capture_activation = worker.activation_gate.current

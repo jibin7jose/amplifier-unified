@@ -23,7 +23,7 @@ async def install_host_access(parent, app, monkeypatch, diagnostic, *, handles=N
     from amplifier_web.app_guidance import install_app_access
     from amplifier_web.runtime_worker import Worker
     from amplifier_web.runtime import RuntimeManager
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
     sid = parent.coordinator.session_id
     generation = app._session(sid)['collaborationGeneration']
     worker = Worker()

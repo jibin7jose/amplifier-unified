@@ -34,7 +34,7 @@ from amplifier_web.auth import data_identity
 from amplifier_web.handoff_boundary import inspect as inspect_boundary
 from amplifier_web.management import Management
 from amplifier_web.service import AppService
-from amplifier_web.shared_state import ActivationGate
+from amplifier_foundation.session.activation import ActivationGate
 from amplifier_web.update_restart import target
 from amplifier_web.updates import UpdateManager
 from amplifier_module_loop_live.runtime import Input

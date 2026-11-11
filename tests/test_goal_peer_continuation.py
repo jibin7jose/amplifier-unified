@@ -28,7 +28,7 @@ from amplifier_web import runtime_worker
 from amplifier_web.management import Management
 from amplifier_web.service import AppService
 from amplifier_web.service import AppError
-from amplifier_web.shared_state import ActivationGate
+from amplifier_foundation.session.activation import ActivationGate
 
 
 HUMAN = "ordering-human-input"

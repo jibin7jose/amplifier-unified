@@ -19,7 +19,7 @@ async def test_native_root_and_child_history_scope(tmp_path,monkeypatch,mode):
     from amplifier_web.app_guidance import install_app_access
     from amplifier_web.runtime_worker import Worker
     from amplifier_web.runtime import RuntimeManager
-    from amplifier_web.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
     from amplifier_web.host.children import install_children,_PERSISTENT
     from amplifier_web.host.storage import SessionStore
     from amplifier_web.host.approvals import Approvals

@@ -11,7 +11,7 @@ from amplifier_foundation.session import (
     request_release,
 )
 from amplifier_web.runtime_worker import Worker
-from amplifier_web.shared_state import ActivationGate
+from amplifier_foundation.session.activation import ActivationGate
 from amplifier_web.service import AppService, AppError
 from amplifier_web.runtime import RuntimeManager, SessionInUseError
 
